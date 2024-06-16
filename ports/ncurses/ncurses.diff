@@ -1,0 +1,24 @@
+diff -rub ./ncurses-6.4/aclocal.m4 ./ncurses-6.4/aclocal.m4
+--- ./ncurses-6.4/aclocal.m4	2022-11-05 20:13:19.000000000 +0000
++++ ./ncurses-6.4/aclocal.m4	2024-06-12 19:12:39.244449293 +0100
+@@ -7505,7 +7505,7 @@
+ 		fi
+ 		cf_cv_rm_so_locs=yes
+ 		;;
+-	(linux*|gnu*|k*bsd*-gnu)
++	(linux*|gnu*|k*bsd*-gnu|laylaos*)
+ 		if test "$DFT_LWR_MODEL" = "shared" && test -n "$LD_RPATH_OPT" ; then
+ 			LOCAL_LDFLAGS="${LD_RPATH_OPT}\$(LOCAL_LIBDIR)"
+ 			LOCAL_LDFLAGS2="$LOCAL_LDFLAGS"
+diff -rub ./ncurses-6.4/configure ./ncurses-6.4/configure
+--- ./ncurses-6.4/configure	2022-11-05 21:13:26.000000000 +0000
++++ ./ncurses-6.4/configure	2024-06-12 19:22:27.811696072 +0100
+@@ -6386,7 +6386,7 @@
+ 		fi
+ 		cf_cv_rm_so_locs=yes
+ 		;;
+-	(linux*|gnu*|k*bsd*-gnu)
++	(linux*|gnu*|k*bsd*-gnu|laylaos*)
+ 		if test "$DFT_LWR_MODEL" = "shared" && test -n "$LD_RPATH_OPT" ; then
+ 			LOCAL_LDFLAGS="${LD_RPATH_OPT}\$(LOCAL_LIBDIR)"
+ 			LOCAL_LDFLAGS2="$LOCAL_LDFLAGS"

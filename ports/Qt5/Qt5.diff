@@ -1,0 +1,335 @@
+diff -rub ./qt5/qtbase/src/corelib/global/qglobal.h ./qt5/qtbase/src/corelib/global/qglobal.h
+--- ./qt5/qtbase/src/corelib/global/qglobal.h	2024-06-15 15:27:14.206582450 +0100
++++ ./qt5/qtbase/src/corelib/global/qglobal.h	2024-06-03 07:39:01.855336784 +0100
+@@ -45,6 +45,7 @@
+ #  include <type_traits>
+ #  include <cstddef>
+ #  include <utility>
++#  include <limits>
+ #endif
+ #ifndef __ASSEMBLER__
+ #  include <assert.h>
+diff -rub ./qt5/qtbase/src/corelib/global/qsystemdetection.h ./qt5/qtbase/src/corelib/global/qsystemdetection.h
+--- ./qt5/qtbase/src/corelib/global/qsystemdetection.h	2024-06-15 15:27:14.210582467 +0100
++++ ./qt5/qtbase/src/corelib/global/qsystemdetection.h	2024-06-01 22:07:08.655036732 +0100
+@@ -71,6 +71,7 @@
+      UNIX     - Any UNIX BSD/SYSV system
+      ANDROID  - Android platform
+      HAIKU    - Haiku
++     LAYLAOS  - LaylaOS
+ 
+    The following operating systems have variants:
+      LINUX    - both Q_OS_LINUX and Q_OS_ANDROID are defined when building for Android
+@@ -139,6 +140,8 @@
+ #  define Q_OS_NACL
+ #elif defined(__EMSCRIPTEN__)
+ #  define Q_OS_WASM
++#elif defined(__laylaos__)
++#  define Q_OS_LAYLAOS
+ #elif defined(__linux__) || defined(__linux)
+ #  define Q_OS_LINUX
+ #elif defined(__FreeBSD__) || defined(__DragonFly__) || defined(__FreeBSD_kernel__)
+diff -rub ./qt5/qtbase/src/corelib/io/io.pri ./qt5/qtbase/src/corelib/io/io.pri
+--- ./qt5/qtbase/src/corelib/io/io.pri	2024-06-15 15:27:14.214582484 +0100
++++ ./qt5/qtbase/src/corelib/io/io.pri	2024-06-01 22:05:30.422825054 +0100
+@@ -194,6 +194,10 @@
+                 io/qstandardpaths_haiku.cpp \
+                 io/qstorageinfo_unix.cpp
+             LIBS += -lbe
++        } else:laylaos {
++            SOURCES += \
++                io/qstandardpaths_laylaos.cpp \
++                io/qstorageinfo_unix.cpp
+         } else {
+             SOURCES += \
+                 io/qstandardpaths_unix.cpp \
+diff -rub ./qt5/qtbase/src/corelib/kernel/qsharedmemory_systemv.cpp ./qt5/qtbase/src/corelib/kernel/qsharedmemory_systemv.cpp
+--- ./qt5/qtbase/src/corelib/kernel/qsharedmemory_systemv.cpp	2024-06-15 15:27:14.254582649 +0100
++++ ./qt5/qtbase/src/corelib/kernel/qsharedmemory_systemv.cpp	2024-06-02 22:02:59.189932326 +0100
+@@ -233,7 +233,11 @@
+         }
+     }
+     // If there are no attachments then remove it.
++#ifdef __laylaos__
++    if (shmid_ds.shm_nattach == 0) {
++#else
+     if (shmid_ds.shm_nattch == 0) {
++#endif
+         // mark for removal
+         if (-1 == shmctl(id, IPC_RMID, &shmid_ds)) {
+             setErrorString(QLatin1String("QSharedMemory::remove"));
+diff -rub ./qt5/qtbase/src/corelib/tools/qbytearray.h ./qt5/qtbase/src/corelib/tools/qbytearray.h
+--- ./qt5/qtbase/src/corelib/tools/qbytearray.h	2024-06-15 15:27:14.302582847 +0100
++++ ./qt5/qtbase/src/corelib/tools/qbytearray.h	2024-06-03 07:39:52.415337801 +0100
+@@ -51,6 +51,7 @@
+ 
+ #include <string>
+ #include <iterator>
++#include <limits>
+ 
+ #ifdef truncate
+ #error qbytearray.h must be included before any header file that defines truncate
+diff -rub ./qt5/qtbase/src/gui/configure.pri ./qt5/qtbase/src/gui/configure.pri
+--- ./qt5/qtbase/src/gui/configure.pri	2024-06-15 15:27:14.354583063 +0100
++++ ./qt5/qtbase/src/gui/configure.pri	2024-05-31 22:12:23.558425073 +0100
+@@ -66,6 +66,7 @@
+     else: integrity: name = integrityfb
+     else: haiku: name = haiku
+     else: wasm: name = wasm
++    else: laylaos: name = laylaos
+     else: name = xcb
+ 
+     $${1}.value = $$name
+diff -rub ./qt5/qtbase/src/gui/gui.pro ./qt5/qtbase/src/gui/gui.pro
+--- ./qt5/qtbase/src/gui/gui.pro	2024-06-15 15:27:14.374583145 +0100
++++ ./qt5/qtbase/src/gui/gui.pro	2024-05-31 22:11:54.826367230 +0100
+@@ -34,6 +34,7 @@
+ 
+ osx: LIBS_PRIVATE += -framework AppKit
+ darwin: LIBS_PRIVATE += -framework CoreGraphics
++laylaos: LIBS_PRIVATE += -lgui -lfreetype
+ 
+ CONFIG += simd optimize_full
+ 
+diff -rub ./qt5/qtbase/src/network/configure.json ./qt5/qtbase/src/network/configure.json
+--- ./qt5/qtbase/src/network/configure.json	2024-06-15 15:27:14.478583575 +0100
++++ ./qt5/qtbase/src/network/configure.json	2024-06-06 14:25:20.977827504 +0100
+@@ -84,6 +84,10 @@
+             "sources": [
+                 { "type": "openssl" },
+                 {
++                    "libs": "$$[CROSS_BUILD_SYSROOT]/usr/lib/libssl.so $$[CROSS_BUILD_SYSROOT]/usr/lib/libcrypto.so",
++                    "condition": "cross_compile && config.laylaos"
++                },
++                {
+                     "libs": "-lssleay32 -llibeay32 -lUser32 -lWs2_32 -lAdvapi32 -lGdi32",
+                     "condition": "config.win32"
+                 },
+diff -rub ./qt5/qtbase/src/network/ssl/qsslsocket_openssl_symbols.cpp ./qt5/qtbase/src/network/ssl/qsslsocket_openssl_symbols.cpp
+--- ./qt5/qtbase/src/network/ssl/qsslsocket_openssl_symbols.cpp	2024-06-15 15:27:14.502583675 +0100
++++ ./qt5/qtbase/src/network/ssl/qsslsocket_openssl_symbols.cpp	2024-06-06 20:43:13.623301453 +0100
+@@ -150,7 +150,6 @@
+ DEFINEFUNC(const BIO_METHOD *, BIO_s_mem, void, DUMMYARG, return nullptr, return)
+ DEFINEFUNC2(int, BN_is_word, BIGNUM *a, a, BN_ULONG w, w, return 0, return)
+ DEFINEFUNC(int, EVP_CIPHER_CTX_reset, EVP_CIPHER_CTX *c, c, return 0, return)
+-DEFINEFUNC(int, EVP_PKEY_base_id, EVP_PKEY *a, a, return NID_undef, return)
+ DEFINEFUNC(int, RSA_bits, RSA *a, a, return 0, return)
+ DEFINEFUNC(int, DSA_bits, DSA *a, a, return 0, return)
+ DEFINEFUNC(int, OPENSSL_sk_num, OPENSSL_STACK *a, a, return -1, return)
+@@ -472,7 +471,17 @@
+ DEFINEFUNC(int, SSL_version, const SSL *a, a, return 0, return)
+ DEFINEFUNC2(int, SSL_get_error, SSL *a, a, int b, b, return -1, return)
+ DEFINEFUNC(STACK_OF(X509) *, SSL_get_peer_cert_chain, SSL *a, a, return nullptr, return)
++
++// Changes to work with OpenSSL 3
++// See: https://gist.github.com/seyedmmousavi/b1f6681eb37f3edbe3dcabb6e89c5d43
++#if defined(OPENSSL_VERSION_MAJOR) && OPENSSL_VERSION_MAJOR >= 3
++DEFINEFUNC(X509 *, SSL_get1_peer_certificate, SSL *a, a, return nullptr, return)
++DEFINEFUNC(int, EVP_PKEY_get_base_id, const EVP_PKEY *pkey, pkey, return -1, return)
++#else
+ DEFINEFUNC(X509 *, SSL_get_peer_certificate, SSL *a, a, return nullptr, return)
++DEFINEFUNC(int, EVP_PKEY_base_id, EVP_PKEY *a, a, return NID_undef, return)
++#endif // OPENSSL_VERSION_MAJOR >= 3
++
+ #if OPENSSL_VERSION_NUMBER >= 0x00908000L
+ // 0.9.8 broke SC and BC by changing this function's signature.
+ DEFINEFUNC(long, SSL_get_verify_result, const SSL *a, a, return -1, return)
+@@ -998,7 +1007,13 @@
+     RESOLVEFUNC(OPENSSL_init_crypto)
+     RESOLVEFUNC(ASN1_STRING_get0_data)
+     RESOLVEFUNC(EVP_CIPHER_CTX_reset)
++
++#if defined(OPENSSL_VERSION_MAJOR) && OPENSSL_VERSION_MAJOR >= 3
++    RESOLVEFUNC(EVP_PKEY_get_base_id)
++#else
+     RESOLVEFUNC(EVP_PKEY_base_id)
++#endif // OPENSSL_VERSION_MAJOR >= 3
++
+     RESOLVEFUNC(RSA_bits)
+     RESOLVEFUNC(OPENSSL_sk_new_null)
+     RESOLVEFUNC(OPENSSL_sk_push)
+@@ -1299,7 +1314,13 @@
+     RESOLVEFUNC(SSL_version)
+     RESOLVEFUNC(SSL_get_error)
+     RESOLVEFUNC(SSL_get_peer_cert_chain)
++
++#if defined(OPENSSL_VERSION_MAJOR) && OPENSSL_VERSION_MAJOR >= 3
++    RESOLVEFUNC(SSL_get1_peer_certificate)
++#else
+     RESOLVEFUNC(SSL_get_peer_certificate)
++#endif // OPENSSL_VERSION_MAJOR >= 3
++
+     RESOLVEFUNC(SSL_get_verify_result)
+     RESOLVEFUNC(SSL_new)
+     RESOLVEFUNC(SSL_ctrl)
+diff -rub ./qt5/qtbase/src/network/ssl/qsslsocket_openssl_symbols_p.h ./qt5/qtbase/src/network/ssl/qsslsocket_openssl_symbols_p.h
+--- ./qt5/qtbase/src/network/ssl/qsslsocket_openssl_symbols_p.h	2024-06-15 15:27:14.502583675 +0100
++++ ./qt5/qtbase/src/network/ssl/qsslsocket_openssl_symbols_p.h	2024-06-06 20:43:08.259279547 +0100
+@@ -377,7 +377,19 @@
+ int q_SSL_version(const SSL *a);
+ int q_SSL_get_error(SSL *a, int b);
+ STACK_OF(X509) *q_SSL_get_peer_cert_chain(SSL *a);
++
++// Changes to work with OpenSSL 3
++// See: https://gist.github.com/seyedmmousavi/b1f6681eb37f3edbe3dcabb6e89c5d43
++#if defined(OPENSSL_VERSION_MAJOR) && OPENSSL_VERSION_MAJOR >= 3
++X509 *q_SSL_get1_peer_certificate(SSL *a);
++#define q_SSL_get_peer_certificate q_SSL_get1_peer_certificate
++int q_EVP_PKEY_get_base_id(const EVP_PKEY *pkey);
++#define q_EVP_PKEY_base_id q_EVP_PKEY_get_base_id
++#else
+ X509 *q_SSL_get_peer_certificate(SSL *a);
++int q_EVP_PKEY_base_id(EVP_PKEY *a);
++#endif // OPENSSL_VERSION_MAJOR >= 3
++
+ long q_SSL_get_verify_result(const SSL *a);
+ SSL *q_SSL_new(SSL_CTX *a);
+ long q_SSL_ctrl(SSL *ssl,int cmd, long larg, void *parg);
+diff -rub ./qt5/qtbase/src/plugins/platforms/platforms.pro ./qt5/qtbase/src/plugins/platforms/platforms.pro
+--- ./qt5/qtbase/src/plugins/platforms/platforms.pro	2024-06-15 15:27:14.590584038 +0100
++++ ./qt5/qtbase/src/plugins/platforms/platforms.pro	2024-06-01 22:04:16.750667030 +0100
+@@ -46,6 +46,10 @@
+     SUBDIRS += haiku
+ }
+ 
++laylaos {
++    SUBDIRS += laylaos
++}
++
+ wasm: SUBDIRS += wasm
+ 
+ qtConfig(mirclient): SUBDIRS += mirclient
+diff -rub ./qt5/qtbase/src/tools/moc/generator.cpp ./qt5/qtbase/src/tools/moc/generator.cpp
+--- ./qt5/qtbase/src/tools/moc/generator.cpp	2024-06-15 15:27:14.674584386 +0100
++++ ./qt5/qtbase/src/tools/moc/generator.cpp	2024-06-01 22:25:40.227552107 +0100
+@@ -46,6 +46,8 @@
+ #include <private/qmetaobject_p.h> //for the flags.
+ #include <private/qplugin_p.h> //for the flags.
+ 
++#include <limits>
++
+ QT_BEGIN_NAMESPACE
+ 
+ uint nameToBuiltinType(const QByteArray &name)
+diff -rub ./qt5/qtbase/tests/auto/corelib/io/qfileselector/qfileselector.qrc ./qt5/qtbase/tests/auto/corelib/io/qfileselector/qfileselector.qrc
+--- ./qt5/qtbase/tests/auto/corelib/io/qfileselector/qfileselector.qrc	2024-06-15 15:27:14.906585345 +0100
++++ ./qt5/qtbase/tests/auto/corelib/io/qfileselector/qfileselector.qrc	2024-05-31 22:11:01.586260045 +0100
+@@ -20,6 +20,7 @@
+    <file>platforms/+unix/+darwin/+mac/test</file>
+    <file>platforms/+unix/+darwin/test</file>
+    <file>platforms/+unix/+haiku/test</file>
++   <file>platforms/+unix/+laylaos/test</file>
+    <file>platforms/+unix/+linux/test</file>
+    <file>platforms/+unix/+qnx/test</file>
+    <file>platforms/+unix/test</file>
+@@ -34,6 +35,7 @@
+    <file>platforms/+darwin/test</file>
+    <file>platforms/+mac/test</file>
+    <file>platforms/+haiku/test</file>
++   <file>platforms/+laylaos/test</file>
+    <file>platforms/+linux/test</file>
+    <file>platforms/+qnx/test</file>
+    <file>platforms/+wince/test</file>
+@@ -45,6 +47,7 @@
+    <file>platforms/+ios/test2</file>
+    <file>platforms/+macos/test2</file>
+    <file>platforms/+haiku/test2</file>
++   <file>platforms/+laylaos/test2</file>
+    <file>platforms/+linux/test2</file>
+    <file>platforms/+qnx/test2</file>
+    <file>platforms/+wince/test2</file>
+diff -rub ./qt5/qtpurchasing/examples/purchasing/qthangman/enable2.txt ./qt5/qtpurchasing/examples/purchasing/qthangman/enable2.txt
+--- ./qt5/qtpurchasing/examples/purchasing/qthangman/enable2.txt	2024-06-15 15:27:17.446595848 +0100
++++ ./qt5/qtpurchasing/examples/purchasing/qthangman/enable2.txt	2024-06-01 22:08:21.247193771 +0100
+@@ -7577,6 +7577,7 @@
+ layering
+ layers
+ laying
++laylaos
+ layman
+ layout
+ layouts
+diff -rub ./qt5/qtscript/src/3rdparty/javascriptcore/JavaScriptCore/wtf/Platform.h ./qt5/qtscript/src/3rdparty/javascriptcore/JavaScriptCore/wtf/Platform.h
+--- ./qt5/qtscript/src/3rdparty/javascriptcore/JavaScriptCore/wtf/Platform.h	2024-06-15 15:27:17.942597900 +0100
++++ ./qt5/qtscript/src/3rdparty/javascriptcore/JavaScriptCore/wtf/Platform.h	2024-05-31 22:08:13.341921116 +0100
+@@ -472,6 +472,11 @@
+ #endif
+ #endif
+ 
++/* OS(LAYLAOS) - LaylaOS */
++#ifdef __laylaos__
++#define WTF_OS_LAYLAOS 1
++#endif
++
+ /* OS(LINUX) - Linux */
+ #ifdef __linux__
+ #define WTF_OS_LINUX 1
+@@ -522,6 +527,7 @@
+     || OS(FREEBSD)          \
+     || OS(HAIKU)            \
+     || OS(HPUX)             \
++    || OS(LAYLAOS)          \
+     || OS(LINUX)            \
+     || OS(NETBSD)           \
+     || OS(OPENBSD)          \
+@@ -543,6 +549,7 @@
+ /* PLATFORM(WX) */
+ /* PLATFORM(GTK) */
+ /* PLATFORM(HAIKU) */
++/* PLATFORM(LAYLAOS) */
+ /* PLATFORM(MAC) */
+ /* PLATFORM(WIN) */
+ #if defined(BUILDING_CHROMIUM__)
+@@ -555,6 +562,8 @@
+ #define WTF_PLATFORM_GTK 1
+ #elif defined(BUILDING_HAIKU__)
+ #define WTF_PLATFORM_HAIKU 1
++#elif defined(BUILDING_LAYLAOS__)
++#define WTF_PLATFORM_LAYLAOS 1
+ #elif OS(DARWIN)
+ #define WTF_PLATFORM_MAC 1
+ #elif OS(WINDOWS)
+@@ -757,7 +766,7 @@
+ #endif
+ #endif
+ 
+-#if PLATFORM(HAIKU)
++#if PLATFORM(HAIKU) || PLATFORM(LAYLAOS)
+ #define HAVE_POSIX_MEMALIGN 1
+ #define WTF_USE_CURL 1
+ #define WTF_USE_PTHREADS 1
+@@ -778,7 +787,7 @@
+ 
+ #if !OS(WINDOWS) && !OS(SOLARIS) && !OS(QNX) \
+     && !OS(SYMBIAN) && !OS(HAIKU) && !OS(RVCT) \
+-    && !OS(ANDROID) && !OS(AIX) && !OS(HPUX)
++    && !OS(ANDROID) && !OS(AIX) && !OS(HPUX) && !OS(LAYLAOS)
+ #define HAVE_TM_GMTOFF 1
+ #define HAVE_TM_ZONE 1
+ #define HAVE_TIMEGM 1
+diff -rub ./qt5/qtscript/src/script/script.pro ./qt5/qtscript/src/script/script.pro
+--- ./qt5/qtscript/src/script/script.pro	2024-06-15 15:27:17.958597966 +0100
++++ ./qt5/qtscript/src/script/script.pro	2024-05-31 22:05:00.501531403 +0100
+@@ -36,6 +36,11 @@
+     }
+ }
+ 
++laylaos {
++    # we are using musl, which has -lm as part of -lc
++    LIBS_PRIVATE += $$[QT_SYSROOT]/usr/lib/libc.so
++}
++
+ qtConfig(asm_hwcap_h): DEFINES += HAVE_asm_hwcap_h
+ 
+ # Suppress 'LEAK' messages (see QTBUG-18201)
+diff -rub ./qt5/qtscript/util/mkdist-javascriptcore ./qt5/qtscript/util/mkdist-javascriptcore
+--- ./qt5/qtscript/util/mkdist-javascriptcore	2024-06-15 15:27:18.062598396 +0100
++++ ./qt5/qtscript/util/mkdist-javascriptcore	2024-05-31 22:04:03.141414762 +0100
+@@ -34,6 +34,7 @@
+ excluded_directories="$excluded_directories JavaScriptCore/wtf/win"
+ excluded_directories="$excluded_directories JavaScriptCore/wtf/chromium"
+ excluded_directories="$excluded_directories JavaScriptCore/wtf/haiku"
++excluded_directories="$excluded_directories JavaScriptCore/wtf/laylaos"
+ excluded_directories="$excluded_directories JavaScriptCore/icu"
+ excluded_directories="$excluded_directories JavaScriptCore/qt"
+ excluded_directories="$excluded_directories JavaScriptCore/JavaScriptCore.gyp"

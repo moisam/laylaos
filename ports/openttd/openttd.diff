@@ -1,0 +1,346 @@
+diff -rub ./OpenTTD-13.4/cmake/CompileFlags.cmake ./OpenTTD-13.4/cmake/CompileFlags.cmake
+--- ./OpenTTD-13.4/cmake/CompileFlags.cmake	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/cmake/CompileFlags.cmake	2024-01-19 15:15:42.161864561 +0000
+@@ -172,7 +172,7 @@
+         message(FATAL_ERROR "No warning flags are set for this compiler yet; please consider creating a Pull Request to add support for this compiler.")
+     endif()
+ 
+-    if(NOT WIN32 AND NOT HAIKU)
++    if(NOT WIN32 AND NOT HAIKU AND NOT LAYLAOS)
+         # rdynamic is used to get useful stack traces from crash reports.
+         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -rdynamic")
+     endif()
+diff -rub ./OpenTTD-13.4/cmake/InstallAndPackage.cmake ./OpenTTD-13.4/cmake/InstallAndPackage.cmake
+--- ./OpenTTD-13.4/cmake/InstallAndPackage.cmake	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/cmake/InstallAndPackage.cmake	2024-01-20 10:39:17.554000864 +0000
+@@ -203,6 +203,8 @@
+ 
+     set(CPACK_PACKAGE_FILE_NAME "openttd-#CPACK_PACKAGE_VERSION#-linux-${PLATFORM}-${CPACK_SYSTEM_NAME}")
+ 
++elseif(LAYLAOS)
++
+ else()
+     message(FATAL_ERROR "Unknown OS found for packaging; please consider creating a Pull Request to add support for this OS.")
+ endif()
+diff -rub ./OpenTTD-13.4/cmake/Options.cmake ./OpenTTD-13.4/cmake/Options.cmake
+--- ./OpenTTD-13.4/cmake/Options.cmake	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/cmake/Options.cmake	2024-02-22 22:19:46.677529318 +0000
+@@ -17,6 +17,16 @@
+         set(DEFAULT_PERSONAL_DIR ".${BINARY_NAME}")
+         set(DEFAULT_SHARED_DIR "(not set)")
+         set(DEFAULT_GLOBAL_DIR "${CMAKE_INSTALL_FULL_DATADIR}/${BINARY_NAME}")
++    elseif(LAYLAOS)
++        set(DEFAULT_PERSONAL_DIR ".${BINARY_NAME}")
++        set(DEFAULT_SHARED_DIR "/usr/share/games/${BINARY_NAME}")
++        set(DEFAULT_GLOBAL_DIR "/usr/share/games/${BINARY_NAME}")
++        message(STATUS "Default Personal directory - ${DEFAULT_PERSONAL_DIR}")
++        message(STATUS "Default Shared directory - ${DEFAULT_SHARED_DIR}")
++        message(STATUS "Default Global directory - ${DEFAULT_GLOBAL_DIR}")
++        set(PERSONAL_DIR "${DEFAULT_PERSONAL_DIR}" CACHE STRING "Personal directory")
++        set(SHARED_DIR "${DEFAULT_SHARED_DIR}" CACHE STRING "Shared directory")
++        set(GLOBAL_DIR "${DEFAULT_GLOBAL_DIR}" CACHE STRING "Global directory")
+     else()
+         message(FATAL_ERROR "Unknown OS found; please consider creating a Pull Request to add support for this OS.")
+     endif()
+@@ -36,6 +46,10 @@
+         message(STATUS "Detecting Global Data directory - ${GLOBAL_DIR}")
+     endif()
+ 
++    message(STATUS "Setting Personal directory - ${PERSONAL_DIR}")
++    message(STATUS "Setting Shared directory - ${SHARED_DIR}")
++    message(STATUS "Setting Global directory - ${GLOBAL_DIR}")
++
+     set(HOST_BINARY_DIR "" CACHE PATH "Full path to native cmake build directory")
+ endfunction()
+ 
+@@ -48,6 +62,8 @@
+ 
+     if(UNIX AND NOT APPLE AND NOT OPTION_PACKAGE_DEPENDENCIES)
+         set(DEFAULT_OPTION_INSTALL_FHS ON)
++    elseif(LAYLAOS)
++        set(DEFAULT_OPTION_INSTALL_FHS ON)
+     else()
+         set(DEFAULT_OPTION_INSTALL_FHS OFF)
+     endif()
+@@ -61,6 +77,8 @@
+         # Although pthreads is supported, it is not in a way yet that is
+         # useful for us.
+         option(OPTION_USE_THREADS "Use threads" OFF)
++    elseif(LAYLAOS)
++        option(OPTION_USE_THREADS "Use threads" OFF)
+     else()
+         option(OPTION_USE_THREADS "Use threads" ON)
+     endif()
+diff -rub ./OpenTTD-13.4/CMakeLists.txt ./OpenTTD-13.4/CMakeLists.txt
+--- ./OpenTTD-13.4/CMakeLists.txt	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/CMakeLists.txt	2024-01-22 16:00:29.498635911 +0000
+@@ -225,10 +225,52 @@
+     target_sources(openttd PRIVATE "${CMAKE_SOURCE_DIR}/os/windows/openttd.manifest")
+ endif()
+ 
++
++set(host_tools_list strgen settingsgen)
++
++if(CMAKE_CROSSCOMPILING)
++    # Pawn off the creation of the host utilities into its own dedicated space
++    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/host_tools)
++    file(TO_NATIVE_PATH ${CMAKE_COMMAND} native_cmake_command)
++    file(TO_NATIVE_PATH ${CMAKE_CURRENT_SOURCE_DIR} native_cmake_current_source_dir)
++    execute_process(
++        COMMAND "${native_cmake_command}" "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}" "${native_cmake_current_source_dir}"
++                "-DCMAKE_C_COMPILER=/usr/bin/cc" "-DCMAKE_CXX_COMPILER=/usr/bin/c++"
++        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/host_tools
++    )
++
++    add_custom_target(host_tools
++        COMMAND ${CMAKE_COMMAND} --build . --target host_tools --config $<CONFIG>
++        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/host_tools
++    )
++    include(${CMAKE_CURRENT_BINARY_DIR}/host_tools/host_tools.cmake)
++
++    foreach(tgt IN ITEMS ${host_tools_list})
++        add_dependencies(host${tgt} host_tools)
++    endforeach()
++
++else()
++    # Add an empty target, host tools are built inplace
++    add_custom_target(host_tools
++        DEPENDS ${host_tools_list}
++    )
++endif()
++
++
+ add_subdirectory(${CMAKE_SOURCE_DIR}/bin)
+ add_subdirectory(${CMAKE_SOURCE_DIR}/src)
+ add_subdirectory(${CMAKE_SOURCE_DIR}/media)
+ 
++
++if(NOT CMAKE_CROSSCOMPILING)
++    foreach(tgt IN ITEMS ${host_tools_list})
++        add_executable(host${tgt} ALIAS ${tgt})
++    endforeach()
++
++    export(TARGETS ${host_tools_list} NAMESPACE host FILE host_tools.cmake)
++endif()
++
++
+ add_dependencies(openttd
+     find_version)
+ 
+diff -rub ./OpenTTD-13.4/src/dedicated.cpp ./OpenTTD-13.4/src/dedicated.cpp
+--- ./OpenTTD-13.4/src/dedicated.cpp	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/src/dedicated.cpp	2024-01-27 21:00:06.497489935 +0000
+@@ -14,7 +14,7 @@
+ std::string _log_file; ///< File to reroute output of a forked OpenTTD to
+ std::unique_ptr<FILE, FileDeleter> _log_fd; ///< File to reroute output of a forked OpenTTD to
+ 
+-#if defined(UNIX)
++#if defined(UNIX) || defined (__laylaos__)
+ 
+ #include <unistd.h>
+ 
+diff -rub ./OpenTTD-13.4/src/lang/CMakeLists.txt ./OpenTTD-13.4/src/lang/CMakeLists.txt
+--- ./OpenTTD-13.4/src/lang/CMakeLists.txt	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/src/lang/CMakeLists.txt	2024-01-22 16:09:28.734047196 +0000
+@@ -84,11 +84,11 @@
+ 
+     add_custom_command(OUTPUT ${LANG_BINARY_FILE}
+             COMMAND ${CMAKE_COMMAND} -E make_directory ${LANG_BINARY_DIR}
+-            COMMAND strgen
++            COMMAND hoststrgen
+                     -s ${CMAKE_CURRENT_SOURCE_DIR}
+                     -d ${LANG_BINARY_DIR}
+                     ${LANG_SOURCE_FILE}
+-            DEPENDS strgen ${MASTER_LANG_FILE}
++            DEPENDS hoststrgen ${MASTER_LANG_FILE}
+             MAIN_DEPENDENCY ${LANG_SOURCE_FILE}
+             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+             COMMENT "Compiling language ${LANG_SOURCE_FILE_NAME_WE}"
+@@ -113,10 +113,10 @@
+ # Generate a command and target to create the strings table
+ add_custom_command_timestamp(OUTPUT ${TABLE_BINARY_DIR}/strings.h
+         COMMAND ${CMAKE_COMMAND} -E make_directory ${TABLE_BINARY_DIR}
+-        COMMAND strgen
++        COMMAND hoststrgen
+                 -s ${CMAKE_CURRENT_SOURCE_DIR}
+                 -d ${TABLE_BINARY_DIR}
+-        DEPENDS strgen ${MASTER_LANG_FILE}
++        DEPENDS hoststrgen ${MASTER_LANG_FILE}
+         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+         COMMENT "Generating table/strings.h"
+ )
+diff -rub ./OpenTTD-13.4/src/network/core/os_abstraction.h ./OpenTTD-13.4/src/network/core/os_abstraction.h
+--- ./OpenTTD-13.4/src/network/core/os_abstraction.h	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/src/network/core/os_abstraction.h	2024-01-23 14:10:32.882092881 +0000
+@@ -60,7 +60,7 @@
+ #endif /* _WIN32 */
+ 
+ /* UNIX stuff */
+-#if defined(UNIX) && !defined(__OS2__)
++#if (defined(UNIX) || defined(__laylaos__)) && !defined(__OS2__)
+ #	if defined(OPENBSD) || defined(__NetBSD__)
+ #		define AI_ADDRCONFIG 0
+ #	endif
+diff -rub ./OpenTTD-13.4/src/openttd.cpp ./OpenTTD-13.4/src/openttd.cpp
+--- ./OpenTTD-13.4/src/openttd.cpp	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/src/openttd.cpp	2024-01-28 21:43:05.316624936 +0000
+@@ -486,7 +486,7 @@
+ 	}
+ };
+ 
+-#if defined(UNIX)
++#if defined(UNIX) || defined (__laylaos__)
+ extern void DedicatedFork();
+ #endif
+ 
+@@ -684,7 +684,7 @@
+ 	if (dedicated) Debug(net, 3, "Starting dedicated server, version {}", _openttd_revision);
+ 	if (_dedicated_forks && !dedicated) _dedicated_forks = false;
+ 
+-#if defined(UNIX)
++#if defined(UNIX) || defined (__laylaos__)
+ 	/* We must fork here, or we'll end up without some resources we need (like sockets) */
+ 	if (_dedicated_forks) DedicatedFork();
+ #endif
+diff -rub ./OpenTTD-13.4/src/os/unix/CMakeLists.txt ./OpenTTD-13.4/src/os/unix/CMakeLists.txt
+--- ./OpenTTD-13.4/src/os/unix/CMakeLists.txt	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/src/os/unix/CMakeLists.txt	2024-01-23 15:12:55.663799126 +0000
+@@ -9,6 +9,16 @@
+ )
+ 
+ add_files(
++    crashlog_unix.cpp
++    CONDITION LAYLAOS
++)
++
++add_files(
++    unix.cpp
++    CONDITION LAYLAOS
++)
++
++add_files(
+     font_unix.cpp
+     CONDITION Fontconfig_FOUND
+ )
+diff -rub ./OpenTTD-13.4/src/spritecache.cpp ./OpenTTD-13.4/src/spritecache.cpp
+--- ./OpenTTD-13.4/src/spritecache.cpp	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/src/spritecache.cpp	2024-02-21 16:37:58.125096532 +0000
+@@ -980,6 +980,8 @@
+ 	/* Remember 'target_size' from the previous allocation attempt, so we do not try to reach the target_size multiple times in case of failure. */
+ 	static uint last_alloc_attempt = 0;
+ 
++#ifndef __laylaos__
++
+ 	if (_spritecache_ptr == nullptr || (_allocated_sprite_cache_size != target_size && target_size != last_alloc_attempt)) {
+ 		delete[] reinterpret_cast<byte *>(_spritecache_ptr);
+ 
+@@ -1016,6 +1018,13 @@
+ 		}
+ 	}
+ 
++#else
++
++    _allocated_sprite_cache_size = target_size / 5;
++    _spritecache_ptr = reinterpret_cast<MemBlock *>(new byte[_allocated_sprite_cache_size]);
++
++#endif
++
+ 	/* A big free block */
+ 	_spritecache_ptr->size = (_allocated_sprite_cache_size - sizeof(MemBlock)) | S_FREE_MASK;
+ 	/* Sentinel block (identified by size == 0) */
+diff -rub ./OpenTTD-13.4/src/stdafx.h ./OpenTTD-13.4/src/stdafx.h
+--- ./OpenTTD-13.4/src/stdafx.h	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/src/stdafx.h	2024-01-27 20:03:51.091776122 +0000
+@@ -38,7 +38,7 @@
+ #	define TROUBLED_INTS
+ #endif
+ 
+-#if defined(__HAIKU__) || defined(__CYGWIN__)
++#if defined(__HAIKU__) || defined(__CYGWIN__) || defined(__laylaos__)
+ #	include <strings.h> /* strncasecmp */
+ #endif
+ 
+@@ -109,7 +109,7 @@
+ #	define SIZE_MAX ((size_t)-1)
+ #endif
+ 
+-#if defined(UNIX) || defined(__MINGW32__)
++#if defined(UNIX) || defined(__MINGW32__) || defined(__laylaos__)
+ #	include <sys/types.h>
+ #endif
+ 
+@@ -118,7 +118,7 @@
+ #	define strcasecmp stricmp
+ #endif
+ 
+-#if defined(SUNOS) || defined(HPUX) || defined(__CYGWIN__)
++#if defined(SUNOS) || defined(HPUX) || defined(__CYGWIN__) || defined(__laylaos__)
+ #	include <alloca.h>
+ #endif
+ 
+@@ -326,7 +326,7 @@
+ typedef unsigned char byte;
+ 
+ /* This is already defined in unix, but not in QNX Neutrino (6.x) or Cygwin. */
+-#if (!defined(UNIX) && !defined(__HAIKU__)) || defined(__QNXNTO__) || defined(__CYGWIN__)
++#if (!defined(UNIX) && !defined(__HAIKU__) && !defined(__laylaos__)) || defined(__QNXNTO__) || defined(__CYGWIN__)
+ 	typedef unsigned int uint;
+ #endif
+ 
+diff -rub ./OpenTTD-13.4/src/table/settings/CMakeLists.txt ./OpenTTD-13.4/src/table/settings/CMakeLists.txt
+--- ./OpenTTD-13.4/src/table/settings/CMakeLists.txt	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/src/table/settings/CMakeLists.txt	2024-01-22 16:14:08.271710325 +0000
+@@ -31,12 +31,12 @@
+ # Generate a command and target to create the settings table
+ add_custom_command_timestamp(OUTPUT ${TABLE_BINARY_DIR}/settings.h
+         COMMAND ${CMAKE_COMMAND} -E make_directory ${TABLE_BINARY_DIR}
+-        COMMAND settingsgen
++        COMMAND hostsettingsgen
+                 -o ${TABLE_BINARY_DIR}/settings.h
+                 -b ${CMAKE_SOURCE_DIR}/src/table/settings.h.preamble
+                 -a ${CMAKE_SOURCE_DIR}/src/table/settings.h.postamble
+                 ${TABLE_INI_SOURCE_FILES}
+-        DEPENDS settingsgen ${TABLE_INI_SOURCE_FILES}
++        DEPENDS hostsettingsgen ${TABLE_INI_SOURCE_FILES}
+                 ${CMAKE_SOURCE_DIR}/src/table/settings.h.preamble
+                 ${CMAKE_SOURCE_DIR}/src/table/settings.h.postamble
+         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+diff -rub ./OpenTTD-13.4/src/video/dedicated_v.cpp ./OpenTTD-13.4/src/video/dedicated_v.cpp
+--- ./OpenTTD-13.4/src/video/dedicated_v.cpp	2023-07-29 23:43:37.000000000 +0100
++++ ./OpenTTD-13.4/src/video/dedicated_v.cpp	2024-01-23 14:52:27.622572089 +0000
+@@ -51,7 +51,7 @@
+ }
+ #endif
+ 
+-#if defined(UNIX)
++#if defined(UNIX) || defined(__laylaos__)
+ #	include <sys/time.h> /* gettimeofday */
+ #	include <sys/types.h>
+ #	include <unistd.h>
+@@ -180,7 +180,7 @@
+ bool VideoDriver_Dedicated::ChangeResolution(int w, int h) { return false; }
+ bool VideoDriver_Dedicated::ToggleFullscreen(bool fs) { return false; }
+ 
+-#if defined(UNIX) || defined(__OS2__)
++#if defined(UNIX) || defined(__OS2__) || defined(__laylaos__)
+ static bool InputWaiting()
+ {
+ 	struct timeval tv;
+@@ -213,7 +213,7 @@
+ 
+ 	if (_exit_game) return;
+ 
+-#if defined(UNIX) || defined(__OS2__)
++#if defined(UNIX) || defined(__OS2__) || defined(__laylaos__)
+ 	if (fgets(input_line, lengthof(input_line), stdin) == nullptr) return;
+ #else
+ 	/* Handle console input, and signal console thread, it can accept input again */
+@@ -237,7 +237,7 @@
+ void VideoDriver_Dedicated::MainLoop()
+ {
+ 	/* Signal handlers */
+-#if defined(UNIX)
++#if defined(UNIX) || defined(__laylaos__)
+ 	signal(SIGTERM, DedicatedSignalHandler);
+ 	signal(SIGINT, DedicatedSignalHandler);
+ 	signal(SIGQUIT, DedicatedSignalHandler);

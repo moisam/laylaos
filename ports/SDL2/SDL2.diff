@@ -1,0 +1,2624 @@
+diff -rub ./SDL2-2.26.5/configure.ac ./SDL2-2.26.5/configure.ac
+--- ./SDL2-2.26.5/configure.ac	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/configure.ac	2023-05-29 20:11:08.569383000 +0100
+@@ -1,5 +1,5 @@
+ dnl Process this file with autoconf to produce a configure script.
+-AC_PREREQ([2.63])
++AC_PREREQ([2.71])
+ AC_INIT
+ AC_CONFIG_SRCDIR([src/SDL.c])
+ AC_CONFIG_HEADERS([include/SDL_config.h])
+@@ -33,8 +33,9 @@
+ AC_SUBST(SDL_VERSION)
+ 
+ # libtool versioning
+-LT_INIT([win32-dll])
+-LT_LANG([Windows Resource])
++#LT_INIT([win32-dll])
++#LT_LANG([Windows Resource])
++LT_INIT([shared static])
+ 
+ # For historical reasons, the library name redundantly includes the major
+ # version twice: libSDL2-2.0.so.0.
+@@ -144,7 +145,9 @@
+ # Uncomment the following line if you want to force SDL and applications
+ # built with it to be compiled for a particular architecture.
+ #AX_GCC_ARCHFLAG([no], [BASE_CFLAGS="$BASE_CFLAGS $ax_cv_gcc_archflag]")
+-BUILD_CFLAGS="$CFLAGS $CPPFLAGS -DUSING_GENERATED_CONFIG_H"
++BUILD_CFLAGS="$CFLAGS $CPPFLAGS"
++#BUILD_CFLAGS="$CFLAGS $CPPFLAGS -DUSING_GENERATED_CONFIG_H"
++
+ # The default optimization for SDL is -O3 (Bug #31)
+ if test "x$orig_CFLAGS" = x; then
+     BUILD_CFLAGS=`echo $BUILD_CFLAGS | sed 's/-O2/-O3/'`
+@@ -326,9 +329,7 @@
+ if test x$enable_libc = xyes; then
+     AC_DEFINE(HAVE_LIBC, 1, [ ])
+ 
+-dnl Check for C library headers
+-dnl AC_CHECK_INCLUDES_DEFAULT is an autoconf-2.7x thing where AC_HEADER_STDC is deprecated.
+-    m4_ifdef([AC_CHECK_INCLUDES_DEFAULT], [AC_CHECK_INCLUDES_DEFAULT], [AC_HEADER_STDC])
++AC_PROG_EGREP
+     AC_CHECK_HEADERS(sys/types.h stdio.h stdlib.h stddef.h stdarg.h malloc.h memory.h string.h strings.h wchar.h inttypes.h stdint.h limits.h ctype.h math.h float.h iconv.h signal.h linux/input.h)
+ 
+ dnl Check for typedefs, structures, etc.
+@@ -2252,6 +2253,20 @@
+     fi
+ }
+ 
++dnl Set up LaylaOS video driver if enabled
++CheckLaylaOSVideo()
++{
++    AC_ARG_ENABLE(video-laylaos,
++AS_HELP_STRING([--enable-video-laylaos],[use LaylaOS video driver [[default=yes]]]),
++                  , enable_video_laylaos=yes)
++    if test x$enable_video = xyes -a x$enable_video_laylaos = xyes; then
++        AC_DEFINE(SDL_VIDEO_DRIVER_LAYLAOS, 1, [ ])
++        SOURCES="$SOURCES $srcdir/src/video/laylaos/*.c"
++        have_video=yes
++        SUMMARY_video="${SUMMARY_video} LaylaOS"
++    fi
++}
++
+ dnl Set up the Cocoa video driver for Mac OS X (but not Darwin)
+ CheckCOCOA()
+ {
+@@ -2730,7 +2745,7 @@
+         esac
+         if test x$enable_video_vulkan = xno; then
+             # For reasons I am totally unable to see, I get an undefined macro error if
+-            # I put this in the AC_TRY_COMPILE.
++            # I put this in the AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[]], [[]])],[],[]).
+             AC_MSG_WARN([Vulkan does not work on this configuration.])
+         fi
+     fi
+@@ -3040,6 +3055,10 @@
+             pthread_cflags="-D_REENTRANT -D_THREAD_SAFE"
+             pthread_lib=""
+             ;;
++        *-*-laylaos*)
++            pthread_cflags="-D_REENTRANT -D_THREAD_SAFE"
++            pthread_lib=""
++            ;;
+         *-*-linux*|*-*-uclinux*)
+             pthread_cflags="-D_REENTRANT"
+             pthread_lib="-lpthread"
+@@ -3626,7 +3645,7 @@
+ 
+         if test x$hidapi_support = xyes; then
+             if test x$have_libusb_h = xyes; then
+-                AC_DEFINE(HAVE_LIBUSB)
++                AC_DEFINE([HAVE_LIBUSB], [], [HAVE_LIBUSB])
+                 EXTRA_CFLAGS="$EXTRA_CFLAGS $LIBUSB_CFLAGS"
+                 if test x$require_hidapi_libusb = xyes; then
+                     EXTRA_LDFLAGS="$EXTRA_LDFLAGS $LIBUSB_LIBS"
+@@ -3747,7 +3766,7 @@
+ 
+ dnl Set up the configuration based on the host platform!
+ case "$host" in
+-    *-*-linux*|*-*-uclinux*|*-*-gnu*|*-*-k*bsd*-gnu|*-*-bsdi*|*-*-freebsd*|*-*-dragonfly*|*-*-netbsd*|*-*-openbsd*|*-*-sysv5*|*-*-solaris*|*-*-hpux*|*-*-aix*|*-*-minix*|*-*-nto*)
++    *-*-linux*|*-*-uclinux*|*-*-gnu*|*-*-k*bsd*-gnu|*-*-bsdi*|*-*-freebsd*|*-*-dragonfly*|*-*-netbsd*|*-*-openbsd*|*-*-sysv5*|*-*-solaris*|*-*-hpux*|*-*-aix*|*-*-minix*|*-*-nto*|*-*-laylaos*)
+         case "$host" in
+             *-*-android*)
+                 # Android
+@@ -3765,6 +3784,7 @@
+                     have_video=yes
+                 fi
+                 ;;
++            *-*-laylaos*)       ARCH=laylaos ;;
+             *-*-linux*)         ARCH=linux ;;
+             *-*-uclinux*)       ARCH=linux ;;
+             *-*-kfreebsd*-gnu)  ARCH=kfreebsd-gnu ;;
+@@ -3789,6 +3809,7 @@
+         CheckWerror
+         CheckDeclarationAfterStatement
+         CheckDummyVideo
++        CheckLaylaOSVideo
+         CheckOffscreenVideo
+         CheckDiskAudio
+         CheckDummyAudio
+@@ -3876,6 +3897,12 @@
+                 SUMMARY_audio="${SUMMARY_audio} paudio"
+                 have_audio=yes
+             ;;
++            laylaos)
++                AC_DEFINE(SDL_AUDIO_DRIVER_LAYLAOS, 1, [ ])
++                SOURCES="$SOURCES $srcdir/src/audio/laylaos/*.c"
++                SUMMARY_audio="${SUMMARY_audio} LaylaOS"
++                have_audio=yes
++            ;;
+             android)
+                 AC_DEFINE(SDL_AUDIO_DRIVER_ANDROID, 1, [ ])
+                 SOURCES="$SOURCES $srcdir/src/audio/android/*.c"
+diff -rub ./SDL2-2.26.5/include/SDL_config.h ./SDL2-2.26.5/include/SDL_config.h
+--- ./SDL2-2.26.5/include/SDL_config.h	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/include/SDL_config.h	2023-05-29 19:58:44.201626000 +0100
+@@ -49,6 +49,8 @@
+ #include "SDL_config_emscripten.h"
+ #elif defined(__NGAGE__)
+ #include "SDL_config_ngage.h"
++#elif defined(__LAYLAOS__)
++#include "SDL_config_laylaos.h"
+ #else
+ /* This is a minimal configuration just to get SDL running on new platforms. */
+ #include "SDL_config_minimal.h"
+diff -rub ./SDL2-2.26.5/include/SDL_config.h.in ./SDL2-2.26.5/include/SDL_config.h.in
+--- ./SDL2-2.26.5/include/SDL_config.h.in	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/include/SDL_config.h.in	2023-05-29 19:37:01.343723000 +0100
+@@ -1,494 +1,1200 @@
+-/*
+-  Simple DirectMedia Layer
+-  Copyright (C) 1997-2023 Sam Lantinga <slouken@libsdl.org>
+-
+-  This software is provided 'as-is', without any express or implied
+-  warranty.  In no event will the authors be held liable for any damages
+-  arising from the use of this software.
+-
+-  Permission is granted to anyone to use this software for any purpose,
+-  including commercial applications, and to alter it and redistribute it
+-  freely, subject to the following restrictions:
+-
+-  1. The origin of this software must not be misrepresented; you must not
+-     claim that you wrote the original software. If you use this software
+-     in a product, an acknowledgment in the product documentation would be
+-     appreciated but is not required.
+-  2. Altered source versions must be plainly marked as such, and must not be
+-     misrepresented as being the original software.
+-  3. This notice may not be removed or altered from any source distribution.
+-*/
+-
+-#ifndef SDL_config_h_
+-#define SDL_config_h_
+-
+-/**
+- *  \file SDL_config.h.in
+- *
+- *  This is a set of defines to configure the SDL features
+- */
+-
+-/* General platform specific identifiers */
+-#include "SDL_platform.h"
+-
+-/* Make sure that this isn't included by Visual C++ */
+-#ifdef _MSC_VER
+-#error You should run git checkout -f include/SDL_config.h
+-#endif
++/* include/SDL_config.h.in.  Generated from configure.ac by autoheader.  */
+ 
+-/* C language features */
+-#undef const
+-#undef inline
+-#undef volatile
++/* Define to 1 if using 'alloca.c'. */
++#undef C_ALLOCA
+ 
+-/* C datatypes */
+-#if defined(__LP64__) || defined(_LP64) || defined(_WIN64)
+-#define SIZEOF_VOIDP 8
+-#else
+-#define SIZEOF_VOIDP 4
+-#endif
++/* */
++#undef DYNAPI_NEEDS_DLOPEN
+ 
+-#undef HAVE_GCC_ATOMICS
+-#undef HAVE_GCC_SYNC_LOCK_TEST_AND_SET
++/* Define to 1 if you have the `abs' function. */
++#undef HAVE_ABS
+ 
+-/* Comment this if you want to build without any C library requirements */
+-#undef HAVE_LIBC
+-#if HAVE_LIBC
++/* Define to 1 if you have the `acos' function. */
++#undef HAVE_ACOS
+ 
+-/* Useful headers */
+-#undef STDC_HEADERS
+-#undef HAVE_ALLOCA_H
+-#undef HAVE_CTYPE_H
+-#undef HAVE_FLOAT_H
+-#undef HAVE_ICONV_H
+-#undef HAVE_INTTYPES_H
+-#undef HAVE_LIMITS_H
+-#undef HAVE_MALLOC_H
+-#undef HAVE_MATH_H
+-#undef HAVE_MEMORY_H
+-#undef HAVE_SIGNAL_H
+-#undef HAVE_STDARG_H
+-#undef HAVE_STDINT_H
+-#undef HAVE_STDIO_H
+-#undef HAVE_STDLIB_H
+-#undef HAVE_STRINGS_H
+-#undef HAVE_STRING_H
+-#undef HAVE_SYS_TYPES_H
+-#undef HAVE_WCHAR_H
+-#undef HAVE_LINUX_INPUT_H
+-#undef HAVE_PTHREAD_NP_H
+-#undef HAVE_LIBUNWIND_H
++/* Define to 1 if you have the `acosf' function. */
++#undef HAVE_ACOSF
+ 
+-/* C library functions */
+-#undef HAVE_DLOPEN
+-#undef HAVE_MALLOC
+-#undef HAVE_CALLOC
+-#undef HAVE_REALLOC
+-#undef HAVE_FREE
++/* Define to 1 if you have 'alloca', as a function or macro. */
+ #undef HAVE_ALLOCA
+-#ifndef __WIN32__ /* Don't use C runtime versions of these on Windows */
+-#undef HAVE_GETENV
+-#undef HAVE_SETENV
+-#undef HAVE_PUTENV
+-#undef HAVE_UNSETENV
+-#endif
+-#undef HAVE_QSORT
+-#undef HAVE_BSEARCH
+-#undef HAVE_ABS
+-#undef HAVE_BCOPY
+-#undef HAVE_MEMSET
+-#undef HAVE_MEMCPY
+-#undef HAVE_MEMMOVE
+-#undef HAVE_MEMCMP
+-#undef HAVE_WCSLEN
+-#undef HAVE_WCSLCPY
+-#undef HAVE_WCSLCAT
+-#undef HAVE__WCSDUP
+-#undef HAVE_WCSDUP
+-#undef HAVE_WCSSTR
+-#undef HAVE_WCSCMP
+-#undef HAVE_WCSNCMP
+-#undef HAVE_WCSCASECMP
+-#undef HAVE__WCSICMP
+-#undef HAVE_WCSNCASECMP
+-#undef HAVE__WCSNICMP
+-#undef HAVE_STRLEN
+-#undef HAVE_STRLCPY
+-#undef HAVE_STRLCAT
+-#undef HAVE__STRREV
+-#undef HAVE__STRUPR
+-#undef HAVE__STRLWR
+-#undef HAVE_INDEX
+-#undef HAVE_RINDEX
+-#undef HAVE_STRCHR
+-#undef HAVE_STRRCHR
+-#undef HAVE_STRSTR
+-#undef HAVE_STRTOK_R
+-#undef HAVE_ITOA
+-#undef HAVE__LTOA
+-#undef HAVE__UITOA
+-#undef HAVE__ULTOA
+-#undef HAVE_STRTOL
+-#undef HAVE_STRTOUL
+-#undef HAVE__I64TOA
+-#undef HAVE__UI64TOA
+-#undef HAVE_STRTOLL
+-#undef HAVE_STRTOULL
+-#undef HAVE_STRTOD
+-#undef HAVE_ATOI
+-#undef HAVE_ATOF
+-#undef HAVE_STRCMP
+-#undef HAVE_STRNCMP
+-#undef HAVE__STRICMP
+-#undef HAVE_STRCASECMP
+-#undef HAVE__STRNICMP
+-#undef HAVE_STRNCASECMP
+-#undef HAVE_STRCASESTR
+-#undef HAVE_SSCANF
+-#undef HAVE_VSSCANF
+-#undef HAVE_SNPRINTF
+-#undef HAVE_VSNPRINTF
+-#undef HAVE_M_PI
+-#undef HAVE_ACOS
+-#undef HAVE_ACOSF
++
++/* Define to 1 if <alloca.h> works. */
++#undef HAVE_ALLOCA_H
++
++/* */
++#undef HAVE_ALTIVEC_H
++
++/* Define to 1 if you have the `asin' function. */
+ #undef HAVE_ASIN
++
++/* Define to 1 if you have the `asinf' function. */
+ #undef HAVE_ASINF
++
++/* Define to 1 if you have the `atan' function. */
+ #undef HAVE_ATAN
+-#undef HAVE_ATANF
++
++/* Define to 1 if you have the `atan2' function. */
+ #undef HAVE_ATAN2
++
++/* Define to 1 if you have the `atan2f' function. */
+ #undef HAVE_ATAN2F
++
++/* Define to 1 if you have the `atanf' function. */
++#undef HAVE_ATANF
++
++/* Define to 1 if you have the `atof' function. */
++#undef HAVE_ATOF
++
++/* Define to 1 if you have the `atoi' function. */
++#undef HAVE_ATOI
++
++/* */
++#undef HAVE_AUDIOCLIENT_H
++
++/* Define to 1 if you have the `bcopy' function. */
++#undef HAVE_BCOPY
++
++/* Define to 1 if you have the `bsearch' function. */
++#undef HAVE_BSEARCH
++
++/* Define to 1 if you have the `calloc' function. */
++#undef HAVE_CALLOC
++
++/* Define to 1 if you have the `ceil' function. */
+ #undef HAVE_CEIL
++
++/* Define to 1 if you have the `ceilf' function. */
+ #undef HAVE_CEILF
++
++/* */
++#undef HAVE_CLOCK_GETTIME
++
++/* Define to 1 if you have the `copysign' function. */
+ #undef HAVE_COPYSIGN
++
++/* Define to 1 if you have the `copysignf' function. */
+ #undef HAVE_COPYSIGNF
++
++/* Define to 1 if you have the `cos' function. */
+ #undef HAVE_COS
++
++/* Define to 1 if you have the `cosf' function. */
+ #undef HAVE_COSF
++
++/* Define to 1 if you have the <ctype.h> header file. */
++#undef HAVE_CTYPE_H
++
++/* */
++#undef HAVE_DBUS_DBUS_H
++
++/* */
++#undef HAVE_DDRAW_H
++
++/* */
++#undef HAVE_DINPUT_H
++
++/* Define to 1 if you have the <dlfcn.h> header file. */
++#undef HAVE_DLFCN_H
++
++/* */
++#undef HAVE_DLOPEN
++
++/* */
++#undef HAVE_DSOUND_H
++
++/* */
++#undef HAVE_DXGI_H
++
++/* Define to 1 if you have the `elf_aux_info' function. */
++#undef HAVE_ELF_AUX_INFO
++
++/* Define to 1 if you have the `exp' function. */
+ #undef HAVE_EXP
++
++/* Define to 1 if you have the `expf' function. */
+ #undef HAVE_EXPF
++
++/* Define to 1 if you have the `fabs' function. */
+ #undef HAVE_FABS
++
++/* Define to 1 if you have the `fabsf' function. */
+ #undef HAVE_FABSF
++
++/* */
++#undef HAVE_FCITX
++
++/* Define to 1 if you have the <float.h> header file. */
++#undef HAVE_FLOAT_H
++
++/* Define to 1 if you have the `floor' function. */
+ #undef HAVE_FLOOR
++
++/* Define to 1 if you have the `floorf' function. */
+ #undef HAVE_FLOORF
++
++/* Define to 1 if you have the `fmod' function. */
+ #undef HAVE_FMOD
++
++/* Define to 1 if you have the `fmodf' function. */
+ #undef HAVE_FMODF
++
++/* Define to 1 if you have the `fopen64' function. */
++#undef HAVE_FOPEN64
++
++/* Define to 1 if you have the `free' function. */
++#undef HAVE_FREE
++
++/* Define to 1 if you have the `fseeko' function. */
++#undef HAVE_FSEEKO
++
++/* Define to 1 if you have the `fseeko64' function. */
++#undef HAVE_FSEEKO64
++
++/* */
++#undef HAVE_GCC_ATOMICS
++
++/* */
++#undef HAVE_GCC_SYNC_LOCK_TEST_AND_SET
++
++/* Define to 1 if you have the `getauxval' function. */
++#undef HAVE_GETAUXVAL
++
++/* Define to 1 if you have the `getenv' function. */
++#undef HAVE_GETENV
++
++/* */
++#undef HAVE_IBUS_IBUS_H
++
++/* Define to 1 if you have the `iconv' function. */
++#undef HAVE_ICONV
++
++/* Define to 1 if you have the <iconv.h> header file. */
++#undef HAVE_ICONV_H
++
++/* */
++#undef HAVE_IMMINTRIN_H
++
++/* Define to 1 if you have the `index' function. */
++#undef HAVE_INDEX
++
++/* */
++#undef HAVE_INOTIFY
++
++/* Define to 1 if you have the `inotify_init' function. */
++#undef HAVE_INOTIFY_INIT
++
++/* Define to 1 if you have the `inotify_init1' function. */
++#undef HAVE_INOTIFY_INIT1
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#undef HAVE_INTTYPES_H
++
++/* Define to 1 if you have the `itoa' function. */
++#undef HAVE_ITOA
++
++/* */
++#undef HAVE_KMSDRM_SHARED
++
++/* */
++#undef HAVE_LASXINTRIN_H
++
++/* Define to 1 if you have the `asound' library (-lasound). */
++#undef HAVE_LIBASOUND
++
++/* */
++#undef HAVE_LIBC
++
++/* */
++#undef HAVE_LIBDECOR_H
++
++/* */
++#undef HAVE_LIBSAMPLERATE_H
++
++/* */
++#undef HAVE_LIBUDEV_H
++
++/* Define to 1 if you have the <libunwind.h> header file. */
++#undef HAVE_LIBUNWIND_H
++
++/* HAVE_LIBUSB */
++#undef HAVE_LIBUSB
++
++/* Define to 1 if you have the <limits.h> header file. */
++#undef HAVE_LIMITS_H
++
++/* Define to 1 if you have the <linux/input.h> header file. */
++#undef HAVE_LINUX_INPUT_H
++
++/* Define to 1 if you have the `log' function. */
+ #undef HAVE_LOG
+-#undef HAVE_LOGF
++
++/* Define to 1 if you have the `log10' function. */
+ #undef HAVE_LOG10
++
++/* Define to 1 if you have the `log10f' function. */
+ #undef HAVE_LOG10F
++
++/* Define to 1 if you have the `logf' function. */
++#undef HAVE_LOGF
++
++/* Define to 1 if you have the `lround' function. */
+ #undef HAVE_LROUND
++
++/* Define to 1 if you have the `lroundf' function. */
+ #undef HAVE_LROUNDF
++
++/* */
++#undef HAVE_LSXINTRIN_H
++
++/* Define to 1 if you have the `malloc' function. */
++#undef HAVE_MALLOC
++
++/* Define to 1 if you have the <malloc.h> header file. */
++#undef HAVE_MALLOC_H
++
++/* Define to 1 if you have the <math.h> header file. */
++#undef HAVE_MATH_H
++
++/* Define to 1 if you have the `memcmp' function. */
++#undef HAVE_MEMCMP
++
++/* Define to 1 if you have the `memcpy' function. */
++#undef HAVE_MEMCPY
++
++/* Define to 1 if you have the `memmove' function. */
++#undef HAVE_MEMMOVE
++
++/* Define to 1 if you have the <memory.h> header file. */
++#undef HAVE_MEMORY_H
++
++/* Define to 1 if you have the `memset' function. */
++#undef HAVE_MEMSET
++
++/* */
++#undef HAVE_MMDEVICEAPI_H
++
++/* */
++#undef HAVE_MPROTECT
++
++/* Added by AC_CHECK_DEFINE */
++#undef HAVE_M_PI
++
++/* Define to 1 if you have the `nanosleep' function. */
++#undef HAVE_NANOSLEEP
++
++/* */
++#undef HAVE_OPENGLES2
++
++/* */
++#undef HAVE_O_CLOEXEC
++
++/* Define to 1 if you have the `poll' function. */
++#undef HAVE_POLL
++
++/* */
+ #undef HAVE_POW
++
++/* Define to 1 if you have the `powf' function. */
+ #undef HAVE_POWF
++
++/* */
++#undef HAVE_PTHREAD_NP_H
++
++/* */
++#undef HAVE_PTHREAD_SETNAME_NP
++
++/* */
++#undef HAVE_PTHREAD_SET_NAME_NP
++
++/* Define to 1 if you have the `putenv' function. */
++#undef HAVE_PUTENV
++
++/* Define to 1 if you have the `qsort' function. */
++#undef HAVE_QSORT
++
++/* Define to 1 if you have the `realloc' function. */
++#undef HAVE_REALLOC
++
++/* Define to 1 if you have the `rindex' function. */
++#undef HAVE_RINDEX
++
++/* */
++#undef HAVE_ROAPI_H
++
++/* Define to 1 if you have the `round' function. */
+ #undef HAVE_ROUND
++
++/* Define to 1 if you have the `roundf' function. */
+ #undef HAVE_ROUNDF
++
++/* */
++#undef HAVE_SA_SIGACTION
++
++/* Define to 1 if you have the `scalbn' function. */
+ #undef HAVE_SCALBN
++
++/* Define to 1 if you have the `scalbnf' function. */
+ #undef HAVE_SCALBNF
++
++/* */
++#undef HAVE_SEM_TIMEDWAIT
++
++/* */
++#undef HAVE_SENSORSAPI_H
++
++/* Define to 1 if you have the `setenv' function. */
++#undef HAVE_SETENV
++
++/* Define to 1 if you have the `setjmp' function. */
++#undef HAVE_SETJMP
++
++/* */
++#undef HAVE_SHELLSCALINGAPI_H
++
++/* Define to 1 if you have the `sigaction' function. */
++#undef HAVE_SIGACTION
++
++/* Define to 1 if you have the <signal.h> header file. */
++#undef HAVE_SIGNAL_H
++
++/* Define to 1 if you have the `sin' function. */
+ #undef HAVE_SIN
++
++/* Define to 1 if you have the `sinf' function. */
+ #undef HAVE_SINF
++
++/* Define to 1 if you have the `sqrt' function. */
+ #undef HAVE_SQRT
++
++/* Define to 1 if you have the `sqrtf' function. */
+ #undef HAVE_SQRTF
++
++/* Define to 1 if you have the <stdarg.h> header file. */
++#undef HAVE_STDARG_H
++
++/* Define to 1 if you have the <stddef.h> header file. */
++#undef HAVE_STDDEF_H
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#undef HAVE_STDINT_H
++
++/* Define to 1 if you have the <stdio.h> header file. */
++#undef HAVE_STDIO_H
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#undef HAVE_STDLIB_H
++
++/* Define to 1 if you have the `strcasecmp' function. */
++#undef HAVE_STRCASECMP
++
++/* Define to 1 if you have the `strcasestr' function. */
++#undef HAVE_STRCASESTR
++
++/* Define to 1 if you have the `strchr' function. */
++#undef HAVE_STRCHR
++
++/* Define to 1 if you have the `strcmp' function. */
++#undef HAVE_STRCMP
++
++/* Define to 1 if you have the <strings.h> header file. */
++#undef HAVE_STRINGS_H
++
++/* Define to 1 if you have the <string.h> header file. */
++#undef HAVE_STRING_H
++
++/* Define to 1 if you have the `strlcat' function. */
++#undef HAVE_STRLCAT
++
++/* Define to 1 if you have the `strlcpy' function. */
++#undef HAVE_STRLCPY
++
++/* Define to 1 if you have the `strlen' function. */
++#undef HAVE_STRLEN
++
++/* Define to 1 if you have the `strncasecmp' function. */
++#undef HAVE_STRNCASECMP
++
++/* Define to 1 if you have the `strncmp' function. */
++#undef HAVE_STRNCMP
++
++/* Define to 1 if you have the `strrchr' function. */
++#undef HAVE_STRRCHR
++
++/* Define to 1 if you have the `strstr' function. */
++#undef HAVE_STRSTR
++
++/* Define to 1 if you have the `strtod' function. */
++#undef HAVE_STRTOD
++
++/* Define to 1 if you have the `strtok_r' function. */
++#undef HAVE_STRTOK_R
++
++/* Define to 1 if you have the `strtol' function. */
++#undef HAVE_STRTOL
++
++/* Define to 1 if you have the `strtoll' function. */
++#undef HAVE_STRTOLL
++
++/* Define to 1 if you have the `strtoul' function. */
++#undef HAVE_STRTOUL
++
++/* Define to 1 if you have the `strtoull' function. */
++#undef HAVE_STRTOULL
++
++/* Define to 1 if you have the `sysconf' function. */
++#undef HAVE_SYSCONF
++
++/* Define to 1 if you have the `sysctlbyname' function. */
++#undef HAVE_SYSCTLBYNAME
++
++/* Define to 1 if you have the <sys/inotify.h> header file. */
++#undef HAVE_SYS_INOTIFY_H
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#undef HAVE_SYS_STAT_H
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#undef HAVE_SYS_TYPES_H
++
++/* Define to 1 if you have the `tan' function. */
+ #undef HAVE_TAN
++
++/* Define to 1 if you have the `tanf' function. */
+ #undef HAVE_TANF
++
++/* */
++#undef HAVE_TPCSHRD_H
++
++/* Define to 1 if you have the `trunc' function. */
+ #undef HAVE_TRUNC
++
++/* Define to 1 if you have the `truncf' function. */
+ #undef HAVE_TRUNCF
+-#undef HAVE_FOPEN64
+-#undef HAVE_FSEEKO
+-#undef HAVE_FSEEKO64
+-#undef HAVE_SIGACTION
+-#undef HAVE_SA_SIGACTION
+-#undef HAVE_SETJMP
+-#undef HAVE_NANOSLEEP
+-#undef HAVE_SYSCONF
+-#undef HAVE_SYSCTLBYNAME
+-#undef HAVE_CLOCK_GETTIME
+-#undef HAVE_GETPAGESIZE
+-#undef HAVE_MPROTECT
+-#undef HAVE_ICONV
+-#undef HAVE_PTHREAD_SETNAME_NP
+-#undef HAVE_PTHREAD_SET_NAME_NP
+-#undef HAVE_SEM_TIMEDWAIT
+-#undef HAVE_GETAUXVAL
+-#undef HAVE_ELF_AUX_INFO
+-#undef HAVE_POLL
+-#undef HAVE__EXIT
+ 
+-#else
+-#define HAVE_STDARG_H 1
+-#define HAVE_STDDEF_H 1
+-#define HAVE_STDINT_H 1
+-#endif /* HAVE_LIBC */
++/* Define to 1 if you have the <unistd.h> header file. */
++#undef HAVE_UNISTD_H
+ 
+-#undef HAVE_O_CLOEXEC
+-#undef HAVE_ALTIVEC_H
+-#undef HAVE_DBUS_DBUS_H
+-#undef HAVE_FCITX
+-#undef HAVE_SYS_INOTIFY_H
+-#undef HAVE_INOTIFY_INIT
+-#undef HAVE_INOTIFY_INIT1
+-#undef HAVE_INOTIFY
+-#undef HAVE_IBUS_IBUS_H
+-#undef HAVE_IMMINTRIN_H
+-#undef HAVE_LIBUDEV_H
+-#undef HAVE_LIBUSB
+-#undef HAVE_LIBSAMPLERATE_H
+-#undef HAVE_LIBDECOR_H
+-#undef HAVE_LSXINTRIN_H
+-#undef HAVE_LASXINTRIN_H
++/* Define to 1 if you have the `unsetenv' function. */
++#undef HAVE_UNSETENV
+ 
+-#undef HAVE_DDRAW_H
+-#undef HAVE_DINPUT_H
+-#undef HAVE_DSOUND_H
+-#undef HAVE_DXGI_H
++/* Define to 1 if you have the `vsnprintf' function. */
++#undef HAVE_VSNPRINTF
++
++/* Define to 1 if you have the `vsscanf' function. */
++#undef HAVE_VSSCANF
++
++/* Define to 1 if you have the <wchar.h> header file. */
++#undef HAVE_WCHAR_H
++
++/* Define to 1 if you have the `wcscasecmp' function. */
++#undef HAVE_WCSCASECMP
++
++/* Define to 1 if you have the `wcscmp' function. */
++#undef HAVE_WCSCMP
++
++/* Define to 1 if you have the `wcsdup' function. */
++#undef HAVE_WCSDUP
++
++/* Define to 1 if you have the `wcslcat' function. */
++#undef HAVE_WCSLCAT
++
++/* Define to 1 if you have the `wcslcpy' function. */
++#undef HAVE_WCSLCPY
++
++/* Define to 1 if you have the `wcslen' function. */
++#undef HAVE_WCSLEN
++
++/* Define to 1 if you have the `wcsncasecmp' function. */
++#undef HAVE_WCSNCASECMP
++
++/* Define to 1 if you have the `wcsncmp' function. */
++#undef HAVE_WCSNCMP
++
++/* Define to 1 if you have the `wcsstr' function. */
++#undef HAVE_WCSSTR
++
++/* */
+ #undef HAVE_WINDOWS_GAMING_INPUT_H
+-#undef HAVE_XINPUT_H
++
++/* */
+ #undef HAVE_XINPUT_GAMEPAD_EX
++
++/* */
++#undef HAVE_XINPUT_H
++
++/* */
+ #undef HAVE_XINPUT_STATE_EX
+ 
+-#undef HAVE_MMDEVICEAPI_H
+-#undef HAVE_AUDIOCLIENT_H
+-#undef HAVE_TPCSHRD_H
+-#undef HAVE_SENSORSAPI_H
+-#undef HAVE_ROAPI_H
+-#undef HAVE_SHELLSCALINGAPI_H
++/* Define to 1 if you have the `_Exit' function. */
++#undef HAVE__EXIT
+ 
+-/* SDL internal assertion support */
+-#undef SDL_DEFAULT_ASSERT_LEVEL
++/* Define to 1 if you have the `_i64toa' function. */
++#undef HAVE__I64TOA
++
++/* Define to 1 if you have the `_ltoa' function. */
++#undef HAVE__LTOA
++
++/* Define to 1 if you have the `_stricmp' function. */
++#undef HAVE__STRICMP
++
++/* Define to 1 if you have the `_strlwr' function. */
++#undef HAVE__STRLWR
++
++/* Define to 1 if you have the `_strnicmp' function. */
++#undef HAVE__STRNICMP
++
++/* Define to 1 if you have the `_strrev' function. */
++#undef HAVE__STRREV
++
++/* Define to 1 if you have the `_strupr' function. */
++#undef HAVE__STRUPR
++
++/* Define to 1 if you have the `_ui64toa' function. */
++#undef HAVE__UI64TOA
++
++/* Define to 1 if you have the `_uitoa' function. */
++#undef HAVE__UITOA
+ 
+-/* Allow disabling of core subsystems */
++/* Define to 1 if you have the `_ultoa' function. */
++#undef HAVE__ULTOA
++
++/* Define to 1 if you have the `_wcsdup' function. */
++#undef HAVE__WCSDUP
++
++/* Define to 1 if you have the `_wcsicmp' function. */
++#undef HAVE__WCSICMP
++
++/* Define to 1 if you have the `_wcsnicmp' function. */
++#undef HAVE__WCSNICMP
++
++/* Define to the sub-directory where libtool stores uninstalled libraries. */
++#undef LT_OBJDIR
++
++/* Define to the address where bug reports for this package should be sent. */
++#undef PACKAGE_BUGREPORT
++
++/* Define to the full name of this package. */
++#undef PACKAGE_NAME
++
++/* Define to the full name and version of this package. */
++#undef PACKAGE_STRING
++
++/* Define to the one symbol short name of this package. */
++#undef PACKAGE_TARNAME
++
++/* Define to the home page for this package. */
++#undef PACKAGE_URL
++
++/* Define to the version of this package. */
++#undef PACKAGE_VERSION
++
++/* */
++#undef SDL_ALTIVEC_BLITTERS
++
++/* */
++#undef SDL_ARM_NEON_BLITTERS
++
++/* */
++#undef SDL_ARM_SIMD_BLITTERS
++
++/* */
+ #undef SDL_ATOMIC_DISABLED
++
++/* */
+ #undef SDL_AUDIO_DISABLED
+-#undef SDL_CPUINFO_DISABLED
+-#undef SDL_EVENTS_DISABLED
+-#undef SDL_FILE_DISABLED
+-#undef SDL_JOYSTICK_DISABLED
+-#undef SDL_HAPTIC_DISABLED
+-#undef SDL_HIDAPI_DISABLED
+-#undef SDL_SENSOR_DISABLED
+-#undef SDL_LOADSO_DISABLED
+-#undef SDL_RENDER_DISABLED
+-#undef SDL_THREADS_DISABLED
+-#undef SDL_TIMERS_DISABLED
+-#undef SDL_VIDEO_DISABLED
+-#undef SDL_POWER_DISABLED
+-#undef SDL_FILESYSTEM_DISABLED
+-#undef SDL_LOCALE_DISABLED
+-#undef SDL_MISC_DISABLED
+ 
+-/* Enable various audio drivers */
++/* */
+ #undef SDL_AUDIO_DRIVER_AAUDIO
++
++/* */
+ #undef SDL_AUDIO_DRIVER_ALSA
++
++/* */
+ #undef SDL_AUDIO_DRIVER_ALSA_DYNAMIC
++
++/* */
+ #undef SDL_AUDIO_DRIVER_ANDROID
++
++/* */
+ #undef SDL_AUDIO_DRIVER_ARTS
++
++/* */
+ #undef SDL_AUDIO_DRIVER_ARTS_DYNAMIC
++
++/* */
+ #undef SDL_AUDIO_DRIVER_COREAUDIO
++
++/* */
+ #undef SDL_AUDIO_DRIVER_DISK
++
++/* */
+ #undef SDL_AUDIO_DRIVER_DSOUND
++
++/* */
+ #undef SDL_AUDIO_DRIVER_DUMMY
++
++/* */
+ #undef SDL_AUDIO_DRIVER_EMSCRIPTEN
++
++/* */
+ #undef SDL_AUDIO_DRIVER_ESD
++
++/* */
+ #undef SDL_AUDIO_DRIVER_ESD_DYNAMIC
++
++/* */
+ #undef SDL_AUDIO_DRIVER_FUSIONSOUND
++
++/* */
+ #undef SDL_AUDIO_DRIVER_FUSIONSOUND_DYNAMIC
++
++/* */
+ #undef SDL_AUDIO_DRIVER_HAIKU
++
++/* */
+ #undef SDL_AUDIO_DRIVER_JACK
++
++/* */
+ #undef SDL_AUDIO_DRIVER_JACK_DYNAMIC
++
++/* */
++#undef SDL_AUDIO_DRIVER_LAYLAOS
++
++/* */
+ #undef SDL_AUDIO_DRIVER_NACL
++
++/* */
+ #undef SDL_AUDIO_DRIVER_NAS
++
++/* */
+ #undef SDL_AUDIO_DRIVER_NAS_DYNAMIC
++
++/* */
+ #undef SDL_AUDIO_DRIVER_NETBSD
++
++/* */
+ #undef SDL_AUDIO_DRIVER_OPENSLES
++
++/* */
++#undef SDL_AUDIO_DRIVER_OS2
++
++/* */
+ #undef SDL_AUDIO_DRIVER_OSS
++
++/* */
+ #undef SDL_AUDIO_DRIVER_PAUDIO
++
++/* */
+ #undef SDL_AUDIO_DRIVER_PIPEWIRE
++
++/* */
+ #undef SDL_AUDIO_DRIVER_PIPEWIRE_DYNAMIC
++
++/* */
+ #undef SDL_AUDIO_DRIVER_PULSEAUDIO
++
++/* */
+ #undef SDL_AUDIO_DRIVER_PULSEAUDIO_DYNAMIC
++
++/* */
+ #undef SDL_AUDIO_DRIVER_QSA
++
++/* */
+ #undef SDL_AUDIO_DRIVER_SNDIO
++
++/* */
+ #undef SDL_AUDIO_DRIVER_SNDIO_DYNAMIC
++
++/* */
+ #undef SDL_AUDIO_DRIVER_SUNAUDIO
++
++/* */
+ #undef SDL_AUDIO_DRIVER_WASAPI
++
++/* */
+ #undef SDL_AUDIO_DRIVER_WINMM
+-#undef SDL_AUDIO_DRIVER_OS2
+ 
+-/* Enable various input drivers */
+-#undef SDL_INPUT_LINUXEV
++/* */
++#undef SDL_CPUINFO_DISABLED
++
++/* */
++#undef SDL_DEFAULT_ASSERT_LEVEL
++
++/* */
++#undef SDL_EVENTS_DISABLED
++
++/* */
++#undef SDL_FILESYSTEM_ANDROID
++
++/* */
++#undef SDL_FILESYSTEM_COCOA
++
++/* */
++#undef SDL_FILESYSTEM_DISABLED
++
++/* */
++#undef SDL_FILESYSTEM_DUMMY
++
++/* */
++#undef SDL_FILESYSTEM_EMSCRIPTEN
++
++/* */
++#undef SDL_FILESYSTEM_HAIKU
++
++/* */
++#undef SDL_FILESYSTEM_NACL
++
++/* */
++#undef SDL_FILESYSTEM_OS2
++
++/* */
++#undef SDL_FILESYSTEM_RISCOS
++
++/* */
++#undef SDL_FILESYSTEM_UNIX
++
++/* */
++#undef SDL_FILESYSTEM_WINDOWS
++
++/* */
++#undef SDL_FILE_DISABLED
++
++/* */
++#undef SDL_HAPTIC_ANDROID
++
++/* */
++#undef SDL_HAPTIC_DINPUT
++
++/* */
++#undef SDL_HAPTIC_DISABLED
++
++/* */
++#undef SDL_HAPTIC_DUMMY
++
++/* */
++#undef SDL_HAPTIC_IOKIT
++
++/* */
++#undef SDL_HAPTIC_LINUX
++
++/* */
++#undef SDL_HAPTIC_XINPUT
++
++/* */
++#undef SDL_HAVE_MACHINE_JOYSTICK_H
++
++/* */
++#undef SDL_HIDAPI_DISABLED
++
++/* */
+ #undef SDL_INPUT_FBSDKBIO
++
++/* */
++#undef SDL_INPUT_LINUXEV
++
++/* */
+ #undef SDL_INPUT_LINUXKD
++
++/* */
+ #undef SDL_INPUT_WSCONS
+-#undef SDL_JOYSTICK_HAIKU
++
++/* */
++#undef SDL_JOYSTICK_ANDROID
++
++/* */
+ #undef SDL_JOYSTICK_DINPUT
+-#undef SDL_JOYSTICK_WGI
+-#undef SDL_JOYSTICK_XINPUT
++
++/* */
++#undef SDL_JOYSTICK_DISABLED
++
++/* */
+ #undef SDL_JOYSTICK_DUMMY
++
++/* */
++#undef SDL_JOYSTICK_EMSCRIPTEN
++
++/* */
++#undef SDL_JOYSTICK_HAIKU
++
++/* */
++#undef SDL_JOYSTICK_HIDAPI
++
++/* */
+ #undef SDL_JOYSTICK_IOKIT
+-#undef SDL_JOYSTICK_MFI
++
++/* */
+ #undef SDL_JOYSTICK_LINUX
+-#undef SDL_JOYSTICK_ANDROID
++
++/* */
++#undef SDL_JOYSTICK_MFI
++
++/* */
+ #undef SDL_JOYSTICK_OS2
+-#undef SDL_JOYSTICK_USBHID
+-#undef SDL_HAVE_MACHINE_JOYSTICK_H
+-#undef SDL_JOYSTICK_HIDAPI
++
++/* */
+ #undef SDL_JOYSTICK_RAWINPUT
+-#undef SDL_JOYSTICK_EMSCRIPTEN
++
++/* */
++#undef SDL_JOYSTICK_USBHID
++
++/* */
+ #undef SDL_JOYSTICK_VIRTUAL
+-#undef SDL_HAPTIC_DUMMY
+-#undef SDL_HAPTIC_ANDROID
+-#undef SDL_HAPTIC_LINUX
+-#undef SDL_HAPTIC_IOKIT
+-#undef SDL_HAPTIC_DINPUT
+-#undef SDL_HAPTIC_XINPUT
+ 
+-/* Enable various sensor drivers */
+-#undef SDL_SENSOR_ANDROID
+-#undef SDL_SENSOR_COREMOTION
+-#undef SDL_SENSOR_WINDOWS
+-#undef SDL_SENSOR_DUMMY
++/* */
++#undef SDL_JOYSTICK_WGI
++
++/* */
++#undef SDL_JOYSTICK_XINPUT
++
++/* */
++#undef SDL_LIBSAMPLERATE_DYNAMIC
+ 
+-/* Enable various shared object loading systems */
++/* */
++#undef SDL_LIBUSB_DYNAMIC
++
++/* */
++#undef SDL_LOADSO_DISABLED
++
++/* */
+ #undef SDL_LOADSO_DLOPEN
++
++/* */
+ #undef SDL_LOADSO_DUMMY
+-#undef SDL_LOADSO_LDG
+-#undef SDL_LOADSO_WINDOWS
++
++/* */
+ #undef SDL_LOADSO_OS2
+ 
+-/* Enable various threading systems */
++/* */
++#undef SDL_LOADSO_WINDOWS
++
++/* */
++#undef SDL_LOCALE_DISABLED
++
++/* */
++#undef SDL_LOCALE_DUMMY
++
++/* */
++#undef SDL_MISC_DISABLED
++
++/* */
++#undef SDL_MISC_DUMMY
++
++/* */
++#undef SDL_POWER_ANDROID
++
++/* */
++#undef SDL_POWER_DISABLED
++
++/* */
++#undef SDL_POWER_EMSCRIPTEN
++
++/* */
++#undef SDL_POWER_HAIKU
++
++/* */
++#undef SDL_POWER_LINUX
++
++/* */
++#undef SDL_POWER_MACOSX
++
++/* */
++#undef SDL_POWER_UIKIT
++
++/* */
++#undef SDL_POWER_WINDOWS
++
++/* */
++#undef SDL_RENDER_DISABLED
++
++/* */
++#undef SDL_SENSOR_ANDROID
++
++/* */
++#undef SDL_SENSOR_COREMOTION
++
++/* */
++#undef SDL_SENSOR_DISABLED
++
++/* */
++#undef SDL_SENSOR_DUMMY
++
++/* */
++#undef SDL_SENSOR_WINDOWS
++
++/* */
++#undef SDL_THREADS_DISABLED
++
++/* */
+ #undef SDL_THREAD_GENERIC_COND_SUFFIX
++
++/* */
++#undef SDL_THREAD_OS2
++
++/* */
+ #undef SDL_THREAD_PTHREAD
++
++/* */
+ #undef SDL_THREAD_PTHREAD_RECURSIVE_MUTEX
++
++/* */
+ #undef SDL_THREAD_PTHREAD_RECURSIVE_MUTEX_NP
++
++/* */
+ #undef SDL_THREAD_WINDOWS
+-#undef SDL_THREAD_OS2
+ 
+-/* Enable various timer systems */
+-#undef SDL_TIMER_HAIKU
++/* */
++#undef SDL_TIMERS_DISABLED
++
++/* */
+ #undef SDL_TIMER_DUMMY
++
++/* */
++#undef SDL_TIMER_HAIKU
++
++/* */
++#undef SDL_TIMER_OS2
++
++/* */
+ #undef SDL_TIMER_UNIX
++
++/* */
+ #undef SDL_TIMER_WINDOWS
+-#undef SDL_TIMER_OS2
+ 
+-/* Enable various video drivers */
+-#undef SDL_VIDEO_DRIVER_HAIKU
++/* */
++#undef SDL_UDEV_DYNAMIC
++
++/* */
++#undef SDL_USE_IME
++
++/* */
++#undef SDL_VIDEO_DISABLED
++
++/* */
++#undef SDL_VIDEO_DRIVER_ANDROID
++
++/* */
+ #undef SDL_VIDEO_DRIVER_COCOA
++
++/* */
+ #undef SDL_VIDEO_DRIVER_DIRECTFB
++
++/* */
+ #undef SDL_VIDEO_DRIVER_DIRECTFB_DYNAMIC
++
++/* */
+ #undef SDL_VIDEO_DRIVER_DUMMY
+-#undef SDL_VIDEO_DRIVER_WINDOWS
++
++/* */
++#undef SDL_VIDEO_DRIVER_EMSCRIPTEN
++
++/* */
++#undef SDL_VIDEO_DRIVER_HAIKU
++
++/* */
++#undef SDL_VIDEO_DRIVER_KMSDRM
++
++/* */
++#undef SDL_VIDEO_DRIVER_KMSDRM_DYNAMIC
++
++/* */
++#undef SDL_VIDEO_DRIVER_KMSDRM_DYNAMIC_GBM
++
++/* */
++#undef SDL_VIDEO_DRIVER_LAYLAOS
++
++/* */
++#undef SDL_VIDEO_DRIVER_NACL
++
++/* */
++#undef SDL_VIDEO_DRIVER_OFFSCREEN
++
++/* */
++#undef SDL_VIDEO_DRIVER_OS2
++
++/* */
++#undef SDL_VIDEO_DRIVER_QNX
++
++/* */
++#undef SDL_VIDEO_DRIVER_RISCOS
++
++/* */
++#undef SDL_VIDEO_DRIVER_RPI
++
++/* */
++#undef SDL_VIDEO_DRIVER_UIKIT
++
++/* */
++#undef SDL_VIDEO_DRIVER_VIVANTE
++
++/* */
++#undef SDL_VIDEO_DRIVER_VIVANTE_VDK
++
++/* */
+ #undef SDL_VIDEO_DRIVER_WAYLAND
+-#undef SDL_VIDEO_DRIVER_WAYLAND_QT_TOUCH
++
++/* */
+ #undef SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC
+-#undef SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_EGL
++
++/* */
+ #undef SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_CURSOR
+-#undef SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_XKBCOMMON
++
++/* */
++#undef SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_EGL
++
++/* */
+ #undef SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_LIBDECOR
++
++/* */
++#undef SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_XKBCOMMON
++
++/* */
++#undef SDL_VIDEO_DRIVER_WAYLAND_QT_TOUCH
++
++/* */
++#undef SDL_VIDEO_DRIVER_WINDOWS
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11
+-#undef SDL_VIDEO_DRIVER_RPI
+-#undef SDL_VIDEO_DRIVER_KMSDRM
+-#undef SDL_VIDEO_DRIVER_KMSDRM_DYNAMIC
+-#undef SDL_VIDEO_DRIVER_KMSDRM_DYNAMIC_GBM
+-#undef SDL_VIDEO_DRIVER_ANDROID
+-#undef SDL_VIDEO_DRIVER_EMSCRIPTEN
+-#undef SDL_VIDEO_DRIVER_OFFSCREEN
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_DYNAMIC
+-#undef SDL_VIDEO_DRIVER_X11_DYNAMIC_XEXT
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_DYNAMIC_XCURSOR
+-#undef SDL_VIDEO_DRIVER_X11_DYNAMIC_XINPUT2
++
++/* */
++#undef SDL_VIDEO_DRIVER_X11_DYNAMIC_XEXT
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_DYNAMIC_XFIXES
++
++/* */
++#undef SDL_VIDEO_DRIVER_X11_DYNAMIC_XINPUT2
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_DYNAMIC_XRANDR
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_DYNAMIC_XSS
++
++/* Have XkbKeycodeToKeysym */
++#undef SDL_VIDEO_DRIVER_X11_HAS_XKBKEYCODETOKEYSYM
++
++/* */
++#undef SDL_VIDEO_DRIVER_X11_SUPPORTS_GENERIC_EVENTS
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_XCURSOR
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_XDBE
++
++/* */
++#undef SDL_VIDEO_DRIVER_X11_XFIXES
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_XINPUT2
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_XINPUT2_SUPPORTS_MULTITOUCH
+-#undef SDL_VIDEO_DRIVER_X11_XFIXES
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_XRANDR
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_XSCRNSAVER
++
++/* */
+ #undef SDL_VIDEO_DRIVER_X11_XSHAPE
+-#undef SDL_VIDEO_DRIVER_X11_SUPPORTS_GENERIC_EVENTS
+-#undef SDL_VIDEO_DRIVER_X11_HAS_XKBKEYCODETOKEYSYM
+-#undef SDL_VIDEO_DRIVER_NACL
+-#undef SDL_VIDEO_DRIVER_VIVANTE
+-#undef SDL_VIDEO_DRIVER_VIVANTE_VDK
+-#undef SDL_VIDEO_DRIVER_OS2
+-#undef SDL_VIDEO_DRIVER_QNX
+-#undef SDL_VIDEO_DRIVER_RISCOS
+ 
+-#undef SDL_VIDEO_RENDER_D3D
+-#undef SDL_VIDEO_RENDER_D3D11
+-#undef SDL_VIDEO_RENDER_D3D12
+-#undef SDL_VIDEO_RENDER_OGL
+-#undef SDL_VIDEO_RENDER_OGL_ES
+-#undef SDL_VIDEO_RENDER_OGL_ES2
+-#undef SDL_VIDEO_RENDER_DIRECTFB
+-#undef SDL_VIDEO_RENDER_METAL
++/* */
++#undef SDL_VIDEO_METAL
+ 
+-/* Enable OpenGL support */
++/* */
+ #undef SDL_VIDEO_OPENGL
+-#undef SDL_VIDEO_OPENGL_ES
+-#undef SDL_VIDEO_OPENGL_ES2
+-#undef SDL_VIDEO_OPENGL_BGL
++
++/* */
+ #undef SDL_VIDEO_OPENGL_CGL
++
++/* */
+ #undef SDL_VIDEO_OPENGL_EGL
++
++/* */
++#undef SDL_VIDEO_OPENGL_ES
++
++/* */
++#undef SDL_VIDEO_OPENGL_ES2
++
++/* */
+ #undef SDL_VIDEO_OPENGL_GLX
++
++/* */
++#undef SDL_VIDEO_OPENGL_HAIKU
++
++/* */
+ #undef SDL_VIDEO_OPENGL_WGL
+-#undef SDL_VIDEO_OPENGL_OSMESA
+-#undef SDL_VIDEO_OPENGL_OSMESA_DYNAMIC
+ 
+-/* Enable Vulkan support */
+-#undef SDL_VIDEO_VULKAN
++/* */
++#undef SDL_VIDEO_RENDER_D3D
+ 
+-/* Enable Metal support */
+-#undef SDL_VIDEO_METAL
++/* */
++#undef SDL_VIDEO_RENDER_D3D11
+ 
+-/* Enable system power support */
+-#undef SDL_POWER_LINUX
+-#undef SDL_POWER_WINDOWS
+-#undef SDL_POWER_MACOSX
+-#undef SDL_POWER_HAIKU
+-#undef SDL_POWER_ANDROID
+-#undef SDL_POWER_EMSCRIPTEN
+-#undef SDL_POWER_HARDWIRED
++/* */
++#undef SDL_VIDEO_RENDER_D3D12
+ 
+-/* Enable system filesystem support */
+-#undef SDL_FILESYSTEM_ANDROID
+-#undef SDL_FILESYSTEM_HAIKU
+-#undef SDL_FILESYSTEM_COCOA
+-#undef SDL_FILESYSTEM_DUMMY
+-#undef SDL_FILESYSTEM_RISCOS
+-#undef SDL_FILESYSTEM_UNIX
+-#undef SDL_FILESYSTEM_WINDOWS
+-#undef SDL_FILESYSTEM_NACL
+-#undef SDL_FILESYSTEM_EMSCRIPTEN
+-#undef SDL_FILESYSTEM_OS2
+-#undef SDL_FILESYSTEM_VITA
+-#undef SDL_FILESYSTEM_PSP
+-#undef SDL_FILESYSTEM_PS2
++/* */
++#undef SDL_VIDEO_RENDER_DIRECTFB
+ 
+-/* Enable misc subsystem */
+-#undef SDL_MISC_DUMMY
++/* */
++#undef SDL_VIDEO_RENDER_METAL
+ 
+-/* Enable locale subsystem */
+-#undef SDL_LOCALE_DUMMY
++/* */
++#undef SDL_VIDEO_RENDER_OGL
+ 
+-/* Enable assembly routines */
+-#undef SDL_ALTIVEC_BLITTERS
+-#undef SDL_ARM_SIMD_BLITTERS
+-#undef SDL_ARM_NEON_BLITTERS
++/* */
++#undef SDL_VIDEO_RENDER_OGL_ES
+ 
+-/* Whether SDL_DYNAMIC_API needs dlopen() */
+-#undef DYNAPI_NEEDS_DLOPEN
++/* */
++#undef SDL_VIDEO_RENDER_OGL_ES2
+ 
+-/* Enable ime support */
+-#undef SDL_USE_IME
++/* */
++#undef SDL_VIDEO_VULKAN
+ 
+-/* Enable dynamic udev support */
+-#undef SDL_UDEV_DYNAMIC
++/* If using the C implementation of alloca, define if you know the
++   direction of stack growth for your system; otherwise it will be
++   automatically deduced at runtime.
++	STACK_DIRECTION > 0 => grows toward higher addresses
++	STACK_DIRECTION < 0 => grows toward lower addresses
++	STACK_DIRECTION = 0 => direction of growth unknown */
++#undef STACK_DIRECTION
++
++/* Define to 1 if all of the C90 standard headers exist (not just the ones
++   required in a freestanding environment). This macro is provided for
++   backward compatibility; new code need not use it. */
++#undef STDC_HEADERS
+ 
+-/* Enable dynamic libusb support */
+-#undef SDL_LIBUSB_DYNAMIC
++/* Define to 1 if the X Window System is missing or not being used. */
++#undef X_DISPLAY_MISSING
+ 
+-/* Enable dynamic libsamplerate support */
+-#undef SDL_LIBSAMPLERATE_DYNAMIC
++/* Number of bits in a file offset, on hosts where this is settable. */
++#undef _FILE_OFFSET_BITS
++
++/* Define for large files, on AIX-style hosts. */
++#undef _LARGE_FILES
+ 
+-#endif /* SDL_config_h_ */
++/* Define to empty if `const' does not conform to ANSI C. */
++#undef const
++
++/* Define to `__inline__' or `__inline' if that's what the C compiler
++   calls it, or to nothing if 'inline' is not supported under any name.  */
++#ifndef __cplusplus
++#undef inline
++#endif
++
++/* Define to `unsigned int' if <sys/types.h> does not define. */
++#undef size_t
++
++/* Define to empty if the keyword `volatile' does not work. Warning: valid
++   code using `volatile' can become incorrect without. Disable with care. */
++#undef volatile
+diff -rub ./SDL2-2.26.5/include/SDL_platform.h ./SDL2-2.26.5/include/SDL_platform.h
+--- ./SDL2-2.26.5/include/SDL_platform.h	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/include/SDL_platform.h	2023-05-29 19:57:51.685106000 +0100
+@@ -226,6 +226,11 @@
+ #define __3DS__ 1
+ #endif
+ 
++#if defined(__laylaos__)
++#define __LAYLAOS__ 1
++#endif
++
++
+ #include "begin_code.h"
+ /* Set up for C function definitions, even when using C++ */
+ #ifdef __cplusplus
+diff -rub ./SDL2-2.26.5/include/SDL_syswm.h ./SDL2-2.26.5/include/SDL_syswm.h
+--- ./SDL2-2.26.5/include/SDL_syswm.h	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/include/SDL_syswm.h	2023-05-29 20:15:51.124426000 +0100
+@@ -121,6 +121,10 @@
+ struct gbm_device;
+ #endif
+ 
++#if defined(SDL_VIDEO_DRIVER_LAYLAOS)
++#include <gui/client/window.h>
++#endif
++
+ 
+ #include "begin_code.h"
+ /* Set up for C function definitions, even when using C++ */
+@@ -148,7 +152,8 @@
+     SDL_SYSWM_OS2,
+     SDL_SYSWM_HAIKU,
+     SDL_SYSWM_KMSDRM,
+-    SDL_SYSWM_RISCOS
++    SDL_SYSWM_RISCOS,
++    SDL_SYSWM_LAYLAOS
+ } SDL_SYSWM_TYPE;
+ 
+ /**
+@@ -212,6 +217,13 @@
+             MPARAM mp2;                 /**< The second first message parameter */
+         } os2;
+ #endif
++#if defined(SDL_VIDEO_DRIVER_LAYLAOS)
++        struct
++        {
++            int dummy;
++            /* No LaylaOS window events yet */
++        } laylaos;
++#endif
+         /* Can't have an empty union */
+         int dummy;
+     } msg;
+@@ -343,6 +355,13 @@
+         } kmsdrm;
+ #endif
+ 
++#if defined(SDL_VIDEO_DRIVER_LAYLAOS)
++        struct
++        {
++            struct window_t *window;              /**< The GUI window */
++        } laylaos;
++#endif
++
+         /* Make sure this union is always 64 bytes (8 64-bit pointers). */
+         /* Be careful not to overflow this if you add a new target! */
+         Uint8 dummy[64];
+diff -rub ./SDL2-2.26.5/src/audio/SDL_audio.c ./SDL2-2.26.5/src/audio/SDL_audio.c
+--- ./SDL2-2.26.5/src/audio/SDL_audio.c	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/src/audio/SDL_audio.c	2023-06-04 04:39:39.069028000 +0100
+@@ -129,6 +129,9 @@
+ #if SDL_AUDIO_DRIVER_DUMMY
+     &DUMMYAUDIO_bootstrap,
+ #endif
++#if SDL_AUDIO_DRIVER_LAYLAOS
++    &LAYLAOSAUDIO_bootstrap,
++#endif
+     NULL
+ };
+ 
+diff -rub ./SDL2-2.26.5/src/audio/SDL_audiodev.c ./SDL2-2.26.5/src/audio/SDL_audiodev.c
+--- ./SDL2-2.26.5/src/audio/SDL_audiodev.c	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/src/audio/SDL_audiodev.c	2023-05-29 17:09:51.793220000 +0100
+@@ -22,7 +22,7 @@
+ 
+ /* Get the name of the audio device we use for output */
+ 
+-#if SDL_AUDIO_DRIVER_NETBSD || SDL_AUDIO_DRIVER_OSS || SDL_AUDIO_DRIVER_SUNAUDIO
++#if SDL_AUDIO_DRIVER_NETBSD || SDL_AUDIO_DRIVER_OSS || SDL_AUDIO_DRIVER_SUNAUDIO || SDL_AUDIO_DRIVER_LAYLAOS
+ 
+ #include <fcntl.h>
+ #include <sys/types.h>
+diff -rub ./SDL2-2.26.5/src/audio/SDL_sysaudio.h ./SDL2-2.26.5/src/audio/SDL_sysaudio.h
+--- ./SDL2-2.26.5/src/audio/SDL_sysaudio.h	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/src/audio/SDL_sysaudio.h	2023-05-29 17:10:30.934192000 +0100
+@@ -212,6 +212,7 @@
+ extern AudioBootStrap N3DSAUDIO_bootstrap;
+ extern AudioBootStrap EMSCRIPTENAUDIO_bootstrap;
+ extern AudioBootStrap OS2AUDIO_bootstrap;
++extern AudioBootStrap LAYLAOSAUDIO_bootstrap;
+ 
+ #endif /* SDL_sysaudio_h_ */
+ 
+diff -rub ./SDL2-2.26.5/src/dynapi/SDL_dynapi.c ./SDL2-2.26.5/src/dynapi/SDL_dynapi.c
+--- ./SDL2-2.26.5/src/dynapi/SDL_dynapi.c	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/src/dynapi/SDL_dynapi.c	2023-05-29 17:12:04.468412000 +0100
+@@ -341,7 +341,7 @@
+     return retval;
+ }
+ 
+-#elif defined(unix) || defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__) || defined(__QNX__)
++#elif defined(unix) || defined(__unix__) || defined(__APPLE__) || defined(__HAIKU__) || defined(__QNX__) || defined(__laylaos__)
+ #include <dlfcn.h>
+ static SDL_INLINE void *get_sdlapi_entry(const char *fname, const char *sym)
+ {
+diff -rub ./SDL2-2.26.5/src/SDL.c ./SDL2-2.26.5/src/SDL.c
+--- ./SDL2-2.26.5/src/SDL.c	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/src/SDL.c	2023-05-29 17:13:52.566824000 +0100
+@@ -624,6 +624,8 @@
+     return "Nokia N-Gage";
+ #elif __3DS__
+     return "Nintendo 3DS";
++#elif __LAYLAOS__
++    return "LaylaOS";
+ #else
+     return "Unknown (see SDL_platform.h)";
+ #endif
+diff -rub ./SDL2-2.26.5/src/thread/pthread/SDL_syssem.c ./SDL2-2.26.5/src/thread/pthread/SDL_syssem.c
+--- ./SDL2-2.26.5/src/thread/pthread/SDL_syssem.c	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/src/thread/pthread/SDL_syssem.c	2023-05-29 17:14:53.576124000 +0100
+@@ -20,6 +20,11 @@
+ */
+ #include "../../SDL_internal.h"
+ 
++#if defined(__laylaos__)
++// we need this for sem_timedwait()
++#define __USE_XOPEN2K
++#endif
++
+ #include <errno.h>
+ #include <pthread.h>
+ #include <semaphore.h>
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vk_icd.h ./SDL2-2.26.5/src/video/khronos/vulkan/vk_icd.h
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vk_icd.h	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vk_icd.h	2024-03-01 21:38:52.765548726 +0000
+@@ -205,6 +205,13 @@
+ } VkIcdSurfaceGgp;
+ #endif  // VK_USE_PLATFORM_GGP
+ 
++#ifdef VK_USE_PLATFORM_LAYLAOS
++typedef struct {
++    VkIcdSurfaceBase base;
++    void *window;
++} VkIcdSurfaceLaylaOS;
++#endif  // VK_USE_PLATFORM_LAYLAOS
++
+ typedef struct {
+     VkIcdSurfaceBase base;
+     VkDisplayModeKHR displayMode;
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_core.h ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_core.h
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_core.h	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_core.h	2024-03-01 22:21:50.096514714 +0000
+@@ -978,6 +978,7 @@
+     VK_STRUCTURE_TYPE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_INFO_EXT = 1000376002,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT = 1000377000,
+     VK_STRUCTURE_TYPE_SCREEN_SURFACE_CREATE_INFO_QNX = 1000378000,
++    VK_STRUCTURE_TYPE_LAYLAOS_SURFACE_CREATE_INFO_KHR = 1000379000,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COLOR_WRITE_ENABLE_FEATURES_EXT = 1000381000,
+     VK_STRUCTURE_TYPE_PIPELINE_COLOR_WRITE_CREATE_INFO_EXT = 1000381001,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIMITIVES_GENERATED_QUERY_FEATURES_EXT = 1000382000,
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_enums.hpp ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_enums.hpp
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_enums.hpp	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_enums.hpp	2024-03-01 21:49:25.212743188 +0000
+@@ -332,6 +332,9 @@
+ #if defined( VK_USE_PLATFORM_WIN32_KHR )
+     eWin32SurfaceCreateInfoKHR = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++    eLaylaOSSurfaceCreateInfoKHR = VK_STRUCTURE_TYPE_LAYLAOS_SURFACE_CREATE_INFO_KHR,
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
+     eDebugReportCallbackCreateInfoEXT                = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT,
+     ePipelineRasterizationStateRasterizationOrderAMD = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_RASTERIZATION_ORDER_AMD,
+     eDebugMarkerObjectNameInfoEXT                    = VK_STRUCTURE_TYPE_DEBUG_MARKER_OBJECT_NAME_INFO_EXT,
+@@ -2999,6 +3002,14 @@
+   };
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++
++  enum class LaylaOSSurfaceCreateFlagBitsKHR : VkLaylaOSSurfaceCreateFlagsKHR
++  {
++  };
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+ 
+   enum class DebugReportFlagBitsEXT : VkDebugReportFlagsEXT
+@@ -6868,6 +6879,13 @@
+ 
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++
++  using LaylaOSSurfaceCreateFlagsKHR = Flags<LaylaOSSurfaceCreateFlagBitsKHR>;
++
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+ 
+   using DebugReportFlagsEXT = Flags<DebugReportFlagBitsEXT>;
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_funcs.hpp ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_funcs.hpp
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_funcs.hpp	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_funcs.hpp	2024-03-01 21:52:37.283692213 +0000
+@@ -9033,6 +9033,88 @@
+   }
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++
++  template <typename Dispatch>
++  VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE Result Instance::createLaylaOSSurfaceKHR( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR * pCreateInfo,
++                                                                                const VULKAN_HPP_NAMESPACE::AllocationCallbacks *      pAllocator,
++                                                                                VULKAN_HPP_NAMESPACE::SurfaceKHR *                     pSurface,
++                                                                                Dispatch const & d ) const VULKAN_HPP_NOEXCEPT
++  {
++    VULKAN_HPP_ASSERT( d.getVkHeaderVersion() == VK_HEADER_VERSION );
++    return static_cast<Result>( d.vkCreateLaylaOSSurfaceKHR( m_instance,
++                                                          reinterpret_cast<const VkLaylaOSSurfaceCreateInfoKHR *>( pCreateInfo ),
++                                                          reinterpret_cast<const VkAllocationCallbacks *>( pAllocator ),
++                                                          reinterpret_cast<VkSurfaceKHR *>( pSurface ) ) );
++  }
++
++#  ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
++  template <typename Dispatch>
++  VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE typename ResultValueType<VULKAN_HPP_NAMESPACE::SurfaceKHR>::type
++                       Instance::createLaylaOSSurfaceKHR( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR &    createInfo,
++                                    Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator,
++                                    Dispatch const &                                          d ) const
++  {
++    VULKAN_HPP_ASSERT( d.getVkHeaderVersion() == VK_HEADER_VERSION );
++
++    VULKAN_HPP_NAMESPACE::SurfaceKHR surface;
++    VkResult                         result =
++      d.vkCreateLaylaOSSurfaceKHR( m_instance,
++                                reinterpret_cast<const VkLaylaOSSurfaceCreateInfoKHR *>( &createInfo ),
++                                reinterpret_cast<const VkAllocationCallbacks *>( static_cast<const VULKAN_HPP_NAMESPACE::AllocationCallbacks *>( allocator ) ),
++                                reinterpret_cast<VkSurfaceKHR *>( &surface ) );
++    resultCheck( static_cast<VULKAN_HPP_NAMESPACE::Result>( result ), VULKAN_HPP_NAMESPACE_STRING "::Instance::createLaylaOSSurfaceKHR" );
++
++    return createResultValueType( static_cast<VULKAN_HPP_NAMESPACE::Result>( result ), surface );
++  }
++
++#    ifndef VULKAN_HPP_NO_SMART_HANDLE
++  template <typename Dispatch>
++  VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE typename ResultValueType<UniqueHandle<VULKAN_HPP_NAMESPACE::SurfaceKHR, Dispatch>>::type
++                       Instance::createLaylaOSSurfaceKHRUnique( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR &    createInfo,
++                                          Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator,
++                                          Dispatch const &                                          d ) const
++  {
++    VULKAN_HPP_ASSERT( d.getVkHeaderVersion() == VK_HEADER_VERSION );
++
++    VULKAN_HPP_NAMESPACE::SurfaceKHR surface;
++    VkResult                         result =
++      d.vkCreateLaylaOSSurfaceKHR( m_instance,
++                                reinterpret_cast<const VkLaylaOSSurfaceCreateInfoKHR *>( &createInfo ),
++                                reinterpret_cast<const VkAllocationCallbacks *>( static_cast<const VULKAN_HPP_NAMESPACE::AllocationCallbacks *>( allocator ) ),
++                                reinterpret_cast<VkSurfaceKHR *>( &surface ) );
++    resultCheck( static_cast<VULKAN_HPP_NAMESPACE::Result>( result ), VULKAN_HPP_NAMESPACE_STRING "::Instance::createLaylaOSSurfaceKHRUnique" );
++
++    return createResultValueType(
++      static_cast<VULKAN_HPP_NAMESPACE::Result>( result ),
++      UniqueHandle<VULKAN_HPP_NAMESPACE::SurfaceKHR, Dispatch>( surface, ObjectDestroy<Instance, Dispatch>( *this, allocator, d ) ) );
++  }
++#    endif /* VULKAN_HPP_NO_SMART_HANDLE */
++#  endif   /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
++
++  template <typename Dispatch>
++  VULKAN_HPP_INLINE Bool32
++    PhysicalDevice::getLaylaOSPresentationSupportKHR( uint32_t queueFamilyIndex, Dispatch const & d ) const VULKAN_HPP_NOEXCEPT
++  {
++    VULKAN_HPP_ASSERT( d.getVkHeaderVersion() == VK_HEADER_VERSION );
++    return static_cast<Bool32>( d.vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( m_physicalDevice, queueFamilyIndex ) );
++  }
++
++#  ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
++  template <typename Dispatch>
++  VULKAN_HPP_INLINE VULKAN_HPP_NAMESPACE::Bool32
++    PhysicalDevice::getLaylaOSPresentationSupportKHR( uint32_t queueFamilyIndex, Dispatch const & d ) const VULKAN_HPP_NOEXCEPT
++  {
++    VULKAN_HPP_ASSERT( d.getVkHeaderVersion() == VK_HEADER_VERSION );
++
++    VkBool32 result = d.vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( m_physicalDevice, queueFamilyIndex );
++
++    return static_cast<VULKAN_HPP_NAMESPACE::Bool32>( result );
++  }
++#  endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
++#endif   /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+ 
+   template <typename Dispatch>
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan.h ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan.h
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan.h	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan.h	2024-03-01 21:40:21.907939474 +0000
+@@ -85,6 +85,11 @@
+ #include "vulkan_screen.h"
+ #endif
+ 
++
++#ifdef VK_USE_PLATFORM_LAYLAOS
++#include "vulkan_laylaos.h"
++#endif
++
+ #ifdef VK_ENABLE_BETA_EXTENSIONS
+ #include "vulkan_beta.h"
+ #endif
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_handles.hpp ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_handles.hpp
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_handles.hpp	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_handles.hpp	2024-03-01 21:56:16.080021171 +0000
+@@ -520,6 +520,11 @@
+   struct Win32SurfaceCreateInfoKHR;
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++  struct LaylaOSSurfaceCreateInfoKHR;
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+   struct DebugReportCallbackCreateInfoEXT;
+ 
+@@ -12111,6 +12116,18 @@
+     Bool32 getWin32PresentationSupportKHR( uint32_t queueFamilyIndex, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++    //=== VK_KHR_laylaos_surface ===
++
++    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
++    Bool32 getLaylaOSPresentationSupportKHR( uint32_t queueFamilyIndex, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
++#  ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
++    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
++    VULKAN_HPP_NAMESPACE::Bool32 getLaylaOSPresentationSupportKHR( uint32_t            queueFamilyIndex,
++                                                                   Dispatch const & d  VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
++#  endif /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+ #if defined( VK_ENABLE_BETA_EXTENSIONS )
+     //=== VK_KHR_video_queue ===
+ 
+@@ -13107,6 +13124,30 @@
+ #  endif   /*VULKAN_HPP_DISABLE_ENHANCED_MODE*/
+ #endif     /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++    //=== VK_KHR_laylaos_surface ===
++
++    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
++    VULKAN_HPP_NODISCARD Result createLaylaOSSurfaceKHR( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR * pCreateInfo,
++                                                       const VULKAN_HPP_NAMESPACE::AllocationCallbacks *       pAllocator,
++                                                       VULKAN_HPP_NAMESPACE::SurfaceKHR *                      pSurface,
++                                                       Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
++#  ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
++    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
++    VULKAN_HPP_NODISCARD typename ResultValueType<VULKAN_HPP_NAMESPACE::SurfaceKHR>::type
++      createLaylaOSSurfaceKHR( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR &             createInfo,
++                             Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator VULKAN_HPP_DEFAULT_ARGUMENT_NULLPTR_ASSIGNMENT,
++                             Dispatch const & d                                                  VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
++#    ifndef VULKAN_HPP_NO_SMART_HANDLE
++    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
++    VULKAN_HPP_NODISCARD typename ResultValueType<UniqueHandle<VULKAN_HPP_NAMESPACE::SurfaceKHR, Dispatch>>::type
++      createLaylaOSSurfaceKHRUnique( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR &             createInfo,
++                                   Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator VULKAN_HPP_DEFAULT_ARGUMENT_NULLPTR_ASSIGNMENT,
++                                   Dispatch const & d                                                  VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
++#    endif /* VULKAN_HPP_NO_SMART_HANDLE */
++#  endif   /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
++#endif     /*VK_USE_PLATFORM_LAYLAOS*/
++
+     //=== VK_EXT_debug_report ===
+ 
+     template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_hash.hpp ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_hash.hpp
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_hash.hpp	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_hash.hpp	2024-03-01 21:57:00.324553749 +0000
+@@ -13483,6 +13483,22 @@
+   };
+ #  endif /*VK_USE_PLATFORM_XLIB_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++  template <>
++  struct hash<VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR>
++  {
++    std::size_t operator()( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR const & laylaOSSurfaceCreateInfoKHR ) const VULKAN_HPP_NOEXCEPT
++    {
++      std::size_t seed = 0;
++      VULKAN_HPP_HASH_COMBINE( seed, laylaOSSurfaceCreateInfoKHR.sType );
++      VULKAN_HPP_HASH_COMBINE( seed, laylaOSSurfaceCreateInfoKHR.pNext );
++      VULKAN_HPP_HASH_COMBINE( seed, laylaOSSurfaceCreateInfoKHR.flags );
++      VULKAN_HPP_HASH_COMBINE( seed, laylaOSSurfaceCreateInfoKHR.window );
++      return seed;
++    }
++  };
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+ #endif  // 14 <= VULKAN_HPP_CPP_VERSION
+ 
+ }  // namespace std
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan.hpp ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan.hpp
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan.hpp	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan.hpp	2024-03-01 21:45:45.593286948 +0000
+@@ -86,7 +86,7 @@
+ #endif
+ 
+ #if VULKAN_HPP_ENABLE_DYNAMIC_LOADER_TOOL == 1
+-#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+ #    include <dlfcn.h>
+ #  elif defined( _WIN32 )
+ typedef struct HINSTANCE__ * HINSTANCE;
+@@ -2970,6 +2970,26 @@
+     }
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++    //=== VK_KHR_laylaos_surface ===
++
++    VkResult vkCreateLaylaOSSurfaceKHR( VkInstance                         instance,
++                                     const VkLaylaOSSurfaceCreateInfoKHR * pCreateInfo,
++                                     const VkAllocationCallbacks *      pAllocator,
++                                     VkSurfaceKHR *                     pSurface ) const VULKAN_HPP_NOEXCEPT
++    {
++      return ::vkCreateLaylaOSSurfaceKHR( instance, pCreateInfo, pAllocator, pSurface );
++    }
++
++    VkBool32 vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( VkPhysicalDevice physicalDevice,
++                                                            uint32_t         queueFamilyIndex,
++                                                            Display *        dpy,
++                                                            VisualID         visualID ) const VULKAN_HPP_NOEXCEPT
++    {
++      return ::vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( physicalDevice, queueFamilyIndex, dpy, visualID );
++    }
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+     //=== VK_EXT_debug_report ===
+ 
+     VkResult vkCreateDebugReportCallbackEXT( VkInstance                                 instance,
+@@ -11429,7 +11449,7 @@
+     {
+       if ( !vulkanLibraryName.empty() )
+       {
+-#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+         m_library = dlopen( vulkanLibraryName.c_str(), RTLD_NOW | RTLD_LOCAL );
+ #  elif defined( _WIN32 )
+         m_library = ::LoadLibraryA( vulkanLibraryName.c_str() );
+@@ -11439,7 +11459,7 @@
+       }
+       else
+       {
+-#  if defined( __unix__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+         m_library = dlopen( "libvulkan.so", RTLD_NOW | RTLD_LOCAL );
+         if ( m_library == nullptr )
+         {
+@@ -11482,7 +11502,7 @@
+     {
+       if ( m_library )
+       {
+-#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+         dlclose( m_library );
+ #  elif defined( _WIN32 )
+         ::FreeLibrary( m_library );
+@@ -11495,7 +11515,7 @@
+     template <typename T>
+     T getProcAddress( const char * function ) const VULKAN_HPP_NOEXCEPT
+     {
+-#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+       return (T)dlsym( m_library, function );
+ #  elif defined( _WIN32 )
+       return ( T )::GetProcAddress( m_library, function );
+@@ -11510,7 +11530,7 @@
+     }
+ 
+   private:
+-#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNXNTO__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+     void * m_library;
+ #  elif defined( _WIN32 )
+     ::HINSTANCE m_library;
+@@ -11821,6 +11841,15 @@
+     PFN_dummy vkGetPhysicalDeviceWin32PresentationSupportKHR_placeholder    = 0;
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++    //=== VK_KHR_laylaos_surface ===
++    PFN_vkCreateLaylaOSSurfaceKHR                        vkCreateLaylaOSSurfaceKHR                        = 0;
++    PFN_vkGetPhysicalDeviceLaylaOSPresentationSupportKHR vkGetPhysicalDeviceLaylaOSPresentationSupportKHR = 0;
++#else
++    PFN_dummy vkCreateLaylaOSSurfaceKHR_placeholder                                  = 0;
++    PFN_dummy vkGetPhysicalDeviceLaylaOSPresentationSupportKHR_placeholder           = 0;
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+     //=== VK_EXT_debug_report ===
+     PFN_vkCreateDebugReportCallbackEXT  vkCreateDebugReportCallbackEXT  = 0;
+     PFN_vkDestroyDebugReportCallbackEXT vkDestroyDebugReportCallbackEXT = 0;
+@@ -12860,6 +12889,13 @@
+         PFN_vkGetPhysicalDeviceWin32PresentationSupportKHR( vkGetInstanceProcAddr( instance, "vkGetPhysicalDeviceWin32PresentationSupportKHR" ) );
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++      //=== VK_KHR_laylaos_surface ===
++      vkCreateLaylaOSSurfaceKHR = PFN_vkCreateLaylaOSSurfaceKHR( vkGetInstanceProcAddr( instance, "vkCreateLaylaOSSurfaceKHR" ) );
++      vkGetPhysicalDeviceLaylaOSPresentationSupportKHR =
++        PFN_vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( vkGetInstanceProcAddr( instance, "vkGetPhysicalDeviceLaylaOSPresentationSupportKHR" ) );
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+       //=== VK_EXT_debug_report ===
+       vkCreateDebugReportCallbackEXT  = PFN_vkCreateDebugReportCallbackEXT( vkGetInstanceProcAddr( instance, "vkCreateDebugReportCallbackEXT" ) );
+       vkDestroyDebugReportCallbackEXT = PFN_vkDestroyDebugReportCallbackEXT( vkGetInstanceProcAddr( instance, "vkDestroyDebugReportCallbackEXT" ) );
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_raii.hpp ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_raii.hpp
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_raii.hpp	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_raii.hpp	2024-03-01 22:03:42.345925277 +0000
+@@ -310,6 +310,13 @@
+           PFN_vkGetPhysicalDeviceWin32PresentationSupportKHR( vkGetInstanceProcAddr( instance, "vkGetPhysicalDeviceWin32PresentationSupportKHR" ) );
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++        //=== VK_KHR_laylaos_surface ===
++        vkCreateLaylaOSSurfaceKHR = PFN_vkCreateLaylaOSSurfaceKHR( vkGetInstanceProcAddr( instance, "vkCreateLaylaOSSurfaceKHR" ) );
++        vkGetPhysicalDeviceLaylaOSPresentationSupportKHR =
++          PFN_vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( vkGetInstanceProcAddr( instance, "vkGetPhysicalDeviceLaylaOSPresentationSupportKHR" ) );
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+ #  if defined( VK_USE_PLATFORM_XCB_KHR )
+         //=== VK_KHR_xcb_surface ===
+         vkCreateXcbSurfaceKHR = PFN_vkCreateXcbSurfaceKHR( vkGetInstanceProcAddr( instance, "vkCreateXcbSurfaceKHR" ) );
+@@ -568,6 +575,15 @@
+       PFN_dummy vkGetPhysicalDeviceWin32PresentationSupportKHR_placeholder    = 0;
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++      //=== VK_KHR_laylaos_surface ===
++      PFN_vkCreateLaylaOSSurfaceKHR                        vkCreateLaylaOSSurfaceKHR                        = 0;
++      PFN_vkGetPhysicalDeviceLaylaOSPresentationSupportKHR vkGetPhysicalDeviceLaylaOSPresentationSupportKHR = 0;
++#  else
++      PFN_dummy vkCreateLaylaOSSurfaceKHR_placeholder                                  = 0;
++      PFN_dummy vkGetPhysicalDeviceLaylaOSPresentationSupportKHR_placeholder           = 0;
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+ #  if defined( VK_USE_PLATFORM_XCB_KHR )
+       //=== VK_KHR_xcb_surface ===
+       PFN_vkCreateXcbSurfaceKHR                        vkCreateXcbSurfaceKHR                        = 0;
+@@ -2527,6 +2543,14 @@
+                                                   VULKAN_HPP_NAMESPACE::Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator = nullptr ) const;
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++      //=== VK_KHR_laylaos_surface ===
++
++      VULKAN_HPP_NODISCARD VULKAN_HPP_RAII_NAMESPACE::SurfaceKHR
++                           createLaylaOSSurfaceKHR( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR const &                          createInfo,
++                                                 VULKAN_HPP_NAMESPACE::Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator = nullptr ) const;
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+       //=== VK_EXT_debug_report ===
+ 
+       VULKAN_HPP_NODISCARD VULKAN_HPP_RAII_NAMESPACE::DebugReportCallbackEXT
+@@ -2835,6 +2859,13 @@
+       VULKAN_HPP_NODISCARD VULKAN_HPP_NAMESPACE::Bool32 getWin32PresentationSupportKHR( uint32_t queueFamilyIndex ) const VULKAN_HPP_NOEXCEPT;
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++      //=== VK_KHR_laylaos_surface ===
++
++      VULKAN_HPP_NODISCARD VULKAN_HPP_NAMESPACE::Bool32
++                           getLaylaOSPresentationSupportKHR( uint32_t queueFamilyIndex ) const VULKAN_HPP_NOEXCEPT;
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+ #  if defined( VK_ENABLE_BETA_EXTENSIONS )
+       //=== VK_KHR_video_queue ===
+ 
+@@ -9589,6 +9620,26 @@
+       }
+ #  endif /*VK_USE_PLATFORM_XLIB_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++      SurfaceKHR( VULKAN_HPP_NAMESPACE::VULKAN_HPP_RAII_NAMESPACE::Instance const &               instance,
++                  VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR const &                           createInfo,
++                  VULKAN_HPP_NAMESPACE::Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator = nullptr )
++        : m_instance( *instance )
++        , m_allocator( static_cast<const VULKAN_HPP_NAMESPACE::AllocationCallbacks *>( allocator ) )
++        , m_dispatcher( instance.getDispatcher() )
++      {
++        VULKAN_HPP_NAMESPACE::Result result = static_cast<VULKAN_HPP_NAMESPACE::Result>(
++          instance.getDispatcher()->vkCreateLaylaOSSurfaceKHR( static_cast<VkInstance>( *instance ),
++                                                           reinterpret_cast<const VkLaylaOSSurfaceCreateInfoKHR *>( &createInfo ),
++                                                           reinterpret_cast<const VkAllocationCallbacks *>( m_allocator ),
++                                                           reinterpret_cast<VkSurfaceKHR *>( &m_surface ) ) );
++        if ( result != VULKAN_HPP_NAMESPACE::Result::eSuccess )
++        {
++          detail::throwResultException( result, "vkCreateLaylaOSSurfaceKHR" );
++        }
++      }
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+       SurfaceKHR( VULKAN_HPP_NAMESPACE::VULKAN_HPP_RAII_NAMESPACE::Instance const &               instance,
+                   VkSurfaceKHR                                                                    surface,
+                   VULKAN_HPP_NAMESPACE::Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator = nullptr )
+@@ -12733,6 +12784,28 @@
+     }
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++    //=== VK_KHR_win32_surface ===
++
++    VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE VULKAN_HPP_RAII_NAMESPACE::SurfaceKHR
++                                           Instance::createLaylaOSSurfaceKHR( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR const &                         createInfo,
++                                       VULKAN_HPP_NAMESPACE::Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator ) const
++    {
++      return VULKAN_HPP_RAII_NAMESPACE::SurfaceKHR( *this, createInfo, allocator );
++    }
++
++    VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE VULKAN_HPP_NAMESPACE::Bool32
++                                           PhysicalDevice::getLaylaOSPresentationSupportKHR( uint32_t queueFamilyIndex ) const VULKAN_HPP_NOEXCEPT
++    {
++      VULKAN_HPP_ASSERT( getDispatcher()->vkGetPhysicalDeviceLaylaOSPresentationSupportKHR &&
++                         "Function <vkGetPhysicalDeviceLaylaOSPresentationSupportKHR> requires <VK_KHR_laylaos_surface>" );
++
++      VkBool32 result = getDispatcher()->vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( static_cast<VkPhysicalDevice>( m_physicalDevice ), queueFamilyIndex );
++
++      return static_cast<VULKAN_HPP_NAMESPACE::Bool32>( result );
++    }
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+     //=== VK_EXT_debug_report ===
+ 
+     VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE VULKAN_HPP_RAII_NAMESPACE::DebugReportCallbackEXT
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_static_assertions.hpp ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_static_assertions.hpp
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_static_assertions.hpp	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_static_assertions.hpp	2024-03-01 22:05:03.877661269 +0000
+@@ -1957,6 +1957,16 @@
+                           "Win32SurfaceCreateInfoKHR is not nothrow_move_constructible!" );
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++//=== VK_KHR_laylaos_surface ===
++
++VULKAN_HPP_STATIC_ASSERT( sizeof( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR ) == sizeof( VkLaylaOSSurfaceCreateInfoKHR ),
++                          "struct and wrapper have different size!" );
++VULKAN_HPP_STATIC_ASSERT( std::is_standard_layout<VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR>::value, "struct wrapper is not a standard layout!" );
++VULKAN_HPP_STATIC_ASSERT( std::is_nothrow_move_constructible<VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR>::value,
++                          "LaylaOSSurfaceCreateInfoKHR is not nothrow_move_constructible!" );
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+ //=== VK_EXT_debug_report ===
+ 
+ VULKAN_HPP_STATIC_ASSERT( sizeof( VULKAN_HPP_NAMESPACE::DebugReportCallbackEXT ) == sizeof( VkDebugReportCallbackEXT ),
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_structs.hpp ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_structs.hpp
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_structs.hpp	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_structs.hpp	2024-03-01 22:08:06.352648119 +0000
+@@ -99717,5 +99717,116 @@
+   };
+ #endif /*VK_USE_PLATFORM_XLIB_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  struct LaylaOSSurfaceCreateInfoKHR
++  {
++    using NativeType = VkLaylaOSSurfaceCreateInfoKHR;
++
++    static const bool                                  allowDuplicate = false;
++    static VULKAN_HPP_CONST_OR_CONSTEXPR StructureType structureType  = StructureType::eLaylaOSSurfaceCreateInfoKHR;
++
++#  if !defined( VULKAN_HPP_NO_STRUCT_CONSTRUCTORS )
++    VULKAN_HPP_CONSTEXPR LaylaOSSurfaceCreateInfoKHR( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateFlagsKHR flags_     = {},
++                                                    void*                                             window_      = {},
++                                                    const void *                                     pNext_     = nullptr ) VULKAN_HPP_NOEXCEPT
++      : pNext( pNext_ )
++      , flags( flags_ )
++      , window( window_ )
++    {
++    }
++
++    VULKAN_HPP_CONSTEXPR LaylaOSSurfaceCreateInfoKHR( LaylaOSSurfaceCreateInfoKHR const & rhs ) VULKAN_HPP_NOEXCEPT = default;
++
++    LaylaOSSurfaceCreateInfoKHR( VkLaylaOSSurfaceCreateInfoKHR const & rhs ) VULKAN_HPP_NOEXCEPT
++      : LaylaOSSurfaceCreateInfoKHR( *reinterpret_cast<LaylaOSSurfaceCreateInfoKHR const *>( &rhs ) )
++    {
++    }
++
++    LaylaOSSurfaceCreateInfoKHR & operator=( LaylaOSSurfaceCreateInfoKHR const & rhs ) VULKAN_HPP_NOEXCEPT = default;
++#  endif /*VULKAN_HPP_NO_STRUCT_CONSTRUCTORS*/
++
++    LaylaOSSurfaceCreateInfoKHR & operator=( VkLaylaOSSurfaceCreateInfoKHR const & rhs ) VULKAN_HPP_NOEXCEPT
++    {
++      *this = *reinterpret_cast<VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR const *>( &rhs );
++      return *this;
++    }
++
++#  if !defined( VULKAN_HPP_NO_STRUCT_SETTERS )
++    VULKAN_HPP_CONSTEXPR_14 LaylaOSSurfaceCreateInfoKHR & setPNext( const void * pNext_ ) VULKAN_HPP_NOEXCEPT
++    {
++      pNext = pNext_;
++      return *this;
++    }
++
++    VULKAN_HPP_CONSTEXPR_14 LaylaOSSurfaceCreateInfoKHR & setFlags( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateFlagsKHR flags_ ) VULKAN_HPP_NOEXCEPT
++    {
++      flags = flags_;
++      return *this;
++    }
++
++    VULKAN_HPP_CONSTEXPR_14 LaylaOSSurfaceCreateInfoKHR & setWindow( void* window_ ) VULKAN_HPP_NOEXCEPT
++    {
++      window = window_;
++      return *this;
++    }
++#  endif /*VULKAN_HPP_NO_STRUCT_SETTERS*/
++
++    operator VkLaylaOSSurfaceCreateInfoKHR const &() const VULKAN_HPP_NOEXCEPT
++    {
++      return *reinterpret_cast<const VkLaylaOSSurfaceCreateInfoKHR *>( this );
++    }
++
++    operator VkLaylaOSSurfaceCreateInfoKHR &() VULKAN_HPP_NOEXCEPT
++    {
++      return *reinterpret_cast<VkLaylaOSSurfaceCreateInfoKHR *>( this );
++    }
++
++#  if defined( VULKAN_HPP_USE_REFLECT )
++#    if 14 <= VULKAN_HPP_CPP_VERSION
++    auto
++#    else
++    std::tuple<VULKAN_HPP_NAMESPACE::StructureType const &,
++               const void * const &,
++               VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateFlagsKHR const &,
++               void* const &>
++#    endif
++      reflect() const VULKAN_HPP_NOEXCEPT
++    {
++      return std::tie( sType, pNext, flags, window );
++    }
++#  endif
++
++#  if defined( VULKAN_HPP_HAS_SPACESHIP_OPERATOR )
++    auto operator<=>( LaylaOSSurfaceCreateInfoKHR const & ) const = default;
++#  else
++    bool operator==( LaylaOSSurfaceCreateInfoKHR const & rhs ) const VULKAN_HPP_NOEXCEPT
++    {
++#    if defined( VULKAN_HPP_USE_REFLECT )
++      return this->reflect() == rhs.reflect();
++#    else
++      return ( sType == rhs.sType ) && ( pNext == rhs.pNext ) && ( flags == rhs.flags ) && ( winodw == rhs.window );
++#    endif
++    }
++
++    bool operator!=( LaylaOSSurfaceCreateInfoKHR const & rhs ) const VULKAN_HPP_NOEXCEPT
++    {
++      return !operator==( rhs );
++    }
++#  endif
++
++  public:
++    VULKAN_HPP_NAMESPACE::StructureType              sType     = StructureType::eLaylaOSSurfaceCreateInfoKHR;
++    const void *                                     pNext     = {};
++    VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateFlagsKHR flags     = {};
++    void*                                        window = {};
++  };
++
++  template <>
++  struct CppType<StructureType, StructureType::eLaylaOSSurfaceCreateInfoKHR>
++  {
++    using Type = LaylaOSSurfaceCreateInfoKHR;
++  };
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+ }  // namespace VULKAN_HPP_NAMESPACE
+ #endif
+diff -rub ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_to_string.hpp ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_to_string.hpp
+--- ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_to_string.hpp	2022-11-17 17:16:07.000000000 +0000
++++ ./SDL2-2.26.5/src/video/khronos/vulkan/vulkan_to_string.hpp	2024-03-01 22:09:53.735837464 +0000
+@@ -1930,6 +1930,15 @@
+   }
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++
++  VULKAN_HPP_INLINE std::string to_string( LaylaOSSurfaceCreateFlagsKHR )
++  {
++    return "{}";
++  }
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+ 
+   VULKAN_HPP_INLINE std::string to_string( DebugReportFlagsEXT value )
+@@ -3321,6 +3330,9 @@
+ #if defined( VK_USE_PLATFORM_WIN32_KHR )
+       case StructureType::eWin32SurfaceCreateInfoKHR: return "Win32SurfaceCreateInfoKHR";
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++      case StructureType::eLaylaOSSurfaceCreateInfoKHR: return "LaylaOSSurfaceCreateInfoKHR";
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
+       case StructureType::eDebugReportCallbackCreateInfoEXT: return "DebugReportCallbackCreateInfoEXT";
+       case StructureType::ePipelineRasterizationStateRasterizationOrderAMD: return "PipelineRasterizationStateRasterizationOrderAMD";
+       case StructureType::eDebugMarkerObjectNameInfoEXT: return "DebugMarkerObjectNameInfoEXT";
+@@ -6098,6 +6110,15 @@
+   }
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++
++  VULKAN_HPP_INLINE std::string to_string( LaylaOSSurfaceCreateFlagBitsKHR )
++  {
++    return "(void)";
++  }
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+ 
+   VULKAN_HPP_INLINE std::string to_string( DebugReportFlagBitsEXT value )
+diff -rub ./SDL2-2.26.5/src/video/SDL_sysvideo.h ./SDL2-2.26.5/src/video/SDL_sysvideo.h
+--- ./SDL2-2.26.5/src/video/SDL_sysvideo.h	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/src/video/SDL_sysvideo.h	2023-05-29 17:16:29.758097000 +0100
+@@ -476,6 +476,7 @@
+ extern VideoBootStrap NGAGE_bootstrap;
+ extern VideoBootStrap OS2DIVE_bootstrap;
+ extern VideoBootStrap OS2VMAN_bootstrap;
++extern VideoBootStrap LAYLAOS_bootstrap;
+ 
+ /* Use SDL_OnVideoThread() sparingly, to avoid regressions in use cases that currently happen to work */
+ extern SDL_bool SDL_OnVideoThread(void);
+diff -rub ./SDL2-2.26.5/src/video/SDL_video.c ./SDL2-2.26.5/src/video/SDL_video.c
+--- ./SDL2-2.26.5/src/video/SDL_video.c	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/src/video/SDL_video.c	2023-05-31 07:12:32.012159000 +0100
+@@ -144,6 +144,9 @@
+     &DUMMY_evdev_bootstrap,
+ #endif
+ #endif
++#if SDL_VIDEO_DRIVER_LAYLAOS
++    &LAYLAOS_bootstrap,
++#endif
+     NULL
+ };
+ 
+@@ -4470,8 +4473,11 @@
+ #if SDL_VIDEO_DRIVER_VITA
+ #include "vita/SDL_vitamessagebox.h"
+ #endif
++#if SDL_VIDEO_DRIVER_LAYLAOS
++#include "laylaos/SDL_laylaosmessagebox.h"
++#endif
+ 
+-#if SDL_VIDEO_DRIVER_WINDOWS || SDL_VIDEO_DRIVER_WINRT || SDL_VIDEO_DRIVER_COCOA || SDL_VIDEO_DRIVER_UIKIT || SDL_VIDEO_DRIVER_X11 || SDL_VIDEO_DRIVER_WAYLAND || SDL_VIDEO_DRIVER_HAIKU || SDL_VIDEO_DRIVER_OS2 || SDL_VIDEO_DRIVER_RISCOS
++#if SDL_VIDEO_DRIVER_WINDOWS || SDL_VIDEO_DRIVER_WINRT || SDL_VIDEO_DRIVER_COCOA || SDL_VIDEO_DRIVER_UIKIT || SDL_VIDEO_DRIVER_X11 || SDL_VIDEO_DRIVER_WAYLAND || SDL_VIDEO_DRIVER_HAIKU || SDL_VIDEO_DRIVER_OS2 || SDL_VIDEO_DRIVER_RISCOS || SDL_VIDEO_DRIVER_LAYLAOS
+ static SDL_bool SDL_MessageboxValidForDriver(const SDL_MessageBoxData *messageboxdata, SDL_SYSWM_TYPE drivertype)
+ {
+     SDL_SysWMinfo info;
+@@ -4606,6 +4612,13 @@
+         retval = 0;
+     }
+ #endif
++#if SDL_VIDEO_DRIVER_LAYLAOS
++    if (retval == -1 &&
++        SDL_MessageboxValidForDriver(messageboxdata, SDL_SYSWM_LAYLAOS) &&
++        LAYLAOS_ShowMessageBox(messageboxdata, buttonid) == 0) {
++        retval = 0;
++    }
++#endif
+     if (retval == -1) {
+         const char *error = SDL_GetError();
+ 
+diff -rub ./SDL2-2.26.5/src/video/SDL_vulkan_internal.h ./SDL2-2.26.5/src/video/SDL_vulkan_internal.h
+--- ./SDL2-2.26.5/src/video/SDL_vulkan_internal.h	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/src/video/SDL_vulkan_internal.h	2024-03-01 21:08:18.876941501 +0000
+@@ -56,6 +56,9 @@
+ #define VK_USE_PLATFORM_XLIB_KHR
+ #define VK_USE_PLATFORM_XCB_KHR
+ #endif
++#if SDL_VIDEO_DRIVER_LAYLAOS
++#define VK_USE_PLATFORM_LAYLAOS
++#endif
+ 
+ #define VK_NO_PROTOTYPES
+ #include "./khronos/vulkan/vulkan.h"
+diff -rub ./SDL2-2.26.5/test/configure.ac ./SDL2-2.26.5/test/configure.ac
+--- ./SDL2-2.26.5/test/configure.ac	2023-04-05 19:45:47.000000000 +0100
++++ ./SDL2-2.26.5/test/configure.ac	2023-05-29 19:48:50.552045000 +0100
+@@ -138,6 +138,15 @@
+  #error SDL_VIDEO_OPENGL
+  #endif
+ ]],[])], [have_opengl=yes],[])
++
++dnl LaylaOS has no OpenGL support yet, although the header file SDL_opengl.h
++dnl is still installed by SDL2
++case "$host" in
++    *-*-laylaos*)
++        have_opengl=no
++        ;;
++esac
++
+ AC_MSG_RESULT($have_opengl)
+ 
+ dnl Check for OpenGL ES
+@@ -149,6 +158,15 @@
+  #error SDL_VIDEO_OPENGL_ES
+  #endif
+ ]],[])] ,[have_opengles=yes],[])
++
++dnl LaylaOS has no OpenGL support yet, although the header file SDL_opengl.h
++dnl is still installed by SDL2
++case "$host" in
++    *-*-laylaos*)
++        have_opengles=no
++        ;;
++esac
++
+ AC_MSG_RESULT($have_opengles)
+ 
+ dnl Check for OpenGL ES2
+@@ -160,6 +178,15 @@
+  #error SDL_VIDEO_OPENGL_ES2
+  #endif
+ ]],[])], [have_opengles2=yes],[])
++
++dnl LaylaOS has no OpenGL support yet, although the header file SDL_opengl.h
++dnl is still installed by SDL2
++case "$host" in
++    *-*-laylaos*)
++        have_opengles2=no
++        ;;
++esac
++
+ AC_MSG_RESULT($have_opengles2)
+ 
+ GLLIB=""

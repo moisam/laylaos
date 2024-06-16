@@ -1,0 +1,190 @@
+diff -rub ./MPlayer-1.5/configure ./MPlayer-1.5/configure
+--- ./MPlayer-1.5/configure	2022-02-27 09:09:00.000000000 +0000
++++ ./MPlayer-1.5/configure	2024-03-11 10:11:59.528526360 +0000
+@@ -233,6 +233,7 @@
+ wine()      { issystem "Wine"; }
+ win32()     { cygwin || mingw32 || wine; }
+ msvc()      { test "$cc_vendor" = "msvc"; }
++laylaos()   { issystem "LaylaOS"; }
+ 
+ # arch test boolean functions
+ # x86/x86pc is used by QNX
+@@ -484,6 +485,7 @@
+   --enable-vesa            enable VESA video output [autodetect]
+   --enable-svga            enable SVGAlib video output [autodetect]
+   --enable-sdl             enable SDL video output [autodetect]
++  --enable-laylaos         enable LaylaOS video and audio output [autodetect]
+   --enable-kva             enable KVA video output [autodetect]
+   --enable-aa              enable AAlib video output [autodetect]
+   --enable-caca            enable CACA  video output [autodetect]
+@@ -702,6 +704,7 @@
+ _vda=auto
+ _vdpau=auto
+ _sdl=auto
++_laylaos=auto
+ _kva=auto
+ _direct3d=auto
+ _directx=auto
+@@ -1058,6 +1061,8 @@
+   --disable-vdpau)      _vdpau=no       ;;
+   --enable-sdl)         _sdl=yes        ;;
+   --disable-sdl)        _sdl=no         ;;
++  --enable-laylaos)     _laylaos=yes    ;;
++  --disable-laylaos)    _laylaos=no     ;;
+   --enable-kva)         _kva=yes        ;;
+   --disable-kva)        _kva=no         ;;
+   --enable-direct3d)    _direct3d=yes   ;;
+@@ -1808,7 +1813,7 @@
+   # OS name
+   system_name=$(uname -s 2>&1)
+   case "$system_name" in
+-  Linux|FreeBSD|NetBSD|OpenBSD|DragonFly|BSD/OS|Darwin|SunOS|QNX|GNU|MorphOS|AIX|AmigaOS|Haiku)
++  Linux|FreeBSD|NetBSD|OpenBSD|DragonFly|BSD/OS|Darwin|SunOS|QNX|GNU|MorphOS|AIX|AmigaOS|Haiku|LaylaOS)
+     ;;
+   IRIX*)
+     system_name=IRIX
+@@ -1877,6 +1882,7 @@
+       amigaos) system_name=AmigaOS ;;
+       mingw32*) system_name=MINGW32 ;;
+       wine) system_name=Wine ;;
++      laylaos) system_name=LaylaOS ;;
+     esac
+   done
+   # We need to convert underscores so that values like k6-2 and pentium-mmx can be passed
+@@ -1956,6 +1962,12 @@
+   libs_mplayer="$libs_mplayer -lshell32"
+ fi
+ 
++if laylaos ; then
++  extra_ldflags="$extra_ldflags -lgui -lfreetype"
++  #extra_cflags="-fno-pic $extra_cflags"
++  extra_cflags="$extra_cflags"
++fi
++
+ if darwin && test "$cc_vendor" != "clang" ; then
+   extra_cflags="-falign-loops=16 -shared-libgcc $extra_cflags"
+ fi
+@@ -4688,7 +4700,13 @@
+ fi #if linux
+ 
+ echocheck "pkg-config"
+-_pkg_config=pkg-config
++
++if test "x$PKGCONFIG" = "x" ; then
++  _pkg_config=pkg-config
++else
++  _pkg_config=$PKGCONFIG
++fi
++
+ if $($_pkg_config --version > /dev/null 2>&1); then
+   if test "$ld_static"; then
+     _pkg_config="$_pkg_config --static"
+@@ -6097,6 +6115,29 @@
+ echores "$_v4l2"
+ 
+ 
++echocheck "LaylaOS"
++if test "$_laylaos" = auto || test "$_laylaos" = yes ; then
++  cat > $TMPC << EOF
++int main(void) {
++#ifdef __laylaos__
++  return 0;
++#endif
++}
++EOF
++   _laylaos=no
++   cc_check && _laylaos=yes
++fi
++if test "$_laylaos" = yes ; then
++  def_laylaos='#define CONFIG_LAYLAOS 1'
++  vomodules="laylaos $vomodules"
++  aomodules="laylaos $aomodules"
++else
++  def_laylaos='#undef CONFIG_LAYLAOS'
++  novomodules="laylaos $novomodules"
++  noaomodules="laylaos $noaomodules"
++fi
++echores "$_laylaos"
++
+ 
+ #########
+ # AUDIO #
+@@ -8313,7 +8354,7 @@
+ # (FIXME: 'echocheck "dynamic linking"' above and modify here accordingly)
+ ld_dl_dynamic=''
+ freebsd || netbsd || openbsd || dragonfly || bsdos && ld_dl_dynamic='-rdynamic'
+-if test "$_real" = yes || test "$_xanim" = yes && ! win32 && ! qnx && ! darwin && ! os2 && ! sunos; then
++if test "$_real" = yes || test "$_xanim" = yes && ! win32 && ! qnx && ! darwin && ! os2 && ! sunos && ! laylaos; then
+   ld_dl_dynamic='-rdynamic'
+ fi
+ 
+@@ -8816,6 +8857,7 @@
+ S3FB = $_s3fb
+ SDL = $_sdl
+ SDL_IMAGE = $sdl_image
++LAYLAOS = $_laylaos
+ SPEEX = $_speex
+ STREAM_CACHE = $_stream_cache
+ SGIAUDIO = $_sgiaudio
+@@ -9414,6 +9456,7 @@
+ $def_sdl
+ $def_sdl_sdl_h
+ $def_svga
++$def_laylaos
+ $def_tdfxfb
+ $def_tdfxvid
+ $def_tga
+diff -rub ./MPlayer-1.5/libao2/audio_out.c ./MPlayer-1.5/libao2/audio_out.c
+--- ./MPlayer-1.5/libao2/audio_out.c	2019-06-28 22:05:15.000000000 +0100
++++ ./MPlayer-1.5/libao2/audio_out.c	2024-03-09 10:44:00.581136398 +0000
+@@ -45,6 +45,7 @@
+ extern const ao_functions_t audio_out_sdl;
+ extern const ao_functions_t audio_out_sun;
+ extern const ao_functions_t audio_out_sgi;
++extern const ao_functions_t audio_out_laylaos;
+ extern const ao_functions_t audio_out_win32;
+ extern const ao_functions_t audio_out_dsound;
+ extern const ao_functions_t audio_out_kai;
+@@ -107,6 +108,9 @@
+ #ifdef CONFIG_SDL
+         &audio_out_sdl,
+ #endif
++#ifdef CONFIG_LAYLAOS
++        &audio_out_laylaos,
++#endif
+ #ifdef CONFIG_OPENAL
+         &audio_out_openal,
+ #endif
+diff -rub ./MPlayer-1.5/libvo/video_out.c ./MPlayer-1.5/libvo/video_out.c
+--- ./MPlayer-1.5/libvo/video_out.c	2020-12-29 21:02:05.000000000 +0000
++++ ./MPlayer-1.5/libvo/video_out.c	2024-03-12 11:36:32.023872632 +0000
+@@ -109,6 +109,7 @@
+ extern const vo_functions_t video_out_matrixview;
+ extern const vo_functions_t video_out_dga;
+ extern const vo_functions_t video_out_sdl;
++extern const vo_functions_t video_out_laylaos;
+ extern const vo_functions_t video_out_3dfx;
+ extern const vo_functions_t video_out_tdfxfb;
+ extern const vo_functions_t video_out_s3fb;
+@@ -215,6 +216,9 @@
+ #ifdef CONFIG_SDL
+         &video_out_sdl,
+ #endif
++#ifdef CONFIG_LAYLAOS
++        &video_out_laylaos,
++#endif
+ #ifdef CONFIG_GL
+         &video_out_gl,
+ #endif
+diff -rub ./MPlayer-1.5/Makefile ./MPlayer-1.5/Makefile
+--- ./MPlayer-1.5/Makefile	2021-05-01 18:45:31.000000000 +0100
++++ ./MPlayer-1.5/Makefile	2024-03-11 09:52:36.759049753 +0000
+@@ -546,6 +546,8 @@
+ SRCS_MPLAYER-$(SDL)           += libao2/ao_sdl.c                        \
+                                  libvo/vo_sdl.c                         \
+                                  libvo/sdl_common.c
++SRCS_MPLAYER-$(LAYLAOS)       += libao2/ao_laylaos.c                    \
++                                 libvo/vo_laylaos.c
+ SRCS_MPLAYER-$(SGIAUDIO)      += libao2/ao_sgi.c
+ SRCS_MPLAYER-$(SNDIO)         += libao2/ao_sndio.c
+ SRCS_MPLAYER-$(SUNAUDIO)      += libao2/ao_sun.c
