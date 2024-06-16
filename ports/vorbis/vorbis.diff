@@ -1,0 +1,30 @@
+diff -rub ./libvorbis-1.3.3/configure ./libvorbis-1.3.3/configure
+--- ./libvorbis-1.3.3/configure	2012-02-03 22:01:11.000000000 +0000
++++ ./libvorbis-1.3.3/configure	2024-02-10 20:19:19.261138330 +0000
+@@ -5579,7 +5579,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos* | laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -10703,6 +10703,17 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++laylaos*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  dynamic_linker='LaylaOS ld.so'
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no

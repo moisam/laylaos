@@ -1,0 +1,4922 @@
+diff -rub ./musl-1.2.4/arch/generic/bits/shm.h ./musl-1.2.4/arch/generic/bits/shm.h
+--- ./musl-1.2.4/arch/generic/bits/shm.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/arch/generic/bits/shm.h	2023-09-03 13:24:12.714011087 +0100
+@@ -1,5 +1,18 @@
+ #define SHMLBA 4096
+ 
++#ifdef __laylaos__
++// make this compatible with out newlib definition
++struct shmid_ds {
++    struct ipc_perm shm_perm;   // Operation permission structure
++    size_t          shm_segsz;  // Size of segment in bytes
++    pid_t           shm_lpid;   // Process ID of last shared memory operation
++    pid_t           shm_cpid;   // Process ID of creator
++    unsigned long   shm_nattach;// Number of current attaches
++    time_t          shm_atime;  // Time of last shmat()
++    time_t          shm_dtime;  // Time of last shmdt()
++    time_t          shm_ctime;  // Time of last change by shmctl()
++};
++#else
+ struct shmid_ds {
+ 	struct ipc_perm shm_perm;
+ 	size_t shm_segsz;
+@@ -12,6 +25,7 @@
+ 	unsigned long __pad1;
+ 	unsigned long __pad2;
+ };
++#endif
+ 
+ struct shminfo {
+ 	unsigned long shmmax, shmmin, shmmni, shmseg, shmall, __unused[4];
+diff -rub ./musl-1.2.4/arch/i386/bits/signal.h ./musl-1.2.4/arch/i386/bits/signal.h
+--- ./musl-1.2.4/arch/i386/bits/signal.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/arch/i386/bits/signal.h	2024-05-21 00:16:37.296563614 +0100
+@@ -101,6 +101,11 @@
+ #define SA_RESETHAND  0x80000000
+ #define SA_RESTORER   0x04000000
+ 
++#ifdef __laylaos__
++// make siginfo_t layout similar to our original newlib implementation
++#define __SI_SWAP_ERRNO_CODE
++#endif
++
+ #endif
+ 
+ #define SIGHUP    1
+diff -rub ./musl-1.2.4/arch/x86_64/bits/signal.h ./musl-1.2.4/arch/x86_64/bits/signal.h
+--- ./musl-1.2.4/arch/x86_64/bits/signal.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/arch/x86_64/bits/signal.h	2023-08-27 10:19:29.524352000 +0100
+@@ -112,6 +112,11 @@
+ #define SA_RESETHAND  0x80000000
+ #define SA_RESTORER   0x04000000
+ 
++#ifdef __laylaos__
++// make siginfo_t layout similar to our original newlib implementation
++#define __SI_SWAP_ERRNO_CODE
++#endif
++
+ #endif
+ 
+ #define SIGHUP    1
+diff -rub ./musl-1.2.4/arch/x86_64/ksigaction.h ./musl-1.2.4/arch/x86_64/ksigaction.h
+--- ./musl-1.2.4/arch/x86_64/ksigaction.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/arch/x86_64/ksigaction.h	2023-09-16 16:16:31.621474566 +0100
+@@ -1,11 +1,15 @@
+ #include <features.h>
+ 
++#ifdef __laylaos__
++#define k_sigaction     sigaction
++#else
+ struct k_sigaction {
+ 	void (*handler)(int);
+ 	unsigned long flags;
+ 	void (*restorer)(void);
+ 	unsigned mask[2];
+ };
++#endif
+ 
+ hidden void __restore_rt();
+ #define __restore __restore_rt
+diff -rub ./musl-1.2.4/arch/x86_64/syscall_arch.h ./musl-1.2.4/arch/x86_64/syscall_arch.h
+--- ./musl-1.2.4/arch/x86_64/syscall_arch.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/arch/x86_64/syscall_arch.h	2024-01-26 19:19:01.346442749 +0000
+@@ -1,6 +1,92 @@
+ #define __SYSCALL_LL_E(x) (x)
+ #define __SYSCALL_LL_O(x) (x)
+ 
++#ifdef __laylaos__
++
++struct syscall_args
++{
++    unsigned long args[8];
++};
++
++static __inline long __syscall0(long n)
++{
++	unsigned long ret;
++	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n) : "rcx", "r9", "r11", "memory");
++	return ret;
++}
++
++static __inline long __syscall1(long n, long a1)
++{
++	unsigned long ret;
++	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1) : "rcx", "r9", "r11", "memory");
++	return ret;
++}
++
++static __inline long __syscall2(long n, long a1, long a2)
++{
++	unsigned long ret;
++	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2)
++						  : "rcx", "r9", "r11", "memory");
++	return ret;
++}
++
++static __inline long __syscall3(long n, long a1, long a2, long a3)
++{
++	unsigned long ret;
++	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2),
++						  "d"(a3) : "rcx", "r9", "r11", "memory");
++	return ret;
++}
++
++static __inline long __syscall4(long n, long a1, long a2, long a3, long a4)
++{
++	unsigned long ret;
++	register long r10 __asm__("r10") = a4;
++	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2),
++						  "d"(a3), "r"(r10): "rcx", "r9", "r11", "memory");
++	return ret;
++}
++
++static __inline long __syscall5(long n, long a1, long a2, long a3, long a4, long a5)
++{
++	unsigned long ret;
++	register long r10 __asm__("r10") = a4;
++	register long r8 __asm__("r8") = a5;
++	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(a1), "S"(a2),
++						  "d"(a3), "r"(r10), "r"(r8) : "rcx", "r9", "r11", "memory");
++	return ret;
++}
++
++static __inline long __syscall6(long n, long a1, long a2, long a3, long a4, long a5, long a6)
++{
++	unsigned long ret;
++	volatile struct syscall_args args = {
++	    a1, a2, a3, a4, a5, a6, 0, 0,
++	};
++	
++	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(&args) : "rcx", "r9", "r11", "memory");
++	return ret;
++}
++
++static __inline long __syscall7(long n, long a1, long a2, long a3, long a4, long a5, long a6, long a7)
++{
++	unsigned long ret;
++	volatile struct syscall_args args = {
++	    a1, a2, a3, a4, a5, a6, a7, 0,
++	};
++	
++	__asm__ __volatile__ ("syscall" : "=a"(ret) : "a"(n), "D"(&args) : "rcx", "r9", "r11", "memory");
++	return ret;
++}
++
++#define VDSO_USEFUL
++#define VDSO_CGT_SYM "__vdso_clock_gettime"
++#define VDSO_CGT_VER "LaylaOS_0.1"
++
++#define IPC_64 0
++
++#else       /* !__laylaos__ */
++
+ static __inline long __syscall0(long n)
+ {
+ 	unsigned long ret;
+@@ -68,3 +154,5 @@
+ #define VDSO_GETCPU_VER "LINUX_2.6"
+ 
+ #define IPC_64 0
++
++#endif      /* !__laylaos__ */
+diff -rub ./musl-1.2.4/configure ./musl-1.2.4/configure
+--- ./musl-1.2.4/configure	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/configure	2023-08-23 20:52:57.997839000 +0100
+@@ -802,6 +802,7 @@
+ TOOL_LIBS = $tool_libs
+ ADD_CFI = $ADD_CFI
+ MALLOC_DIR = $malloc_dir
++TARGET = $target
+ EOF
+ test "x$static" = xno && echo "STATIC_LIBS ="
+ test "x$shared" = xno && echo "SHARED_LIBS ="
+diff -rub ./musl-1.2.4/crt/crt1.c ./musl-1.2.4/crt/crt1.c
+--- ./musl-1.2.4/crt/crt1.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/crt/crt1.c	2024-01-27 14:47:16.723551747 +0000
+@@ -8,6 +8,18 @@
+ int main();
+ weak void _init();
+ weak void _fini();
++
++#ifdef __laylaos__
++
++int __libc_start_main(int (*)(), size_t *, void (*)(), void(*)(), void(*)());
++
++void _start_c(size_t *sp)
++{
++	__libc_start_main(main, sp, _init, _fini, 0);
++}
++
++#else       /* !__laylaos__ */
++
+ int __libc_start_main(int (*)(), int, char **,
+ 	void (*)(), void(*)(), void(*)());
+ 
+@@ -17,3 +29,5 @@
+ 	char **argv = (void *)(p+1);
+ 	__libc_start_main(main, argc, argv, _init, _fini, 0);
+ }
++
++#endif      /* !__laylaos__ */
+diff -rub ./musl-1.2.4/crt/rcrt1.c ./musl-1.2.4/crt/rcrt1.c
+--- ./musl-1.2.4/crt/rcrt1.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/crt/rcrt1.c	2024-01-27 14:47:14.675511075 +0000
+@@ -5,6 +5,18 @@
+ int main();
+ weak void _init();
+ weak void _fini();
++
++#ifdef __laylaos__
++
++int __libc_start_main(int (*)(), size_t *, void (*)(), void(*)(), void(*)());
++
++hidden void __dls2(unsigned char *base, size_t *sp)
++{
++	__libc_start_main(main, sp, _init, _fini, 0);
++}
++
++#else       /* !__laylaos__ */
++
+ int __libc_start_main(int (*)(), int, char **,
+ 	void (*)(), void(*)(), void(*)());
+ 
+@@ -12,3 +24,5 @@
+ {
+ 	__libc_start_main(main, *sp, (void *)(sp+1), _init, _fini, 0);
+ }
++
++#endif      /* !__laylaos__ */
+diff -rub ./musl-1.2.4/include/alltypes.h.in ./musl-1.2.4/include/alltypes.h.in
+--- ./musl-1.2.4/include/alltypes.h.in	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/alltypes.h.in	2024-03-03 12:47:49.511484010 +0000
+@@ -59,7 +59,13 @@
+ TYPEDEF unsigned pthread_key_t;
+ TYPEDEF int pthread_spinlock_t;
+ TYPEDEF struct { unsigned __attr; } pthread_mutexattr_t;
++
++#ifndef __laylaos__
+ TYPEDEF struct { unsigned __attr; } pthread_condattr_t;
++#else
++TYPEDEF struct { clockid_t clockid; int pshared; } pthread_condattr_t;
++#endif
++
+ TYPEDEF struct { unsigned __attr; } pthread_barrierattr_t;
+ TYPEDEF struct { unsigned __attr[2]; } pthread_rwlockattr_t;
+ 
+@@ -83,10 +89,19 @@
+ TYPEDEF unsigned short sa_family_t;
+ 
+ TYPEDEF struct { union { int __i[sizeof(long)==8?14:9]; volatile int __vi[sizeof(long)==8?14:9]; unsigned long __s[sizeof(long)==8?7:9]; } __u; } pthread_attr_t;
++
++#ifndef __laylaos__
+ TYPEDEF struct { union { int __i[sizeof(long)==8?10:6]; volatile int __vi[sizeof(long)==8?10:6]; volatile void *volatile __p[sizeof(long)==8?5:6]; } __u; } pthread_mutex_t;
+ TYPEDEF struct { union { int __i[sizeof(long)==8?10:6]; volatile int __vi[sizeof(long)==8?10:6]; volatile void *volatile __p[sizeof(long)==8?5:6]; } __u; } mtx_t;
+ TYPEDEF struct { union { int __i[12]; volatile int __vi[12]; void *__p[12*sizeof(int)/sizeof(void*)]; } __u; } pthread_cond_t;
+ TYPEDEF struct { union { int __i[12]; volatile int __vi[12]; void *__p[12*sizeof(int)/sizeof(void*)]; } __u; } cnd_t;
++#else
++TYPEDEF struct { int type:2; int pshared:1; int robust:1; int prio_inherit:1; int lock; int owner; int recursion; } pthread_mutex_t;
++TYPEDEF struct { int type:2; int pshared:1; int robust:1; int prio_inherit:1; int lock; int owner; int recursion; } mtx_t;
++TYPEDEF struct { clockid_t clockid; int pshared; int lock; void *first_waiter; void *last_waiter; } pthread_cond_t;
++TYPEDEF struct { clockid_t clockid; int pshared; int lock; void *first_waiter; void *last_waiter; } cnd_t;
++#endif
++
+ TYPEDEF struct { union { int __i[sizeof(long)==8?14:8]; volatile int __vi[sizeof(long)==8?14:8]; void *__p[sizeof(long)==8?7:8]; } __u; } pthread_rwlock_t;
+ TYPEDEF struct { union { int __i[sizeof(long)==8?8:5]; volatile int __vi[sizeof(long)==8?8:5]; void *__p[sizeof(long)==8?4:5]; } __u; } pthread_barrier_t;
+ 
+diff -rub ./musl-1.2.4/include/errno.h ./musl-1.2.4/include/errno.h
+--- ./musl-1.2.4/include/errno.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/errno.h	2023-09-03 19:57:11.761152065 +0100
+@@ -19,6 +19,10 @@
+ extern char *program_invocation_short_name, *program_invocation_name;
+ #endif
+ 
++#ifdef __laylaos__
++#define __set_errno(e)      errno = (e)
++#endif
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff -rub ./musl-1.2.4/include/fcntl.h ./musl-1.2.4/include/fcntl.h
+--- ./musl-1.2.4/include/fcntl.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/fcntl.h	2023-09-03 14:29:01.520598155 +0100
+@@ -21,6 +21,10 @@
+ 
+ #include <bits/fcntl.h>
+ 
++#ifdef __laylaos__
++#include <sys/file.h>
++#endif
++
+ struct flock {
+ 	short l_type;
+ 	short l_whence;
+diff -rub ./musl-1.2.4/include/mntent.h ./musl-1.2.4/include/mntent.h
+--- ./musl-1.2.4/include/mntent.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/mntent.h	2023-09-03 18:18:57.753016756 +0100
+@@ -20,6 +20,16 @@
+ #define MNTOPT_NOSUID	"nosuid"
+ #define MNTOPT_NOAUTO	"noauto"
+ 
++#ifdef __laylaos__
++#include <paths.h>
++
++/* File listing canonical interesting mount points. */
++#define	MNTTAB				_PATH_MNTTAB	/* Deprecated alias. */
++
++/* File listing currently active mount points. */
++#define	MOUNTED				_PATH_MOUNTED	/* Deprecated alias. */
++#endif
++
+ struct mntent {
+ 	char *mnt_fsname;
+ 	char *mnt_dir;
+diff -rub ./musl-1.2.4/include/pthread.h ./musl-1.2.4/include/pthread.h
+--- ./musl-1.2.4/include/pthread.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/pthread.h	2024-04-20 14:29:04.165402264 +0100
+@@ -55,9 +55,16 @@
+ #define PTHREAD_PROCESS_SHARED 1
+ 
+ 
+-#define PTHREAD_MUTEX_INITIALIZER {{{0}}}
+ #define PTHREAD_RWLOCK_INITIALIZER {{{0}}}
++
++#ifndef __laylaos__
++#define PTHREAD_MUTEX_INITIALIZER {{{0}}}
+ #define PTHREAD_COND_INITIALIZER {{{0}}}
++#else
++#define PTHREAD_MUTEX_INITIALIZER {0, 0, 0, 0, 0, 0, 0}
++#define PTHREAD_COND_INITIALIZER {0, 0, 0, 0, 0}
++#endif
++
+ #define PTHREAD_ONCE_INIT 0
+ 
+ 
+diff -rub ./musl-1.2.4/include/signal.h ./musl-1.2.4/include/signal.h
+--- ./musl-1.2.4/include/signal.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/signal.h	2023-08-27 10:36:56.667567000 +0100
+@@ -166,6 +166,21 @@
+ #define si_syscall __si_fields.__sigsys.si_syscall
+ #define si_arch    __si_fields.__sigsys.si_arch
+ 
++#ifdef __laylaos__
++// make sigaction layout similar to our original newlib implementation
++struct sigaction {
++	sigset_t sa_mask;
++	union {
++		void (*sa_handler)(int);
++		void (*sa_sigaction)(int, siginfo_t *, void *);
++		void (*sa_sigaction_cookie)(int, siginfo_t*, void*, void*);
++	} __sa_handler;
++	void* sa_cookie;
++	void (*sa_restorer)(void);
++	int sa_flags;
++};
++#define sa_sigaction_cookie     __sa_handler.sa_sigaction_cookie
++#else
+ struct sigaction {
+ 	union {
+ 		void (*sa_handler)(int);
+@@ -175,6 +190,8 @@
+ 	int sa_flags;
+ 	void (*sa_restorer)(void);
+ };
++#endif
++
+ #define sa_handler   __sa_handler.sa_handler
+ #define sa_sigaction __sa_handler.sa_sigaction
+ 
+diff -rub ./musl-1.2.4/include/sys/acct.h ./musl-1.2.4/include/sys/acct.h
+--- ./musl-1.2.4/include/sys/acct.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/sys/acct.h	2023-09-03 14:31:53.009057889 +0100
+@@ -11,6 +11,10 @@
+ 
+ #define ACCT_COMM 16
+ 
++#ifdef __laylaos__
++#define ACCT_VERSION    3
++#endif
++
+ typedef uint16_t comp_t;
+ 
+ struct acct {
+diff -rub ./musl-1.2.4/include/sys/ptrace.h ./musl-1.2.4/include/sys/ptrace.h
+--- ./musl-1.2.4/include/sys/ptrace.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/sys/ptrace.h	2023-09-03 14:33:29.147937193 +0100
+@@ -44,6 +44,15 @@
+ #define PTRACE_GET_SYSCALL_INFO 0x420e
+ #define PTRACE_GET_RSEQ_CONFIGURATION	0x420f
+ 
++#ifdef __laylaos__
++#define PTRACE_SET_SYSCALL          23
++#define PTRACE_GET_THREAD_AREA      25
++#define PTRACE_SET_THREAD_AREA      26
++#define PTRACE_SYSEMU               31
++#define PTRACE_SYSEMU_SINGLESTEP    32
++#define PTRACE_SINGLEBLOCK          33
++#endif
++
+ #define PT_READ_I PTRACE_PEEKTEXT
+ #define PT_READ_D PTRACE_PEEKDATA
+ #define PT_READ_U PTRACE_PEEKUSER
+@@ -88,6 +97,11 @@
+ #define PTRACE_EVENT_SECCOMP 7
+ #define PTRACE_EVENT_STOP 128
+ 
++#ifdef __laylaos__
++#define PTRACE_EVENT_SYSCALL_ENTER  8
++#define PTRACE_EVENT_SYSCALL_EXIT   9
++#endif
++
+ #define PTRACE_PEEKSIGINFO_SHARED 1
+ 
+ #define PTRACE_SYSCALL_INFO_NONE 0
+@@ -131,6 +145,10 @@
+ 	};
+ };
+ 
++#ifdef __laylaos__
++#define ptrace_syscall_info         __ptrace_syscall_info
++#endif
++
+ struct __ptrace_rseq_configuration {
+ 	uint64_t rseq_abi_pointer;
+ 	uint32_t rseq_abi_size;
+diff -rub ./musl-1.2.4/include/sys/select.h ./musl-1.2.4/include/sys/select.h
+--- ./musl-1.2.4/include/sys/select.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/sys/select.h	2023-09-03 14:10:44.646244997 +0100
+@@ -35,6 +35,12 @@
+ #define NFDBITS (8*(int)sizeof(long))
+ #endif
+ 
++#ifdef __laylaos__
++#define __fds_bits      fds_bits
++#define _NFDBITS        NFDBITS
++#define	_howmany(x,y)	(((x) + ((y) - 1)) / (y))
++#endif
++
+ #if _REDIR_TIME64
+ __REDIR(select, __select_time64);
+ __REDIR(pselect, __pselect_time64);
+diff -rub ./musl-1.2.4/include/sys/socket.h ./musl-1.2.4/include/sys/socket.h
+--- ./musl-1.2.4/include/sys/socket.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/sys/socket.h	2023-09-03 12:08:54.710911524 +0100
+@@ -54,11 +54,16 @@
+ };
+ 
+ #ifdef _GNU_SOURCE
++
++#ifdef __laylaos__
++#include <sys/ucred.h>
++#else
+ struct ucred {
+ 	pid_t pid;
+ 	uid_t uid;
+ 	gid_t gid;
+ };
++#endif
+ 
+ struct mmsghdr {
+ 	struct msghdr msg_hdr;
+@@ -225,7 +230,7 @@
+ #endif
+ 
+ #ifndef SO_RCVTIMEO
+-#if __LONG_MAX == 0x7fffffff
++#if __LONG_MAX == 0x7fffffff && !defined(__laylaos__)
+ #define SO_RCVTIMEO     66
+ #define SO_SNDTIMEO     67
+ #else
+@@ -235,7 +240,7 @@
+ #endif
+ 
+ #ifndef SO_TIMESTAMP
+-#if __LONG_MAX == 0x7fffffff
++#if __LONG_MAX == 0x7fffffff && !defined(__laylaos__)
+ #define SO_TIMESTAMP    63
+ #define SO_TIMESTAMPNS  64
+ #define SO_TIMESTAMPING 65
+@@ -325,7 +330,11 @@
+ #define SOL_TLS         282
+ #define SOL_XDP         283
+ 
++#ifdef __laylaos__
++#define SOMAXCONN       4096
++#else
+ #define SOMAXCONN       128
++#endif
+ 
+ #define MSG_OOB       0x0001
+ #define MSG_PEEK      0x0002
+diff -rub ./musl-1.2.4/include/sys/utsname.h ./musl-1.2.4/include/sys/utsname.h
+--- ./musl-1.2.4/include/sys/utsname.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/sys/utsname.h	2023-09-03 12:04:21.947788629 +0100
+@@ -7,6 +7,13 @@
+ 
+ #include <features.h>
+ 
++#ifdef __laylaos__
++#ifndef _GNU_SOURCE
++#define _GNU_SOURCE
++#endif
++#define _UTSNAME_LENGTH     65
++#endif
++
+ struct utsname {
+ 	char sysname[65];
+ 	char nodename[65];
+diff -rub ./musl-1.2.4/include/termios.h ./musl-1.2.4/include/termios.h
+--- ./musl-1.2.4/include/termios.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/include/termios.h	2023-09-03 13:28:34.310873313 +0100
+@@ -20,6 +20,29 @@
+ 
+ #include <bits/termios.h>
+ 
++#ifdef __laylaos__
++
++#define c_ispeed    __c_ispeed
++#define c_ospeed    __c_ospeed
++
++/* `c_cc' member of 'struct termios' structure can be disabled by
++   using the value _POSIX_VDISABLE.  */
++#define _POSIX_VDISABLE '\0'
++
++#define NCC 8
++
++struct termio
++{
++    unsigned short int c_iflag;             /* input mode flags */
++    unsigned short int c_oflag;             /* output mode flags */
++    unsigned short int c_cflag;             /* control mode flags */
++    unsigned short int c_lflag;             /* local mode flags */
++    unsigned int c_line;                    /* line discipline */
++    unsigned char c_cc[NCC];                /* control characters */
++};
++
++#endif      /* __laylaos__ */
++
+ speed_t cfgetospeed (const struct termios *);
+ speed_t cfgetispeed (const struct termios *);
+ int cfsetospeed (struct termios *, speed_t);
+diff -rub ./musl-1.2.4/ldso/dlstart.c ./musl-1.2.4/ldso/dlstart.c
+--- ./musl-1.2.4/ldso/dlstart.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/ldso/dlstart.c	2023-09-10 01:52:35.132124787 +0100
+@@ -23,12 +23,20 @@
+ 	size_t i, aux[AUX_CNT], dyn[DYN_CNT];
+ 	size_t *rel, rel_size, base;
+ 
++#ifdef __laylaos__
++
++	size_t *auxv = (void *)(sp+3);
++
++#else       /* !__laylaos__ */
++
+ 	int argc = *sp;
+ 	char **argv = (void *)(sp+1);
+ 
+ 	for (i=argc+1; argv[i]; i++);
+ 	size_t *auxv = (void *)(argv+i+1);
+ 
++#endif      /* !__laylaos__ */
++
+ 	for (i=0; i<AUX_CNT; i++) aux[i] = 0;
+ 	for (i=0; auxv[i]; i+=2) if (auxv[i]<AUX_CNT)
+ 		aux[auxv[i]] = auxv[i+1];
+diff -rub ./musl-1.2.4/ldso/dynlink.c ./musl-1.2.4/ldso/dynlink.c
+--- ./musl-1.2.4/ldso/dynlink.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/ldso/dynlink.c	2024-01-27 12:58:14.025052241 +0000
+@@ -1014,11 +1014,23 @@
+ {
+ 	void *p;
+ 	int prot = PROT_READ|PROT_WRITE, flags = MAP_ANONYMOUS|MAP_PRIVATE;
++
++#ifdef __laylaos__
++
++	if(__syscall(SYS_mmap, 
++	             0, n, prot, flags, -1, 0, &p) < 0)
++    {
++        p = MAP_FAILED;
++    }
++
++#else
+ #ifdef SYS_mmap2
+ 	p = (void *)__syscall(SYS_mmap2, 0, n, prot, flags, -1, 0);
+ #else
+ 	p = (void *)__syscall(SYS_mmap, 0, n, prot, flags, -1, 0);
+ #endif
++#endif
++
+ 	return (unsigned long)p > -4096UL ? 0 : p;
+ }
+ 
+@@ -1708,6 +1720,14 @@
+ hidden void __dls2(unsigned char *base, size_t *sp)
+ {
+ 	size_t *auxv;
++
++#ifdef __laylaos__
++
++	auxv = (void *)(sp+3);
++	ldso.base = base;
++
++#else       /* !__laylaos__ */
++
+ 	for (auxv=sp+1+*sp+1; *auxv; auxv++);
+ 	auxv++;
+ 	if (DL_FDPIC) {
+@@ -1725,6 +1745,9 @@
+ 	} else {
+ 		ldso.base = base;
+ 	}
++
++#endif      /* !__laylaos__ */
++
+ 	Ehdr *ehdr = (void *)ldso.base;
+ 	ldso.name = ldso.shortname = "libc.so";
+ 	ldso.phnum = ehdr->e_phnum;
+@@ -1802,16 +1825,29 @@
+ 	char *env_preload=0;
+ 	char *replace_argv0=0;
+ 	size_t vdso_base;
++
++#ifdef __laylaos__
++
++	int argc = *sp;
++	char **argv = (void *)(*(uintptr_t *)(sp+1));
++	char **argv_orig = argv;
++	char **envp = (void *)(*(uintptr_t *)(sp+2));
++
++#else       /* !__laylaos__ */
++
+ 	int argc = *sp;
+ 	char **argv = (void *)(sp+1);
+ 	char **argv_orig = argv;
+ 	char **envp = argv+argc+1;
+ 
++#endif      /* !__laylaos__ */
++
+ 	/* Find aux vector just past environ[] and use it to initialize
+ 	 * global data that may be needed before we can make syscalls. */
+ 	__environ = envp;
+ 	decode_vec(auxv, aux, AUX_CNT);
+ 	search_vec(auxv, &__sysinfo, AT_SYSINFO);
++
+ 	__pthread_self()->sysinfo = __sysinfo;
+ 	libc.page_size = aux[AT_PAGESZ];
+ 	libc.secure = ((aux[0]&0x7800)!=0x7800 || aux[AT_UID]!=aux[AT_EUID]
+@@ -1886,7 +1922,44 @@
+ 				argv[0] = 0;
+ 			}
+ 		}
++
++#ifdef __laylaos__
++		sp[0] = (size_t)(argc - (argv-argv_orig));
++		sp[1] = (size_t)argv;
++		
++		char *filename = (char *)aux[AT_EXECFN];
++        //__asm__ __volatile__("xchg %%bx, %%bx"::);
++		
++		if (!filename || !strcmp(filename, "ld.so")) {
++		    filename = argv[0];
++		}
++
++		if (!filename) {
++			dprintf(2, "musl libc (" LDSO_ARCH ")\n"
++				"Version %s\n"
++				"Dynamic Program Loader\n"
++				"Usage: %s [options] [--] pathname%s\n",
++				__libc_version, ldname,
++				ldd_mode ? "" : " [args]");
++			_exit(1);
++		}
++		fd = open(filename, O_RDONLY);
++
++		if (fd < 0) {
++			dprintf(2, "%s: cannot load %s: %s\n", ldname, filename, strerror(errno));
++			_exit(1);
++		}
++		Ehdr *ehdr = map_library(fd, &app);
++		if (!ehdr) {
++			dprintf(2, "%s: %s: Not a valid dynamic program\n", ldname, filename);
++			_exit(1);
++		}
++		close(fd);
++		ldso.name = ldname;
++		app.name = filename;
++#else
+ 		argv[-1] = (void *)(argc - (argv-argv_orig));
++
+ 		if (!argv[0]) {
+ 			dprintf(2, "musl libc (" LDSO_ARCH ")\n"
+ 				"Version %s\n"
+@@ -1897,6 +1970,7 @@
+ 			_exit(1);
+ 		}
+ 		fd = open(argv[0], O_RDONLY);
++
+ 		if (fd < 0) {
+ 			dprintf(2, "%s: cannot load %s: %s\n", ldname, argv[0], strerror(errno));
+ 			_exit(1);
+@@ -1909,6 +1983,8 @@
+ 		close(fd);
+ 		ldso.name = ldname;
+ 		app.name = argv[0];
++#endif
++
+ 		aux[AT_ENTRY] = (size_t)laddr(&app, ehdr->e_entry);
+ 		/* Find the name that would have been used for the dynamic
+ 		 * linker had ldd not taken its place. */
+@@ -1977,8 +2053,15 @@
+ 				vdso.base = (void *)(vdso_base - phdr->p_vaddr + phdr->p_offset);
+ 		}
+ 		vdso.name = "";
++
++#ifdef __laylaos__
++		vdso.shortname = "laylaos-vdso.so.1";
++		vdso.relocated = 0;
++#else
+ 		vdso.shortname = "linux-gate.so.1";
+ 		vdso.relocated = 1;
++#endif
++
+ 		vdso.deps = (struct dso **)no_deps;
+ 		decode_dyn(&vdso);
+ 		vdso.prev = tail;
+@@ -2070,7 +2153,12 @@
+ 
+ 	errno = 0;
+ 
++#ifdef __laylaos__
++	CRTJMP((void *)aux[AT_ENTRY], sp);
++#else
+ 	CRTJMP((void *)aux[AT_ENTRY], argv-1);
++#endif
++
+ 	for(;;);
+ }
+ 
+diff -rub ./musl-1.2.4/Makefile ./musl-1.2.4/Makefile
+--- ./musl-1.2.4/Makefile	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/Makefile	2023-08-25 19:48:27.283234000 +0100
+@@ -78,6 +78,14 @@
+ -include config.mak
+ -include $(srcdir)/arch/$(ARCH)/arch.mak
+ 
++
++ifneq (,$(findstring laylaos,$(TARGET)))
++    ARCH_SYSCALL_H = $(srcdir)/arch/$(ARCH)/bits/syscall-laylaos.h.in
++else
++    ARCH_SYSCALL_H = $(srcdir)/arch/$(ARCH)/bits/syscall.h.in
++endif
++
++
+ ifeq ($(ARCH),)
+ 
+ all:
+@@ -98,9 +106,9 @@
+ obj/include/bits/alltypes.h: $(srcdir)/arch/$(ARCH)/bits/alltypes.h.in $(srcdir)/include/alltypes.h.in $(srcdir)/tools/mkalltypes.sed
+ 	sed -f $(srcdir)/tools/mkalltypes.sed $(srcdir)/arch/$(ARCH)/bits/alltypes.h.in $(srcdir)/include/alltypes.h.in > $@
+ 
+-obj/include/bits/syscall.h: $(srcdir)/arch/$(ARCH)/bits/syscall.h.in
+-	cp $< $@
+-	sed -n -e s/__NR_/SYS_/p < $< >> $@
++obj/include/bits/syscall.h:
++	cp $(ARCH_SYSCALL_H) $@
++	sed -n -e s/__NR_/SYS_/p < $(ARCH_SYSCALL_H) >> $@
+ 
+ obj/src/internal/version.h: $(wildcard $(srcdir)/VERSION $(srcdir)/.git)
+ 	printf '#define VERSION "%s"\n' "$$(cd $(srcdir); sh tools/version.sh)" > $@
+diff -rub ./musl-1.2.4/src/aio/aio.c ./musl-1.2.4/src/aio/aio.c
+--- ./musl-1.2.4/src/aio/aio.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/aio/aio.c	2023-08-25 19:30:35.736545000 +0100
+@@ -200,11 +200,21 @@
+ 			.si_pid = getpid(),
+ 			.si_uid = getuid()
+ 		};
++
++#ifndef __laylaos__
+ 		__syscall(SYS_rt_sigqueueinfo, si.si_pid, si.si_signo, &si);
++#else
++#pragma message "rt_sigqueueinfo is not supported on LaylaOS."
++#endif
+ 	}
+ 	if (sev.sigev_notify == SIGEV_THREAD) {
+ 		a_store(&__pthread_self()->cancel, 0);
++
++#ifndef __laylaos__
+ 		sev.sigev_notify_function(sev.sigev_value);
++#else
++#pragma message "sigev_notify_function is not supported on LaylaOS."
++#endif
+ 	}
+ }
+ 
+diff -rub ./musl-1.2.4/src/aio/lio_listio.c ./musl-1.2.4/src/aio/lio_listio.c
+--- ./musl-1.2.4/src/aio/lio_listio.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/aio/lio_listio.c	2023-08-25 19:33:17.772642000 +0100
+@@ -46,7 +46,12 @@
+ 		.si_pid = getpid(),
+ 		.si_uid = getuid()
+ 	};
++
++#ifndef __laylaos__
+ 	__syscall(SYS_rt_sigqueueinfo, si.si_pid, si.si_signo, &si);
++#else
++#pragma message "rt_sigqueueinfo is not supported on LaylaOS."
++#endif
+ }
+ 
+ static void *wait_thread(void *p)
+@@ -60,7 +65,11 @@
+ 		notify_signal(sev);
+ 		break;
+ 	case SIGEV_THREAD:
++#ifndef __laylaos__
+ 		sev->sigev_notify_function(sev->sigev_value);
++#else
++#pragma message "sigev_notify_function is not supported on LaylaOS."
++#endif
+ 		break;
+ 	}
+ 	return 0;
+@@ -117,9 +126,13 @@
+ 		pthread_t td;
+ 
+ 		if (sev->sigev_notify == SIGEV_THREAD) {
++#ifndef __laylaos__
+ 			if (sev->sigev_notify_attributes)
+ 				a = *sev->sigev_notify_attributes;
+ 			else
++#else
++#pragma message "sigev_notify_function is not supported on LaylaOS."
++#endif
+ 				pthread_attr_init(&a);
+ 		} else {
+ 			pthread_attr_init(&a);
+diff -rub ./musl-1.2.4/src/conf/sysconf.c ./musl-1.2.4/src/conf/sysconf.c
+--- ./musl-1.2.4/src/conf/sysconf.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/conf/sysconf.c	2023-08-25 19:42:44.684414000 +0100
+@@ -203,7 +203,11 @@
+ 	case JT_NPROCESSORS_ONLN & 255: ;
+ 		unsigned char set[128] = {1};
+ 		int i, cnt;
++#ifndef __laylaos__
+ 		__syscall(SYS_sched_getaffinity, 0, sizeof set, set);
++#else
++#pragma message "sched_getaffinity is not supported on LaylaOS."
++#endif
+ 		for (i=cnt=0; i<sizeof set; i++)
+ 			for (; set[i]; set[i]&=set[i]-1, cnt++);
+ 		return cnt;
+diff -rub ./musl-1.2.4/src/env/__init_tls.c ./musl-1.2.4/src/env/__init_tls.c
+--- ./musl-1.2.4/src/env/__init_tls.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/env/__init_tls.c	2023-09-17 20:26:51.015203093 +0100
+@@ -19,7 +19,12 @@
+ 	if (r < 0) return -1;
+ 	if (!r) libc.can_do_threads = 1;
+ 	td->detach_state = DT_JOINABLE;
++#ifndef __laylaos__
+ 	td->tid = __syscall(SYS_set_tid_address, &__thread_list_lock);
++#else
++#pragma message "set_tid_address is not supported on LaylaOS."
++	td->tid = __syscall(SYS_gettid);
++#endif
+ 	td->locale = &libc.global_locale;
+ 	td->robust_list.head = &td->robust_list.head;
+ 	td->sysinfo = __sysinfo;
+@@ -131,6 +136,18 @@
+ 		+ MIN_TLS_ALIGN-1 & -MIN_TLS_ALIGN;
+ 
+ 	if (libc.tls_size > sizeof builtin_tls) {
++
++#ifdef __laylaos__
++
++	if(__syscall(SYS_mmap, 
++	             0, libc.tls_size, PROT_READ|PROT_WRITE,
++			     MAP_ANONYMOUS|MAP_PRIVATE, -1, 0, &mem) < 0)
++    {
++        mem = MAP_FAILED;
++    }
++
++#else
++
+ #ifndef SYS_mmap2
+ #define SYS_mmap2 SYS_mmap
+ #endif
+@@ -141,6 +158,9 @@
+ 		/* -4095...-1 cast to void * will crash on dereference anyway,
+ 		 * so don't bloat the init code checking for error codes and
+ 		 * explicitly calling a_crash(). */
++
++#endif
++
+ 	} else {
+ 		mem = builtin_tls;
+ 	}
+diff -rub ./musl-1.2.4/src/env/__libc_start_main.c ./musl-1.2.4/src/env/__libc_start_main.c
+--- ./musl-1.2.4/src/env/__libc_start_main.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/env/__libc_start_main.c	2024-01-27 14:47:18.579588607 +0000
+@@ -20,12 +20,22 @@
+ #ifdef __GNUC__
+ __attribute__((__noinline__))
+ #endif
++#ifdef __laylaos__
++void __init_libc(char **envp, char *pn, size_t *__auxv)
++#else       /* !__laylaos__ */
+ void __init_libc(char **envp, char *pn)
++#endif      /* !__laylaos__ */
+ {
+ 	size_t i, *auxv, aux[AUX_CNT] = { 0 };
+ 	__environ = envp;
++
++#ifdef __laylaos__
++	libc.auxv = auxv = __auxv;
++#else       /* !__laylaos__ */
+ 	for (i=0; envp[i]; i++);
+ 	libc.auxv = auxv = (void *)(envp+i+1);
++#endif      /* !__laylaos__ */
++
+ 	for (i=0; auxv[i]; i+=2) if (auxv[i]<AUX_CNT) aux[auxv[i]] = auxv[i+1];
+ 	__hwcap = aux[AT_HWCAP];
+ 	if (aux[AT_SYSINFO]) __sysinfo = aux[AT_SYSINFO];
+@@ -66,6 +76,42 @@
+ 
+ weak_alias(libc_start_init, __libc_start_init);
+ 
++#ifdef __laylaos__
++
++typedef int lsm2_fn(int (*)(int,char **,char **), int, char **, char **);
++static lsm2_fn libc_start_main_stage2;
++
++int __libc_start_main(int (*main)(int,char **,char **), long *sp,
++	void (*init_dummy)(), void(*fini_dummy)(), void(*ldso_dummy)())
++{
++	int argc = *sp;
++	char **argv = (void *)(*(uintptr_t *)(sp+1));
++	char **envp = (void *)(*(uintptr_t *)(sp+2));
++	size_t *auxv = (void *)(sp+3);
++
++	/* External linkage, and explicit noinline attribute if available,
++	 * are used to prevent the stack frame used during init from
++	 * persisting for the entire process lifetime. */
++	__init_libc(envp, argv[0], auxv);
++
++	/* Barrier against hoisting application code or anything using ssp
++	 * or thread pointer prior to its initialization above. */
++	lsm2_fn *stage2 = libc_start_main_stage2;
++	__asm__ ( "" : "+r"(stage2) : : "memory" );
++	return stage2(main, argc, argv, envp);
++}
++
++static int libc_start_main_stage2(int (*main)(int,char **,char **), int argc, char **argv, char **envp)
++{
++	__libc_start_init();
++
++	/* Pass control to the application */
++	exit(main(argc, argv, envp));
++	return 0;
++}
++
++#else       /* !__laylaos__ */
++
+ typedef int lsm2_fn(int (*)(int,char **,char **), int, char **);
+ static lsm2_fn libc_start_main_stage2;
+ 
+@@ -95,3 +141,5 @@
+ 	exit(main(argc, argv, envp));
+ 	return 0;
+ }
++
++#endif      /* !__laylaos__ */
+diff -rub ./musl-1.2.4/src/exit/abort.c ./musl-1.2.4/src/exit/abort.c
+--- ./musl-1.2.4/src/exit/abort.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/exit/abort.c	2023-08-25 20:07:31.257232000 +0100
+@@ -17,11 +17,19 @@
+ 	 * the default action of abnormal termination. */
+ 	__block_all_sigs(0);
+ 	LOCK(__abort_lock);
++#ifndef __laylaos__
+ 	__syscall(SYS_rt_sigaction, SIGABRT,
+ 		&(struct k_sigaction){.handler = SIG_DFL}, 0, _NSIG/8);
+ 	__syscall(SYS_tkill, __pthread_self()->tid, SIGABRT);
+ 	__syscall(SYS_rt_sigprocmask, SIG_UNBLOCK,
+ 		&(long[_NSIG/(8*sizeof(long))]){1UL<<(SIGABRT-1)}, 0, _NSIG/8);
++#else
++	sigaction(SIGABRT,
++		&(struct sigaction){.sa_handler = SIG_DFL}, 0);
++	raise(SIGABRT);
++	sigprocmask(SIG_UNBLOCK,
++		(const sigset_t*)&(long[_NSIG/(8*sizeof(long))]){1UL<<(SIGABRT-1)}, 0);
++#endif
+ 
+ 	/* Beyond this point should be unreachable. */
+ 	a_crash();
+diff -rub ./musl-1.2.4/src/fcntl/posix_fadvise.c ./musl-1.2.4/src/fcntl/posix_fadvise.c
+--- ./musl-1.2.4/src/fcntl/posix_fadvise.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/fcntl/posix_fadvise.c	2023-08-25 20:09:42.840112000 +0100
+@@ -3,7 +3,10 @@
+ 
+ int posix_fadvise(int fd, off_t base, off_t len, int advice)
+ {
+-#if defined(SYSCALL_FADVISE_6_ARG)
++#ifdef __laylaos__
++	errno = ENOSYS;
++	return -1;
++#elif defined(SYSCALL_FADVISE_6_ARG)
+ 	/* Some archs, at least arm and powerpc, have the syscall
+ 	 * arguments reordered to avoid needing 7 argument registers
+ 	 * due to 64-bit argument alignment. */
+diff -rub ./musl-1.2.4/src/fcntl/posix_fallocate.c ./musl-1.2.4/src/fcntl/posix_fallocate.c
+--- ./musl-1.2.4/src/fcntl/posix_fallocate.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/fcntl/posix_fallocate.c	2023-08-26 19:13:14.533372000 +0100
+@@ -1,3 +1,4 @@
++#ifndef __laylaos__
+ #include <fcntl.h>
+ #include "syscall.h"
+ 
+@@ -6,3 +7,4 @@
+ 	return -__syscall(SYS_fallocate, fd, 0, __SYSCALL_LL_E(base),
+ 		__SYSCALL_LL_E(len));
+ }
++#endif
+diff -rub ./musl-1.2.4/src/internal/libc.h ./musl-1.2.4/src/internal/libc.h
+--- ./musl-1.2.4/src/internal/libc.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/internal/libc.h	2023-09-02 21:27:25.583591202 +0100
+@@ -37,7 +37,12 @@
+ extern hidden struct __libc __libc;
+ #define libc __libc
+ 
++#ifdef __laylaos__
++hidden void __init_libc(char **, char *, size_t *);
++#else
+ hidden void __init_libc(char **, char *);
++#endif
++
+ hidden void __init_tls(size_t *);
+ hidden void __init_ssp(void *);
+ hidden void __libc_start_init(void);
+diff -rub ./musl-1.2.4/src/internal/pthread_impl.h ./musl-1.2.4/src/internal/pthread_impl.h
+--- ./musl-1.2.4/src/internal/pthread_impl.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/internal/pthread_impl.h	2024-03-03 12:50:14.359586246 +0000
+@@ -169,16 +169,72 @@
+ {
+ 	if (priv) priv = FUTEX_PRIVATE;
+ 	if (cnt<0) cnt = INT_MAX;
++#ifndef __laylaos__
+ 	__syscall(SYS_futex, addr, FUTEX_WAKE|priv, cnt) != -ENOSYS ||
+ 	__syscall(SYS_futex, addr, FUTEX_WAKE, cnt);
++#else
++#pragma message "Futexes are not supported on LaylaOS."
++#endif
+ }
+ static inline void __futexwait(volatile void *addr, int val, int priv)
+ {
+ 	if (priv) priv = FUTEX_PRIVATE;
++#ifndef __laylaos__
+ 	__syscall(SYS_futex, addr, FUTEX_WAIT|priv, val, 0) != -ENOSYS ||
+ 	__syscall(SYS_futex, addr, FUTEX_WAIT, val, 0);
++#else
++#pragma message "Futexes are not supported on LaylaOS."
++	while(*(volatile int *)addr == val) {
++		sched_yield();
++	}
++#endif
+ }
+ 
++
++#ifdef __laylaos__
++
++struct cond_waiter_t
++{
++    struct cond_waiter_t *next;
++    volatile int signalled;
++};
++
++#define SST_SIZE (_NSIG/8/sizeof(long))
++
++static inline int signotset(sigset_t *dest, const sigset_t *src)
++{
++	unsigned long i = 0, *d = (void*) dest, *s = (void*) src;
++	for(; i < SST_SIZE; i++) d[i] = ~s[i];
++	return 0;
++}
++
++#undef SST_SIZE
++
++/* initialize 'ts' with the difference between 'abstime' and the current time
++ * according to 'clock'. Returns -1 if abstime already expired, or 0 otherwise.
++ */
++static inline int
++__timespec_to_absolute(struct timespec *ts, const struct timespec *abstime,
++                       clockid_t  clock)
++{
++    clock_gettime(clock, ts);
++    ts->tv_sec  = abstime->tv_sec - ts->tv_sec;
++    ts->tv_nsec = abstime->tv_nsec - ts->tv_nsec;
++
++    if (ts->tv_nsec < 0) {
++        ts->tv_sec--;
++        ts->tv_nsec += 1000000000;
++    }
++
++    if ((ts->tv_nsec < 0) || (ts->tv_sec < 0))
++        return -1;
++    
++    return 0;
++}
++
++#endif
++
++
+ hidden void __acquire_ptc(void);
+ hidden void __release_ptc(void);
+ hidden void __inhibit_ptc(void);
+diff -rub ./musl-1.2.4/src/internal/syscall.h ./musl-1.2.4/src/internal/syscall.h
+--- ./musl-1.2.4/src/internal/syscall.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/internal/syscall.h	2023-09-08 20:51:57.086909585 +0100
+@@ -23,10 +23,23 @@
+ typedef long syscall_arg_t;
+ #endif
+ 
++#ifdef __laylaos__
++
++hidden long __syscall_ret(unsigned long),
++	__laylaos_syscall_cp012345(syscall_arg_t, syscall_arg_t, syscall_arg_t, 
++	                           syscall_arg_t, syscall_arg_t, syscall_arg_t),
++	__laylaos_syscall_cp6(syscall_arg_t, syscall_arg_t, syscall_arg_t, 
++	                      syscall_arg_t, syscall_arg_t, syscall_arg_t,
++	                      syscall_arg_t);
++
++#else       /* !__laylaos__ */
++
+ hidden long __syscall_ret(unsigned long),
+ 	__syscall_cp(syscall_arg_t, syscall_arg_t, syscall_arg_t, syscall_arg_t,
+ 	             syscall_arg_t, syscall_arg_t, syscall_arg_t);
+ 
++#endif      /* !__laylaos__ */
++
+ #define __syscall1(n,a) __syscall1(n,__scc(a))
+ #define __syscall2(n,a,b) __syscall2(n,__scc(a),__scc(b))
+ #define __syscall3(n,a,b,c) __syscall3(n,__scc(a),__scc(b),__scc(c))
+@@ -47,6 +60,18 @@
+ #define socketcall(nm,a,b,c,d,e,f) __syscall_ret(__socketcall(nm,a,b,c,d,e,f))
+ #define socketcall_cp(nm,a,b,c,d,e,f) __syscall_ret(__socketcall_cp(nm,a,b,c,d,e,f))
+ 
++#ifdef __laylaos__
++
++#define __syscall_cp0(n) (__laylaos_syscall_cp012345)(n,0,0,0,0,0)
++#define __syscall_cp1(n,a) (__laylaos_syscall_cp012345)(n,__scc(a),0,0,0,0)
++#define __syscall_cp2(n,a,b) (__laylaos_syscall_cp012345)(n,__scc(a),__scc(b),0,0,0)
++#define __syscall_cp3(n,a,b,c) (__laylaos_syscall_cp012345)(n,__scc(a),__scc(b),__scc(c),0,0)
++#define __syscall_cp4(n,a,b,c,d) (__laylaos_syscall_cp012345)(n,__scc(a),__scc(b),__scc(c),__scc(d),0)
++#define __syscall_cp5(n,a,b,c,d,e) (__laylaos_syscall_cp012345)(n,__scc(a),__scc(b),__scc(c),__scc(d),__scc(e))
++#define __syscall_cp6(n,a,b,c,d,e,f) (__laylaos_syscall_cp6)(n,__scc(a),__scc(b),__scc(c),__scc(d),__scc(e),__scc(f))
++
++#else       /* !__laylaos__ */
++
+ #define __syscall_cp0(n) (__syscall_cp)(n,0,0,0,0,0,0)
+ #define __syscall_cp1(n,a) (__syscall_cp)(n,__scc(a),0,0,0,0,0)
+ #define __syscall_cp2(n,a,b) (__syscall_cp)(n,__scc(a),__scc(b),0,0,0,0)
+@@ -55,15 +80,19 @@
+ #define __syscall_cp5(n,a,b,c,d,e) (__syscall_cp)(n,__scc(a),__scc(b),__scc(c),__scc(d),__scc(e),0)
+ #define __syscall_cp6(n,a,b,c,d,e,f) (__syscall_cp)(n,__scc(a),__scc(b),__scc(c),__scc(d),__scc(e),__scc(f))
+ 
++#endif      /* !__laylaos__ */
++
+ #define __syscall_cp(...) __SYSCALL_DISP(__syscall_cp,__VA_ARGS__)
+ #define syscall_cp(...) __syscall_ret(__syscall_cp(__VA_ARGS__))
+ 
+ static inline long __alt_socketcall(int sys, int sock, int cp, syscall_arg_t a, syscall_arg_t b, syscall_arg_t c, syscall_arg_t d, syscall_arg_t e, syscall_arg_t f)
+ {
+ 	long r;
++#ifndef __laylaos__
+ 	if (cp) r = __syscall_cp(sys, a, b, c, d, e, f);
+ 	else r = __syscall(sys, a, b, c, d, e, f);
+ 	if (r != -ENOSYS) return r;
++#endif
+ #ifdef SYS_socketcall
+ 	if (cp) r = __syscall_cp(SYS_socketcall, sock, ((long[6]){a, b, c, d, e, f}));
+ 	else r = __syscall(SYS_socketcall, sock, ((long[6]){a, b, c, d, e, f}));
+diff -rub ./musl-1.2.4/src/internal/vdso.c ./musl-1.2.4/src/internal/vdso.c
+--- ./musl-1.2.4/src/internal/vdso.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/internal/vdso.c	2024-01-26 19:50:42.947782541 +0000
+@@ -8,6 +8,10 @@
+ 
+ #ifdef VDSO_USEFUL
+ 
++#ifdef __laylaos__
++extern uintptr_t vdso_base_addr;
++#endif
++
+ #if ULONG_MAX == 0xffffffff
+ typedef Elf32_Ehdr Ehdr;
+ typedef Elf32_Phdr Phdr;
+@@ -46,6 +50,11 @@
+ 	for (i=0; libc.auxv[i] != AT_SYSINFO_EHDR; i+=2)
+ 		if (!libc.auxv[i]) return 0;
+ 	if (!libc.auxv[i+1]) return 0;
++
++#ifdef __laylaos__
++    vdso_base_addr = libc.auxv[i+1];
++#endif
++
+ 	Ehdr *eh = (void *)libc.auxv[i+1];
+ 	Phdr *ph = (void *)((char *)eh + eh->e_phoff);
+ 	size_t *dynv=0, base=-1;
+diff -rub ./musl-1.2.4/src/ipc/msgctl.c ./musl-1.2.4/src/ipc/msgctl.c
+--- ./musl-1.2.4/src/ipc/msgctl.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/msgctl.c	2023-09-09 09:27:30.645132160 +0100
+@@ -25,7 +25,7 @@
+ 		buf = &tmp;
+ 	}
+ #endif
+-#ifndef SYS_ipc
++#if defined(__laylaos__) || !defined(SYS_ipc)
+ 	int r = __syscall(SYS_msgctl, q, IPC_CMD(cmd), buf);
+ #else
+ 	int r = __syscall(SYS_ipc, IPCOP_msgctl, q, IPC_CMD(cmd), 0, buf, 0);
+diff -rub ./musl-1.2.4/src/ipc/msgget.c ./musl-1.2.4/src/ipc/msgget.c
+--- ./musl-1.2.4/src/ipc/msgget.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/msgget.c	2023-09-09 09:27:59.909140126 +0100
+@@ -4,7 +4,7 @@
+ 
+ int msgget(key_t k, int flag)
+ {
+-#ifndef SYS_ipc
++#if defined(__laylaos__) || !defined(SYS_ipc)
+ 	return syscall(SYS_msgget, k, flag);
+ #else
+ 	return syscall(SYS_ipc, IPCOP_msgget, k, flag);
+diff -rub ./musl-1.2.4/src/ipc/msgrcv.c ./musl-1.2.4/src/ipc/msgrcv.c
+--- ./musl-1.2.4/src/ipc/msgrcv.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/msgrcv.c	2023-08-27 14:07:38.292472000 +0100
+@@ -4,9 +4,24 @@
+ 
+ ssize_t msgrcv(int q, void *m, size_t len, long type, int flag)
+ {
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    int res;
++    
++    res = __syscall_cp(SYS_msgrcv, q, m, len, type, flag, &bytes);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return (ssize_t)-1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ #ifndef SYS_ipc
+ 	return syscall_cp(SYS_msgrcv, q, m, len, type, flag);
+ #else
+ 	return syscall_cp(SYS_ipc, IPCOP_msgrcv, q, len, flag, ((long[]){ (long)m, type }));
+ #endif
++#endif
+ }
+diff -rub ./musl-1.2.4/src/ipc/msgsnd.c ./musl-1.2.4/src/ipc/msgsnd.c
+--- ./musl-1.2.4/src/ipc/msgsnd.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/msgsnd.c	2023-09-09 09:28:56.061164583 +0100
+@@ -4,7 +4,7 @@
+ 
+ int msgsnd(int q, const void *m, size_t len, int flag)
+ {
+-#ifndef SYS_ipc
++#if defined(__laylaos__) || !defined(SYS_ipc)
+ 	return syscall_cp(SYS_msgsnd, q, m, len, flag);
+ #else
+ 	return syscall_cp(SYS_ipc, IPCOP_msgsnd, q, len, flag, m);
+diff -rub ./musl-1.2.4/src/ipc/semctl.c ./musl-1.2.4/src/ipc/semctl.c
+--- ./musl-1.2.4/src/ipc/semctl.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/semctl.c	2023-09-03 11:51:14.112982008 +0100
+@@ -44,11 +44,17 @@
+ 		arg.buf = &tmp;
+ 	}
+ #endif
++
++#ifdef __laylaos__
++	int r = __syscall(SYS_semctl, id, num, IPC_CMD(cmd), &arg);
++#else
+ #ifndef SYS_ipc
+ 	int r = __syscall(SYS_semctl, id, num, IPC_CMD(cmd), arg.buf);
+ #else
+ 	int r = __syscall(SYS_ipc, IPCOP_semctl, id, num, IPC_CMD(cmd), &arg.buf);
+ #endif
++#endif
++
+ #ifdef SYSCALL_IPC_BROKEN_MODE
+ 	if (r >= 0) switch (cmd | IPC_TIME64) {
+ 	case IPC_STAT:
+diff -rub ./musl-1.2.4/src/ipc/semget.c ./musl-1.2.4/src/ipc/semget.c
+--- ./musl-1.2.4/src/ipc/semget.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/semget.c	2023-09-09 09:29:37.305189616 +0100
+@@ -11,7 +11,7 @@
+ 	 * n fits in the correct (per POSIX) userspace type, so
+ 	 * we have to check here. */
+ 	if (n > USHRT_MAX) return __syscall_ret(-EINVAL);
+-#ifndef SYS_ipc
++#if defined(__laylaos__) || !defined(SYS_ipc)
+ 	return syscall(SYS_semget, key, n, fl);
+ #else
+ 	return syscall(SYS_ipc, IPCOP_semget, key, n, fl);
+diff -rub ./musl-1.2.4/src/ipc/semop.c ./musl-1.2.4/src/ipc/semop.c
+--- ./musl-1.2.4/src/ipc/semop.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/semop.c	2023-09-09 09:30:02.705207778 +0100
+@@ -4,7 +4,7 @@
+ 
+ int semop(int id, struct sembuf *buf, size_t n)
+ {
+-#ifndef SYS_ipc
++#if defined(__laylaos__) || !defined(SYS_ipc)
+ 	return syscall(SYS_semop, id, buf, n);
+ #else
+ 	return syscall(SYS_ipc, IPCOP_semop, id, n, 0, buf);
+diff -rub ./musl-1.2.4/src/ipc/semtimedop.c ./musl-1.2.4/src/ipc/semtimedop.c
+--- ./musl-1.2.4/src/ipc/semtimedop.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/semtimedop.c	2023-09-09 09:31:19.249274061 +0100
+@@ -26,6 +26,10 @@
+ 	if (NO_TIME32 || r!=-ENOSYS) return __syscall_ret(r);
+ 	ts = ts ? (void *)(long[]){CLAMP(s), ns} : 0;
+ #endif
++
++#ifdef __laylaos__
++	return __syscall_ret(-ENOSYS);
++#else
+ #if defined(SYS_ipc)
+ 	return syscall(SYS_ipc, IPCOP_semtimedop, id, n, 0, buf, ts);
+ #elif defined(SYS_semtimedop)
+@@ -33,4 +37,5 @@
+ #else
+ 	return __syscall_ret(-ENOSYS);
+ #endif
++#endif
+ }
+diff -rub ./musl-1.2.4/src/ipc/shmat.c ./musl-1.2.4/src/ipc/shmat.c
+--- ./musl-1.2.4/src/ipc/shmat.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/shmat.c	2024-06-07 21:07:46.713641201 +0100
+@@ -1,7 +1,25 @@
+ #include <sys/shm.h>
++#include <stdio.h>
+ #include "syscall.h"
+ #include "ipc.h"
+ 
++#ifdef __laylaos__
++void *shmat(int id, const void *addr, int flag)
++{
++    volatile void *res_addr = NULL;
++    long res;
++    
++    res = __syscall4(SYS_shmat, id, addr, flag, &res_addr);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return (void *)-1;
++    }
++    
++    return (void *)res_addr;
++}
++#else
+ #ifndef SYS_ipc
+ void *shmat(int id, const void *addr, int flag)
+ {
+@@ -15,3 +33,4 @@
+ 	return (ret > -(unsigned long)SHMLBA) ? (void *)ret : (void *)addr;
+ }
+ #endif
++#endif
+diff -rub ./musl-1.2.4/src/ipc/shmctl.c ./musl-1.2.4/src/ipc/shmctl.c
+--- ./musl-1.2.4/src/ipc/shmctl.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/shmctl.c	2023-09-09 09:32:12.997329970 +0100
+@@ -25,7 +25,7 @@
+ 		buf = &tmp;
+ 	}
+ #endif
+-#ifndef SYS_ipc
++#if defined(__laylaos__) || !defined(SYS_ipc)
+ 	int r = __syscall(SYS_shmctl, id, IPC_CMD(cmd), buf);
+ #else
+ 	int r = __syscall(SYS_ipc, IPCOP_shmctl, id, IPC_CMD(cmd), 0, buf, 0);
+diff -rub ./musl-1.2.4/src/ipc/shmdt.c ./musl-1.2.4/src/ipc/shmdt.c
+--- ./musl-1.2.4/src/ipc/shmdt.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/shmdt.c	2023-09-09 09:32:34.033353765 +0100
+@@ -4,7 +4,7 @@
+ 
+ int shmdt(const void *addr)
+ {
+-#ifndef SYS_ipc
++#if defined(__laylaos__) || !defined(SYS_ipc)
+ 	return syscall(SYS_shmdt, addr);
+ #else
+ 	return syscall(SYS_ipc, IPCOP_shmdt, 0, 0, 0, addr);
+diff -rub ./musl-1.2.4/src/ipc/shmget.c ./musl-1.2.4/src/ipc/shmget.c
+--- ./musl-1.2.4/src/ipc/shmget.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/ipc/shmget.c	2023-09-09 09:26:37.605126848 +0100
+@@ -6,7 +6,7 @@
+ int shmget(key_t key, size_t size, int flag)
+ {
+ 	if (size > PTRDIFF_MAX) size = SIZE_MAX;
+-#ifndef SYS_ipc
++#if defined(__laylaos__) || !defined(SYS_ipc)
+ 	return syscall(SYS_shmget, key, size, flag);
+ #else
+ 	return syscall(SYS_ipc, IPCOP_shmget, key, size, flag);
+diff -rub ./musl-1.2.4/src/linux/cap.c ./musl-1.2.4/src/linux/cap.c
+--- ./musl-1.2.4/src/linux/cap.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/cap.c	2023-08-25 20:14:08.507497000 +0100
+@@ -2,10 +2,20 @@
+ 
+ int capset(void *a, void *b)
+ {
++#ifdef __laylaos__
++	errno = ENOSYS;
++	return -1;
++#else
+ 	return syscall(SYS_capset, a, b);
++#endif
+ }
+ 
+ int capget(void *a, void *b)
+ {
++#ifdef __laylaos__
++	errno = ENOSYS;
++	return -1;
++#else
+ 	return syscall(SYS_capget, a, b);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/clock_adjtime.c ./musl-1.2.4/src/linux/clock_adjtime.c
+--- ./musl-1.2.4/src/linux/clock_adjtime.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/clock_adjtime.c	2023-08-25 22:27:17.900060000 +0100
+@@ -118,6 +118,7 @@
+ 		if (clock_id==CLOCK_REALTIME) r = __syscall(SYS_adjtimex, &ktx);
+ 		else
+ #endif
++#ifndef __laylaos__
+ 		r = __syscall(SYS_clock_adjtime, clock_id, &ktx);
+ 		if (r>=0) {
+ 			utx->modes = ktx.modes;
+@@ -143,9 +144,18 @@
+ 			utx->tai = ktx.tai;
+ 		}
+ 		return __syscall_ret(r);
++#else
++		errno = ENOSYS;
++		return -1;
++#endif
+ 	}
+ #ifdef SYS_adjtimex
+ 	if (clock_id==CLOCK_REALTIME) return syscall(SYS_adjtimex, utx);
+ #endif
++#ifndef __laylaos__
+ 	return syscall(SYS_clock_adjtime, clock_id, utx);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/clone.c ./musl-1.2.4/src/linux/clone.c
+--- ./musl-1.2.4/src/linux/clone.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/clone.c	2023-11-11 20:27:05.857681572 +0000
+@@ -17,5 +17,16 @@
+ 	ctid = va_arg(ap, pid_t *);
+ 	va_end(ap);
+ 
++#ifdef __laylaos__
++	int res = __syscall_ret(__clone(func, stack, flags, arg, ptid, tls, ctid));
++	
++	if(res > 0 && ptid)
++	{
++	    *ptid = res;
++	}
++	
++	return res;
++#else
+ 	return __syscall_ret(__clone(func, stack, flags, arg, ptid, tls, ctid));
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/copy_file_range.c ./musl-1.2.4/src/linux/copy_file_range.c
+--- ./musl-1.2.4/src/linux/copy_file_range.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/copy_file_range.c	2023-08-25 22:28:01.987838000 +0100
+@@ -4,5 +4,10 @@
+ 
+ ssize_t copy_file_range(int fd_in, off_t *off_in, int fd_out, off_t *off_out, size_t len, unsigned flags)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_copy_file_range, fd_in, off_in, fd_out, off_out, len, flags);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/epoll.c ./musl-1.2.4/src/linux/epoll.c
+--- ./musl-1.2.4/src/linux/epoll.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/epoll.c	2023-08-25 22:30:08.032036000 +0100
+@@ -11,25 +11,40 @@
+ 
+ int epoll_create1(int flags)
+ {
++#ifndef __laylaos__
+ 	int r = __syscall(SYS_epoll_create1, flags);
+ #ifdef SYS_epoll_create
+ 	if (r==-ENOSYS && !flags) r = __syscall(SYS_epoll_create, 1);
+ #endif
+ 	return __syscall_ret(r);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+ 
+ int epoll_ctl(int fd, int op, int fd2, struct epoll_event *ev)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_epoll_ctl, fd, op, fd2, ev);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+ 
+ int epoll_pwait(int fd, struct epoll_event *ev, int cnt, int to, const sigset_t *sigs)
+ {
++#ifndef __laylaos__
+ 	int r = __syscall_cp(SYS_epoll_pwait, fd, ev, cnt, to, sigs, _NSIG/8);
+ #ifdef SYS_epoll_wait
+ 	if (r==-ENOSYS && !sigs) r = __syscall_cp(SYS_epoll_wait, fd, ev, cnt, to);
+ #endif
+ 	return __syscall_ret(r);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+ 
+ int epoll_wait(int fd, struct epoll_event *ev, int cnt, int to)
+diff -rub ./musl-1.2.4/src/linux/eventfd.c ./musl-1.2.4/src/linux/eventfd.c
+--- ./musl-1.2.4/src/linux/eventfd.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/eventfd.c	2023-08-25 22:30:55.820266000 +0100
+@@ -5,11 +5,16 @@
+ 
+ int eventfd(unsigned int count, int flags)
+ {
++#ifndef __laylaos__
+ 	int r = __syscall(SYS_eventfd2, count, flags);
+ #ifdef SYS_eventfd
+ 	if (r==-ENOSYS && !flags) r = __syscall(SYS_eventfd, count);
+ #endif
+ 	return __syscall_ret(r);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+ 
+ int eventfd_read(int fd, eventfd_t *value)
+diff -rub ./musl-1.2.4/src/linux/fallocate.c ./musl-1.2.4/src/linux/fallocate.c
+--- ./musl-1.2.4/src/linux/fallocate.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/fallocate.c	2023-08-25 22:31:33.815755000 +0100
+@@ -4,6 +4,11 @@
+ 
+ int fallocate(int fd, int mode, off_t base, off_t len)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_fallocate, fd, mode, __SYSCALL_LL_E(base),
+ 		__SYSCALL_LL_E(len));
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/fanotify.c ./musl-1.2.4/src/linux/fanotify.c
+--- ./musl-1.2.4/src/linux/fanotify.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/fanotify.c	2023-08-25 22:32:09.431078000 +0100
+@@ -3,12 +3,22 @@
+ 
+ int fanotify_init(unsigned flags, unsigned event_f_flags)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_fanotify_init, flags, event_f_flags);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+ 
+ int fanotify_mark(int fanotify_fd, unsigned flags, unsigned long long mask,
+ 	          int dfd, const char *pathname)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_fanotify_mark, fanotify_fd, flags, __SYSCALL_LL_E(mask), dfd, pathname);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+ 
+diff -rub ./musl-1.2.4/src/linux/getrandom.c ./musl-1.2.4/src/linux/getrandom.c
+--- ./musl-1.2.4/src/linux/getrandom.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/getrandom.c	2023-08-27 14:09:08.197664000 +0100
+@@ -3,5 +3,20 @@
+ 
+ ssize_t getrandom(void *buf, size_t buflen, unsigned flags)
+ {
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    int res;
++
++	res = __syscall_cp(SYS_getrandom, buf, buflen, flags, &bytes);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return -1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ 	return syscall_cp(SYS_getrandom, buf, buflen, flags);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/inotify.c ./musl-1.2.4/src/linux/inotify.c
+--- ./musl-1.2.4/src/linux/inotify.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/inotify.c	2023-08-25 22:33:04.232447000 +0100
+@@ -8,19 +8,34 @@
+ }
+ int inotify_init1(int flags)
+ {
++#ifndef __laylaos__
+ 	int r = __syscall(SYS_inotify_init1, flags);
+ #ifdef SYS_inotify_init
+ 	if (r==-ENOSYS && !flags) r = __syscall(SYS_inotify_init);
+ #endif
+ 	return __syscall_ret(r);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+ 
+ int inotify_add_watch(int fd, const char *pathname, uint32_t mask)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_inotify_add_watch, fd, pathname, mask);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+ 
+ int inotify_rm_watch(int fd, int wd)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_inotify_rm_watch, fd, wd);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/membarrier.c ./musl-1.2.4/src/linux/membarrier.c
+--- ./musl-1.2.4/src/linux/membarrier.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/membarrier.c	2023-08-25 22:34:40.570905000 +0100
+@@ -21,6 +21,7 @@
+ 
+ int __membarrier(int cmd, int flags)
+ {
++#ifndef __laylaos__
+ 	int r = __syscall(SYS_membarrier, cmd, flags);
+ 	/* Emulate the private expedited command, which is needed by the
+ 	 * dynamic linker for installation of dynamic TLS, for older
+@@ -53,6 +54,10 @@
+ 		__restore_sigs(&set);
+ 	}
+ 	return __syscall_ret(r);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+ 
+ void __membarrier_init(void)
+@@ -66,7 +71,9 @@
+ 	 * to the application to do so if desired. Unfortunately this means
+ 	 * library code initialized after the process becomes multi-threaded
+ 	 * cannot use these features without accepting registration latency. */
++#ifndef __laylaos__
+ 	__syscall(SYS_membarrier, MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED, 0);
++#endif
+ }
+ 
+ weak_alias(__membarrier, membarrier);
+diff -rub ./musl-1.2.4/src/linux/memfd_create.c ./musl-1.2.4/src/linux/memfd_create.c
+--- ./musl-1.2.4/src/linux/memfd_create.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/memfd_create.c	2023-08-25 22:35:11.371918000 +0100
+@@ -4,5 +4,10 @@
+ 
+ int memfd_create(const char *name, unsigned flags)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_memfd_create, name, flags);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/name_to_handle_at.c ./musl-1.2.4/src/linux/name_to_handle_at.c
+--- ./musl-1.2.4/src/linux/name_to_handle_at.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/name_to_handle_at.c	2023-08-25 22:35:46.585430000 +0100
+@@ -5,6 +5,11 @@
+ int name_to_handle_at(int dirfd, const char *pathname,
+ 	struct file_handle *handle, int *mount_id, int flags)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_name_to_handle_at, dirfd,
+ 		pathname, handle, mount_id, flags);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/open_by_handle_at.c ./musl-1.2.4/src/linux/open_by_handle_at.c
+--- ./musl-1.2.4/src/linux/open_by_handle_at.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/open_by_handle_at.c	2023-08-25 22:36:11.586645000 +0100
+@@ -4,5 +4,10 @@
+ 
+ int open_by_handle_at(int mount_fd, struct file_handle *handle, int flags)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_open_by_handle_at, mount_fd, handle, flags);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/pivot_root.c ./musl-1.2.4/src/linux/pivot_root.c
+--- ./musl-1.2.4/src/linux/pivot_root.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/pivot_root.c	2023-08-25 22:36:38.750744000 +0100
+@@ -2,5 +2,10 @@
+ 
+ int pivot_root(const char *new, const char *old)
+ {
++#ifndef __laylaos__
+ 	return syscall(SYS_pivot_root, new, old);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/prctl.c ./musl-1.2.4/src/linux/prctl.c
+--- ./musl-1.2.4/src/linux/prctl.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/prctl.c	2023-08-26 19:18:45.238608000 +0100
+@@ -10,5 +10,10 @@
+ 	va_start(ap, op);
+ 	for (i=0; i<4; i++) x[i] = va_arg(ap, unsigned long);
+ 	va_end(ap);
++#ifndef __laylaos__
+ 	return syscall(SYS_prctl, op, x[0], x[1], x[2], x[3]);
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/prlimit.c ./musl-1.2.4/src/linux/prlimit.c
+--- ./musl-1.2.4/src/linux/prlimit.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/prlimit.c	2023-08-25 22:37:54.181660000 +0100
+@@ -6,6 +6,7 @@
+ 
+ int prlimit(pid_t pid, int resource, const struct rlimit *new_limit, struct rlimit *old_limit)
+ {
++#ifndef __laylaos__
+ 	struct rlimit tmp;
+ 	int r;
+ 	if (new_limit && SYSCALL_RLIM_INFINITY != RLIM_INFINITY) {
+@@ -20,4 +21,8 @@
+ 		FIX(old_limit->rlim_max);
+ 	}
+ 	return r;
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/process_vm.c ./musl-1.2.4/src/linux/process_vm.c
+--- ./musl-1.2.4/src/linux/process_vm.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/process_vm.c	2023-08-26 19:20:12.353026000 +0100
+@@ -2,6 +2,8 @@
+ #include <sys/uio.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ ssize_t process_vm_writev(pid_t pid, const struct iovec *lvec, unsigned long liovcnt, const struct iovec *rvec, unsigned long riovcnt, unsigned long flags)
+ {
+ 	return syscall(SYS_process_vm_writev, pid, lvec, liovcnt, rvec, riovcnt, flags);
+@@ -11,3 +13,6 @@
+ {
+ 	return syscall(SYS_process_vm_readv, pid, lvec, liovcnt, rvec, riovcnt, flags);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/quotactl.c ./musl-1.2.4/src/linux/quotactl.c
+--- ./musl-1.2.4/src/linux/quotactl.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/quotactl.c	2023-08-26 19:19:55.181665000 +0100
+@@ -1,7 +1,12 @@
+ #include <sys/quota.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int quotactl(int cmd, const char *special, int id, char *addr)
+ {
+ 	return syscall(SYS_quotactl, cmd, special, id, addr);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/readahead.c ./musl-1.2.4/src/linux/readahead.c
+--- ./musl-1.2.4/src/linux/readahead.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/readahead.c	2023-08-26 19:19:42.060487000 +0100
+@@ -2,7 +2,12 @@
+ #include <fcntl.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ ssize_t readahead(int fd, off_t pos, size_t len)
+ {
+ 	return syscall(SYS_readahead, fd, __SYSCALL_LL_O(pos), len);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/reboot.c ./musl-1.2.4/src/linux/reboot.c
+--- ./musl-1.2.4/src/linux/reboot.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/reboot.c	2023-12-26 17:54:32.581670889 +0000
+@@ -3,5 +3,9 @@
+ 
+ int reboot(int type)
+ {
++#ifdef __laylaos__
++	return syscall(SYS_reboot, type);
++#else
+ 	return syscall(SYS_reboot, 0xfee1dead, 672274793, type);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/remap_file_pages.c ./musl-1.2.4/src/linux/remap_file_pages.c
+--- ./musl-1.2.4/src/linux/remap_file_pages.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/remap_file_pages.c	2023-08-26 19:20:27.805292000 +0100
+@@ -2,7 +2,12 @@
+ #include <sys/mman.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int remap_file_pages(void *addr, size_t size, int prot, size_t pgoff, int flags)
+ {
+ 	return syscall(SYS_remap_file_pages, addr, size, prot, pgoff, flags);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/sbrk.c ./musl-1.2.4/src/linux/sbrk.c
+--- ./musl-1.2.4/src/linux/sbrk.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/sbrk.c	2023-08-27 17:58:07.422970000 +0100
+@@ -6,6 +6,21 @@
+ 
+ void *sbrk(intptr_t inc)
+ {
++#ifdef __laylaos__
++    volatile void *addr = NULL;
++    int res;
++
++	res = __syscall(SYS_brk, inc, &addr);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return (void *)-1;
++    }
++    
++    return (void *)addr;
++#else
+ 	if (inc) return (void *)__syscall_ret(-ENOMEM);
+ 	return (void *)__syscall(SYS_brk, 0);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/linux/sendfile.c ./musl-1.2.4/src/linux/sendfile.c
+--- ./musl-1.2.4/src/linux/sendfile.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/sendfile.c	2023-08-26 19:21:05.662354000 +0100
+@@ -1,7 +1,12 @@
+ #include <sys/sendfile.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ ssize_t sendfile(int out_fd, int in_fd, off_t *ofs, size_t count)
+ {
+ 	return syscall(SYS_sendfile, out_fd, in_fd, ofs, count);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/setfsgid.c ./musl-1.2.4/src/linux/setfsgid.c
+--- ./musl-1.2.4/src/linux/setfsgid.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/setfsgid.c	2023-08-26 19:20:48.894742000 +0100
+@@ -1,7 +1,12 @@
+ #include <sys/fsuid.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int setfsgid(gid_t gid)
+ {
+ 	return syscall(SYS_setfsgid, gid);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/setfsuid.c ./musl-1.2.4/src/linux/setfsuid.c
+--- ./musl-1.2.4/src/linux/setfsuid.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/setfsuid.c	2023-08-26 19:20:58.961706000 +0100
+@@ -1,7 +1,12 @@
+ #include <sys/fsuid.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int setfsuid(uid_t uid)
+ {
+ 	return syscall(SYS_setfsuid, uid);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/setns.c ./musl-1.2.4/src/linux/setns.c
+--- ./musl-1.2.4/src/linux/setns.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/setns.c	2023-08-26 19:21:26.499931000 +0100
+@@ -2,7 +2,12 @@
+ #include <sched.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int setns(int fd, int nstype)
+ {
+ 	return syscall(SYS_setns, fd, nstype);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/signalfd.c ./musl-1.2.4/src/linux/signalfd.c
+--- ./musl-1.2.4/src/linux/signalfd.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/signalfd.c	2023-08-26 19:21:45.358498000 +0100
+@@ -4,6 +4,8 @@
+ #include <fcntl.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int signalfd(int fd, const sigset_t *sigs, int flags)
+ {
+ 	int ret = __syscall(SYS_signalfd4, fd, sigs, _NSIG/8, flags);
+@@ -19,3 +21,6 @@
+ #endif
+ 	return __syscall_ret(ret);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/splice.c ./musl-1.2.4/src/linux/splice.c
+--- ./musl-1.2.4/src/linux/splice.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/splice.c	2023-08-26 19:21:57.212568000 +0100
+@@ -2,7 +2,12 @@
+ #include <fcntl.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ ssize_t splice(int fd_in, off_t *off_in, int fd_out, off_t *off_out, size_t len, unsigned flags)
+ {
+ 	return syscall(SYS_splice, fd_in, off_in, fd_out, off_out, len, flags);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/tee.c ./musl-1.2.4/src/linux/tee.c
+--- ./musl-1.2.4/src/linux/tee.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/tee.c	2023-08-26 19:22:07.219562000 +0100
+@@ -2,7 +2,12 @@
+ #include <fcntl.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ ssize_t tee(int src, int dest, size_t len, unsigned flags)
+ {
+ 	return syscall(SYS_tee, src, dest, len, flags);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/timerfd.c ./musl-1.2.4/src/linux/timerfd.c
+--- ./musl-1.2.4/src/linux/timerfd.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/timerfd.c	2023-08-26 19:23:06.825746000 +0100
+@@ -4,6 +4,8 @@
+ 
+ #define IS32BIT(x) !((x)+0x80000000ULL>>32)
+ 
++#ifndef __laylaos__
++
+ int timerfd_create(int clockid, int flags)
+ {
+ 	return syscall(SYS_timerfd_create, clockid, flags);
+@@ -57,3 +59,6 @@
+ #endif
+ 	return syscall(SYS_timerfd_gettime, fd, cur);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/unshare.c ./musl-1.2.4/src/linux/unshare.c
+--- ./musl-1.2.4/src/linux/unshare.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/unshare.c	2023-08-26 19:23:17.892210000 +0100
+@@ -2,7 +2,12 @@
+ #include <sched.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int unshare(int flags)
+ {
+ 	return syscall(SYS_unshare, flags);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/vmsplice.c ./musl-1.2.4/src/linux/vmsplice.c
+--- ./musl-1.2.4/src/linux/vmsplice.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/vmsplice.c	2023-08-26 19:23:27.367471000 +0100
+@@ -2,7 +2,12 @@
+ #include <fcntl.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ ssize_t vmsplice(int fd, const struct iovec *iov, size_t cnt, unsigned flags)
+ {
+ 	return syscall(SYS_vmsplice, fd, iov, cnt, flags);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/linux/xattr.c ./musl-1.2.4/src/linux/xattr.c
+--- ./musl-1.2.4/src/linux/xattr.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/linux/xattr.c	2023-08-26 19:24:27.638732000 +0100
+@@ -1,6 +1,8 @@
+ #include <sys/xattr.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ ssize_t getxattr(const char *path, const char *name, void *value, size_t size)
+ {
+ 	return syscall(SYS_getxattr, path, name, value, size);
+@@ -60,3 +62,6 @@
+ {
+ 	return syscall(SYS_fremovexattr, fd, name);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/malloc/mallocng/glue.h ./musl-1.2.4/src/malloc/mallocng/glue.h
+--- ./musl-1.2.4/src/malloc/mallocng/glue.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/malloc/mallocng/glue.h	2023-09-09 15:21:24.236377498 +0100
+@@ -33,7 +33,12 @@
+ #define assert(x) do { if (!(x)) a_crash(); } while(0)
+ #endif
+ 
++#ifdef __laylaos__
++extern void *sbrk(intptr_t inc);
++#undef brk
++#else
+ #define brk(p) ((uintptr_t)__syscall(SYS_brk, p))
++#endif
+ 
+ #define mmap __mmap
+ #define madvise __madvise
+diff -rub ./musl-1.2.4/src/malloc/mallocng/malloc.c ./musl-1.2.4/src/malloc/mallocng/malloc.c
+--- ./musl-1.2.4/src/malloc/mallocng/malloc.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/malloc/mallocng/malloc.c	2023-09-10 14:43:07.186304721 +0100
+@@ -60,13 +60,23 @@
+ 			int need_guard = 0;
+ 			if (!ctx.brk) {
+ 				need_guard = 1;
++#ifdef __laylaos__
++				ctx.brk = (uintptr_t)sbrk(0);
++#else
+ 				ctx.brk = brk(0);
+ 				// some ancient kernels returned _ebss
+ 				// instead of next page as initial brk.
+ 				ctx.brk += -ctx.brk & (pagesize-1);
++#endif
+ 				new = ctx.brk + 2*pagesize;
+ 			}
++
++#ifdef __laylaos__
++			sbrk(new - ctx.brk);
++			if ((uintptr_t)sbrk(0) != new) {
++#else
+ 			if (brk(new) != new) {
++#endif
+ 				ctx.brk = -1;
+ 			} else {
+ 				if (need_guard) mmap((void *)ctx.brk, pagesize,
+diff -rub ./musl-1.2.4/src/misc/getpriority.c ./musl-1.2.4/src/misc/getpriority.c
+--- ./musl-1.2.4/src/misc/getpriority.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/misc/getpriority.c	2023-08-27 14:14:13.662281000 +0100
+@@ -3,7 +3,20 @@
+ 
+ int getpriority(int which, id_t who)
+ {
++#ifdef __laylaos__
++    volatile int nice;
++	int ret = syscall(SYS_getpriority, which, who, &nice);
++    
++    if(ret >= 0)
++    {
++        return (20 - nice);
++    }
++    
++    errno = -ret;
++    return -1;
++#else
+ 	int ret = syscall(SYS_getpriority, which, who);
+ 	if (ret < 0) return ret;
+ 	return 20-ret;
++#endif
+ }
+diff -rub ./musl-1.2.4/src/misc/getrlimit.c ./musl-1.2.4/src/misc/getrlimit.c
+--- ./musl-1.2.4/src/misc/getrlimit.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/misc/getrlimit.c	2023-08-25 22:52:47.866159000 +0100
+@@ -6,15 +6,22 @@
+ 
+ int getrlimit(int resource, struct rlimit *rlim)
+ {
++#ifndef __laylaos__
+ 	int ret = syscall(SYS_prlimit64, 0, resource, 0, rlim);
+ 	if (!ret) {
+ 		FIX(rlim->rlim_cur);
+ 		FIX(rlim->rlim_max);
+ 	}
++#endif
++
+ #ifdef SYS_getrlimit
+ 	unsigned long k_rlim[2];
++
++#ifndef __laylaos__
+ 	if (!ret || errno != ENOSYS)
+ 		return ret;
++#endif
++
+ 	if (syscall(SYS_getrlimit, resource, k_rlim) < 0)
+ 		return -1;
+ 	rlim->rlim_cur = k_rlim[0] == -1UL ? RLIM_INFINITY : k_rlim[0];
+diff -rub ./musl-1.2.4/src/misc/setpriority.c ./musl-1.2.4/src/misc/setpriority.c
+--- ./musl-1.2.4/src/misc/setpriority.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/misc/setpriority.c	2023-08-27 14:18:22.011414000 +0100
+@@ -3,5 +3,9 @@
+ 
+ int setpriority(int which, id_t who, int prio)
+ {
++#ifdef __laylaos__
++	return syscall(SYS_setpriority, which, who, (20 - prio));
++#else
+ 	return syscall(SYS_setpriority, which, who, prio);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/misc/setrlimit.c ./musl-1.2.4/src/misc/setrlimit.c
+--- ./musl-1.2.4/src/misc/setrlimit.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/misc/setrlimit.c	2023-08-25 22:54:28.393986000 +0100
+@@ -23,6 +23,7 @@
+ 
+ int setrlimit(int resource, const struct rlimit *rlim)
+ {
++#ifndef __laylaos__
+ 	struct rlimit tmp;
+ 	if (SYSCALL_RLIM_INFINITY != RLIM_INFINITY) {
+ 		tmp = *rlim;
+@@ -31,8 +32,13 @@
+ 		rlim = &tmp;
+ 	}
+ 	int ret = __syscall(SYS_prlimit64, 0, resource, rlim, 0);
++#endif
++
+ #ifdef SYS_setrlimit
++
++#ifndef __laylaos__
+ 	if (ret != -ENOSYS) return __syscall_ret(ret);
++#endif
+ 
+ 	struct ctx c = {
+ 		.lim[0] = MIN(rlim->rlim_cur, MIN(-1UL, SYSCALL_RLIM_INFINITY)),
+diff -rub ./musl-1.2.4/src/mman/madvise.c ./musl-1.2.4/src/mman/madvise.c
+--- ./musl-1.2.4/src/mman/madvise.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mman/madvise.c	2023-09-19 21:00:09.877332819 +0100
+@@ -3,7 +3,12 @@
+ 
+ int __madvise(void *addr, size_t len, int advice)
+ {
++#ifdef __laylaos__
++	errno = ENOSYS;
++	return -1;
++#else
+ 	return syscall(SYS_madvise, addr, len, advice);
++#endif
+ }
+ 
+ weak_alias(__madvise, madvise);
+diff -rub ./musl-1.2.4/src/mman/mmap.c ./musl-1.2.4/src/mman/mmap.c
+--- ./musl-1.2.4/src/mman/mmap.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mman/mmap.c	2024-05-23 15:18:07.436267262 +0100
+@@ -25,6 +25,19 @@
+ 	if (flags & MAP_FIXED) {
+ 		__vm_wait();
+ 	}
++#ifdef __laylaos__
++    volatile void *res_address = 0;
++
++	ret = __syscall(SYS_mmap, start, len, prot, flags, fd, off, &res_address);
++    
++    if(ret < 0)
++    {
++        errno = -ret;
++        return MAP_FAILED;
++    }
++    
++    return (void *)res_address;
++#else
+ #ifdef SYS_mmap2
+ 	ret = __syscall(SYS_mmap2, start, len, prot, flags, fd, off/UNIT);
+ #else
+@@ -34,6 +47,7 @@
+ 	if (ret == -EPERM && !start && (flags&MAP_ANON) && !(flags&MAP_FIXED))
+ 		ret = -ENOMEM;
+ 	return (void *)__syscall_ret(ret);
++#endif
+ }
+ 
+ weak_alias(__mmap, mmap);
+diff -rub ./musl-1.2.4/src/mman/mremap.c ./musl-1.2.4/src/mman/mremap.c
+--- ./musl-1.2.4/src/mman/mremap.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mman/mremap.c	2024-05-23 15:18:46.508280774 +0100
+@@ -26,7 +26,22 @@
+ 		va_end(ap);
+ 	}
+ 
++#ifdef __laylaos__
++    volatile void *res_address = 0;
++    int res;
++
++	res = __syscall(SYS_mremap, old_addr, old_len, new_len, flags, new_addr, &res_address);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return MAP_FAILED;
++    }
++    
++    return (void *)res_address;
++#else
+ 	return (void *)syscall(SYS_mremap, old_addr, old_len, new_len, flags, new_addr);
++#endif
+ }
+ 
+ weak_alias(__mremap, mremap);
+diff -rub ./musl-1.2.4/src/mman/posix_madvise.c ./musl-1.2.4/src/mman/posix_madvise.c
+--- ./musl-1.2.4/src/mman/posix_madvise.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mman/posix_madvise.c	2023-08-26 19:26:23.247577000 +0100
+@@ -2,8 +2,14 @@
+ #include <sys/mman.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int posix_madvise(void *addr, size_t len, int advice)
+ {
+ 	if (advice == MADV_DONTNEED) return 0;
++
+ 	return -__syscall(SYS_madvise, addr, len, advice);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/mq/mq_getattr.c ./musl-1.2.4/src/mq/mq_getattr.c
+--- ./musl-1.2.4/src/mq/mq_getattr.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mq/mq_getattr.c	2023-08-26 19:29:07.602312000 +0100
+@@ -1,7 +1,13 @@
+ #include <mqueue.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int mq_getattr(mqd_t mqd, struct mq_attr *attr)
+ {
+ 	return mq_setattr(mqd, 0, attr);
+ }
++
++#else
++#pragma message "mqs are not supported on LaylaOS."
++#endif
+diff -rub ./musl-1.2.4/src/mq/mq_notify.c ./musl-1.2.4/src/mq/mq_notify.c
+--- ./musl-1.2.4/src/mq/mq_notify.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mq/mq_notify.c	2023-08-26 19:27:05.321997000 +0100
+@@ -7,6 +7,8 @@
+ #include <semaphore.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ struct args {
+ 	sem_t sem;
+ 	int sock;
+@@ -90,3 +92,7 @@
+ 	pthread_setcancelstate(cs, 0);
+ 	return 0;
+ }
++
++#else
++#pragma message "mqs are not supported on LaylaOS."
++#endif
+diff -rub ./musl-1.2.4/src/mq/mq_open.c ./musl-1.2.4/src/mq/mq_open.c
+--- ./musl-1.2.4/src/mq/mq_open.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mq/mq_open.c	2023-08-26 19:27:22.158508000 +0100
+@@ -3,6 +3,8 @@
+ #include <stdarg.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ mqd_t mq_open(const char *name, int flags, ...)
+ {
+ 	mode_t mode = 0;
+@@ -15,5 +17,10 @@
+ 		attr = va_arg(ap, struct mq_attr *);
+ 		va_end(ap);
+ 	}
++
+ 	return syscall(SYS_mq_open, name, flags, mode, attr);
+ }
++
++#else
++#pragma message "mqs are not supported on LaylaOS."
++#endif
+diff -rub ./musl-1.2.4/src/mq/mq_receive.c ./musl-1.2.4/src/mq/mq_receive.c
+--- ./musl-1.2.4/src/mq/mq_receive.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mq/mq_receive.c	2023-08-26 19:29:10.544839000 +0100
+@@ -1,6 +1,12 @@
+ #include <mqueue.h>
+ 
++#ifndef __laylaos__
++
+ ssize_t mq_receive(mqd_t mqd, char *msg, size_t len, unsigned *prio)
+ {
+ 	return mq_timedreceive(mqd, msg, len, prio, 0);
+ }
++
++#else
++#pragma message "mqs are not supported on LaylaOS."
++#endif
+diff -rub ./musl-1.2.4/src/mq/mq_send.c ./musl-1.2.4/src/mq/mq_send.c
+--- ./musl-1.2.4/src/mq/mq_send.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mq/mq_send.c	2023-08-26 19:29:13.443387000 +0100
+@@ -1,6 +1,12 @@
+ #include <mqueue.h>
+ 
++#ifndef __laylaos__
++
+ int mq_send(mqd_t mqd, const char *msg, size_t len, unsigned prio)
+ {
+ 	return mq_timedsend(mqd, msg, len, prio, 0);
+ }
++
++#else
++#pragma message "mqs are not supported on LaylaOS."
++#endif
+diff -rub ./musl-1.2.4/src/mq/mq_setattr.c ./musl-1.2.4/src/mq/mq_setattr.c
+--- ./musl-1.2.4/src/mq/mq_setattr.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mq/mq_setattr.c	2023-08-26 19:27:32.339605000 +0100
+@@ -1,7 +1,13 @@
+ #include <mqueue.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int mq_setattr(mqd_t mqd, const struct mq_attr *restrict new, struct mq_attr *restrict old)
+ {
+ 	return syscall(SYS_mq_getsetattr, mqd, new, old);
+ }
++
++#else
++#pragma message "mqs are not supported on LaylaOS."
++#endif
+diff -rub ./musl-1.2.4/src/mq/mq_timedreceive.c ./musl-1.2.4/src/mq/mq_timedreceive.c
+--- ./musl-1.2.4/src/mq/mq_timedreceive.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mq/mq_timedreceive.c	2023-08-26 19:27:53.144811000 +0100
+@@ -5,6 +5,8 @@
+ #define IS32BIT(x) !((x)+0x80000000ULL>>32)
+ #define CLAMP(x) (int)(IS32BIT(x) ? (x) : 0x7fffffffU+((0ULL+(x))>>63))
+ 
++#ifndef __laylaos__
++
+ ssize_t mq_timedreceive(mqd_t mqd, char *restrict msg, size_t len, unsigned *restrict prio, const struct timespec *restrict at)
+ {
+ #ifdef SYS_mq_timedreceive_time64
+@@ -22,3 +24,7 @@
+ 	return syscall_cp(SYS_mq_timedreceive, mqd, msg, len, prio, at);
+ #endif
+ }
++
++#else
++#pragma message "mqs are not supported on LaylaOS."
++#endif
+diff -rub ./musl-1.2.4/src/mq/mq_timedsend.c ./musl-1.2.4/src/mq/mq_timedsend.c
+--- ./musl-1.2.4/src/mq/mq_timedsend.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mq/mq_timedsend.c	2023-08-26 19:28:07.200171000 +0100
+@@ -5,6 +5,8 @@
+ #define IS32BIT(x) !((x)+0x80000000ULL>>32)
+ #define CLAMP(x) (int)(IS32BIT(x) ? (x) : 0x7fffffffU+((0ULL+(x))>>63))
+ 
++#ifndef __laylaos__
++
+ int mq_timedsend(mqd_t mqd, const char *msg, size_t len, unsigned prio, const struct timespec *at)
+ {
+ #ifdef SYS_mq_timedsend_time64
+@@ -22,3 +24,7 @@
+ 	return syscall_cp(SYS_mq_timedsend, mqd, msg, len, prio, at);
+ #endif
+ }
++
++#else
++#pragma message "mqs are not supported on LaylaOS."
++#endif
+diff -rub ./musl-1.2.4/src/mq/mq_unlink.c ./musl-1.2.4/src/mq/mq_unlink.c
+--- ./musl-1.2.4/src/mq/mq_unlink.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/mq/mq_unlink.c	2023-08-26 19:28:19.046626000 +0100
+@@ -2,6 +2,8 @@
+ #include <errno.h>
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int mq_unlink(const char *name)
+ {
+ 	int ret;
+@@ -14,3 +16,7 @@
+ 	}
+ 	return ret;
+ }
++
++#else
++#pragma message "mqs are not supported on LaylaOS."
++#endif
+diff -rub ./musl-1.2.4/src/network/accept4.c ./musl-1.2.4/src/network/accept4.c
+--- ./musl-1.2.4/src/network/accept4.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/network/accept4.c	2023-08-25 23:06:01.168162000 +0100
+@@ -6,6 +6,7 @@
+ 
+ int accept4(int fd, struct sockaddr *restrict addr, socklen_t *restrict len, int flg)
+ {
++#ifndef __laylaos__
+ 	if (!flg) return accept(fd, addr, len);
+ 	int ret = socketcall_cp(accept4, fd, addr, len, flg, 0, 0);
+ 	if (ret>=0 || (errno != ENOSYS && errno != EINVAL)) return ret;
+@@ -13,6 +14,9 @@
+ 		errno = EINVAL;
+ 		return -1;
+ 	}
++#else
++	int ret;
++#endif
+ 	ret = accept(fd, addr, len);
+ 	if (ret<0) return ret;
+ 	if (flg & SOCK_CLOEXEC)
+diff -rub ./musl-1.2.4/src/network/recvmmsg.c ./musl-1.2.4/src/network/recvmmsg.c
+--- ./musl-1.2.4/src/network/recvmmsg.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/network/recvmmsg.c	2023-08-26 19:29:48.631461000 +0100
+@@ -10,6 +10,8 @@
+ 
+ hidden void __convert_scm_timestamps(struct msghdr *, socklen_t);
+ 
++#ifndef __laylaos__
++
+ int recvmmsg(int fd, struct mmsghdr *msgvec, unsigned int vlen, unsigned int flags, struct timespec *timeout)
+ {
+ #if LONG_MAX > INT_MAX
+@@ -37,3 +39,6 @@
+ 	return syscall_cp(SYS_recvmmsg, fd, msgvec, vlen, flags, timeout);
+ #endif
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/process/posix_spawn.c ./musl-1.2.4/src/process/posix_spawn.c
+--- ./musl-1.2.4/src/process/posix_spawn.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/process/posix_spawn.c	2023-11-11 22:10:50.501880144 +0000
+@@ -156,7 +156,13 @@
+ fail:
+ 	/* Since sizeof errno < PIPE_BUF, the write is atomic. */
+ 	ret = -ret;
++
++#ifdef __laylaos__
++	if (ret) while (write(p, &ret, sizeof ret) < 0);
++#else
+ 	if (ret) while (__syscall(SYS_write, p, &ret, sizeof ret) < 0);
++#endif
++
+ 	_exit(127);
+ }
+ 
+@@ -167,7 +173,9 @@
+ 	char *const argv[restrict], char *const envp[restrict])
+ {
+ 	pid_t pid;
++#ifndef __laylaos__
+ 	char stack[1024+PATH_MAX];
++#endif
+ 	int ec=0, cs;
+ 	struct args args;
+ 
+@@ -190,8 +198,20 @@
+ 		goto fail;
+ 	}
+ 
++#ifdef __laylaos__
++	//pid = __clone(child, stack+sizeof stack,
++	//	CLONE_VM|CLONE_VFORK|SIGCHLD, &args, 0, 0, 0);
++	pid = fork();
++	
++	if(pid == 0)
++	{
++	    return child(&args);
++	}
++#else
+ 	pid = __clone(child, stack+sizeof stack,
+ 		CLONE_VM|CLONE_VFORK|SIGCHLD, &args);
++#endif
++
+ 	close(args.p[1]);
+ 	UNLOCK(__abort_lock);
+ 
+diff -rub ./musl-1.2.4/src/process/system.c ./musl-1.2.4/src/process/system.c
+--- ./musl-1.2.4/src/process/system.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/process/system.c	2023-11-12 12:28:25.223754206 +0000
+@@ -19,12 +19,10 @@
+ 	pthread_testcancel();
+ 
+ 	if (!cmd) return 1;
+-
+ 	sigaction(SIGINT, &sa, &oldint);
+ 	sigaction(SIGQUIT, &sa, &oldquit);
+ 	sigaddset(&sa.sa_mask, SIGCHLD);
+ 	sigprocmask(SIG_BLOCK, &sa.sa_mask, &old);
+-
+ 	sigemptyset(&reset);
+ 	if (oldint.sa_handler != SIG_IGN) sigaddset(&reset, SIGINT);
+ 	if (oldquit.sa_handler != SIG_IGN) sigaddset(&reset, SIGQUIT);
+@@ -35,12 +33,10 @@
+ 	ret = posix_spawn(&pid, "/bin/sh", 0, &attr,
+ 		(char *[]){"sh", "-c", (char *)cmd, 0}, __environ);
+ 	posix_spawnattr_destroy(&attr);
+-
+ 	if (!ret) while (waitpid(pid, &status, 0)<0 && errno == EINTR);
+ 	sigaction(SIGINT, &oldint, NULL);
+ 	sigaction(SIGQUIT, &oldquit, NULL);
+ 	sigprocmask(SIG_SETMASK, &old, NULL);
+-
+ 	if (ret) errno = ret;
+ 	return status;
+ }
+diff -rub ./musl-1.2.4/src/sched/affinity.c ./musl-1.2.4/src/sched/affinity.c
+--- ./musl-1.2.4/src/sched/affinity.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/sched/affinity.c	2023-08-26 19:30:23.932322000 +0100
+@@ -4,6 +4,8 @@
+ #include "pthread_impl.h"
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ int sched_setaffinity(pid_t tid, size_t size, const cpu_set_t *set)
+ {
+ 	return syscall(SYS_sched_setaffinity, tid, size, set);
+@@ -31,3 +33,6 @@
+ {
+ 	return -do_getaffinity(td->tid, size, set);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/sched/sched_getcpu.c ./musl-1.2.4/src/sched/sched_getcpu.c
+--- ./musl-1.2.4/src/sched/sched_getcpu.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/sched/sched_getcpu.c	2023-08-26 19:31:06.998680000 +0100
+@@ -4,6 +4,8 @@
+ #include "syscall.h"
+ #include "atomic.h"
+ 
++#ifndef __laylaos__
++
+ #ifdef VDSO_GETCPU_SYM
+ 
+ static void *volatile vdso_func;
+@@ -40,3 +42,6 @@
+ 	if (!r) return cpu;
+ 	return __syscall_ret(r);
+ }
++
++#endif
++
+diff -rub ./musl-1.2.4/src/select/pselect.c ./musl-1.2.4/src/select/pselect.c
+--- ./musl-1.2.4/src/select/pselect.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/select/pselect.c	2023-08-25 23:12:47.454140000 +0100
+@@ -21,6 +21,10 @@
+ 		return __syscall_ret(r);
+ 	s = CLAMP(s);
+ #endif
++#ifndef __laylaos__
+ 	return syscall_cp(SYS_pselect6, n, rfds, wfds, efds,
+ 		ts ? ((long[]){s, ns}) : 0, data);
++#else
++	return syscall_cp(SYS_pselect, n, rfds, wfds, efds, ts, data);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/select/select.c ./musl-1.2.4/src/select/select.c
+--- ./musl-1.2.4/src/select/select.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/select/select.c	2023-09-17 11:31:08.867514890 +0100
+@@ -25,6 +25,12 @@
+ 		ns = us*1000;
+ 	}
+ 
++#ifdef __laylaos__
++	struct timeval tv2;
++	tv2.tv_sec = s;
++	tv2.tv_usec = us;
++	return syscall_cp(SYS_select, n, rfds, wfds, efds, tv ? &tv2 : 0);
++#else
+ #ifdef SYS_pselect6_time64
+ 	int r = -ENOSYS;
+ 	if (SYS_pselect6 == SYS_pselect6_time64 || !IS32BIT(s))
+@@ -42,4 +48,5 @@
+ 	return syscall_cp(SYS_pselect6, n, rfds, wfds, efds,
+ 		tv ? ((long[]){s, ns}) : 0, ((syscall_arg_t[]){ 0, _NSIG/8 }));
+ #endif
++#endif
+ }
+diff -rub ./musl-1.2.4/src/signal/block.c ./musl-1.2.4/src/signal/block.c
+--- ./musl-1.2.4/src/signal/block.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/signal/block.c	2023-09-16 17:25:53.832028970 +0100
+@@ -28,6 +28,28 @@
+ #endif
+ };
+ 
++#ifdef __laylaos__
++
++void __block_all_sigs(void *set)
++{
++	//sigprocmask(SIG_BLOCK, (const sigset_t*)&all_mask, set);
++	__syscall(SYS_sigprocmask, SIG_BLOCK, &all_mask, set);
++}
++
++void __block_app_sigs(void *set)
++{
++	//sigprocmask(SIG_BLOCK, (const sigset_t*)&app_mask, set);
++	__syscall(SYS_sigprocmask, SIG_BLOCK, &app_mask, set);
++}
++
++void __restore_sigs(void *set)
++{
++	//sigprocmask(SIG_SETMASK, set, 0);
++	__syscall(SYS_sigprocmask, SIG_SETMASK, set, 0);
++}
++
++#else
++
+ void __block_all_sigs(void *set)
+ {
+ 	__syscall(SYS_rt_sigprocmask, SIG_BLOCK, &all_mask, set, _NSIG/8);
+@@ -42,3 +64,5 @@
+ {
+ 	__syscall(SYS_rt_sigprocmask, SIG_SETMASK, set, 0, _NSIG/8);
+ }
++
++#endif
+diff -rub ./musl-1.2.4/src/signal/raise.c ./musl-1.2.4/src/signal/raise.c
+--- ./musl-1.2.4/src/signal/raise.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/signal/raise.c	2023-08-25 23:18:27.142835000 +0100
+@@ -7,7 +7,13 @@
+ {
+ 	sigset_t set;
+ 	__block_app_sigs(&set);
++
++#ifdef __laylaos__
++	int ret = syscall(SYS_kill, __pthread_self()->tid, sig);
++#else
+ 	int ret = syscall(SYS_tkill, __pthread_self()->tid, sig);
++#endif
++
+ 	__restore_sigs(&set);
+ 	return ret;
+ }
+diff -rub ./musl-1.2.4/src/signal/sigaction.c ./musl-1.2.4/src/signal/sigaction.c
+--- ./musl-1.2.4/src/signal/sigaction.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/signal/sigaction.c	2024-05-23 18:40:12.158820371 +0100
+@@ -15,11 +15,59 @@
+ 	memcpy(set, handler_set, sizeof handler_set);
+ }
+ 
++#ifndef __laylaos__
+ volatile int __eintr_valid_flag;
++#endif
+ 
+ int __libc_sigaction(int sig, const struct sigaction *restrict sa, struct sigaction *restrict old)
+ {
+ 	struct k_sigaction ksa, ksa_old;
++
++#ifdef __laylaos__
++
++	if (sa) {
++		if ((uintptr_t)sa->sa_handler > 1UL) {
++			a_or_l(handler_set+(sig-1)/(8*sizeof(long)),
++				1UL<<(sig-1)%(8*sizeof(long)));
++
++			/* If pthread_create has not yet been called,
++			 * implementation-internal signals might not
++			 * yet have been unblocked. They must be
++			 * unblocked before any signal handler is
++			 * installed, so that an application cannot
++			 * receive an illegal sigset_t (with them
++			 * blocked) as part of the ucontext_t passed
++			 * to the signal handler. */
++			if (!libc.threaded && !unmask_done) {
++				__syscall(SYS_sigprocmask, SIG_UNBLOCK,
++					SIGPT_SET, 0);
++				unmask_done = 1;
++			}
++		}
++
++		ksa.sa_handler = sa->sa_handler;
++		ksa.sa_flags = sa->sa_flags;
++		memcpy(&ksa.sa_mask, &sa->sa_mask, _NSIG/8);
++	}
++
++   	// LaylaOS kernel requires a signal restorer function
++	ksa.sa_flags |= SA_RESTORER | SA_SIGINFO;
++#ifdef __x86_64__
++	ksa.sa_restorer = __restore_rt;
++#else
++	ksa.sa_restorer = __restore;
++#endif
++
++	int r = __syscall(SYS_sigaction, sig, sa?&ksa:0, old?&ksa_old:0);
++
++	if (old && !r) {
++		old->sa_handler = ksa_old.sa_handler;
++		old->sa_flags = ksa_old.sa_flags;
++		memcpy(&old->sa_mask, &ksa_old.sa_mask, _NSIG/8);
++	}
++
++#else       /* !__laylaos__ */
++
+ 	if (sa) {
+ 		if ((uintptr_t)sa->sa_handler > 1UL) {
+ 			a_or_l(handler_set+(sig-1)/(8*sizeof(long)),
+@@ -51,18 +99,27 @@
+ #endif
+ 		memcpy(&ksa.mask, &sa->sa_mask, _NSIG/8);
+ 	}
++
+ 	int r = __syscall(SYS_rt_sigaction, sig, sa?&ksa:0, old?&ksa_old:0, _NSIG/8);
++
+ 	if (old && !r) {
+ 		old->sa_handler = ksa_old.handler;
+ 		old->sa_flags = ksa_old.flags;
+ 		memcpy(&old->sa_mask, &ksa_old.mask, _NSIG/8);
+ 	}
++
++#endif
++
+ 	return __syscall_ret(r);
+ }
+ 
+ int __sigaction(int sig, const struct sigaction *restrict sa, struct sigaction *restrict old)
+ {
++#ifdef __laylaos__
++	sigset_t set;
++#else
+ 	unsigned long set[_NSIG/(8*sizeof(long))];
++#endif
+ 
+ 	if (sig-32U < 3 || sig-1U >= _NSIG-1) {
+ 		errno = EINVAL;
+diff -rub ./musl-1.2.4/src/signal/sigaltstack.c ./musl-1.2.4/src/signal/sigaltstack.c
+--- ./musl-1.2.4/src/signal/sigaltstack.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/signal/sigaltstack.c	2023-08-25 23:30:10.545931000 +0100
+@@ -14,5 +14,9 @@
+ 			return -1;
+ 		}
+ 	}
++#ifdef __laylaos__
++	return syscall(SYS_signalstack, ss, old);
++#else
+ 	return syscall(SYS_sigaltstack, ss, old);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/signal/sigpending.c ./musl-1.2.4/src/signal/sigpending.c
+--- ./musl-1.2.4/src/signal/sigpending.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/signal/sigpending.c	2023-09-16 20:22:18.816732467 +0100
+@@ -3,5 +3,9 @@
+ 
+ int sigpending(sigset_t *set)
+ {
++#ifdef __laylaos__
++	return syscall(SYS_sigpending, set);
++#else
+ 	return syscall(SYS_rt_sigpending, set, _NSIG/8);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/signal/sigqueue.c ./musl-1.2.4/src/signal/sigqueue.c
+--- ./musl-1.2.4/src/signal/sigqueue.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/signal/sigqueue.c	2023-08-25 23:31:37.175057000 +0100
+@@ -4,6 +4,7 @@
+ #include "syscall.h"
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
+ int sigqueue(pid_t pid, int sig, const union sigval value)
+ {
+ 	siginfo_t si;
+@@ -20,3 +21,4 @@
+ 	__restore_sigs(&set);
+ 	return r;
+ }
++#endif
+diff -rub ./musl-1.2.4/src/signal/sigsetjmp_tail.c ./musl-1.2.4/src/signal/sigsetjmp_tail.c
+--- ./musl-1.2.4/src/signal/sigsetjmp_tail.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/signal/sigsetjmp_tail.c	2023-08-25 23:32:45.278994000 +0100
+@@ -5,6 +5,10 @@
+ hidden int __sigsetjmp_tail(sigjmp_buf jb, int ret)
+ {
+ 	void *p = jb->__ss;
++#ifdef __laylaos__
++	__syscall(SYS_sigprocmask, SIG_SETMASK, ret?p:0, ret?0:p);
++#else
+ 	__syscall(SYS_rt_sigprocmask, SIG_SETMASK, ret?p:0, ret?0:p, _NSIG/8);
++#endif
+ 	return ret;
+ }
+diff -rub ./musl-1.2.4/src/signal/sigsuspend.c ./musl-1.2.4/src/signal/sigsuspend.c
+--- ./musl-1.2.4/src/signal/sigsuspend.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/signal/sigsuspend.c	2023-08-25 23:33:50.833838000 +0100
+@@ -3,5 +3,9 @@
+ 
+ int sigsuspend(const sigset_t *mask)
+ {
++#ifdef __laylaos__
++	return syscall_cp(SYS_sigsuspend, mask);
++#else
+ 	return syscall_cp(SYS_rt_sigsuspend, mask, _NSIG/8);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/signal/sigtimedwait.c ./musl-1.2.4/src/signal/sigtimedwait.c
+--- ./musl-1.2.4/src/signal/sigtimedwait.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/signal/sigtimedwait.c	2023-08-26 19:09:46.093460000 +0100
+@@ -19,8 +19,12 @@
+ 	return __syscall_cp(SYS_rt_sigtimedwait, mask, si,
+ 		ts ? ((long[]){CLAMP(s), ns}) : 0, _NSIG/8);;
+ #else
++#ifdef __laylaos__
++	return __syscall_cp(SYS_sigtimedwait, mask, si, ts);
++#else
+ 	return __syscall_cp(SYS_rt_sigtimedwait, mask, si, ts, _NSIG/8);
+ #endif
++#endif
+ }
+ 
+ int sigtimedwait(const sigset_t *restrict mask, siginfo_t *restrict si, const struct timespec *restrict timeout)
+diff -rub ./musl-1.2.4/src/stat/fstatat.c ./musl-1.2.4/src/stat/fstatat.c
+--- ./musl-1.2.4/src/stat/fstatat.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/stat/fstatat.c	2023-08-26 19:34:21.785458000 +0100
+@@ -32,6 +32,8 @@
+ 	uint64_t spare[14];
+ };
+ 
++#ifndef __laylaos__
++
+ static int fstatat_statx(int fd, const char *restrict path, struct stat *restrict st, int flag)
+ {
+ 	struct statx stx;
+@@ -68,6 +70,9 @@
+ 	return 0;
+ }
+ 
++#endif
++
++
+ #ifdef SYS_fstatat
+ 
+ #include "kstat.h"
+@@ -139,10 +144,12 @@
+ {
+ 	int ret;
+ #ifdef SYS_fstatat
++#ifndef __laylaos__
+ 	if (sizeof((struct kstat){0}.st_atime_sec) < sizeof(time_t)) {
+ 		ret = fstatat_statx(fd, path, st, flag);
+ 		if (ret!=-ENOSYS) return __syscall_ret(ret);
+ 	}
++#endif
+ 	ret = fstatat_kstat(fd, path, st, flag);
+ #else
+ 	ret = fstatat_statx(fd, path, st, flag);
+diff -rub ./musl-1.2.4/src/stat/utimensat.c ./musl-1.2.4/src/stat/utimensat.c
+--- ./musl-1.2.4/src/stat/utimensat.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/stat/utimensat.c	2023-11-12 03:17:14.112179270 +0000
+@@ -32,7 +32,12 @@
+ 	r = __syscall(SYS_utimensat, fd, path,
+ 		times ? ((long[]){s0, ns0, s1, ns1}) : 0, flags);
+ #else
++#ifndef __laylaos__
+ 	r = __syscall(SYS_utimensat, fd, path, times, flags);
++#else
++	//r = __syscall(SYS_futimesat, fd, path, times);
++	r = -ENOSYS;
++#endif
+ #endif
+ 
+ #ifdef SYS_futimesat
+diff -rub ./musl-1.2.4/src/stdio/__stdio_read.c ./musl-1.2.4/src/stdio/__stdio_read.c
+--- ./musl-1.2.4/src/stdio/__stdio_read.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/stdio/__stdio_read.c	2023-09-07 11:28:12.107949023 +0100
+@@ -1,6 +1,10 @@
+ #include "stdio_impl.h"
+ #include <sys/uio.h>
+ 
++#ifdef __laylaos__
++#include <unistd.h>
++#endif
++
+ size_t __stdio_read(FILE *f, unsigned char *buf, size_t len)
+ {
+ 	struct iovec iov[2] = {
+@@ -9,8 +13,14 @@
+ 	};
+ 	ssize_t cnt;
+ 
++#ifdef __laylaos__
++	cnt = iov[0].iov_len ? readv(f->fd, iov, 2)
++		: read(f->fd, iov[1].iov_base, iov[1].iov_len);
++#else
+ 	cnt = iov[0].iov_len ? syscall(SYS_readv, f->fd, iov, 2)
+ 		: syscall(SYS_read, f->fd, iov[1].iov_base, iov[1].iov_len);
++#endif
++
+ 	if (cnt <= 0) {
+ 		f->flags |= cnt ? F_ERR : F_EOF;
+ 		return 0;
+diff -rub ./musl-1.2.4/src/stdio/__stdio_write.c ./musl-1.2.4/src/stdio/__stdio_write.c
+--- ./musl-1.2.4/src/stdio/__stdio_write.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/stdio/__stdio_write.c	2023-11-12 00:54:13.218739975 +0000
+@@ -12,7 +12,11 @@
+ 	int iovcnt = 2;
+ 	ssize_t cnt;
+ 	for (;;) {
++#ifdef __laylaos__
++		cnt = writev(f->fd, iov, iovcnt);
++#else
+ 		cnt = syscall(SYS_writev, f->fd, iov, iovcnt);
++#endif
+ 		if (cnt == rem) {
+ 			f->wend = f->buf + f->buf_size;
+ 			f->wpos = f->wbase = f->buf;
+diff -rub ./musl-1.2.4/src/stdio/tmpnam.c ./musl-1.2.4/src/stdio/tmpnam.c
+--- ./musl-1.2.4/src/stdio/tmpnam.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/stdio/tmpnam.c	2023-09-07 18:24:08.013384876 +0100
+@@ -6,6 +6,10 @@
+ #include <stdlib.h>
+ #include "syscall.h"
+ 
++#ifdef __laylaos__
++#include <unistd.h>
++#endif
++
+ #define MAXTRIES 100
+ 
+ char *tmpnam(char *buf)
+@@ -16,11 +20,17 @@
+ 	int r;
+ 	for (try=0; try<MAXTRIES; try++) {
+ 		__randname(s+12);
++
++#ifdef __laylaos__
++		r = readlink(s, (char[1]){0}, 1);
++#else
+ #ifdef SYS_readlink
+ 		r = __syscall(SYS_readlink, s, (char[1]){0}, 1);
+ #else
+ 		r = __syscall(SYS_readlinkat, AT_FDCWD, s, (char[1]){0}, 1);
+ #endif
++#endif
++
+ 		if (r == -ENOENT) return strcpy(buf ? buf : internal, s);
+ 	}
+ 	return 0;
+diff -rub ./musl-1.2.4/src/thread/cnd_destroy.c ./musl-1.2.4/src/thread/cnd_destroy.c
+--- ./musl-1.2.4/src/thread/cnd_destroy.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/cnd_destroy.c	2024-03-02 21:15:44.847387005 +0000
+@@ -1,6 +1,21 @@
+ #include <threads.h>
+ 
++#ifndef __laylaos__
++
+ void cnd_destroy(cnd_t *c)
+ {
+ 	/* For private cv this is a no-op */
+ }
++
++#else
++
++void cnd_destroy(cnd_t *c)
++{
++    c->clockid = -1;
++    c->first_waiter = NULL;
++    c->last_waiter = NULL;
++
++    return 0;
++}
++
++#endif
+diff -rub ./musl-1.2.4/src/thread/cnd_init.c ./musl-1.2.4/src/thread/cnd_init.c
+--- ./musl-1.2.4/src/thread/cnd_init.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/cnd_init.c	2024-03-02 21:15:42.507388323 +0000
+@@ -1,7 +1,23 @@
+ #include <threads.h>
+ 
++#ifndef __laylaos__
++
+ int cnd_init(cnd_t *c)
+ {
+ 	*c = (cnd_t){ 0 };
+ 	return thrd_success;
+ }
++
++#else
++
++int cnd_init(cnd_t *c)
++{
++    c->clockid = CLOCK_REALTIME;
++    c->pshared = 0;
++    c->first_waiter = NULL;
++    c->last_waiter = NULL;
++    
++    return 0;
++}
++
++#endif
+diff -rub ./musl-1.2.4/src/thread/mtx_destroy.c ./musl-1.2.4/src/thread/mtx_destroy.c
+--- ./musl-1.2.4/src/thread/mtx_destroy.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/mtx_destroy.c	2024-03-03 12:49:12.791538198 +0000
+@@ -1,5 +1,19 @@
+ #include <threads.h>
+ 
++#ifndef __laylaos__
++
+ void mtx_destroy(mtx_t *mtx)
+ {
+ }
++
++#else       /* !__laylaos__ */
++
++#include "pthread_impl.h"
++
++void mtx_destroy(mtx_t *mtx)
++{
++    pthread_mutex_destroy((pthread_mutex_t *)mtx);
++}
++
++#endif      /* !__laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/mtx_init.c ./musl-1.2.4/src/thread/mtx_init.c
+--- ./musl-1.2.4/src/thread/mtx_init.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/mtx_init.c	2024-03-03 12:48:18.995501665 +0000
+@@ -1,6 +1,8 @@
+ #include "pthread_impl.h"
+ #include <threads.h>
+ 
++#ifndef __laylaos__
++
+ int mtx_init(mtx_t *m, int type)
+ {
+ 	*m = (mtx_t){
+@@ -8,3 +10,16 @@
+ 	};
+ 	return thrd_success;
+ }
++
++#else       /* !__laylaos__ */
++
++int mtx_init(mtx_t *m, int type)
++{
++	*m = (mtx_t){
++		.type = ((type&mtx_recursive) ? PTHREAD_MUTEX_RECURSIVE : PTHREAD_MUTEX_NORMAL),
++	};
++	return thrd_success;
++}
++
++#endif      /* !__laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/mtx_lock.c ./musl-1.2.4/src/thread/mtx_lock.c
+--- ./musl-1.2.4/src/thread/mtx_lock.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/mtx_lock.c	2024-03-03 12:49:26.555548390 +0000
+@@ -1,6 +1,8 @@
+ #include "pthread_impl.h"
+ #include <threads.h>
+ 
++#ifndef __laylaos__
++
+ int mtx_lock(mtx_t *m)
+ {
+ 	if (m->_m_type == PTHREAD_MUTEX_NORMAL && !a_cas(&m->_m_lock, 0, EBUSY))
+@@ -10,3 +12,13 @@
+ 	 * for return values. */
+ 	return mtx_timedlock(m, 0);
+ }
++
++#else       /* !__laylaos__ */
++
++int mtx_lock(mtx_t *m)
++{
++    return pthread_mutex_lock((pthread_mutex_t *)m);
++}
++
++#endif      /* !__laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/mtx_trylock.c ./musl-1.2.4/src/thread/mtx_trylock.c
+--- ./musl-1.2.4/src/thread/mtx_trylock.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/mtx_trylock.c	2024-03-03 12:48:22.675503989 +0000
+@@ -3,8 +3,11 @@
+ 
+ int mtx_trylock(mtx_t *m)
+ {
++
++#ifndef __laylaos__
+ 	if (m->_m_type == PTHREAD_MUTEX_NORMAL)
+ 		return (a_cas(&m->_m_lock, 0, EBUSY) & EBUSY) ? thrd_busy : thrd_success;
++#endif
+ 
+ 	int ret = __pthread_mutex_trylock((pthread_mutex_t *)m);
+ 	switch (ret) {
+diff -rub ./musl-1.2.4/src/thread/pthread_attr_get.c ./musl-1.2.4/src/thread/pthread_attr_get.c
+--- ./musl-1.2.4/src/thread/pthread_attr_get.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_attr_get.c	2024-03-02 20:45:23.122228703 +0000
+@@ -56,6 +56,8 @@
+ 	return 0;
+ }
+ 
++#ifndef __laylaos__
++
+ int pthread_condattr_getclock(const pthread_condattr_t *restrict a, clockid_t *restrict clk)
+ {
+ 	*clk = a->__attr & 0x7fffffff;
+@@ -68,6 +70,22 @@
+ 	return 0;
+ }
+ 
++#else       /* !__laylaos__ */
++
++int pthread_condattr_getclock(const pthread_condattr_t *restrict a, clockid_t *restrict clk)
++{
++	*clk = a->clockid;
++	return 0;
++}
++
++int pthread_condattr_getpshared(const pthread_condattr_t *restrict a, int *restrict pshared)
++{
++	*pshared = a->pshared;
++	return 0;
++}
++
++#endif      /* !__laylaos__ */
++
+ int pthread_mutexattr_getprotocol(const pthread_mutexattr_t *restrict a, int *restrict protocol)
+ {
+ 	*protocol = a->__attr / 8U % 2;
+diff -rub ./musl-1.2.4/src/thread/pthread_barrier_wait.c ./musl-1.2.4/src/thread/pthread_barrier_wait.c
+--- ./musl-1.2.4/src/thread/pthread_barrier_wait.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_barrier_wait.c	2024-02-03 02:50:07.739056082 +0000
+@@ -84,8 +84,12 @@
+ 			a_spin();
+ 		a_inc(&inst->finished);
+ 		while (inst->finished == 1)
++#ifndef __laylaos__
+ 			__syscall(SYS_futex,&inst->finished,FUTEX_WAIT|FUTEX_PRIVATE,1,0) != -ENOSYS
+ 			|| __syscall(SYS_futex,&inst->finished,FUTEX_WAIT,1,0);
++#else
++		    sched_yield();
++#endif
+ 		return PTHREAD_BARRIER_SERIAL_THREAD;
+ 	}
+ 
+diff -rub ./musl-1.2.4/src/thread/pthread_cancel.c ./musl-1.2.4/src/thread/pthread_cancel.c
+--- ./musl-1.2.4/src/thread/pthread_cancel.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_cancel.c	2023-08-26 01:02:35.601006000 +0100
+@@ -69,7 +69,11 @@
+ 		return;
+ 	}
+ 
++#ifdef __laylaos__
++	__syscall(SYS_kill, self->tid, SIGCANCEL);
++#else
+ 	__syscall(SYS_tkill, self->tid, SIGCANCEL);
++#endif
+ }
+ 
+ void __testcancel()
+diff -rub ./musl-1.2.4/src/thread/pthread_condattr_destroy.c ./musl-1.2.4/src/thread/pthread_condattr_destroy.c
+--- ./musl-1.2.4/src/thread/pthread_condattr_destroy.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_condattr_destroy.c	2024-03-02 20:39:19.682545320 +0000
+@@ -2,5 +2,10 @@
+ 
+ int pthread_condattr_destroy(pthread_condattr_t *a)
+ {
++
++#ifdef __laylaos__
++    a->clockid = -1;
++#endif
++
+ 	return 0;
+ }
+diff -rub ./musl-1.2.4/src/thread/pthread_condattr_init.c ./musl-1.2.4/src/thread/pthread_condattr_init.c
+--- ./musl-1.2.4/src/thread/pthread_condattr_init.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_condattr_init.c	2024-03-02 20:39:28.230494572 +0000
+@@ -1,7 +1,19 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int pthread_condattr_init(pthread_condattr_t *a)
+ {
+ 	*a = (pthread_condattr_t){0};
+ 	return 0;
+ }
++
++#else
++
++int pthread_condattr_init(pthread_condattr_t *a)
++{
++    a->clockid = CLOCK_REALTIME;
++    return 0;
++}
++
++#endif
+diff -rub ./musl-1.2.4/src/thread/pthread_condattr_setclock.c ./musl-1.2.4/src/thread/pthread_condattr_setclock.c
+--- ./musl-1.2.4/src/thread/pthread_condattr_setclock.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_condattr_setclock.c	2024-03-02 20:39:24.110519033 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int pthread_condattr_setclock(pthread_condattr_t *a, clockid_t clk)
+ {
+ 	if (clk < 0 || clk-2U < 2) return EINVAL;
+@@ -7,3 +9,14 @@
+ 	a->__attr |= clk;
+ 	return 0;
+ }
++
++#else
++
++int pthread_condattr_setclock(pthread_condattr_t *a, clockid_t clk)
++{
++	if (clk < 0 || clk-2U < 2) return EINVAL;
++    a->clockid = clk;
++    return 0;
++}
++
++#endif
+diff -rub ./musl-1.2.4/src/thread/pthread_condattr_setpshared.c ./musl-1.2.4/src/thread/pthread_condattr_setpshared.c
+--- ./musl-1.2.4/src/thread/pthread_condattr_setpshared.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_condattr_setpshared.c	2024-03-02 20:39:22.054531239 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int pthread_condattr_setpshared(pthread_condattr_t *a, int pshared)
+ {
+ 	if (pshared > 1U) return EINVAL;
+@@ -7,3 +9,14 @@
+ 	a->__attr |= (unsigned)pshared<<31;
+ 	return 0;
+ }
++
++#else
++
++int pthread_condattr_setpshared(pthread_condattr_t *a, int pshared)
++{
++	if (pshared > 1U) return EINVAL;
++	a->pshared = pshared;
++	return 0;
++}
++
++#endif
+diff -rub ./musl-1.2.4/src/thread/pthread_cond_broadcast.c ./musl-1.2.4/src/thread/pthread_cond_broadcast.c
+--- ./musl-1.2.4/src/thread/pthread_cond_broadcast.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_cond_broadcast.c	2024-03-02 21:15:33.791394616 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int pthread_cond_broadcast(pthread_cond_t *c)
+ {
+ 	if (!c->_c_shared) return __private_cond_signal(c, -1);
+@@ -8,3 +10,12 @@
+ 	__wake(&c->_c_seq, -1, 0);
+ 	return 0;
+ }
++
++#else
++
++int pthread_cond_broadcast(pthread_cond_t *c)
++{
++    return __private_cond_signal(c, -1);
++}
++
++#endif
+diff -rub ./musl-1.2.4/src/thread/pthread_cond_destroy.c ./musl-1.2.4/src/thread/pthread_cond_destroy.c
+--- ./musl-1.2.4/src/thread/pthread_cond_destroy.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_cond_destroy.c	2024-03-02 20:58:00.894879650 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int pthread_cond_destroy(pthread_cond_t *c)
+ {
+ 	if (c->_c_shared && c->_c_waiters) {
+@@ -12,3 +14,27 @@
+ 	}
+ 	return 0;
+ }
++
++#else
++
++int pthread_cond_destroy(pthread_cond_t *c)
++{
++    if(c->pshared && c->first_waiter)
++    {
++        volatile struct cond_waiter_t *waiter;
++
++        while((waiter = c->first_waiter))
++        {
++            pthread_cond_broadcast(c);
++            sched_yield();
++        }
++    }
++
++    c->clockid = -1;
++    c->first_waiter = NULL;
++    c->last_waiter = NULL;
++
++    return 0;
++}
++
++#endif
+diff -rub ./musl-1.2.4/src/thread/pthread_cond_init.c ./musl-1.2.4/src/thread/pthread_cond_init.c
+--- ./musl-1.2.4/src/thread/pthread_cond_init.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_cond_init.c	2024-03-02 21:00:25.204064347 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int pthread_cond_init(pthread_cond_t *restrict c, const pthread_condattr_t *restrict a)
+ {
+ 	*c = (pthread_cond_t){0};
+@@ -9,3 +11,17 @@
+ 	}
+ 	return 0;
+ }
++
++#else
++
++int pthread_cond_init(pthread_cond_t *restrict c, const pthread_condattr_t *restrict a)
++{
++    c->clockid = a ? a->clockid : CLOCK_REALTIME;
++    c->pshared = a ? a->pshared : 0;
++    c->first_waiter = NULL;
++    c->last_waiter = NULL;
++    
++    return 0;
++}
++
++#endif
+diff -rub ./musl-1.2.4/src/thread/pthread_cond_signal.c ./musl-1.2.4/src/thread/pthread_cond_signal.c
+--- ./musl-1.2.4/src/thread/pthread_cond_signal.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_cond_signal.c	2024-03-02 21:15:39.303390381 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int pthread_cond_signal(pthread_cond_t *c)
+ {
+ 	if (!c->_c_shared) return __private_cond_signal(c, 1);
+@@ -8,3 +10,12 @@
+ 	__wake(&c->_c_seq, 1, 0);
+ 	return 0;
+ }
++
++#else
++
++int pthread_cond_signal(pthread_cond_t *c)
++{
++    return __private_cond_signal(c, 1);
++}
++
++#endif
+diff -rub ./musl-1.2.4/src/thread/pthread_cond_timedwait.c ./musl-1.2.4/src/thread/pthread_cond_timedwait.c
+--- ./musl-1.2.4/src/thread/pthread_cond_timedwait.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_cond_timedwait.c	2024-03-02 21:16:20.667385931 +0000
+@@ -22,6 +22,8 @@
+  * needed by the cancellation cleanup handler.
+  */
+ 
++#ifndef __laylaos__
++
+ struct waiter {
+ 	struct waiter *prev, *next;
+ 	volatile int state, barrier;
+@@ -49,8 +51,10 @@
+ {
+ 	a_store(l, 0);
+ 	if (w) __wake(l, 1, 1);
++#ifndef __laylaos__
+ 	else __syscall(SYS_futex, l, FUTEX_REQUEUE|FUTEX_PRIVATE, 0, 1, r) != -ENOSYS
+ 		|| __syscall(SYS_futex, l, FUTEX_REQUEUE, 0, 1, r);
++#endif
+ }
+ 
+ enum {
+@@ -210,4 +214,103 @@
+ 	return 0;
+ }
+ 
++#else       /* !__laylaos__ */
++
++static inline void lock(volatile int *l)
++{
++    static int zero = 0;
++
++    while (!__atomic_compare_exchange_n(l, &zero, 1, 0,
++                                        __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
++        sched_yield();
++	}
++}
++
++static inline void unlock(volatile int *l)
++{
++    static int one = 1;
++
++    __atomic_compare_exchange_n(l, &one, 0, 0,
++                                __ATOMIC_SEQ_CST, __ATOMIC_RELAXED);
++}
++
++static inline int timespec_cmp(const struct timespec *a, const struct timespec *b)
++{
++    if (a->tv_sec  < b->tv_sec)  return -1;
++    if (a->tv_sec  > b->tv_sec)  return +1;
++    if (a->tv_nsec < b->tv_nsec) return -1;
++    if (a->tv_nsec > b->tv_nsec) return +1;
++    return 0;
++}
++
++int __pthread_cond_timedwait(pthread_cond_t *restrict c,
++                             pthread_mutex_t *restrict m,
++                             const struct timespec *restrict ts)
++{
++    struct cond_waiter_t waiter = { NULL, 0 };
++    struct timespec now;
++
++    lock(&c->lock);
++
++    if(!c->first_waiter)
++    {
++        c->first_waiter = &waiter;
++    }
++
++    if(c->last_waiter)
++    {
++        ((struct cond_waiter_t *)c->last_waiter)->next = &waiter;
++    }
++    
++    c->last_waiter = &waiter;
++    unlock(&c->lock);
++    
++    while(!waiter.signalled)
++    {
++        if(ts)
++        {
++        	if(clock_gettime(c->clockid, &now) < 0)
++        	{
++        		return errno;
++        	}
++
++    		if(timespec_cmp(ts, &now) <= 0)
++    		{
++    			return ETIMEDOUT;
++    		}
++		}
++
++		pthread_mutex_unlock(m);
++		sched_yield();
++		pthread_mutex_lock(m);
++    }
++    
++    return 0;
++}
++
++int __private_cond_signal(pthread_cond_t *c, int n)
++{
++    volatile struct cond_waiter_t *waiter;
++
++    lock(&c->lock);
++
++    while((waiter = c->first_waiter))
++    {
++        if(!(c->first_waiter = waiter->next))
++        {
++            c->last_waiter = NULL;
++        }
++    
++        waiter->next = NULL;
++        waiter->signalled = 1;
++
++        if(--n == 0) break;
++    }
++    
++    unlock(&c->lock);
++    return 0;
++}
++
++#endif      /* !__laylaos__ */
++
+ weak_alias(__pthread_cond_timedwait, pthread_cond_timedwait);
+diff -rub ./musl-1.2.4/src/thread/pthread_create.c ./musl-1.2.4/src/thread/pthread_create.c
+--- ./musl-1.2.4/src/thread/pthread_create.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_create.c	2024-04-22 02:14:22.371651709 +0100
+@@ -24,6 +24,7 @@
+ {
+ 	int tid = __pthread_self()->tid;
+ 	int val = __thread_list_lock;
++
+ 	if (val == tid) {
+ 		tl_lock_count++;
+ 		return;
+@@ -68,7 +69,6 @@
+ 	}
+ 
+ 	__pthread_tsd_run_dtors();
+-
+ 	__block_app_sigs(&set);
+ 
+ 	/* This atomic potentially competes with a concurrent pthread_detach
+@@ -121,6 +121,7 @@
+ 	 * and the detached thread case where the robust list head will
+ 	 * be invalid when the kernel would process it. */
+ 	__vm_lock();
++#ifndef __laylaos__
+ 	volatile void *volatile *rp;
+ 	while ((rp=self->robust_list.head) && rp != &self->robust_list.head) {
+ 		pthread_mutex_t *m = (void *)((char *)rp
+@@ -134,6 +135,7 @@
+ 		if (cont < 0 || waiters)
+ 			__wake(&m->_m_lock, 1, priv);
+ 	}
++#endif
+ 	__vm_unlock();
+ 
+ 	__do_orphaned_stdio_locks();
+@@ -157,8 +159,12 @@
+ 
+ 		/* Robust list will no longer be valid, and was already
+ 		 * processed above, so unregister it with the kernel. */
++#ifndef __laylaos__
+ 		if (self->robust_list.off)
+ 			__syscall(SYS_set_robust_list, 0, 3*sizeof(long));
++#else
++    	__tl_unlock();
++#endif
+ 
+ 		/* The following call unmaps the thread's stack mapping
+ 		 * and then exits without touching the stack. */
+@@ -169,6 +175,10 @@
+ 	a_store(&self->detach_state, DT_EXITED);
+ 	__wake(&self->detach_state, 1, 1);
+ 
++#ifdef __laylaos__
++	__tl_unlock();
++#endif
++
+ 	for (;;) __syscall(SYS_exit, 0);
+ }
+ 
+@@ -188,7 +198,11 @@
+ 	void *(*start_func)(void *);
+ 	void *start_arg;
+ 	volatile int control;
++#ifdef __laylaos__
++	unsigned long sig_mask[128/8/sizeof(long)];
++#else
+ 	unsigned long sig_mask[_NSIG/8/sizeof(long)];
++#endif
+ };
+ 
+ static int start(void *p)
+@@ -199,11 +213,17 @@
+ 		if (a_cas(&args->control, 1, 2)==1)
+ 			__wait(&args->control, 0, 2, 1);
+ 		if (args->control) {
++#ifndef __laylaos__
+ 			__syscall(SYS_set_tid_address, &args->control);
++#endif
+ 			for (;;) __syscall(SYS_exit, 0);
+ 		}
+ 	}
++#ifndef __laylaos__
+ 	__syscall(SYS_rt_sigprocmask, SIG_SETMASK, &args->sig_mask, 0, _NSIG/8);
++#else
++	__syscall(SYS_sigprocmask, SIG_SETMASK, &args->sig_mask, 0);
++#endif
+ 	__pthread_exit(args->start_func(args->start_arg));
+ 	return 0;
+ }
+@@ -255,7 +275,11 @@
+ 		init_file_lock(__stdin_used);
+ 		init_file_lock(__stdout_used);
+ 		init_file_lock(__stderr_used);
++#ifndef __laylaos__
+ 		__syscall(SYS_rt_sigprocmask, SIG_UNBLOCK, SIGPT_SET, 0, _NSIG/8);
++#else
++		__syscall(SYS_sigprocmask, SIG_UNBLOCK, SIGPT_SET, 0);
++#endif
+ 		self->tsd = (void **)__pthread_tsd_main;
+ 		__membarrier_init();
+ 		libc.threaded = 1;
+@@ -351,9 +375,40 @@
+ 		~(1UL<<((SIGCANCEL-1)%(8*sizeof(long))));
+ 
+ 	__tl_lock();
++
++#ifdef __laylaos__
++	// it could happen that the child thread runs and finishes before we come
++	// back, in which case it will segfault in pthread_exit() as its prev and
++	// next pointers will be zero.  the workaround for now is to adjust the
++	// pointers before the call, and unroll the changes after the call if an
++	// error happened
++	new->next = self->next;
++	new->prev = self;
++	new->next->prev = new;
++	new->prev->next = new;
++#endif
++
+ 	if (!libc.threads_minus_1++) libc.need_locks = 1;
+ 	ret = __clone((c11 ? start_c11 : start), stack, flags, args, &new->tid, TP_ADJ(new), &__thread_list_lock);
+ 
++#ifdef __laylaos__
++	if (ret > 0) {
++		new->tid = ret;
++		//__thread_list_lock = ret;
++		
++		// avoid a race condition when the child runs just after we return from
++		// this function and it sets __thread_list_lock, which will render the
++		// lock locked forever
++		while(__thread_list_lock != ret) {
++		    sched_yield();
++		}
++	} else {
++		// unroll the changes we made to the thread list
++		self->next = new->next;
++		new->next->prev = self;
++	}
++#endif
++
+ 	/* All clone failures translate to EAGAIN. If explicit scheduling
+ 	 * was requested, attempt it before unlocking the thread list so
+ 	 * that the failed thread is never exposed and so that we can
+@@ -370,10 +425,13 @@
+ 	}
+ 
+ 	if (ret >= 0) {
++#ifndef __laylaos__
++		// we did this above before the clone call
+ 		new->next = self->next;
+ 		new->prev = self;
+ 		new->next->prev = new;
+ 		new->prev->next = new;
++#endif
+ 	} else {
+ 		if (!--libc.threads_minus_1) libc.need_locks = 0;
+ 	}
+diff -rub ./musl-1.2.4/src/thread/pthread_kill.c ./musl-1.2.4/src/thread/pthread_kill.c
+--- ./musl-1.2.4/src/thread/pthread_kill.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_kill.c	2023-08-26 01:11:35.769486000 +0100
+@@ -10,8 +10,13 @@
+ 	 * must be async-cancel-safe. */
+ 	__block_all_sigs(&set);
+ 	LOCK(t->killlock);
++#ifdef __laylaos__
++	r = t->tid ? -__syscall(SYS_kill, t->tid, sig)
++		: (sig+0U >= _NSIG ? EINVAL : 0);
++#else
+ 	r = t->tid ? -__syscall(SYS_tkill, t->tid, sig)
+ 		: (sig+0U >= _NSIG ? EINVAL : 0);
++#endif
+ 	UNLOCK(t->killlock);
+ 	__restore_sigs(&set);
+ 	return r;
+diff -rub ./musl-1.2.4/src/thread/pthread_mutexattr_setprotocol.c ./musl-1.2.4/src/thread/pthread_mutexattr_setprotocol.c
+--- ./musl-1.2.4/src/thread/pthread_mutexattr_setprotocol.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_mutexattr_setprotocol.c	2024-03-03 12:48:02.459491545 +0000
+@@ -1,6 +1,8 @@
+ #include "pthread_impl.h"
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ static volatile int check_pi_result = -1;
+ 
+ int pthread_mutexattr_setprotocol(pthread_mutexattr_t *a, int protocol)
+@@ -14,7 +16,9 @@
+ 		r = check_pi_result;
+ 		if (r < 0) {
+ 			volatile int lk = 0;
++#ifndef __laylaos__
+ 			r = -__syscall(SYS_futex, &lk, FUTEX_LOCK_PI, 0, 0);
++#endif
+ 			a_store(&check_pi_result, r);
+ 		}
+ 		if (r) return r;
+@@ -26,3 +30,27 @@
+ 		return EINVAL;
+ 	}
+ }
++
++#else       /* !__laylaos__ */
++
++int pthread_mutexattr_setprotocol(pthread_mutexattr_t *a, int protocol)
++{
++	int r;
++	switch (protocol) {
++	case PTHREAD_PRIO_NONE:
++		a->__attr &= ~8;
++		return 0;
++	case PTHREAD_PRIO_INHERIT:
++		// TODO: we do not support this yet
++		//a->__attr |= 8;
++		//return 0;
++		return ENOTSUP;
++	case PTHREAD_PRIO_PROTECT:
++		return ENOTSUP;
++	default:
++		return EINVAL;
++	}
++}
++
++#endif      /* !__laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/pthread_mutexattr_setrobust.c ./musl-1.2.4/src/thread/pthread_mutexattr_setrobust.c
+--- ./musl-1.2.4/src/thread/pthread_mutexattr_setrobust.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_mutexattr_setrobust.c	2024-03-03 12:48:04.367492685 +0000
+@@ -1,6 +1,8 @@
+ #include "pthread_impl.h"
+ #include "syscall.h"
+ 
++#ifndef __laylaos__
++
+ static volatile int check_robust_result = -1;
+ 
+ int pthread_mutexattr_setrobust(pthread_mutexattr_t *a, int robust)
+@@ -11,7 +13,9 @@
+ 		if (r < 0) {
+ 			void *p;
+ 			size_t l;
++#ifndef __laylaos__
+ 			r = -__syscall(SYS_get_robust_list, 0, &p, &l);
++#endif
+ 			a_store(&check_robust_result, r);
+ 		}
+ 		if (r) return r;
+@@ -21,3 +25,24 @@
+ 	a->__attr &= ~4;
+ 	return 0;
+ }
++
++#else       /* !__laylaos__ */
++
++int pthread_mutexattr_setrobust(pthread_mutexattr_t *a, int robust)
++{
++	if (robust > 1U) return EINVAL;
++
++	// TODO: we do not support this yet
++	/*
++	if (robust) {
++		a->__attr |= 4;
++		return 0;
++	}
++	a->__attr &= ~4;
++	return 0;
++	*/
++	return ENOTSUP;
++}
++
++#endif      /* !__laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/pthread_mutex_consistent.c ./musl-1.2.4/src/thread/pthread_mutex_consistent.c
+--- ./musl-1.2.4/src/thread/pthread_mutex_consistent.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_mutex_consistent.c	2024-03-03 12:48:17.023500428 +0000
+@@ -1,6 +1,8 @@
+ #include "pthread_impl.h"
+ #include "atomic.h"
+ 
++#ifndef __laylaos__
++
+ int pthread_mutex_consistent(pthread_mutex_t *m)
+ {
+ 	int old = m->_m_lock;
+@@ -12,3 +14,14 @@
+ 	a_and(&m->_m_lock, ~0x40000000);
+ 	return 0;
+ }
++
++#else       /* !__laylaos__ */
++
++int pthread_mutex_consistent(pthread_mutex_t *m)
++{
++	// TODO: we do not support this yet
++	return ENOTSUP;
++}
++
++#endif      /* !__laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/pthread_mutex_destroy.c ./musl-1.2.4/src/thread/pthread_mutex_destroy.c
+--- ./musl-1.2.4/src/thread/pthread_mutex_destroy.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_mutex_destroy.c	2024-03-03 12:48:13.275498101 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int pthread_mutex_destroy(pthread_mutex_t *mutex)
+ {
+ 	/* If the mutex being destroyed is process-shared and has nontrivial
+@@ -8,3 +10,21 @@
+ 	if (mutex->_m_type > 128) __vm_wait();
+ 	return 0;
+ }
++
++#else       /* !__laylaos__ */
++
++int pthread_mutex_destroy(pthread_mutex_t *mutex)
++{
++    // ensure the mutex is not already locked
++    if(pthread_mutex_trylock(mutex) != 0)
++    {
++        return EBUSY;
++    }
++
++    __atomic_store_n(&mutex->lock, -1, __ATOMIC_SEQ_CST);
++
++    return 0;
++}
++
++#endif      /* !__laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/pthread_mutex_init.c ./musl-1.2.4/src/thread/pthread_mutex_init.c
+--- ./musl-1.2.4/src/thread/pthread_mutex_init.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_mutex_init.c	2024-03-03 12:48:06.867494190 +0000
+@@ -1,8 +1,27 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int pthread_mutex_init(pthread_mutex_t *restrict m, const pthread_mutexattr_t *restrict a)
+ {
+ 	*m = (pthread_mutex_t){0};
+ 	if (a) m->_m_type = a->__attr;
+ 	return 0;
+ }
++
++#else       /* !__laylaos__ */
++
++int pthread_mutex_init(pthread_mutex_t *restrict m, const pthread_mutexattr_t *restrict a)
++{
++	*m = (pthread_mutex_t){0};
++	if (a) {
++		m->type = a->__attr & 3;
++		m->robust = !!(a->__attr & 4);
++		m->pshared = !!(a->__attr & 128);
++		m->prio_inherit = !!(a->__attr & 8);
++	}
++	return 0;
++}
++
++#endif      /* !__laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/pthread_mutex_lock.c ./musl-1.2.4/src/thread/pthread_mutex_lock.c
+--- ./musl-1.2.4/src/thread/pthread_mutex_lock.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_mutex_lock.c	2024-03-03 12:48:08.539495203 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int __pthread_mutex_lock(pthread_mutex_t *m)
+ {
+ 	if ((m->_m_type&15) == PTHREAD_MUTEX_NORMAL
+@@ -9,4 +11,35 @@
+ 	return __pthread_mutex_timedlock(m, 0);
+ }
+ 
++#else       /* !__laylaos__ */
++
++int __pthread_mutex_lock(pthread_mutex_t *mutex)
++{
++    while (!__sync_bool_compare_and_swap(&mutex->lock, 0, 1)) {
++        if (mutex->owner == __pthread_self()->tid) {
++            if (mutex->type == PTHREAD_MUTEX_RECURSIVE) {
++                // detect overflow in a recursive mutex
++                if (__atomic_load_n(&mutex->recursion, __ATOMIC_SEQ_CST) == INT_MAX) {
++                    return EAGAIN;
++                }
++                
++                __atomic_fetch_add(&mutex->recursion, 1, __ATOMIC_SEQ_CST);
++                return 0;
++            } else if (mutex->type == PTHREAD_MUTEX_ERRORCHECK) {
++                // trying to relock a non-recursive mutex we locked earlier
++                return EDEADLK;
++            }
++        }
++        
++        sched_yield();
++    }
++    
++    mutex->owner = __pthread_self()->tid;
++    __atomic_store_n(&mutex->recursion, 0, __ATOMIC_SEQ_CST);
++    
++    return 0;
++}
++
++#endif      /* !__laylaos__ */
++
+ weak_alias(__pthread_mutex_lock, pthread_mutex_lock);
+diff -rub ./musl-1.2.4/src/thread/pthread_mutex_timedlock.c ./musl-1.2.4/src/thread/pthread_mutex_timedlock.c
+--- ./musl-1.2.4/src/thread/pthread_mutex_timedlock.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_mutex_timedlock.c	2024-03-03 12:47:59.759489946 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ #define IS32BIT(x) !((x)+0x80000000ULL>>32)
+ #define CLAMP(x) (int)(IS32BIT(x) ? (x) : 0x7fffffffU+((0ULL+(x))>>63))
+ 
+@@ -15,7 +17,20 @@
+ 	if (SYS_futex == SYS_futex_time64 || r!=-ENOSYS) return r;
+ 	to = to ? (void *)(long[]){CLAMP(s), ns} : 0;
+ #endif
++#ifndef __laylaos__
+ 	return __syscall(SYS_futex, addr, op, val, to);
++#else
++	while(a_cas(addr, val, 0) == val) {
++		if(to) {
++			int r;
++			r = clock_nanosleep(CLOCK_REALTIME, 0, to, NULL);
++			if(a_cas(addr, val, 0) != val) return 0;
++			return (r == 0) ? -ETIMEDOUT : r;
++		}
++		sched_yield();
++	}
++	 return 0;
++#endif
+ }
+ 
+ static int pthread_mutex_timedlock_pi(pthread_mutex_t *restrict m, const struct timespec *restrict at)
+@@ -36,7 +51,9 @@
+ 		/* Catch spurious success for non-robust mutexes. */
+ 		if (!(type&4) && ((m->_m_lock & 0x40000000) || m->_m_waiters)) {
+ 			a_store(&m->_m_waiters, -1);
++#ifndef __laylaos__
+ 			__syscall(SYS_futex, &m->_m_lock, FUTEX_UNLOCK_PI|priv);
++#endif
+ 			self->robust_list.pending = 0;
+ 			break;
+ 		}
+@@ -89,4 +106,43 @@
+ 	return r;
+ }
+ 
++#else       /* !__laylaos__ */
++
++int __pthread_mutex_timedlock(pthread_mutex_t *restrict mutex,
++                              const struct timespec *restrict at)
++{
++    clockid_t        clock = CLOCK_MONOTONIC;
++    struct timespec  ts;
++
++    while (!__sync_bool_compare_and_swap(&mutex->lock, 0, 1)) {
++        if (mutex->owner == __pthread_self()->tid) {
++            if (mutex->type == PTHREAD_MUTEX_RECURSIVE) {
++                // detect overflow in a recursive mutex
++                if (__atomic_load_n(&mutex->recursion, __ATOMIC_SEQ_CST) == INT_MAX) {
++                    return EAGAIN;
++                }
++                
++                __atomic_fetch_add(&mutex->recursion, 1, __ATOMIC_SEQ_CST);
++                return 0;
++            } else if (mutex->type == PTHREAD_MUTEX_ERRORCHECK) {
++                // trying to relock a non-recursive mutex we locked earlier
++                return EDEADLK;
++            }
++        }
++
++        if (at && __timespec_to_absolute(&ts, at, clock) < 0) {
++            return ETIMEDOUT;
++        }
++        
++        sched_yield();
++    }
++    
++    mutex->owner = __pthread_self()->tid;
++    __atomic_store_n(&mutex->recursion, 0, __ATOMIC_SEQ_CST);
++    
++    return 0;
++}
++
++#endif      /* !__laylaos__ */
++
+ weak_alias(__pthread_mutex_timedlock, pthread_mutex_timedlock);
+diff -rub ./musl-1.2.4/src/thread/pthread_mutex_trylock.c ./musl-1.2.4/src/thread/pthread_mutex_trylock.c
+--- ./musl-1.2.4/src/thread/pthread_mutex_trylock.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_mutex_trylock.c	2024-03-03 12:48:11.451496980 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int __pthread_mutex_trylock_owner(pthread_mutex_t *m)
+ {
+ 	int old, own;
+@@ -27,7 +29,9 @@
+ 	if (type & 128) {
+ 		if (!self->robust_list.off) {
+ 			self->robust_list.off = (char*)&m->_m_lock-(char *)&m->_m_next;
++#ifndef __laylaos__
+ 			__syscall(SYS_set_robust_list, &self->robust_list, 3*sizeof(long));
++#endif
+ 		}
+ 		if (m->_m_waiters) tid |= 0x80000000;
+ 		self->robust_list.pending = &m->_m_next;
+@@ -43,7 +47,9 @@
+ success:
+ 	if ((type&8) && m->_m_waiters) {
+ 		int priv = (type & 128) ^ 128;
++#ifndef __laylaos__
+ 		__syscall(SYS_futex, &m->_m_lock, FUTEX_UNLOCK_PI|priv);
++#endif
+ 		self->robust_list.pending = 0;
+ 		return (type&4) ? ENOTRECOVERABLE : EBUSY;
+ 	}
+@@ -71,4 +77,35 @@
+ 	return __pthread_mutex_trylock_owner(m);
+ }
+ 
++#else       /* !__laylaos__ */
++
++int __pthread_mutex_trylock(pthread_mutex_t *mutex)
++{
++    if (!__sync_bool_compare_and_swap(&mutex->lock, 0, 1)) {
++        if (mutex->owner == __pthread_self()->tid) {
++            if (mutex->type == PTHREAD_MUTEX_RECURSIVE) {
++                // detect overflow in a recursive mutex
++                if (__atomic_load_n(&mutex->recursion, __ATOMIC_SEQ_CST) == INT_MAX) {
++                    return EAGAIN;
++                }
++                
++                __atomic_fetch_add(&mutex->recursion, 1, __ATOMIC_SEQ_CST);
++                return 0;
++            } else if (mutex->type == PTHREAD_MUTEX_ERRORCHECK) {
++                // trying to relock a non-recursive mutex we locked earlier
++                return EDEADLK;
++            }
++        }
++        
++        return EBUSY;
++    }
++    
++    mutex->owner = __pthread_self()->tid;
++    __atomic_store_n(&mutex->recursion, 0, __ATOMIC_SEQ_CST);
++    
++    return 0;
++}
++
++#endif      /* !__laylaos__ */
++
+ weak_alias(__pthread_mutex_trylock, pthread_mutex_trylock);
+diff -rub ./musl-1.2.4/src/thread/pthread_mutex_unlock.c ./musl-1.2.4/src/thread/pthread_mutex_unlock.c
+--- ./musl-1.2.4/src/thread/pthread_mutex_unlock.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_mutex_unlock.c	2024-03-03 12:48:15.059499205 +0000
+@@ -1,5 +1,7 @@
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int __pthread_mutex_unlock(pthread_mutex_t *m)
+ {
+ 	pthread_t self;
+@@ -33,7 +35,9 @@
+ 	if (type&8) {
+ 		if (old<0 || a_cas(&m->_m_lock, old, new)!=old) {
+ 			if (new) a_store(&m->_m_waiters, -1);
++#ifndef __laylaos__
+ 			__syscall(SYS_futex, &m->_m_lock, FUTEX_UNLOCK_PI|priv);
++#endif
+ 		}
+ 		cont = 0;
+ 		waiters = 0;
+@@ -49,4 +53,37 @@
+ 	return 0;
+ }
+ 
++#else       /* !__laylaos__ */
++
++int __pthread_mutex_unlock(pthread_mutex_t *mutex)
++{
++    if (mutex->owner != __pthread_self()->tid) {
++        return EPERM;
++    }
++    
++    if (mutex->type == PTHREAD_MUTEX_RECURSIVE) {
++        if (__atomic_load_n(&mutex->recursion, __ATOMIC_SEQ_CST)) {
++            __atomic_fetch_sub(&mutex->recursion, 1, __ATOMIC_SEQ_CST);
++            return 0;
++        }
++        
++        mutex->owner = 0;
++        __atomic_store_n(&mutex->lock, 0, __ATOMIC_SEQ_CST);
++        return 0;
++    }
++    
++    if (mutex->type == PTHREAD_MUTEX_ERRORCHECK) {
++        if (!__atomic_load_n(&mutex->lock, __ATOMIC_SEQ_CST)) {
++            return EINVAL;
++        }
++    }
++    
++    mutex->owner = 0;
++    __atomic_store_n(&mutex->lock, 0, __ATOMIC_SEQ_CST);
++    
++    return 0;
++}
++
++#endif      /* !__laylaos__ */
++
+ weak_alias(__pthread_mutex_unlock, pthread_mutex_unlock);
+diff -rub ./musl-1.2.4/src/thread/pthread_sigmask.c ./musl-1.2.4/src/thread/pthread_sigmask.c
+--- ./musl-1.2.4/src/thread/pthread_sigmask.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/pthread_sigmask.c	2023-08-26 01:14:04.470951000 +0100
+@@ -6,7 +6,11 @@
+ {
+ 	int ret;
+ 	if (set && (unsigned)how - SIG_BLOCK > 2U) return EINVAL;
++#ifndef __laylaos__
+ 	ret = -__syscall(SYS_rt_sigprocmask, how, set, old, _NSIG/8);
++#else
++	ret = -__syscall(SYS_sigprocmask, how, set, old);
++#endif
+ 	if (!ret && old) {
+ 		if (sizeof old->__bits[0] == 8) {
+ 			old->__bits[0] &= ~0x380000000ULL;
+diff -rub ./musl-1.2.4/src/thread/sem_post.c ./musl-1.2.4/src/thread/sem_post.c
+--- ./musl-1.2.4/src/thread/sem_post.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/sem_post.c	2024-02-27 10:51:22.311170028 +0000
+@@ -2,6 +2,8 @@
+ #include <limits.h>
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int sem_post(sem_t *sem)
+ {
+ 	int val, new, waiters, priv = sem->__val[2];
+@@ -19,3 +21,29 @@
+ 	if (val<0) __wake(sem->__val, waiters>1 ? 1 : -1, priv);
+ 	return 0;
+ }
++
++#else       /* __laylaos__ */
++
++int sem_post(sem_t *sem)
++{
++    while (1) {
++        int old_value = __atomic_load_n(&sem->__val[0], __ATOMIC_SEQ_CST);
++
++        if ((old_value & SEM_VALUE_MAX) == SEM_VALUE_MAX) {
++            errno = EOVERFLOW;
++            return -1;
++        }
++
++        int new_value = old_value + 1;
++
++        if (!__atomic_compare_exchange_n(&sem->__val[0], &old_value, new_value, 0,
++                                         __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
++            continue;
++        }
++
++        return 0;
++    }
++}
++
++#endif      /* __laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/sem_timedwait.c ./musl-1.2.4/src/thread/sem_timedwait.c
+--- ./musl-1.2.4/src/thread/sem_timedwait.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/sem_timedwait.c	2024-03-03 12:47:51.971485414 +0000
+@@ -2,6 +2,8 @@
+ #include <limits.h>
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ static void cleanup(void *p)
+ {
+ 	a_dec(p);
+@@ -31,3 +33,49 @@
+ 	}
+ 	return 0;
+ }
++
++#else       /* __laylaos__ */
++
++int sem_timedwait(sem_t *restrict sem, const struct timespec *restrict at)
++{
++    sigset_t old_set_mask;
++    sigset_t old_set_allowed;
++    sigset_t all_signals;
++
++    if (sem_trywait(sem) == 0) {
++        return 0;
++    }
++
++    sigfillset(&all_signals);
++    sigprocmask(SIG_SETMASK, &all_signals, &old_set_mask);
++    signotset(&old_set_allowed, &old_set_mask);
++
++    while (sem_trywait(sem) != 0) {
++        if (errno == EAGAIN) {
++            struct timespec now;
++
++            if (__timespec_to_absolute(&now, at, CLOCK_REALTIME) < 0)
++            {
++                errno = ETIMEDOUT;
++            }
++        }
++
++        if (errno == EAGAIN && sigpending(&old_set_allowed)) {
++            errno = EINTR;
++        }
++
++        if (errno != EAGAIN) {
++            sigprocmask(SIG_SETMASK, &old_set_mask, NULL);
++            return -1;
++        }
++
++        sched_yield();
++    }
++
++    sigprocmask(SIG_SETMASK, &old_set_mask, NULL);
++
++    return 0;
++}
++
++#endif      /* __laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/sem_trywait.c ./musl-1.2.4/src/thread/sem_trywait.c
+--- ./musl-1.2.4/src/thread/sem_trywait.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/sem_trywait.c	2024-02-27 10:51:28.559274743 +0000
+@@ -2,6 +2,8 @@
+ #include <limits.h>
+ #include "pthread_impl.h"
+ 
++#ifndef __laylaos__
++
+ int sem_trywait(sem_t *sem)
+ {
+ 	int val;
+@@ -11,3 +13,28 @@
+ 	errno = EAGAIN;
+ 	return -1;
+ }
++
++#else       /* __laylaos__ */
++
++int sem_trywait(sem_t *sem)
++{
++    int old_value = __atomic_load_n(&sem->__val[0], __ATOMIC_SEQ_CST);
++
++    if (old_value <= 0) {
++        errno = EAGAIN;
++        return -1;
++    }
++    
++    int new_value = old_value - 1;
++
++    if (!__atomic_compare_exchange_n(&sem->__val[0], &old_value, new_value, 0,
++                                     __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
++        errno = EAGAIN;
++        return -1;
++    }
++    
++    return 0;
++}
++
++#endif      /* __laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/sem_wait.c ./musl-1.2.4/src/thread/sem_wait.c
+--- ./musl-1.2.4/src/thread/sem_wait.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/sem_wait.c	2024-02-27 10:58:38.826104464 +0000
+@@ -1,6 +1,47 @@
+ #include <semaphore.h>
+ 
++#ifndef __laylaos__
++
+ int sem_wait(sem_t *sem)
+ {
+ 	return sem_timedwait(sem, 0);
+ }
++
++#else       /* __laylaos__ */
++
++#include "pthread_impl.h"
++
++int sem_wait(sem_t *sem)
++{
++    sigset_t old_set_mask;
++    sigset_t old_set_allowed;
++    sigset_t all_signals;
++
++    if (sem_trywait(sem) == 0) {
++        return 0;
++    }
++
++    sigfillset(&all_signals);
++    sigprocmask(SIG_SETMASK, &all_signals, &old_set_mask);
++    signotset(&old_set_allowed, &old_set_mask);
++
++    while (sem_trywait(sem) != 0) {
++        if (errno == EAGAIN && sigpending(&old_set_allowed)) {
++            errno = EINTR;
++        }
++
++        if (errno != EAGAIN) {
++            sigprocmask(SIG_SETMASK, &old_set_mask, NULL);
++            return -1;
++        }
++
++        sched_yield();
++    }
++
++    sigprocmask(SIG_SETMASK, &old_set_mask, NULL);
++
++    return 0;
++}
++
++#endif      /* __laylaos__ */
++
+diff -rub ./musl-1.2.4/src/thread/synccall.c ./musl-1.2.4/src/thread/synccall.c
+--- ./musl-1.2.4/src/thread/synccall.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/synccall.c	2023-08-26 01:15:52.037145000 +0100
+@@ -78,7 +78,11 @@
+ 
+ 	for (td=self->next; td!=self; td=td->next) {
+ 		target_tid = td->tid;
++#ifdef __laylaos__
++		while ((r = -__syscall(SYS_kill, td->tid, SIGSYNCCALL)) == EAGAIN);
++#else
+ 		while ((r = -__syscall(SYS_tkill, td->tid, SIGSYNCCALL)) == EAGAIN);
++#endif
+ 		if (r) {
+ 			/* If we failed to signal any thread, nop out the
+ 			 * callback to abort the synccall and just release
+diff -rub ./musl-1.2.4/src/thread/__syscall_cp.c ./musl-1.2.4/src/thread/__syscall_cp.c
+--- ./musl-1.2.4/src/thread/__syscall_cp.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/__syscall_cp.c	2023-09-08 20:49:34.223365991 +0100
+@@ -1,6 +1,26 @@
+ #include "pthread_impl.h"
+ #include "syscall.h"
+ 
++#ifdef __laylaos__
++
++long (__laylaos_syscall_cp012345)(syscall_arg_t nr,
++                                  syscall_arg_t u, syscall_arg_t v, 
++                                  syscall_arg_t w, syscall_arg_t x, 
++                                  syscall_arg_t y)
++{
++	return __syscall(nr, u, v, w, x, y);
++}
++
++long (__laylaos_syscall_cp6)(syscall_arg_t nr,
++                             syscall_arg_t u, syscall_arg_t v, 
++                             syscall_arg_t w, syscall_arg_t x, 
++                             syscall_arg_t y, syscall_arg_t z)
++{
++	return __syscall(nr, u, v, w, x, y, z);
++}
++
++#else       /* !__laylaos__ */
++
+ hidden long __syscall_cp_c();
+ 
+ static long sccp(syscall_arg_t nr,
+@@ -18,3 +38,5 @@
+ {
+ 	return __syscall_cp_c(nr, u, v, w, x, y, z);
+ }
++
++#endif      /* !__laylaos__ */
+diff -rub ./musl-1.2.4/src/thread/__timedwait.c ./musl-1.2.4/src/thread/__timedwait.c
+--- ./musl-1.2.4/src/thread/__timedwait.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/__timedwait.c	2024-02-27 10:48:19.498399790 +0000
+@@ -11,6 +11,7 @@
+ static int __futex4_cp(volatile void *addr, int op, int val, const struct timespec *to)
+ {
+ 	int r;
++#ifndef __laylaos__
+ #ifdef SYS_futex_time64
+ 	time_t s = to ? to->tv_sec : 0;
+ 	long ns = to ? to->tv_nsec : 0;
+@@ -24,10 +25,24 @@
+ 	r = __syscall_cp(SYS_futex, addr, op, val, to);
+ 	if (r != -ENOSYS) return r;
+ 	return __syscall_cp(SYS_futex, addr, op & ~FUTEX_PRIVATE, val, to);
++#else
++	while(*(volatile int *)addr == val) {
++		if(to) {
++			r = clock_nanosleep(CLOCK_REALTIME, 0, to, NULL);
++			if(*(volatile int *)addr != val) return 0;
++			return (r == 0) ? -ETIMEDOUT : r;
++		}
++		sched_yield();
++	}
++	return 0;
++	//return -ENOSYS;
++#endif
+ }
+ 
++#ifndef __laylaos__
+ static volatile int dummy = 0;
+ weak_alias(dummy, __eintr_valid_flag);
++#endif
+ 
+ int __timedwait_cp(volatile int *addr, int val,
+ 	clockid_t clk, const struct timespec *at, int priv)
+@@ -51,11 +66,14 @@
+ 
+ 	r = -__futex4_cp(addr, FUTEX_WAIT|priv, val, top);
+ 	if (r != EINTR && r != ETIMEDOUT && r != ECANCELED) r = 0;
++
++#ifndef __laylaos__
+ 	/* Mitigate bug in old kernels wrongly reporting EINTR for non-
+ 	 * interrupting (SA_RESTART) signal handlers. This is only practical
+ 	 * when NO interrupting signal handlers have been installed, and
+ 	 * works by sigaction tracking whether that's the case. */
+ 	if (r == EINTR && !__eintr_valid_flag) r = 0;
++#endif
+ 
+ 	return r;
+ }
+diff -rub ./musl-1.2.4/src/thread/__wait.c ./musl-1.2.4/src/thread/__wait.c
+--- ./musl-1.2.4/src/thread/__wait.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/thread/__wait.c	2024-02-03 02:47:31.842417626 +0000
+@@ -10,8 +10,12 @@
+ 	}
+ 	if (waiters) a_inc(waiters);
+ 	while (*addr==val) {
++#ifndef __laylaos__
+ 		__syscall(SYS_futex, addr, FUTEX_WAIT|priv, val, 0) != -ENOSYS
+ 		|| __syscall(SYS_futex, addr, FUTEX_WAIT, val, 0);
++#else
++		sched_yield();
++#endif
+ 	}
+ 	if (waiters) a_dec(waiters);
+ }
+diff -rub ./musl-1.2.4/src/time/clock_gettime.c ./musl-1.2.4/src/time/clock_gettime.c
+--- ./musl-1.2.4/src/time/clock_gettime.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/time/clock_gettime.c	2024-01-26 22:38:32.923984386 +0000
+@@ -31,6 +31,21 @@
+ }
+ #endif
+ 
++#ifdef __laylaos__
++
++uintptr_t vdso_base_addr = 0;
++
++static int cgt_init(uintptr_t unused, clockid_t clk, struct timespec *ts)
++{
++	void *p = __vdsosym(VDSO_CGT_VER, VDSO_CGT_SYM);
++	int (*f)(uintptr_t, clockid_t, struct timespec *) =
++		(int (*)(uintptr_t, clockid_t, struct timespec *))p;
++	a_cas_p(&vdso_func, (void *)cgt_init, p);
++	return f ? f(vdso_base_addr, clk, ts) : -ENOSYS;
++}
++
++#else
++
+ static int cgt_init(clockid_t clk, struct timespec *ts)
+ {
+ 	void *p = __vdsosym(VDSO_CGT_VER, VDSO_CGT_SYM);
+@@ -52,6 +67,8 @@
+ 	return f ? f(clk, ts) : -ENOSYS;
+ }
+ 
++#endif      /* !__laylaos__ */
++
+ static void *volatile vdso_func = (void *)cgt_init;
+ 
+ #endif
+@@ -61,6 +78,24 @@
+ 	int r;
+ 
+ #ifdef VDSO_CGT_SYM
++
++#ifdef __laylaos__
++
++	int (*f)(uintptr_t, clockid_t, struct timespec *) =
++		(int (*)(uintptr_t, clockid_t, struct timespec *))vdso_func;
++	if (f) {
++		r = f(vdso_base_addr, clk, ts);
++		if (!r) return r;
++		if (r == -EINVAL) return __syscall_ret(r);
++		/* Fall through on errors other than EINVAL. Some buggy
++		 * vdso implementations return ENOSYS for clocks they
++		 * can't handle, rather than making the syscall. This
++		 * also handles the case where cgt_init fails to find
++		 * a vdso function to use. */
++	}
++
++#else
++
+ 	int (*f)(clockid_t, struct timespec *) =
+ 		(int (*)(clockid_t, struct timespec *))vdso_func;
+ 	if (f) {
+@@ -73,7 +108,10 @@
+ 		 * also handles the case where cgt_init fails to find
+ 		 * a vdso function to use. */
+ 	}
+-#endif
++
++#endif      /* !__laylaos__ */
++
++#endif      /* VDSO_CGT_SYM */
+ 
+ #ifdef SYS_clock_gettime64
+ 	r = -ENOSYS;
+diff -rub ./musl-1.2.4/src/time/timer_create.c ./musl-1.2.4/src/time/timer_create.c
+--- ./musl-1.2.4/src/time/timer_create.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/time/timer_create.c	2023-08-26 01:16:53.515182000 +0100
+@@ -103,7 +103,11 @@
+ 		args.sev = evp;
+ 
+ 		__block_app_sigs(&set);
++#ifdef __laylaos__
++		__syscall(SYS_sigprocmask, SIG_BLOCK, SIGTIMER_SET, 0);
++#else
+ 		__syscall(SYS_rt_sigprocmask, SIG_BLOCK, SIGTIMER_SET, 0, _NSIG/8);
++#endif
+ 		r = pthread_create(&td, &attr, start, &args);
+ 		__restore_sigs(&set);
+ 		if (r) {
+diff -rub ./musl-1.2.4/src/time/timer_delete.c ./musl-1.2.4/src/time/timer_delete.c
+--- ./musl-1.2.4/src/time/timer_delete.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/time/timer_delete.c	2023-08-26 01:17:47.514578000 +0100
+@@ -7,7 +7,11 @@
+ 	if ((intptr_t)t < 0) {
+ 		pthread_t td = (void *)((uintptr_t)t << 1);
+ 		a_store(&td->timer_id, td->timer_id | INT_MIN);
++#ifndef __laylaos__
+ 		__syscall(SYS_tkill, td->tid, SIGTIMER);
++#else
++		__syscall(SYS_kill, td->tid, SIGTIMER);
++#endif
+ 		return 0;
+ 	}
+ 	return __syscall(SYS_timer_delete, t);
+diff -rub ./musl-1.2.4/src/unistd/faccessat.c ./musl-1.2.4/src/unistd/faccessat.c
+--- ./musl-1.2.4/src/unistd/faccessat.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/faccessat.c	2023-11-22 20:01:57.651415870 +0000
+@@ -19,14 +19,24 @@
+ 	    || __syscall(SYS_setreuid, __syscall(SYS_geteuid), -1))
+ 		__syscall(SYS_exit, 1);
+ 	ret = __syscall(SYS_faccessat, c->fd, c->filename, c->amode, 0);
++
++#ifdef __laylaos__
++	write(c->p, &ret, sizeof ret);
++#else
+ 	__syscall(SYS_write, c->p, &ret, sizeof ret);
++#endif
++
+ 	return 0;
+ }
+ 
+ int faccessat(int fd, const char *filename, int amode, int flag)
+ {
+ 	if (flag) {
++#ifdef __laylaos__
++		int ret = __syscall(SYS_faccessat, fd, filename, amode, flag);
++#else
+ 		int ret = __syscall(SYS_faccessat2, fd, filename, amode, flag);
++#endif
+ 		if (ret != -ENOSYS) return __syscall_ret(ret);
+ 	}
+ 
+@@ -47,11 +57,20 @@
+ 
+ 	__block_all_sigs(&set);
+ 	
++#ifdef __laylaos__
++	pid = __clone(checker, stack+sizeof stack, 0, &c, 0, 0, 0);
++	__syscall(SYS_close, p[1]);
++
++	if (pid<0 || read(p[0], &ret, sizeof ret) != sizeof(ret))
++		ret = -EBUSY;
++#else
+ 	pid = __clone(checker, stack+sizeof stack, 0, &c);
+ 	__syscall(SYS_close, p[1]);
+ 
+ 	if (pid<0 || __syscall(SYS_read, p[0], &ret, sizeof ret) != sizeof(ret))
+ 		ret = -EBUSY;
++#endif
++
+ 	__syscall(SYS_close, p[0]);
+ 	__syscall(SYS_wait4, pid, &status, __WCLONE, 0);
+ 
+diff -rub ./musl-1.2.4/src/unistd/pread.c ./musl-1.2.4/src/unistd/pread.c
+--- ./musl-1.2.4/src/unistd/pread.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/pread.c	2023-08-27 17:38:27.981982000 +0100
+@@ -3,5 +3,20 @@
+ 
+ ssize_t pread(int fd, void *buf, size_t size, off_t ofs)
+ {
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    int res;
++
++	res = __syscall_cp(SYS_pread, fd, buf, size, ofs, &bytes);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return -1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ 	return syscall_cp(SYS_pread, fd, buf, size, __SYSCALL_LL_PRW(ofs));
++#endif
+ }
+diff -rub ./musl-1.2.4/src/unistd/preadv.c ./musl-1.2.4/src/unistd/preadv.c
+--- ./musl-1.2.4/src/unistd/preadv.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/preadv.c	2023-08-27 14:24:27.952103000 +0100
+@@ -5,6 +5,21 @@
+ 
+ ssize_t preadv(int fd, const struct iovec *iov, int count, off_t ofs)
+ {
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    int res;
++
++	res = __syscall_cp(SYS_preadv, fd, iov, count, ofs, &bytes);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return -1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ 	return syscall_cp(SYS_preadv, fd, iov, count,
+ 		(long)(ofs), (long)(ofs>>32));
++#endif
+ }
+diff -rub ./musl-1.2.4/src/unistd/pwrite.c ./musl-1.2.4/src/unistd/pwrite.c
+--- ./musl-1.2.4/src/unistd/pwrite.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/pwrite.c	2023-08-27 17:39:37.640893000 +0100
+@@ -3,5 +3,20 @@
+ 
+ ssize_t pwrite(int fd, const void *buf, size_t size, off_t ofs)
+ {
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    int res;
++
++	res = __syscall_cp(SYS_pwrite, fd, buf, size, ofs, &bytes);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return -1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ 	return syscall_cp(SYS_pwrite, fd, buf, size, __SYSCALL_LL_PRW(ofs));
++#endif
+ }
+diff -rub ./musl-1.2.4/src/unistd/pwritev.c ./musl-1.2.4/src/unistd/pwritev.c
+--- ./musl-1.2.4/src/unistd/pwritev.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/pwritev.c	2023-08-27 17:35:03.321091000 +0100
+@@ -5,6 +5,21 @@
+ 
+ ssize_t pwritev(int fd, const struct iovec *iov, int count, off_t ofs)
+ {
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    int res;
++
++	res = __syscall_cp(SYS_pwritev, fd, iov, count, ofs, &bytes);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return -1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ 	return syscall_cp(SYS_pwritev, fd, iov, count,
+ 		(long)(ofs), (long)(ofs>>32));
++#endif
+ }
+diff -rub ./musl-1.2.4/src/unistd/read.c ./musl-1.2.4/src/unistd/read.c
+--- ./musl-1.2.4/src/unistd/read.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/read.c	2023-08-27 14:22:47.344475000 +0100
+@@ -3,5 +3,20 @@
+ 
+ ssize_t read(int fd, void *buf, size_t count)
+ {
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    int res;
++
++	res = __syscall_cp(SYS_read, fd, buf, count, &bytes);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return -1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ 	return syscall_cp(SYS_read, fd, buf, count);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/unistd/readlinkat.c ./musl-1.2.4/src/unistd/readlinkat.c
+--- ./musl-1.2.4/src/unistd/readlinkat.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/readlinkat.c	2023-08-27 14:01:57.033470000 +0100
+@@ -8,7 +8,21 @@
+ 		buf = dummy;
+ 		bufsize = 1;
+ 	}
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    
++	int r = __syscall(SYS_readlinkat, fd, path, buf, bufsize, &bytes);
++    
++    if(r < 0)
++    {
++        errno = -r;
++        return (ssize_t)-1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ 	int r = __syscall(SYS_readlinkat, fd, path, buf, bufsize);
+ 	if (buf == dummy && r > 0) r = 0;
+ 	return __syscall_ret(r);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/unistd/readlink.c ./musl-1.2.4/src/unistd/readlink.c
+--- ./musl-1.2.4/src/unistd/readlink.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/readlink.c	2023-08-27 14:02:05.825921000 +0100
+@@ -9,6 +9,19 @@
+ 		buf = dummy;
+ 		bufsize = 1;
+ 	}
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    
++	int r = __syscall(SYS_readlink, path, buf, bufsize, &bytes);
++    
++    if(r < 0)
++    {
++        errno = -r;
++        return (ssize_t)-1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ #ifdef SYS_readlink
+ 	int r = __syscall(SYS_readlink, path, buf, bufsize);
+ #else
+@@ -16,4 +29,5 @@
+ #endif
+ 	if (buf == dummy && r > 0) r = 0;
+ 	return __syscall_ret(r);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/unistd/readv.c ./musl-1.2.4/src/unistd/readv.c
+--- ./musl-1.2.4/src/unistd/readv.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/readv.c	2023-08-27 14:23:35.070850000 +0100
+@@ -3,5 +3,20 @@
+ 
+ ssize_t readv(int fd, const struct iovec *iov, int count)
+ {
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    int res;
++
++	res = __syscall_cp(SYS_readv, fd, iov, count, &bytes);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return -1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ 	return syscall_cp(SYS_readv, fd, iov, count);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/unistd/write.c ./musl-1.2.4/src/unistd/write.c
+--- ./musl-1.2.4/src/unistd/write.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/write.c	2023-08-27 17:33:40.091271000 +0100
+@@ -3,5 +3,20 @@
+ 
+ ssize_t write(int fd, const void *buf, size_t count)
+ {
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    int res;
++
++	res = __syscall_cp(SYS_write, fd, buf, count, &bytes);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return -1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ 	return syscall_cp(SYS_write, fd, buf, count);
++#endif
+ }
+diff -rub ./musl-1.2.4/src/unistd/writev.c ./musl-1.2.4/src/unistd/writev.c
+--- ./musl-1.2.4/src/unistd/writev.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/unistd/writev.c	2023-08-27 17:34:12.768844000 +0100
+@@ -3,5 +3,20 @@
+ 
+ ssize_t writev(int fd, const struct iovec *iov, int count)
+ {
++#ifdef __laylaos__
++    volatile ssize_t bytes;
++    int res;
++
++	res = __syscall_cp(SYS_writev, fd, iov, count, &bytes);
++    
++    if(res < 0)
++    {
++        errno = -res;
++        return -1;
++    }
++    
++    return (ssize_t)bytes;
++#else
+ 	return syscall_cp(SYS_writev, fd, iov, count);
++#endif
+ }

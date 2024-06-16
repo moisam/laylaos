@@ -1,0 +1,161 @@
+diff -rub ./SwiftShader/third_party/glslang/CMakeLists.txt ./SwiftShader/third_party/glslang/CMakeLists.txt
+--- ./SwiftShader/third_party/glslang/CMakeLists.txt	2024-06-15 10:26:46.964549203 +0100
++++ ./SwiftShader/third_party/glslang/CMakeLists.txt	2024-02-29 05:41:42.629100305 +0000
+@@ -153,6 +153,8 @@
+     add_definitions(-DGLSLANG_OSINCLUDE_WIN32)
+ elseif(UNIX)
+     add_definitions(-DGLSLANG_OSINCLUDE_UNIX)
++elseif(LAYLAOS)
++    add_definitions(-DGLSLANG_OSINCLUDE_UNIX)
+ else()
+     message("unknown platform")
+ endif()
+diff -rub ./SwiftShader/third_party/glslang/glslang/CMakeLists.txt ./SwiftShader/third_party/glslang/glslang/CMakeLists.txt
+--- ./SwiftShader/third_party/glslang/glslang/CMakeLists.txt	2024-06-15 10:27:10.612703743 +0100
++++ ./SwiftShader/third_party/glslang/glslang/CMakeLists.txt	2024-02-29 11:15:40.934596717 +0000
+@@ -33,6 +33,8 @@
+ 
+ if(WIN32)
+     add_subdirectory(OSDependent/Windows)
++elseif(LAYLAOS)
++    add_subdirectory(OSDependent/Unix)
+ elseif(UNIX OR "${CMAKE_SYSTEM_NAME}" STREQUAL "Fuchsia")
+     add_subdirectory(OSDependent/Unix)
+ else()
+diff -rub ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-internal.h ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-internal.h
+--- ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-internal.h	2024-06-15 12:30:41.458668282 +0100
++++ ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-internal.h	2024-02-29 12:06:54.804396363 +0000
+@@ -39,7 +39,7 @@
+ 
+ #include "gtest/internal/gtest-port.h"
+ 
+-#if GTEST_OS_LINUX
++#if GTEST_OS_LINUX || GTEST_OS_LAYLAOS
+ # include <stdlib.h>
+ # include <sys/types.h>
+ # include <sys/wait.h>
+diff -rub ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-port-arch.h ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-port-arch.h
+--- ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-port-arch.h	2024-06-15 12:30:07.506594590 +0100
++++ ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-port-arch.h	2024-02-29 11:57:04.488525813 +0000
+@@ -109,6 +109,8 @@
+ #define GTEST_OS_ESP32 1
+ #elif defined(__XTENSA__)
+ #define GTEST_OS_XTENSA 1
++#elif defined(__laylaos__)
++#define GTEST_OS_LAYLAOS 1
+ #endif  // __CYGWIN__
+ 
+ #endif  // GOOGLETEST_INCLUDE_GTEST_INTERNAL_GTEST_PORT_ARCH_H_
+diff -rub ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-port.h ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-port.h
+--- ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-port.h	2024-06-15 12:32:27.830927313 +0100
++++ ./SwiftShader/third_party/googletest/googletest/include/gtest/internal/gtest-port.h	2024-02-29 12:02:43.098823251 +0000
+@@ -468,7 +468,8 @@
+ // no support for it at least as recent as Froyo (2.2).
+ #define GTEST_HAS_STD_WSTRING                                         \
+   (!(GTEST_OS_LINUX_ANDROID || GTEST_OS_CYGWIN || GTEST_OS_SOLARIS || \
+-     GTEST_OS_HAIKU || GTEST_OS_ESP32 || GTEST_OS_ESP8266 || GTEST_OS_XTENSA))
++     GTEST_OS_HAIKU || GTEST_OS_ESP32 || GTEST_OS_ESP8266 || GTEST_OS_XTENSA || \
++     GTEST_OS_LAYLAOS))
+ 
+ #endif  // GTEST_HAS_STD_WSTRING
+ 
+@@ -547,7 +548,7 @@
+   (GTEST_OS_LINUX || GTEST_OS_MAC || GTEST_OS_HPUX || GTEST_OS_QNX ||          \
+    GTEST_OS_FREEBSD || GTEST_OS_NACL || GTEST_OS_NETBSD || GTEST_OS_FUCHSIA || \
+    GTEST_OS_DRAGONFLY || GTEST_OS_GNU_KFREEBSD || GTEST_OS_OPENBSD ||          \
+-   GTEST_OS_HAIKU)
++   GTEST_OS_HAIKU || GTEST_OS_LAYLAOS)
+ #endif  // GTEST_HAS_PTHREAD
+ 
+ #if GTEST_HAS_PTHREAD
+@@ -607,7 +608,8 @@
+      (GTEST_OS_WINDOWS_DESKTOP && _MSC_VER) || GTEST_OS_WINDOWS_MINGW ||  \
+      GTEST_OS_AIX || GTEST_OS_HPUX || GTEST_OS_OPENBSD || GTEST_OS_QNX || \
+      GTEST_OS_FREEBSD || GTEST_OS_NETBSD || GTEST_OS_FUCHSIA ||           \
+-     GTEST_OS_DRAGONFLY || GTEST_OS_GNU_KFREEBSD || GTEST_OS_HAIKU)
++     GTEST_OS_DRAGONFLY || GTEST_OS_GNU_KFREEBSD || GTEST_OS_HAIKU ||     \
++     GTEST_OS_LAYLAOS)
+ # define GTEST_HAS_DEATH_TEST 1
+ #endif
+ 
+diff -rub ./SwiftShader/third_party/googletest/googletest/src/gtest.cc ./SwiftShader/third_party/googletest/googletest/src/gtest.cc
+--- ./SwiftShader/third_party/googletest/googletest/src/gtest.cc	2024-06-15 12:33:16.011057058 +0100
++++ ./SwiftShader/third_party/googletest/googletest/src/gtest.cc	2024-02-29 12:10:36.345725523 +0000
+@@ -54,7 +54,7 @@
+ #include <sstream>
+ #include <vector>
+ 
+-#if GTEST_OS_LINUX
++#if GTEST_OS_LINUX || GTEST_OS_LAYLAOS
+ 
+ # include <fcntl.h>  // NOLINT
+ # include <limits.h>  // NOLINT
+diff -rub ./SwiftShader/third_party/googletest/googletest/src/gtest-death-test.cc ./SwiftShader/third_party/googletest/googletest/src/gtest-death-test.cc
+--- ./SwiftShader/third_party/googletest/googletest/src/gtest-death-test.cc	2024-06-15 12:33:46.547142839 +0100
++++ ./SwiftShader/third_party/googletest/googletest/src/gtest-death-test.cc	2024-02-29 12:12:32.258406994 +0000
+@@ -48,7 +48,7 @@
+ # include <fcntl.h>
+ # include <limits.h>
+ 
+-# if GTEST_OS_LINUX
++# if GTEST_OS_LINUX || GTEST_OS_LAYLAOS
+ #  include <signal.h>
+ # endif  // GTEST_OS_LINUX
+ 
+diff -rub ./SwiftShader/third_party/googletest/googletest/src/gtest-port.cc ./SwiftShader/third_party/googletest/googletest/src/gtest-port.cc
+--- ./SwiftShader/third_party/googletest/googletest/src/gtest-port.cc	2024-06-15 12:35:44.319496410 +0100
++++ ./SwiftShader/third_party/googletest/googletest/src/gtest-port.cc	2024-02-29 12:18:59.575150035 +0000
+@@ -98,7 +98,7 @@
+ const int kStdErrFileno = STDERR_FILENO;
+ #endif  // _MSC_VER
+ 
+-#if GTEST_OS_LINUX
++#if GTEST_OS_LINUX || GTEST_OS_LAYLAOS
+ 
+ namespace {
+ template <typename T>
+@@ -118,7 +118,11 @@
+ size_t GetThreadCount() {
+   const std::string filename =
+       (Message() << "/proc/" << getpid() << "/stat").GetString();
++#if GTEST_OS_LAYLAOS
++  return ReadProcFileField<size_t>(filename, 20);
++#else
+   return ReadProcFileField<size_t>(filename, 19);
++#endif
+ }
+ 
+ #elif GTEST_OS_MAC
+diff -rub ./SwiftShader/third_party/googletest/googletest/test/googletest-death-test-test.cc ./SwiftShader/third_party/googletest/googletest/test/googletest-death-test-test.cc
+--- ./SwiftShader/third_party/googletest/googletest/test/googletest-death-test-test.cc	2024-06-15 12:37:27.431831163 +0100
++++ ./SwiftShader/third_party/googletest/googletest/test/googletest-death-test-test.cc	2024-02-29 12:52:23.871091406 +0000
+@@ -53,7 +53,7 @@
+ # include <signal.h>
+ # include <stdio.h>
+ 
+-# if GTEST_OS_LINUX
++# if GTEST_OS_LINUX || GTEST_OS_LAYLAOS
+ #  include <sys/time.h>
+ # endif  // GTEST_OS_LINUX
+ 
+@@ -396,7 +396,7 @@
+   ASSERT_DEATH(_exit(1), "");
+ }
+ 
+-# if GTEST_OS_LINUX
++# if GTEST_OS_LINUX || GTEST_OS_LAYLAOS
+ void SigprofAction(int, siginfo_t*, void*) { /* no op */ }
+ 
+ // Sets SIGPROF action and ITIMER_PROF timer (interval: 1ms).
+diff -rub ./SwiftShader/third_party/googletest/googletest/test/googletest-port-test.cc ./SwiftShader/third_party/googletest/googletest/test/googletest-port-test.cc
+--- ./SwiftShader/third_party/googletest/googletest/test/googletest-port-test.cc	2024-06-15 12:36:54.495721979 +0100
++++ ./SwiftShader/third_party/googletest/googletest/test/googletest-port-test.cc	2024-02-29 12:20:45.115043253 +0000
+@@ -280,7 +280,7 @@
+ 
+ #if GTEST_OS_LINUX || GTEST_OS_MAC || GTEST_OS_QNX || GTEST_OS_FUCHSIA || \
+     GTEST_OS_DRAGONFLY || GTEST_OS_FREEBSD || GTEST_OS_GNU_KFREEBSD || \
+-    GTEST_OS_NETBSD || GTEST_OS_OPENBSD
++    GTEST_OS_NETBSD || GTEST_OS_OPENBSD || GTEST_OS_LAYLAOS
+ void* ThreadFunc(void* data) {
+   internal::Mutex* mutex = static_cast<internal::Mutex*>(data);
+   mutex->Lock();

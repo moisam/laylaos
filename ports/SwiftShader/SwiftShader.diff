@@ -1,0 +1,1226 @@
+diff -rub SwiftShader/CMakeLists.txt SwiftShader/CMakeLists.txt
+--- SwiftShader/CMakeLists.txt	2024-02-29 14:53:58.184073413 +0000
++++ SwiftShader/CMakeLists.txt	2024-02-29 05:38:40.735450648 +0000
+@@ -32,6 +32,8 @@
+ elseif(CMAKE_SYSTEM_NAME MATCHES "Android")
+     set(ANDROID TRUE)
+     set(CMAKE_CXX_FLAGS "-DANDROID_NDK_BUILD")
++elseif(CMAKE_SYSTEM_NAME MATCHES "LaylaOS")
++    set(LAYLAOS TRUE)
+ elseif(WIN32)
+ elseif(APPLE)
+ elseif(FUCHSIA)
+@@ -314,7 +316,7 @@
+         if(NOT SWIFTSHADER_MSAN AND NOT SWIFTSHADER_ASAN AND NOT SWIFTSHADER_TSAN AND NOT SWIFTSHADER_UBSAN)
+             set_property(TARGET ${TARGET} APPEND_STRING PROPERTY LINK_FLAGS " -Wl,-undefined,error")
+         endif()
+-    elseif(LINUX OR FUCHSIA)
++    elseif(LINUX OR FUCHSIA OR LAYLAOS)
+         # NOTE: The Fuchsia linker script is needed to export the vk_icdInitializeConnectToServiceCallback
+         # entry point (a private implementation detail betwen the Fuchsia Vulkan loader and the ICD).
+         if ((FUCHSIA) AND ("${TARGET}" STREQUAL "vk_swiftshader"))
+@@ -762,6 +764,8 @@
+     endif()
+ elseif(FUCHSIA)
+     set(OS_LIBS zircon)
++elseif(LAYLAOS)
++    set(OS_LIBS dl gui freetype)
+ elseif(APPLE)
+     find_library(COCOA_FRAMEWORK Cocoa)
+     find_library(QUARTZ_FRAMEWORK Quartz)
+@@ -828,6 +832,8 @@
+     target_compile_definitions(vk_base INTERFACE "VK_USE_PLATFORM_METAL_EXT")
+ elseif(FUCHSIA)
+     target_compile_definitions(vk_base INTERFACE "VK_USE_PLATFORM_FUCHSIA")
++elseif(LAYLAOS)
++    target_compile_definitions(vk_base INTERFACE "VK_USE_PLATFORM_LAYLAOS")
+ else()
+     message(FATAL_ERROR "Platform does not support Vulkan yet")
+ endif()
+@@ -860,6 +866,12 @@
+         # Set the RPATH of the next defined build targets to $ORIGIN,
+         # allowing them to load shared libraries from the execution directory.
+         set(CMAKE_BUILD_RPATH "$ORIGIN")
++    endif()
++
++    if(LAYLAOS)
++        # Set the RPATH of the next defined build targets to $ORIGIN,
++        # allowing them to load shared libraries from the execution directory.
++        set(CMAKE_BUILD_RPATH "$ORIGIN")
+     endif()
+ 
+     set(PVR_BUILD_EXAMPLES TRUE CACHE BOOL "Build the PowerVR SDK Examples" FORCE)
+diff -rub SwiftShader/include/vulkan/vk_icd.h SwiftShader/include/vulkan/vk_icd.h
+--- SwiftShader/include/vulkan/vk_icd.h	2024-02-29 14:53:58.200073042 +0000
++++ SwiftShader/include/vulkan/vk_icd.h	2024-02-29 05:38:40.739450781 +0000
+@@ -200,6 +200,13 @@
+ } VkIcdSurfaceGgp;
+ #endif  // VK_USE_PLATFORM_GGP
+ 
++#ifdef VK_USE_PLATFORM_LAYLAOS
++typedef struct {
++    VkIcdSurfaceBase base;
++    void *window;
++} VkIcdSurfaceLaylaOS;
++#endif  // VK_USE_PLATFORM_LAYLAOS
++
+ typedef struct {
+     VkIcdSurfaceBase base;
+     VkDisplayModeKHR displayMode;
+diff -rub SwiftShader/include/vulkan/vulkan_core.h SwiftShader/include/vulkan/vulkan_core.h
+--- SwiftShader/include/vulkan/vulkan_core.h	2024-02-29 14:53:58.216072670 +0000
++++ SwiftShader/include/vulkan/vulkan_core.h	2024-02-29 10:58:30.452677791 +0000
+@@ -429,6 +429,7 @@
+     VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR = 1000004000,
+     VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR = 1000005000,
+     VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR = 1000006000,
++    VK_STRUCTURE_TYPE_LAYLAOS_SURFACE_CREATE_INFO_KHR = 1000007000,
+     VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR = 1000008000,
+     VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR = 1000009000,
+     VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT = 1000011000,
+diff -rub SwiftShader/include/vulkan/vulkan.cppm SwiftShader/include/vulkan/vulkan.cppm
+--- SwiftShader/include/vulkan/vulkan.cppm	2024-02-29 14:53:58.212072763 +0000
++++ SwiftShader/include/vulkan/vulkan.cppm	2024-02-29 05:38:40.743450913 +0000
+@@ -370,6 +370,12 @@
+   using VULKAN_HPP_NAMESPACE::Win32SurfaceCreateFlagsKHR;
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS_KHR )
++  //=== VK_KHR_laylaos_surface ===
++  using VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateFlagBitsKHR;
++  using VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateFlagsKHR;
++#endif /*VK_USE_PLATFORM_LAYLAOS_KHR*/
++
+   //=== VK_EXT_debug_report ===
+   using VULKAN_HPP_NAMESPACE::DebugReportFlagBitsEXT;
+   using VULKAN_HPP_NAMESPACE::DebugReportFlagsEXT;
+@@ -1524,6 +1530,11 @@
+   using VULKAN_HPP_NAMESPACE::Win32SurfaceCreateInfoKHR;
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++  using VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR;
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+   using VULKAN_HPP_NAMESPACE::DebugReportCallbackCreateInfoEXT;
+ 
+diff -rub SwiftShader/include/vulkan/vulkan_enums.hpp SwiftShader/include/vulkan/vulkan_enums.hpp
+--- SwiftShader/include/vulkan/vulkan_enums.hpp	2024-02-29 14:53:58.220072577 +0000
++++ SwiftShader/include/vulkan/vulkan_enums.hpp	2024-02-29 05:38:40.747451046 +0000
+@@ -536,6 +536,9 @@
+ #if defined( VK_USE_PLATFORM_WIN32_KHR )
+     eWin32SurfaceCreateInfoKHR = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++    eLaylaOSSurfaceCreateInfoKHR = VK_STRUCTURE_TYPE_LAYLAOS_SURFACE_CREATE_INFO_KHR,
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
+     eDebugReportCallbackCreateInfoEXT                = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT,
+     eDebugReportCreateInfoEXT                        = VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT,
+     ePipelineRasterizationStateRasterizationOrderAMD = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_RASTERIZATION_ORDER_AMD,
+@@ -4523,6 +4526,23 @@
+   };
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++
++  enum class LaylaOSSurfaceCreateFlagBitsKHR : VkLaylaOSSurfaceCreateFlagsKHR
++  {
++  };
++
++  using LaylaOSSurfaceCreateFlagsKHR = Flags<LaylaOSSurfaceCreateFlagBitsKHR>;
++
++  template <>
++  struct FlagTraits<LaylaOSSurfaceCreateFlagBitsKHR>
++  {
++    static VULKAN_HPP_CONST_OR_CONSTEXPR bool                      isBitmask = true;
++    static VULKAN_HPP_CONST_OR_CONSTEXPR LaylaOSSurfaceCreateFlagsKHR allFlags  = {};
++  };
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+ 
+   enum class DebugReportFlagBitsEXT : VkDebugReportFlagsEXT
+diff -rub SwiftShader/include/vulkan/vulkan_extension_inspection.hpp SwiftShader/include/vulkan/vulkan_extension_inspection.hpp
+--- SwiftShader/include/vulkan/vulkan_extension_inspection.hpp	2024-02-29 14:53:58.220072577 +0000
++++ SwiftShader/include/vulkan/vulkan_extension_inspection.hpp	2024-02-29 05:38:40.751451178 +0000
+@@ -433,6 +433,9 @@
+ #if defined( VK_USE_PLATFORM_WIN32_KHR )
+ "VK_KHR_win32_surface",
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++"VK_KHR_laylaos_surface",
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
+ "VK_EXT_debug_report",
+ #if defined( VK_USE_PLATFORM_GGP )
+ "VK_GGP_stream_descriptor_surface",
+@@ -507,6 +510,9 @@
+ #if defined( VK_USE_PLATFORM_WIN32_KHR )
+ { "VK_KHR_win32_surface", { { "VK_VERSION_1_0", {  { "VK_KHR_surface",  } } } } },
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++{ "VK_KHR_laylaos_surface", { { "VK_VERSION_1_0", {  { "VK_KHR_surface",  } } } } },
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
+ { "VK_EXT_debug_marker", { { "VK_VERSION_1_0", {  { "VK_EXT_debug_report",  } } } } }, 
+ { "VK_KHR_video_queue", { { "VK_VERSION_1_1", {  { "VK_KHR_synchronization2",  } } } } }, 
+ { "VK_KHR_video_decode_queue", { { "VK_VERSION_1_0", {  { "VK_KHR_video_queue", "VK_KHR_synchronization2",  } } } } }, 
+@@ -1559,6 +1565,9 @@
+ #if defined( VK_USE_PLATFORM_WIN32_KHR )
+            || ( extension == "VK_KHR_win32_surface" )
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++           || ( extension == "VK_KHR_laylaos_surface" )
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
+            || ( extension == "VK_EXT_debug_report" )
+ #if defined( VK_USE_PLATFORM_GGP )
+            || ( extension == "VK_GGP_stream_descriptor_surface" )
+diff -rub SwiftShader/include/vulkan/vulkan_funcs.hpp SwiftShader/include/vulkan/vulkan_funcs.hpp
+--- SwiftShader/include/vulkan/vulkan_funcs.hpp	2024-02-29 14:53:58.224072484 +0000
++++ SwiftShader/include/vulkan/vulkan_funcs.hpp	2024-02-29 11:09:37.439364492 +0000
+@@ -9045,6 +9045,75 @@
+   }
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++
++  template <typename Dispatch>
++  VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE Result Instance::createLaylaOSSurfaceKHR( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR * pCreateInfo,
++                                                                                const VULKAN_HPP_NAMESPACE::AllocationCallbacks *      pAllocator,
++                                                                                VULKAN_HPP_NAMESPACE::SurfaceKHR *                     pSurface,
++                                                                                Dispatch const & d ) const VULKAN_HPP_NOEXCEPT
++  {
++    VULKAN_HPP_ASSERT( d.getVkHeaderVersion() == VK_HEADER_VERSION );
++    return static_cast<Result>( d.vkCreateLaylaOSSurfaceKHR( m_instance,
++                                                          reinterpret_cast<const VkLaylaOSSurfaceCreateInfoKHR *>( pCreateInfo ),
++                                                          reinterpret_cast<const VkAllocationCallbacks *>( pAllocator ),
++                                                          reinterpret_cast<VkSurfaceKHR *>( pSurface ) ) );
++  }
++
++#  ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
++  template <typename Dispatch>
++  VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE typename ResultValueType<VULKAN_HPP_NAMESPACE::SurfaceKHR>::type
++                       Instance::createLaylaOSSurfaceKHR( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR &    createInfo,
++                                    Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator,
++                                    Dispatch const &                                          d ) const
++  {
++    VULKAN_HPP_ASSERT( d.getVkHeaderVersion() == VK_HEADER_VERSION );
++
++    VULKAN_HPP_NAMESPACE::SurfaceKHR surface;
++    VkResult                         result =
++      d.vkCreateLaylaOSSurfaceKHR( m_instance,
++                                reinterpret_cast<const VkLaylaOSSurfaceCreateInfoKHR *>( &createInfo ),
++                                reinterpret_cast<const VkAllocationCallbacks *>( static_cast<const VULKAN_HPP_NAMESPACE::AllocationCallbacks *>( allocator ) ),
++                                reinterpret_cast<VkSurfaceKHR *>( &surface ) );
++    resultCheck( static_cast<VULKAN_HPP_NAMESPACE::Result>( result ), VULKAN_HPP_NAMESPACE_STRING "::Instance::createLaylaOSSurfaceKHR" );
++
++    return createResultValueType( static_cast<VULKAN_HPP_NAMESPACE::Result>( result ), surface );
++  }
++
++#    ifndef VULKAN_HPP_NO_SMART_HANDLE
++  template <typename Dispatch>
++  VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE typename ResultValueType<UniqueHandle<VULKAN_HPP_NAMESPACE::SurfaceKHR, Dispatch>>::type
++                       Instance::createLaylaOSSurfaceKHRUnique( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR &    createInfo,
++                                          Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator,
++                                          Dispatch const &                                          d ) const
++  {
++    VULKAN_HPP_ASSERT( d.getVkHeaderVersion() == VK_HEADER_VERSION );
++
++    VULKAN_HPP_NAMESPACE::SurfaceKHR surface;
++    VkResult                         result =
++      d.vkCreateLaylaOSSurfaceKHR( m_instance,
++                                reinterpret_cast<const VkLaylaOSSurfaceCreateInfoKHR *>( &createInfo ),
++                                reinterpret_cast<const VkAllocationCallbacks *>( static_cast<const VULKAN_HPP_NAMESPACE::AllocationCallbacks *>( allocator ) ),
++                                reinterpret_cast<VkSurfaceKHR *>( &surface ) );
++    resultCheck( static_cast<VULKAN_HPP_NAMESPACE::Result>( result ), VULKAN_HPP_NAMESPACE_STRING "::Instance::createLaylaOSSurfaceKHRUnique" );
++
++    return createResultValueType(
++      static_cast<VULKAN_HPP_NAMESPACE::Result>( result ),
++      UniqueHandle<VULKAN_HPP_NAMESPACE::SurfaceKHR, Dispatch>( surface, ObjectDestroy<Instance, Dispatch>( *this, allocator, d ) ) );
++  }
++#    endif /* VULKAN_HPP_NO_SMART_HANDLE */
++#  endif   /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
++
++  template <typename Dispatch>
++  VULKAN_HPP_INLINE Bool32
++    PhysicalDevice::getLaylaOSPresentationSupportKHR( uint32_t queueFamilyIndex, Dispatch const & d ) const VULKAN_HPP_NOEXCEPT
++  {
++    VULKAN_HPP_ASSERT( d.getVkHeaderVersion() == VK_HEADER_VERSION );
++    return static_cast<Bool32>( d.vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( m_physicalDevice, queueFamilyIndex ) );
++  }
++#endif   /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+ 
+   template <typename Dispatch>
+diff -rub SwiftShader/include/vulkan/vulkan.h SwiftShader/include/vulkan/vulkan.h
+--- SwiftShader/include/vulkan/vulkan.h	2024-02-29 14:53:58.212072763 +0000
++++ SwiftShader/include/vulkan/vulkan.h	2024-02-29 05:38:40.759451444 +0000
+@@ -92,6 +92,11 @@
+ #endif
+ 
+ 
++#ifdef VK_USE_PLATFORM_LAYLAOS
++#include "vulkan_laylaos.h"
++#endif
++
++
+ #ifdef VK_ENABLE_BETA_EXTENSIONS
+ #include "vulkan_beta.h"
+ #endif
+diff -rub SwiftShader/include/vulkan/vulkan_handles.hpp SwiftShader/include/vulkan/vulkan_handles.hpp
+--- SwiftShader/include/vulkan/vulkan_handles.hpp	2024-02-29 14:53:58.228072392 +0000
++++ SwiftShader/include/vulkan/vulkan_handles.hpp	2024-02-29 11:06:09.576661792 +0000
+@@ -521,6 +521,11 @@
+   struct Win32SurfaceCreateInfoKHR;
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++  struct LaylaOSSurfaceCreateInfoKHR;
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+   struct DebugReportCallbackCreateInfoEXT;
+ 
+@@ -13981,6 +13986,14 @@
+     Bool32 getWin32PresentationSupportKHR( uint32_t queueFamilyIndex, Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++    //=== VK_KHR_laylaos_surface ===
++
++    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
++    VULKAN_HPP_NAMESPACE::Bool32 getLaylaOSPresentationSupportKHR( uint32_t            queueFamilyIndex,
++                                                                   Dispatch const & d  VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+     //=== VK_KHR_video_queue ===
+ 
+     template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
+@@ -15019,6 +15032,30 @@
+ #  endif   /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
+ #endif     /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++    //=== VK_KHR_laylaos_surface ===
++
++    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
++    VULKAN_HPP_NODISCARD Result createLaylaOSSurfaceKHR( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR * pCreateInfo,
++                                                       const VULKAN_HPP_NAMESPACE::AllocationCallbacks *       pAllocator,
++                                                       VULKAN_HPP_NAMESPACE::SurfaceKHR *                      pSurface,
++                                                       Dispatch const & d VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const VULKAN_HPP_NOEXCEPT;
++#  ifndef VULKAN_HPP_DISABLE_ENHANCED_MODE
++    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
++    VULKAN_HPP_NODISCARD typename ResultValueType<VULKAN_HPP_NAMESPACE::SurfaceKHR>::type
++      createLaylaOSSurfaceKHR( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR &             createInfo,
++                             Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator VULKAN_HPP_DEFAULT_ARGUMENT_NULLPTR_ASSIGNMENT,
++                             Dispatch const & d                                                  VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
++#    ifndef VULKAN_HPP_NO_SMART_HANDLE
++    template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
++    VULKAN_HPP_NODISCARD typename ResultValueType<UniqueHandle<VULKAN_HPP_NAMESPACE::SurfaceKHR, Dispatch>>::type
++      createLaylaOSSurfaceKHRUnique( const VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR &             createInfo,
++                                   Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator VULKAN_HPP_DEFAULT_ARGUMENT_NULLPTR_ASSIGNMENT,
++                                   Dispatch const & d                                                  VULKAN_HPP_DEFAULT_DISPATCHER_ASSIGNMENT ) const;
++#    endif /* VULKAN_HPP_NO_SMART_HANDLE */
++#  endif   /* VULKAN_HPP_DISABLE_ENHANCED_MODE */
++#endif     /*VK_USE_PLATFORM_LAYLAOS*/
++
+     //=== VK_EXT_debug_report ===
+ 
+     template <typename Dispatch = VULKAN_HPP_DEFAULT_DISPATCHER_TYPE>
+diff -rub SwiftShader/include/vulkan/vulkan_hash.hpp SwiftShader/include/vulkan/vulkan_hash.hpp
+--- SwiftShader/include/vulkan/vulkan_hash.hpp	2024-02-29 14:53:58.228072392 +0000
++++ SwiftShader/include/vulkan/vulkan_hash.hpp	2024-02-29 05:38:40.771451841 +0000
+@@ -15990,6 +15990,22 @@
+   };
+ #  endif /*VK_USE_PLATFORM_XLIB_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++  template <>
++  struct hash<VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR>
++  {
++    std::size_t operator()( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR const & laylaOSSurfaceCreateInfoKHR ) const VULKAN_HPP_NOEXCEPT
++    {
++      std::size_t seed = 0;
++      VULKAN_HPP_HASH_COMBINE( seed, laylaOSSurfaceCreateInfoKHR.sType );
++      VULKAN_HPP_HASH_COMBINE( seed, laylaOSSurfaceCreateInfoKHR.pNext );
++      VULKAN_HPP_HASH_COMBINE( seed, laylaOSSurfaceCreateInfoKHR.flags );
++      VULKAN_HPP_HASH_COMBINE( seed, laylaOSSurfaceCreateInfoKHR.window );
++      return seed;
++    }
++  };
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+ #endif  // 14 <= VULKAN_HPP_CPP_VERSION
+ 
+ }  // namespace std
+diff -rub SwiftShader/include/vulkan/vulkan.hpp SwiftShader/include/vulkan/vulkan.hpp
+--- SwiftShader/include/vulkan/vulkan.hpp	2024-02-29 14:53:58.212072763 +0000
++++ SwiftShader/include/vulkan/vulkan.hpp	2024-02-29 10:55:43.529256549 +0000
+@@ -32,7 +32,7 @@
+ #endif
+ 
+ #if VULKAN_HPP_ENABLE_DYNAMIC_LOADER_TOOL == 1
+-#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNX__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNX__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+ #    include <dlfcn.h>
+ #  elif defined( _WIN32 )
+ typedef struct HINSTANCE__ * HINSTANCE;
+@@ -2665,6 +2665,24 @@
+     }
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++    //=== VK_KHR_laylaos_surface ===
++
++    VkResult vkCreateLaylaOSSurfaceKHR( VkInstance                         instance,
++                                     const VkLaylaOSSurfaceCreateInfoKHR * pCreateInfo,
++                                     const VkAllocationCallbacks *      pAllocator,
++                                     VkSurfaceKHR *                     pSurface ) const VULKAN_HPP_NOEXCEPT
++    {
++      return ::vkCreateLaylaOSSurfaceKHR( instance, pCreateInfo, pAllocator, pSurface );
++    }
++
++    VkBool32 vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( VkPhysicalDevice physicalDevice,
++                                                            uint32_t         queueFamilyIndex ) const VULKAN_HPP_NOEXCEPT
++    {
++      return ::vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( physicalDevice, queueFamilyIndex );
++    }
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+     //=== VK_EXT_debug_report ===
+ 
+     VkResult vkCreateDebugReportCallbackEXT( VkInstance                                 instance,
+@@ -13459,7 +13477,7 @@
+     {
+       if ( !vulkanLibraryName.empty() )
+       {
+-#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNX__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNX__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+         m_library = dlopen( vulkanLibraryName.c_str(), RTLD_NOW | RTLD_LOCAL );
+ #  elif defined( _WIN32 )
+         m_library = ::LoadLibraryA( vulkanLibraryName.c_str() );
+@@ -13469,7 +13487,7 @@
+       }
+       else
+       {
+-#  if defined( __unix__ ) || defined( __QNX__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __QNX__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+         m_library = dlopen( "libvulkan.so", RTLD_NOW | RTLD_LOCAL );
+         if ( m_library == nullptr )
+         {
+@@ -13512,7 +13530,7 @@
+     {
+       if ( m_library )
+       {
+-#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNX__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNX__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+         dlclose( m_library );
+ #  elif defined( _WIN32 )
+         ::FreeLibrary( m_library );
+@@ -13525,7 +13543,7 @@
+     template <typename T>
+     T getProcAddress( const char * function ) const VULKAN_HPP_NOEXCEPT
+     {
+-#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNX__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNX__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+       return (T)dlsym( m_library, function );
+ #  elif defined( _WIN32 )
+       return ( T )::GetProcAddress( m_library, function );
+@@ -13540,7 +13558,7 @@
+     }
+ 
+   private:
+-#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNX__ ) || defined( __Fuchsia__ )
++#  if defined( __unix__ ) || defined( __APPLE__ ) || defined( __QNX__ ) || defined( __Fuchsia__ ) || defined( __laylaos__ )
+     void * m_library;
+ #  elif defined( _WIN32 )
+     ::HINSTANCE m_library;
+@@ -13851,6 +13869,15 @@
+     PFN_dummy vkGetPhysicalDeviceWin32PresentationSupportKHR_placeholder          = 0;
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++    //=== VK_KHR_laylaos_surface ===
++    PFN_vkCreateLaylaOSSurfaceKHR                        vkCreateLaylaOSSurfaceKHR                        = 0;
++    PFN_vkGetPhysicalDeviceLaylaOSPresentationSupportKHR vkGetPhysicalDeviceLaylaOSPresentationSupportKHR = 0;
++#else
++    PFN_dummy vkCreateLaylaOSSurfaceKHR_placeholder                                  = 0;
++    PFN_dummy vkGetPhysicalDeviceLaylaOSPresentationSupportKHR_placeholder           = 0;
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+     //=== VK_EXT_debug_report ===
+     PFN_vkCreateDebugReportCallbackEXT  vkCreateDebugReportCallbackEXT  = 0;
+     PFN_vkDestroyDebugReportCallbackEXT vkDestroyDebugReportCallbackEXT = 0;
+@@ -15027,6 +15054,13 @@
+         PFN_vkGetPhysicalDeviceWin32PresentationSupportKHR( vkGetInstanceProcAddr( instance, "vkGetPhysicalDeviceWin32PresentationSupportKHR" ) );
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++      //=== VK_KHR_laylaos_surface ===
++      vkCreateLaylaOSSurfaceKHR = PFN_vkCreateLaylaOSSurfaceKHR( vkGetInstanceProcAddr( instance, "vkCreateLaylaOSSurfaceKHR" ) );
++      vkGetPhysicalDeviceLaylaOSPresentationSupportKHR =
++        PFN_vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( vkGetInstanceProcAddr( instance, "vkGetPhysicalDeviceLaylaOSPresentationSupportKHR" ) );
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+       //=== VK_EXT_debug_report ===
+       vkCreateDebugReportCallbackEXT  = PFN_vkCreateDebugReportCallbackEXT( vkGetInstanceProcAddr( instance, "vkCreateDebugReportCallbackEXT" ) );
+       vkDestroyDebugReportCallbackEXT = PFN_vkDestroyDebugReportCallbackEXT( vkGetInstanceProcAddr( instance, "vkDestroyDebugReportCallbackEXT" ) );
+diff -rub SwiftShader/include/vulkan/vulkan_raii.hpp SwiftShader/include/vulkan/vulkan_raii.hpp
+--- SwiftShader/include/vulkan/vulkan_raii.hpp	2024-02-29 14:53:58.232072298 +0000
++++ SwiftShader/include/vulkan/vulkan_raii.hpp	2024-02-29 05:38:40.791452504 +0000
+@@ -168,6 +168,13 @@
+           PFN_vkGetPhysicalDeviceWin32PresentationSupportKHR( vkGetInstanceProcAddr( instance, "vkGetPhysicalDeviceWin32PresentationSupportKHR" ) );
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++        //=== VK_KHR_laylaos_surface ===
++        vkCreateLaylaOSSurfaceKHR = PFN_vkCreateLaylaOSSurfaceKHR( vkGetInstanceProcAddr( instance, "vkCreateLaylaOSSurfaceKHR" ) );
++        vkGetPhysicalDeviceLaylaOSPresentationSupportKHR =
++          PFN_vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( vkGetInstanceProcAddr( instance, "vkGetPhysicalDeviceLaylaOSPresentationSupportKHR" ) );
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+         //=== VK_EXT_debug_report ===
+         vkCreateDebugReportCallbackEXT  = PFN_vkCreateDebugReportCallbackEXT( vkGetInstanceProcAddr( instance, "vkCreateDebugReportCallbackEXT" ) );
+         vkDestroyDebugReportCallbackEXT = PFN_vkDestroyDebugReportCallbackEXT( vkGetInstanceProcAddr( instance, "vkDestroyDebugReportCallbackEXT" ) );
+@@ -472,6 +479,15 @@
+       PFN_dummy vkGetPhysicalDeviceWin32PresentationSupportKHR_placeholder          = 0;
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++      //=== VK_KHR_laylaos_surface ===
++      PFN_vkCreateLaylaOSSurfaceKHR                        vkCreateLaylaOSSurfaceKHR                        = 0;
++      PFN_vkGetPhysicalDeviceLaylaOSPresentationSupportKHR vkGetPhysicalDeviceLaylaOSPresentationSupportKHR = 0;
++#  else
++      PFN_dummy vkCreateLaylaOSSurfaceKHR_placeholder                                  = 0;
++      PFN_dummy vkGetPhysicalDeviceLaylaOSPresentationSupportKHR_placeholder           = 0;
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+       //=== VK_EXT_debug_report ===
+       PFN_vkCreateDebugReportCallbackEXT  vkCreateDebugReportCallbackEXT  = 0;
+       PFN_vkDestroyDebugReportCallbackEXT vkDestroyDebugReportCallbackEXT = 0;
+@@ -2860,6 +2876,14 @@
+                                                   VULKAN_HPP_NAMESPACE::Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator = nullptr ) const;
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++      //=== VK_KHR_laylaos_surface ===
++
++      VULKAN_HPP_NODISCARD VULKAN_HPP_RAII_NAMESPACE::SurfaceKHR
++                           createLaylaOSSurfaceKHR( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR const &                          createInfo,
++                                                 VULKAN_HPP_NAMESPACE::Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator = nullptr ) const;
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+       //=== VK_EXT_debug_report ===
+ 
+       VULKAN_HPP_NODISCARD VULKAN_HPP_RAII_NAMESPACE::DebugReportCallbackEXT
+@@ -3175,6 +3199,13 @@
+       VULKAN_HPP_NODISCARD VULKAN_HPP_NAMESPACE::Bool32 getWin32PresentationSupportKHR( uint32_t queueFamilyIndex ) const VULKAN_HPP_NOEXCEPT;
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++      //=== VK_KHR_laylaos_surface ===
++
++      VULKAN_HPP_NODISCARD VULKAN_HPP_NAMESPACE::Bool32
++                           getLaylaOSPresentationSupportKHR( uint32_t queueFamilyIndex ) const VULKAN_HPP_NOEXCEPT;
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+       //=== VK_KHR_video_queue ===
+ 
+       VULKAN_HPP_NODISCARD VULKAN_HPP_NAMESPACE::VideoCapabilitiesKHR
+@@ -11054,6 +11085,26 @@
+       }
+ #  endif /*VK_USE_PLATFORM_XLIB_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++      SurfaceKHR( VULKAN_HPP_NAMESPACE::VULKAN_HPP_RAII_NAMESPACE::Instance const &               instance,
++                  VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR const &                           createInfo,
++                  VULKAN_HPP_NAMESPACE::Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator = nullptr )
++        : m_instance( *instance )
++        , m_allocator( static_cast<const VULKAN_HPP_NAMESPACE::AllocationCallbacks *>( allocator ) )
++        , m_dispatcher( instance.getDispatcher() )
++      {
++        VULKAN_HPP_NAMESPACE::Result result = static_cast<VULKAN_HPP_NAMESPACE::Result>(
++          instance.getDispatcher()->vkCreateLaylaOSSurfaceKHR( static_cast<VkInstance>( *instance ),
++                                                           reinterpret_cast<const VkLaylaOSSurfaceCreateInfoKHR *>( &createInfo ),
++                                                           reinterpret_cast<const VkAllocationCallbacks *>( m_allocator ),
++                                                           reinterpret_cast<VkSurfaceKHR *>( &m_surface ) ) );
++        if ( result != VULKAN_HPP_NAMESPACE::Result::eSuccess )
++        {
++          detail::throwResultException( result, "vkCreateLaylaOSSurfaceKHR" );
++        }
++      }
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+       SurfaceKHR( VULKAN_HPP_NAMESPACE::VULKAN_HPP_RAII_NAMESPACE::Instance const &               instance,
+                   VkSurfaceKHR                                                                    surface,
+                   VULKAN_HPP_NAMESPACE::Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator = nullptr )
+@@ -14652,6 +14703,28 @@
+     }
+ #  endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#  if defined( VK_USE_PLATFORM_LAYLAOS )
++    //=== VK_KHR_win32_surface ===
++
++    VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE VULKAN_HPP_RAII_NAMESPACE::SurfaceKHR
++                                           Instance::createLaylaOSSurfaceKHR( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR const &                         createInfo,
++                                       VULKAN_HPP_NAMESPACE::Optional<const VULKAN_HPP_NAMESPACE::AllocationCallbacks> allocator ) const
++    {
++      return VULKAN_HPP_RAII_NAMESPACE::SurfaceKHR( *this, createInfo, allocator );
++    }
++
++    VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE VULKAN_HPP_NAMESPACE::Bool32
++                                           PhysicalDevice::getLaylaOSPresentationSupportKHR( uint32_t queueFamilyIndex ) const VULKAN_HPP_NOEXCEPT
++    {
++      VULKAN_HPP_ASSERT( getDispatcher()->vkGetPhysicalDeviceLaylaOSPresentationSupportKHR &&
++                         "Function <vkGetPhysicalDeviceLaylaOSPresentationSupportKHR> requires <VK_KHR_laylaos_surface>" );
++
++      VkBool32 result = getDispatcher()->vkGetPhysicalDeviceLaylaOSPresentationSupportKHR( static_cast<VkPhysicalDevice>( m_physicalDevice ), queueFamilyIndex );
++
++      return static_cast<VULKAN_HPP_NAMESPACE::Bool32>( result );
++    }
++#  endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+     //=== VK_EXT_debug_report ===
+ 
+     VULKAN_HPP_NODISCARD VULKAN_HPP_INLINE VULKAN_HPP_RAII_NAMESPACE::DebugReportCallbackEXT
+diff -rub SwiftShader/include/vulkan/vulkan_static_assertions.hpp SwiftShader/include/vulkan/vulkan_static_assertions.hpp
+--- SwiftShader/include/vulkan/vulkan_static_assertions.hpp	2024-02-29 14:53:58.232072298 +0000
++++ SwiftShader/include/vulkan/vulkan_static_assertions.hpp	2024-02-29 05:38:40.795452636 +0000
+@@ -1957,6 +1957,16 @@
+                           "Win32SurfaceCreateInfoKHR is not nothrow_move_constructible!" );
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++//=== VK_KHR_laylaos_surface ===
++
++VULKAN_HPP_STATIC_ASSERT( sizeof( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR ) == sizeof( VkLaylaOSSurfaceCreateInfoKHR ),
++                          "struct and wrapper have different size!" );
++VULKAN_HPP_STATIC_ASSERT( std::is_standard_layout<VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR>::value, "struct wrapper is not a standard layout!" );
++VULKAN_HPP_STATIC_ASSERT( std::is_nothrow_move_constructible<VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR>::value,
++                          "LaylaOSSurfaceCreateInfoKHR is not nothrow_move_constructible!" );
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+ //=== VK_EXT_debug_report ===
+ 
+ VULKAN_HPP_STATIC_ASSERT( sizeof( VULKAN_HPP_NAMESPACE::DebugReportCallbackEXT ) == sizeof( VkDebugReportCallbackEXT ),
+diff -rub SwiftShader/include/vulkan/vulkan_structs.hpp SwiftShader/include/vulkan/vulkan_structs.hpp
+--- SwiftShader/include/vulkan/vulkan_structs.hpp	2024-02-29 14:53:58.244072020 +0000
++++ SwiftShader/include/vulkan/vulkan_structs.hpp	2024-02-29 11:07:14.725599836 +0000
+@@ -119568,5 +119568,116 @@
+   };
+ #endif /*VK_USE_PLATFORM_XLIB_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  struct LaylaOSSurfaceCreateInfoKHR
++  {
++    using NativeType = VkLaylaOSSurfaceCreateInfoKHR;
++
++    static const bool                                  allowDuplicate = false;
++    static VULKAN_HPP_CONST_OR_CONSTEXPR StructureType structureType  = StructureType::eLaylaOSSurfaceCreateInfoKHR;
++
++#  if !defined( VULKAN_HPP_NO_STRUCT_CONSTRUCTORS )
++    VULKAN_HPP_CONSTEXPR LaylaOSSurfaceCreateInfoKHR( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateFlagsKHR flags_     = {},
++                                                    void*                                             window_      = {},
++                                                    const void *                                     pNext_     = nullptr ) VULKAN_HPP_NOEXCEPT
++      : pNext( pNext_ )
++      , flags( flags_ )
++      , window( window_ )
++    {
++    }
++
++    VULKAN_HPP_CONSTEXPR LaylaOSSurfaceCreateInfoKHR( LaylaOSSurfaceCreateInfoKHR const & rhs ) VULKAN_HPP_NOEXCEPT = default;
++
++    LaylaOSSurfaceCreateInfoKHR( VkLaylaOSSurfaceCreateInfoKHR const & rhs ) VULKAN_HPP_NOEXCEPT
++      : LaylaOSSurfaceCreateInfoKHR( *reinterpret_cast<LaylaOSSurfaceCreateInfoKHR const *>( &rhs ) )
++    {
++    }
++
++    LaylaOSSurfaceCreateInfoKHR & operator=( LaylaOSSurfaceCreateInfoKHR const & rhs ) VULKAN_HPP_NOEXCEPT = default;
++#  endif /*VULKAN_HPP_NO_STRUCT_CONSTRUCTORS*/
++
++    LaylaOSSurfaceCreateInfoKHR & operator=( VkLaylaOSSurfaceCreateInfoKHR const & rhs ) VULKAN_HPP_NOEXCEPT
++    {
++      *this = *reinterpret_cast<VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateInfoKHR const *>( &rhs );
++      return *this;
++    }
++
++#  if !defined( VULKAN_HPP_NO_STRUCT_SETTERS )
++    VULKAN_HPP_CONSTEXPR_14 LaylaOSSurfaceCreateInfoKHR & setPNext( const void * pNext_ ) VULKAN_HPP_NOEXCEPT
++    {
++      pNext = pNext_;
++      return *this;
++    }
++
++    VULKAN_HPP_CONSTEXPR_14 LaylaOSSurfaceCreateInfoKHR & setFlags( VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateFlagsKHR flags_ ) VULKAN_HPP_NOEXCEPT
++    {
++      flags = flags_;
++      return *this;
++    }
++
++    VULKAN_HPP_CONSTEXPR_14 LaylaOSSurfaceCreateInfoKHR & setWindow( void* window_ ) VULKAN_HPP_NOEXCEPT
++    {
++      window = window_;
++      return *this;
++    }
++#  endif /*VULKAN_HPP_NO_STRUCT_SETTERS*/
++
++    operator VkLaylaOSSurfaceCreateInfoKHR const &() const VULKAN_HPP_NOEXCEPT
++    {
++      return *reinterpret_cast<const VkLaylaOSSurfaceCreateInfoKHR *>( this );
++    }
++
++    operator VkLaylaOSSurfaceCreateInfoKHR &() VULKAN_HPP_NOEXCEPT
++    {
++      return *reinterpret_cast<VkLaylaOSSurfaceCreateInfoKHR *>( this );
++    }
++
++#  if defined( VULKAN_HPP_USE_REFLECT )
++#    if 14 <= VULKAN_HPP_CPP_VERSION
++    auto
++#    else
++    std::tuple<VULKAN_HPP_NAMESPACE::StructureType const &,
++               const void * const &,
++               VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateFlagsKHR const &,
++               void* const &>
++#    endif
++      reflect() const VULKAN_HPP_NOEXCEPT
++    {
++      return std::tie( sType, pNext, flags, window );
++    }
++#  endif
++
++#  if defined( VULKAN_HPP_HAS_SPACESHIP_OPERATOR )
++    auto operator<=>( LaylaOSSurfaceCreateInfoKHR const & ) const = default;
++#  else
++    bool operator==( LaylaOSSurfaceCreateInfoKHR const & rhs ) const VULKAN_HPP_NOEXCEPT
++    {
++#    if defined( VULKAN_HPP_USE_REFLECT )
++      return this->reflect() == rhs.reflect();
++#    else
++      return ( sType == rhs.sType ) && ( pNext == rhs.pNext ) && ( flags == rhs.flags ) && ( window == rhs.window );
++#    endif
++    }
++
++    bool operator!=( LaylaOSSurfaceCreateInfoKHR const & rhs ) const VULKAN_HPP_NOEXCEPT
++    {
++      return !operator==( rhs );
++    }
++#  endif
++
++  public:
++    VULKAN_HPP_NAMESPACE::StructureType              sType     = StructureType::eLaylaOSSurfaceCreateInfoKHR;
++    const void *                                     pNext     = {};
++    VULKAN_HPP_NAMESPACE::LaylaOSSurfaceCreateFlagsKHR flags     = {};
++    void*                                        window = {};
++  };
++
++  template <>
++  struct CppType<StructureType, StructureType::eLaylaOSSurfaceCreateInfoKHR>
++  {
++    using Type = LaylaOSSurfaceCreateInfoKHR;
++  };
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+ }  // namespace VULKAN_HPP_NAMESPACE
+ #endif
+diff -rub SwiftShader/include/vulkan/vulkan_to_string.hpp SwiftShader/include/vulkan/vulkan_to_string.hpp
+--- SwiftShader/include/vulkan/vulkan_to_string.hpp	2024-02-29 14:53:58.244072020 +0000
++++ SwiftShader/include/vulkan/vulkan_to_string.hpp	2024-02-29 05:38:40.823453564 +0000
+@@ -2006,6 +2006,15 @@
+   }
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++
++  VULKAN_HPP_INLINE std::string to_string( LaylaOSSurfaceCreateFlagsKHR )
++  {
++    return "{}";
++  }
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+ 
+   VULKAN_HPP_INLINE std::string to_string( DebugReportFlagsEXT value )
+@@ -3827,6 +3836,9 @@
+ #if defined( VK_USE_PLATFORM_WIN32_KHR )
+       case StructureType::eWin32SurfaceCreateInfoKHR: return "Win32SurfaceCreateInfoKHR";
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++      case StructureType::eLaylaOSSurfaceCreateInfoKHR: return "LaylaOSSurfaceCreateInfoKHR";
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
+       case StructureType::eDebugReportCallbackCreateInfoEXT: return "DebugReportCallbackCreateInfoEXT";
+       case StructureType::ePipelineRasterizationStateRasterizationOrderAMD: return "PipelineRasterizationStateRasterizationOrderAMD";
+       case StructureType::eDebugMarkerObjectNameInfoEXT: return "DebugMarkerObjectNameInfoEXT";
+@@ -6845,6 +6857,15 @@
+   }
+ #endif /*VK_USE_PLATFORM_WIN32_KHR*/
+ 
++#if defined( VK_USE_PLATFORM_LAYLAOS )
++  //=== VK_KHR_laylaos_surface ===
++
++  VULKAN_HPP_INLINE std::string to_string( LaylaOSSurfaceCreateFlagBitsKHR )
++  {
++    return "(void)";
++  }
++#endif /*VK_USE_PLATFORM_LAYLAOS*/
++
+   //=== VK_EXT_debug_report ===
+ 
+   VULKAN_HPP_INLINE std::string to_string( DebugReportFlagBitsEXT value )
+diff -rub SwiftShader/src/Vulkan/CMakeLists.txt SwiftShader/src/Vulkan/CMakeLists.txt
+--- SwiftShader/src/Vulkan/CMakeLists.txt	2024-02-29 14:53:58.260071648 +0000
++++ SwiftShader/src/Vulkan/CMakeLists.txt	2024-02-29 05:38:40.823453564 +0000
+@@ -217,6 +217,8 @@
+     set(VULKAN_API_LIBRARY_NAME "libvulkan.dylib")
+ elseif(FUCHSIA)
+     set(VULKAN_API_LIBRARY_NAME "libvulkan.so")
++elseif(LAYLAOS)
++    set(VULKAN_API_LIBRARY_NAME "libvulkan.so.1")
+ else()
+     message(FATAL_ERROR "Platform does not support Vulkan yet")
+ endif()
+diff -rub SwiftShader/src/Vulkan/libVulkan.cpp SwiftShader/src/Vulkan/libVulkan.cpp
+--- SwiftShader/src/Vulkan/libVulkan.cpp	2024-02-29 14:53:58.268071462 +0000
++++ SwiftShader/src/Vulkan/libVulkan.cpp	2024-02-29 10:50:48.303160138 +0000
+@@ -76,6 +76,10 @@
+ #	include "WSI/Win32SurfaceKHR.hpp"
+ #endif
+ 
++#ifdef VK_USE_PLATFORM_LAYLAOS
++#	include "WSI/LaylaOSSurfaceKHR.hpp"
++#endif
++
+ #include "marl/mutex.h"
+ #include "marl/scheduler.h"
+ #include "marl/thread.h"
+@@ -348,6 +352,9 @@
+ #ifdef VK_USE_PLATFORM_WIN32_KHR
+ 	{ { VK_KHR_WIN32_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_SPEC_VERSION } },
+ #endif
++#ifdef VK_USE_PLATFORM_LAYLAOS
++	{ { VK_KHR_LAYLAOS_SURFACE_EXTENSION_NAME, VK_KHR_LAYLAOS_SURFACE_SPEC_VERSION } },
++#endif
+ };
+ 
+ // TODO(b/208256248): Avoid exit-time destructor.
+@@ -4576,6 +4583,24 @@
+ 
+ 	return VK_TRUE;
+ }
++#endif
++
++#ifdef VK_USE_PLATFORM_LAYLAOS
++VKAPI_ATTR VkResult VKAPI_CALL vkCreateLaylaOSSurfaceKHR(VkInstance instance, const VkLaylaOSSurfaceCreateInfoKHR *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkSurfaceKHR *pSurface)
++{
++	TRACE("(VkInstance instance = %p, VkLaylaOSSurfaceCreateInfoKHR* pCreateInfo = %p, VkAllocationCallbacks* pAllocator = %p, VkSurface* pSurface = %p)",
++	      instance, pCreateInfo, pAllocator, pSurface);
++
++	return vk::LaylaOSSurfaceKHR::Create(pAllocator, pCreateInfo, pSurface);
++}
++
++VKAPI_ATTR VkBool32 VKAPI_CALL vkGetPhysicalDeviceLaylaOSPresentationSupportKHR(VkPhysicalDevice physicalDevice, uint32_t queueFamilyIndex)
++{
++	TRACE("(VkPhysicalDevice physicalDevice = %p, uint32_t queueFamilyIndex = %d)",
++	      physicalDevice, int(queueFamilyIndex));
++
++	return VK_TRUE;
++}
+ #endif
+ 
+ #ifdef VK_USE_PLATFORM_DISPLAY_KHR
+diff -rub SwiftShader/src/Vulkan/VkConfig.hpp SwiftShader/src/Vulkan/VkConfig.hpp
+--- SwiftShader/src/Vulkan/VkConfig.hpp	2024-02-29 14:53:58.264071555 +0000
++++ SwiftShader/src/Vulkan/VkConfig.hpp	2024-02-29 05:38:40.827453697 +0000
+@@ -120,7 +120,7 @@
+ #elif defined(__ANDROID__)
+ #	define SWIFTSHADER_EXTERNAL_SEMAPHORE_OPAQUE_FD 1
+ #endif
+-#if defined(__APPLE__)
++#if defined(__APPLE__) || defined(__laylaos__)
+ #	define SWIFTSHADER_EXTERNAL_MEMORY_OPAQUE_FD 1
+ #endif
+ 
+diff -rub SwiftShader/src/Vulkan/VkDeviceMemory.cpp SwiftShader/src/Vulkan/VkDeviceMemory.cpp
+--- SwiftShader/src/Vulkan/VkDeviceMemory.cpp	2024-02-29 14:53:58.264071555 +0000
++++ SwiftShader/src/Vulkan/VkDeviceMemory.cpp	2024-02-29 05:38:40.827453697 +0000
+@@ -61,6 +61,8 @@
+ 
+ #	if defined(__APPLE__)
+ #		include "VkDeviceMemoryExternalMac.hpp"
++#	elif defined(__laylaos__)
++#		include "VkDeviceMemoryExternalLaylaOS.hpp"
+ #	elif defined(__linux__) && !defined(__ANDROID__)
+ #		include "VkDeviceMemoryExternalLinux.hpp"
+ #	else
+diff -rub SwiftShader/src/Vulkan/VkGetProcAddress.cpp SwiftShader/src/Vulkan/VkGetProcAddress.cpp
+--- SwiftShader/src/Vulkan/VkGetProcAddress.cpp	2024-02-29 14:53:58.264071555 +0000
++++ SwiftShader/src/Vulkan/VkGetProcAddress.cpp	2024-02-29 05:38:40.827453697 +0000
+@@ -191,6 +191,11 @@
+ 	MAKE_VULKAN_INSTANCE_ENTRY(vkCreateWin32SurfaceKHR),
+ 	MAKE_VULKAN_INSTANCE_ENTRY(vkGetPhysicalDeviceWin32PresentationSupportKHR),
+ #endif
++#ifdef VK_USE_PLATFORM_LAYLAOS
++	// VK_KHR_laylaos_surface
++	MAKE_VULKAN_INSTANCE_ENTRY(vkCreateLaylaOSSurfaceKHR),
++	MAKE_VULKAN_INSTANCE_ENTRY(vkGetPhysicalDeviceLaylaOSPresentationSupportKHR),
++#endif
+ 	MAKE_VULKAN_INSTANCE_ENTRY(vkCreateHeadlessSurfaceEXT),
+ };
+ #undef MAKE_VULKAN_INSTANCE_ENTRY
+diff -rub SwiftShader/src/WSI/CMakeLists.txt SwiftShader/src/WSI/CMakeLists.txt
+--- SwiftShader/src/WSI/CMakeLists.txt	2024-02-29 14:53:58.268071462 +0000
++++ SwiftShader/src/WSI/CMakeLists.txt	2024-02-29 05:38:40.827453697 +0000
+@@ -31,6 +31,11 @@
+         Win32SurfaceKHR.cpp
+         Win32SurfaceKHR.hpp
+     )
++elseif(LAYLAOS)
++    list(APPEND WSI_SRC_FILES
++        LaylaOSSurfaceKHR.cpp
++        LaylaOSSurfaceKHR.hpp
++    )
+ elseif(LINUX)
+     if(SWIFTSHADER_BUILD_WSI_XCB)
+         list(APPEND WSI_SRC_FILES
+diff -rub SwiftShader/src/WSI/VkSurfaceKHR.cpp SwiftShader/src/WSI/VkSurfaceKHR.cpp
+--- SwiftShader/src/WSI/VkSurfaceKHR.cpp	2024-02-29 14:53:58.268071462 +0000
++++ SwiftShader/src/WSI/VkSurfaceKHR.cpp	2024-02-29 05:38:40.827453697 +0000
+@@ -22,8 +22,13 @@
+ namespace {
+ 
+ static const VkSurfaceFormatKHR surfaceFormats[] = {
++#ifdef __laylaos__
++	{ VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR },
++	{ VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR },
++#else
+ 	{ VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR },
+ 	{ VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR },
++#endif
+ };
+ 
+ static const VkPresentModeKHR presentModes[] = {
+diff -rub SwiftShader/tests/VulkanUnitTests/Driver.cpp SwiftShader/tests/VulkanUnitTests/Driver.cpp
+--- SwiftShader/tests/VulkanUnitTests/Driver.cpp	2024-02-29 14:53:58.272071369 +0000
++++ SwiftShader/tests/VulkanUnitTests/Driver.cpp	2024-02-29 13:33:02.523773518 +0000
+@@ -26,6 +26,9 @@
+ #elif defined(__linux__)
+ #	include "dlfcn.h"
+ #	define OS_LINUX 1
++#elif defined(__laylaos__)
++#	include "dlfcn.h"
++#	define OS_LAYLAOS 1
+ #elif defined(__Fuchsia__)
+ #	include <zircon/dlfcn.h>
+ #	define OS_FUCHSIA 1
+@@ -89,6 +92,11 @@
+ 	       load("swiftshader/libvk_swiftshader.so") ||
+ 	       load("./libvk_swiftshader.so") ||
+ 	       load("libvk_swiftshader.so");
++#elif OS_LAYLAOS
++	return load("./build/LaylaOS/libvk_swiftshader.so") ||
++	       load("swiftshader/libvk_swiftshader.so") ||
++	       load("./libvk_swiftshader.so") ||
++	       load("libvk_swiftshader.so");
+ #elif OS_ANDROID || OS_FUCHSIA
+ 	return load("libvk_swiftshader.so");
+ #else
+@@ -98,7 +106,7 @@
+ 
+ bool Driver::loadSystem()
+ {
+-#if OS_LINUX
++#if OS_LINUX || OS_LAYLAOS
+ 	return load("libvulkan.so.1");
+ #else
+ 	return false;
+@@ -109,7 +117,7 @@
+ {
+ #if OS_WINDOWS
+ 	dll = LoadLibraryA(path);
+-#elif(OS_MAC || OS_LINUX || OS_ANDROID || OS_FUCHSIA)
++#elif(OS_MAC || OS_LINUX || OS_ANDROID || OS_FUCHSIA || OS_LAYLAOS)
+ 	dll = dlopen(path, RTLD_LAZY | RTLD_LOCAL);
+ #else
+ 	return false;
+@@ -149,7 +157,7 @@
+ 
+ #if OS_WINDOWS
+ 	FreeLibrary((HMODULE)dll);
+-#elif(OS_LINUX || OS_FUCHSIA)
++#elif(OS_LINUX || OS_FUCHSIA || OS_LAYLAOS)
+ 	dlclose(dll);
+ #endif
+ 
+@@ -195,7 +203,7 @@
+ {
+ #if OS_WINDOWS
+ 	return GetProcAddress((HMODULE)dll, name);
+-#elif(OS_MAC || OS_LINUX || OS_ANDROID || OS_FUCHSIA)
++#elif(OS_MAC || OS_LINUX || OS_ANDROID || OS_FUCHSIA || OS_LAYLAOS)
+ 	return dlsym(dll, name);
+ #else
+ 	return nullptr;
+diff -rub SwiftShader/tests/VulkanWrapper/VulkanTester.cpp SwiftShader/tests/VulkanWrapper/VulkanTester.cpp
+--- SwiftShader/tests/VulkanWrapper/VulkanTester.cpp	2024-02-29 14:53:58.272071369 +0000
++++ SwiftShader/tests/VulkanWrapper/VulkanTester.cpp	2024-02-29 11:27:25.098349337 +0000
+@@ -49,6 +49,9 @@
+ #elif defined(__linux__)
+ #	include "dlfcn.h"
+ #	define OS_LINUX 1
++#elif defined(__laylaos__)
++#	include "dlfcn.h"
++#	define OS_LAYLAOS 1
+ #elif defined(__Fuchsia__)
+ #	include <zircon/dlfcn.h>
+ #	define OS_FUCHSIA 1
+@@ -200,6 +203,11 @@
+ 		     "swiftshader/libvk_swiftshader.so",
+ 		     "./libvk_swiftshader.so",
+ 		     "libvk_swiftshader.so" };
++#elif OS_LAYLAOS
++	return { "./build/LaylaOS/libvk_swiftshader.so",
++		     "swiftshader/libvk_swiftshader.so",
++		     "./libvk_swiftshader.so",
++		     "libvk_swiftshader.so" };
+ #elif OS_ANDROID || OS_FUCHSIA
+ 	return
+ 	{
+diff -rub SwiftShader/third_party/llvm-10.0/CMakeLists.txt SwiftShader/third_party/llvm-10.0/CMakeLists.txt
+--- SwiftShader/third_party/llvm-10.0/CMakeLists.txt	2024-02-29 14:53:59.860034488 +0000
++++ SwiftShader/third_party/llvm-10.0/CMakeLists.txt	2024-02-29 06:21:10.879159776 +0000
+@@ -1183,6 +1183,9 @@
+ 
+ if(WIN32)
+     list(APPEND LLVM_INCLUDE_DIR ${LLVM_CONFIG_DIR}/windows/include)
++elseif(LAYLAOS)
++    list(APPEND LLVM_INCLUDE_DIR ${LLVM_CONFIG_DIR}/laylaos/include)
++    list(APPEND LIBBACKTRACE_INCLUDE_DIR ${LIBBACKTRACE_CONFIG_DIR}/laylaos/include)
+ elseif(LINUX)
+     list(APPEND LLVM_INCLUDE_DIR ${LLVM_CONFIG_DIR}/linux/include)
+     list(APPEND LIBBACKTRACE_INCLUDE_DIR ${LIBBACKTRACE_CONFIG_DIR}/linux/include)
+diff -rub SwiftShader/third_party/llvm-10.0/llvm/include/llvm/Support/SwapByteOrder.h SwiftShader/third_party/llvm-10.0/llvm/include/llvm/Support/SwapByteOrder.h
+--- SwiftShader/third_party/llvm-10.0/llvm/include/llvm/Support/SwapByteOrder.h	2024-02-29 14:54:00.268025012 +0000
++++ SwiftShader/third_party/llvm-10.0/llvm/include/llvm/Support/SwapByteOrder.h	2024-02-29 07:05:59.989578287 +0000
+@@ -22,7 +22,7 @@
+ #include <stdlib.h>
+ #endif
+ 
+-#if defined(__linux__) || defined(__GNU__) || defined(__HAIKU__)
++#if defined(__linux__) || defined(__GNU__) || defined(__HAIKU__) || defined(__laylaos__)
+ #include <endian.h>
+ #elif defined(_AIX)
+ #include <sys/machine.h>
+diff -rub SwiftShader/third_party/llvm-10.0/llvm/lib/Support/raw_ostream.cpp SwiftShader/third_party/llvm-10.0/llvm/lib/Support/raw_ostream.cpp
+--- SwiftShader/third_party/llvm-10.0/llvm/lib/Support/raw_ostream.cpp	2024-02-29 14:54:00.416021574 +0000
++++ SwiftShader/third_party/llvm-10.0/llvm/lib/Support/raw_ostream.cpp	2024-02-29 07:52:34.392487282 +0000
+@@ -701,7 +701,7 @@
+   // and Windows _write requires 32 bit input.
+   size_t MaxWriteSize = INT32_MAX;
+ 
+-#if defined(__linux__)
++#if defined(__linux__) || defined(__laylaos__)
+   // It is observed that Linux returns EINVAL for a very large write (>2G).
+   // Make it a reasonably small value.
+   MaxWriteSize = 1024 * 1024 * 1024;
+diff -rub SwiftShader/third_party/llvm-10.0/llvm/lib/Support/Unix/Path.inc SwiftShader/third_party/llvm-10.0/llvm/lib/Support/Unix/Path.inc
+--- SwiftShader/third_party/llvm-10.0/llvm/lib/Support/Unix/Path.inc	2024-02-29 14:54:00.412021667 +0000
++++ SwiftShader/third_party/llvm-10.0/llvm/lib/Support/Unix/Path.inc	2024-02-29 07:10:10.908398661 +0000
+@@ -101,7 +101,7 @@
+ #define STATVFS_F_FRSIZE(vfs) static_cast<uint64_t>(vfs.f_bsize)
+ #endif
+ 
+-#if defined(__NetBSD__) || defined(__DragonFly__) || defined(__GNU__)
++#if defined(__NetBSD__) || defined(__DragonFly__) || defined(__GNU__) || defined(__laylaos__)
+ #define STATVFS_F_FLAG(vfs) (vfs).f_flag
+ #else
+ #define STATVFS_F_FLAG(vfs) (vfs).f_flags
+@@ -117,7 +117,7 @@
+ 
+ #if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) ||     \
+     defined(__minix) || defined(__FreeBSD_kernel__) || defined(__linux__) ||   \
+-    defined(__CYGWIN__) || defined(__DragonFly__) || defined(_AIX) || defined(__GNU__)
++    defined(__CYGWIN__) || defined(__DragonFly__) || defined(_AIX) || defined(__GNU__) || defined(__laylaos__)
+ static int
+ test_dir(char ret[PATH_MAX], const char *dir, const char *bin)
+ {
+@@ -238,7 +238,7 @@
+   // If we don't have procfs mounted, fall back to argv[0]
+   if (getprogpath(exe_path, argv0) != NULL)
+     return exe_path;
+-#elif defined(__linux__) || defined(__CYGWIN__) || defined(__gnu_hurd__)
++#elif defined(__linux__) || defined(__CYGWIN__) || defined(__gnu_hurd__) || defined(__laylaos__)
+   char exe_path[MAXPATHLEN];
+   const char *aPath = "/proc/self/exe";
+   if (sys::fs::exists(aPath)) {
+@@ -465,6 +465,9 @@
+ #elif defined(__HAIKU__)
+   // Haiku doesn't expose this information.
+   return false;
++#elif defined(__laylaos__)
++  // LaylaOS doesn't yet support remote filesystem mounts.
++  return true;
+ #elif defined(__sun)
+   // statvfs::f_basetype contains a null-terminated FSType name of the mounted target
+   StringRef fstype(Vfs.f_basetype);
+diff -rub SwiftShader/third_party/llvm-16.0/CMakeLists.txt SwiftShader/third_party/llvm-16.0/CMakeLists.txt
+--- SwiftShader/third_party/llvm-16.0/CMakeLists.txt	2024-02-29 14:54:00.684015350 +0000
++++ SwiftShader/third_party/llvm-16.0/CMakeLists.txt	2024-02-29 05:38:40.827453697 +0000
+@@ -1512,6 +1512,9 @@
+ 
+ if(WIN32)
+     list(APPEND LLVM_INCLUDE_DIR ${LLVM_CONFIG_DIR}/windows/include)
++elseif(LAYLAOS)
++    list(APPEND LLVM_INCLUDE_DIR ${LLVM_CONFIG_DIR}/laylaos/include)
++    list(APPEND LIBBACKTRACE_INCLUDE_DIR ${LIBBACKTRACE_CONFIG_DIR}/laylaos/include)
+ elseif(LINUX)
+     list(APPEND LLVM_INCLUDE_DIR ${LLVM_CONFIG_DIR}/linux/include)
+     list(APPEND LIBBACKTRACE_INCLUDE_DIR ${LIBBACKTRACE_CONFIG_DIR}/linux/include)
+diff -rub SwiftShader/third_party/llvm-16.0/llvm/include/llvm/Support/SwapByteOrder.h SwiftShader/third_party/llvm-16.0/llvm/include/llvm/Support/SwapByteOrder.h
+--- SwiftShader/third_party/llvm-16.0/llvm/include/llvm/Support/SwapByteOrder.h	2024-02-29 14:54:01.200003365 +0000
++++ SwiftShader/third_party/llvm-16.0/llvm/include/llvm/Support/SwapByteOrder.h	2024-02-29 05:38:40.831453829 +0000
+@@ -20,7 +20,7 @@
+ #include <type_traits>
+ 
+ #if defined(__linux__) || defined(__GNU__) || defined(__HAIKU__) ||            \
+-    defined(__Fuchsia__) || defined(__EMSCRIPTEN__)
++    defined(__Fuchsia__) || defined(__EMSCRIPTEN__) || defined(__laylaos__)
+ #include <endian.h>
+ #elif defined(_AIX)
+ #include <sys/machine.h>
+diff -rub SwiftShader/third_party/llvm-16.0/llvm/include/llvm/TargetParser/Triple.h SwiftShader/third_party/llvm-16.0/llvm/include/llvm/TargetParser/Triple.h
+--- SwiftShader/third_party/llvm-16.0/llvm/include/llvm/TargetParser/Triple.h	2024-02-29 14:54:01.208003180 +0000
++++ SwiftShader/third_party/llvm-16.0/llvm/include/llvm/TargetParser/Triple.h	2024-02-29 05:38:40.831453829 +0000
+@@ -223,7 +223,8 @@
+     WASI,       // Experimental WebAssembly OS
+     Emscripten,
+     ShaderModel, // DirectX ShaderModel
+-    LastOSType = ShaderModel
++    LaylaOS,
++    LastOSType = LaylaOS
+   };
+   enum EnvironmentType {
+     UnknownEnvironment,
+@@ -670,6 +671,11 @@
+     return getOS() == Triple::AIX;
+   }
+ 
++  /// Tests whether the OS is LaylaOS.
++  bool isOSLaylaOS() const {
++    return getOS() == Triple::LaylaOS;
++  }
++
+   /// Tests whether the OS uses the ELF binary format.
+   bool isOSBinFormatELF() const {
+     return getObjectFormat() == Triple::ELF;
+diff -rub SwiftShader/third_party/llvm-16.0/llvm/lib/Support/Unix/Path.inc SwiftShader/third_party/llvm-16.0/llvm/lib/Support/Unix/Path.inc
+--- SwiftShader/third_party/llvm-16.0/llvm/lib/Support/Unix/Path.inc	2024-02-29 14:54:01.387998999 +0000
++++ SwiftShader/third_party/llvm-16.0/llvm/lib/Support/Unix/Path.inc	2024-02-29 05:38:40.831453829 +0000
+@@ -112,7 +112,7 @@
+ #endif
+ 
+ #if defined(__NetBSD__) || defined(__DragonFly__) || defined(__GNU__) ||       \
+-    defined(__MVS__)
++    defined(__MVS__) || defined(__laylaos__)
+ #define STATVFS_F_FLAG(vfs) (vfs).f_flag
+ #else
+ #define STATVFS_F_FLAG(vfs) (vfs).f_flags
+@@ -129,7 +129,7 @@
+ #if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) ||     \
+     defined(__minix) || defined(__FreeBSD_kernel__) || defined(__linux__) ||   \
+     defined(__CYGWIN__) || defined(__DragonFly__) || defined(_AIX) ||          \
+-    defined(__GNU__) || (defined(__sun__) && defined(__svr4__))
++    defined(__GNU__) || (defined(__sun__) && defined(__svr4__)) || defined(__laylaos__)
+ static int test_dir(char ret[PATH_MAX], const char *dir, const char *bin) {
+   struct stat sb;
+   char fullpath[PATH_MAX];
+@@ -250,7 +250,7 @@
+   // If we don't have procfs mounted, fall back to argv[0]
+   if (getprogpath(exe_path, argv0) != NULL)
+     return exe_path;
+-#elif defined(__linux__) || defined(__CYGWIN__) || defined(__gnu_hurd__)
++#elif defined(__linux__) || defined(__CYGWIN__) || defined(__gnu_hurd__) || defined(__laylaos__)
+   char exe_path[PATH_MAX];
+   const char *aPath = "/proc/self/exe";
+   if (sys::fs::exists(aPath)) {
+@@ -506,6 +506,9 @@
+ #elif defined(__HAIKU__)
+   // Haiku doesn't expose this information.
+   return false;
++#elif defined(__laylaos__)
++  // LaylaOS doesn't yet support remote filesystem mounts.
++  return true;
+ #elif defined(__sun)
+   // statvfs::f_basetype contains a null-terminated FSType name of the mounted
+   // target
+diff -rub SwiftShader/third_party/llvm-16.0/llvm/lib/TargetParser/Triple.cpp SwiftShader/third_party/llvm-16.0/llvm/lib/TargetParser/Triple.cpp
+--- SwiftShader/third_party/llvm-16.0/llvm/lib/TargetParser/Triple.cpp	2024-02-29 14:54:01.667992496 +0000
++++ SwiftShader/third_party/llvm-16.0/llvm/lib/TargetParser/Triple.cpp	2024-02-29 05:38:40.831453829 +0000
+@@ -224,6 +224,7 @@
+   case Hurd: return "hurd";
+   case IOS: return "ios";
+   case KFreeBSD: return "kfreebsd";
++  case LaylaOS: return "laylaos";
+   case Linux: return "linux";
+   case Lv2: return "lv2";
+   case MacOSX: return "macosx";
+@@ -565,6 +566,7 @@
+     .StartsWith("fuchsia", Triple::Fuchsia)
+     .StartsWith("ios", Triple::IOS)
+     .StartsWith("kfreebsd", Triple::KFreeBSD)
++    .StartsWith("laylaos", Triple::LaylaOS)
+     .StartsWith("linux", Triple::Linux)
+     .StartsWith("lv2", Triple::Lv2)
+     .StartsWith("macos", Triple::MacOSX)
+diff -rub SwiftShader/third_party/llvm-subzero/CMakeLists.txt SwiftShader/third_party/llvm-subzero/CMakeLists.txt
+--- SwiftShader/third_party/llvm-subzero/CMakeLists.txt	2024-02-29 14:54:01.735990917 +0000
++++ SwiftShader/third_party/llvm-subzero/CMakeLists.txt	2024-02-29 05:38:40.831453829 +0000
+@@ -200,6 +200,8 @@
+ 
+ if(WIN32)
+     set(LLVM_SUBZERO_PLATFORM_INCLUDE_DIR "build/Windows/include")
++elseif(LAYLAOS)
++    set(LLVM_SUBZERO_PLATFORM_INCLUDE_DIR "build/LaylaOS/include")
+ elseif(LINUX)
+     set(LLVM_SUBZERO_PLATFORM_INCLUDE_DIR "build/Linux/include")
+ elseif(APPLE)
+diff -rub SwiftShader/third_party/marl/src/memory.cpp SwiftShader/third_party/marl/src/memory.cpp
+--- SwiftShader/third_party/marl/src/memory.cpp	2024-02-29 14:54:01.787989709 +0000
++++ SwiftShader/third_party/marl/src/memory.cpp	2024-02-29 06:05:06.990148184 +0000
+@@ -19,7 +19,7 @@
+ 
+ #include <cstring>
+ 
+-#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__) || defined(__EMSCRIPTEN__)
++#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__) || defined(__EMSCRIPTEN__) || defined(__laylaos__)
+ #include <sys/mman.h>
+ #include <unistd.h>
+ namespace {
+diff -rub SwiftShader/third_party/SPIRV-Tools/CMakeLists.txt SwiftShader/third_party/SPIRV-Tools/CMakeLists.txt
+--- SwiftShader/third_party/SPIRV-Tools/CMakeLists.txt	2024-02-29 14:53:59.720037739 +0000
++++ SwiftShader/third_party/SPIRV-Tools/CMakeLists.txt	2024-02-29 05:38:40.831453829 +0000
+@@ -66,6 +66,8 @@
+   add_definitions(-DSPIRV_GNU)
+ elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "QNX")
+   add_definitions(-DSPIRV_QNX)
++elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "LaylaOS")
++  add_definitions(-DSPIRV_LAYLAOS)
+ else()
+   message(FATAL_ERROR "Your platform '${CMAKE_SYSTEM_NAME}' is not supported!")
+ endif()
+diff -rub SwiftShader/third_party/SPIRV-Tools/source/print.cpp SwiftShader/third_party/SPIRV-Tools/source/print.cpp
+--- SwiftShader/third_party/SPIRV-Tools/source/print.cpp	2024-02-29 14:53:59.772036532 +0000
++++ SwiftShader/third_party/SPIRV-Tools/source/print.cpp	2024-02-29 05:38:40.831453829 +0000
+@@ -17,7 +17,7 @@
+ #if defined(SPIRV_ANDROID) || defined(SPIRV_LINUX) || defined(SPIRV_MAC) || \
+     defined(SPIRV_IOS) || defined(SPIRV_TVOS) || defined(SPIRV_FREEBSD) ||  \
+     defined(SPIRV_OPENBSD) || defined(SPIRV_EMSCRIPTEN) ||                  \
+-    defined(SPIRV_FUCHSIA) || defined(SPIRV_GNU)
++    defined(SPIRV_FUCHSIA) || defined(SPIRV_GNU) || defined(SPIRV_LAYLAOS)
+ namespace spvtools {
+ 
+ clr::reset::operator const char*() { return "\x1b[0m"; }

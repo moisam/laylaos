@@ -1,0 +1,23 @@
+/* Copyright 2011-2012 Nicholas J. Kain, licensed under standard MIT license */
+.text
+.global __unmapself
+.type   __unmapself,@function
+__unmapself:
+
+#ifdef __laylaos__
+
+	movl $91,%eax   /* SYS_munmap */
+	syscall         /* munmap(arg2,arg3) */
+	xor %rdi,%rdi   /* exit() args: always return success */
+	movl $1, %eax   /* SYS_exit */
+	syscall         /* exit(0) */
+
+#else       /* !__laylaos__ */
+
+	movl $11,%eax   /* SYS_munmap */
+	syscall         /* munmap(arg2,arg3) */
+	xor %rdi,%rdi   /* exit() args: always return success */
+	movl $60,%eax   /* SYS_exit */
+	syscall         /* exit(0) */
+
+#endif      /* !__laylaos__ */

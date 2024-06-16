@@ -1,0 +1,148 @@
+diff -rub ./Vulkan-Headers-1.3.278/registry/validusage.json ./Vulkan-Headers-1.3.278/registry/validusage.json
+--- ./Vulkan-Headers-1.3.278/registry/validusage.json	2024-02-16 10:34:38.000000000 +0000
++++ ./Vulkan-Headers-1.3.278/registry/validusage.json	2024-02-29 21:14:14.869564553 +0000
+@@ -81904,6 +81904,54 @@
+         }
+       ]
+     },
++    "vkCreateLaylaOSSurfaceKHR": {
++      "core": [
++        {
++          "vuid": "VUID-vkCreateLaylaOSSurfaceKHR-instance-parameter",
++          "text": "<code>instance</code> <strong class=\"purple\">must</strong> be a valid <a href=\"#VkInstance\">VkInstance</a> handle",
++          "page": "vkspec"
++        },
++        {
++          "vuid": "VUID-vkCreateLaylaOSSurfaceKHR-pCreateInfo-parameter",
++          "text": "<code>pCreateInfo</code> <strong class=\"purple\">must</strong> be a valid pointer to a valid <a href=\"#VkLaylaOSSurfaceCreateInfoKHR\">VkLaylaOSSurfaceCreateInfoKHR</a> structure",
++          "page": "vkspec"
++        },
++        {
++          "vuid": "VUID-vkCreateLaylaOSSurfaceKHR-pAllocator-parameter",
++          "text": "If <code>pAllocator</code> is not <code>NULL</code>, <code>pAllocator</code> <strong class=\"purple\">must</strong> be a valid pointer to a valid <a href=\"#VkAllocationCallbacks\">VkAllocationCallbacks</a> structure",
++          "page": "vkspec"
++        },
++        {
++          "vuid": "VUID-vkCreateLaylaOSSurfaceKHR-pSurface-parameter",
++          "text": "<code>pSurface</code> <strong class=\"purple\">must</strong> be a valid pointer to a <a href=\"#VkSurfaceKHR\">VkSurfaceKHR</a> handle",
++          "page": "vkspec"
++        }
++      ]
++    },
++    "VkLaylaOSSurfaceCreateInfoKHR": {
++      "core": [
++        {
++          "vuid": "VUID-VkLaylaOSSurfaceCreateInfoKHR-window-01311",
++          "text": "<code>window</code> <strong class=\"purple\">must</strong> be a valid LaylaOS <code>window pointer</code>",
++          "page": "vkspec"
++        },
++        {
++          "vuid": "VUID-VkLaylaOSSurfaceCreateInfoKHR-sType-sType",
++          "text": "<code>sType</code> <strong class=\"purple\">must</strong> be <code>VK_STRUCTURE_TYPE_LAYLAOS_SURFACE_CREATE_INFO_KHR</code>",
++          "page": "vkspec"
++        },
++        {
++          "vuid": "VUID-VkLaylaOSSurfaceCreateInfoKHR-pNext-pNext",
++          "text": "<code>pNext</code> <strong class=\"purple\">must</strong> be <code>NULL</code>",
++          "page": "vkspec"
++        },
++        {
++          "vuid": "VUID-VkLaylaOSSurfaceCreateInfoKHR-flags-zerobitmask",
++          "text": "<code>flags</code> <strong class=\"purple\">must</strong> be <code>0</code>",
++          "page": "vkspec"
++        }
++      ]
++    },
+     "vkCreateXcbSurfaceKHR": {
+       "core": [
+         {
+@@ -83165,6 +83213,20 @@
+         }
+       ]
+     },
++    "vkGetPhysicalDeviceLaylaOSPresentationSupportKHR": {
++      "core": [
++        {
++          "vuid": "VUID-vkGetPhysicalDeviceLaylaOSPresentationSupportKHR-queueFamilyIndex-01309",
++          "text": "<code>queueFamilyIndex</code> <strong class=\"purple\">must</strong> be less than <code>pQueueFamilyPropertyCount</code> returned by <code>vkGetPhysicalDeviceQueueFamilyProperties</code> for the given <code>physicalDevice</code>",
++          "page": "vkspec"
++        },
++        {
++          "vuid": "VUID-vkGetPhysicalDeviceLaylaOSPresentationSupportKHR-physicalDevice-parameter",
++          "text": "<code>physicalDevice</code> <strong class=\"purple\">must</strong> be a valid <a href=\"#VkPhysicalDevice\">VkPhysicalDevice</a> handle",
++          "page": "vkspec"
++        }
++      ]
++    },
+     "vkGetPhysicalDeviceXcbPresentationSupportKHR": {
+       "core": [
+         {
+diff -rub ./Vulkan-Headers-1.3.278/registry/vk.xml ./Vulkan-Headers-1.3.278/registry/vk.xml
+--- ./Vulkan-Headers-1.3.278/registry/vk.xml	2024-02-16 10:34:38.000000000 +0000
++++ ./Vulkan-Headers-1.3.278/registry/vk.xml	2024-02-29 21:29:50.837305786 +0000
+@@ -35,6 +35,7 @@
+         <platform name="sci" protect="VK_USE_PLATFORM_SCI" comment="NVIDIA SCI"/>
+         <platform name="provisional" protect="VK_ENABLE_BETA_EXTENSIONS" comment="Enable declarations for beta/provisional extensions"/>
+         <platform name="screen" protect="VK_USE_PLATFORM_SCREEN_QNX" comment="QNX Screen Graphics Subsystem"/>
++        <platform name="laylaos" protect="VK_USE_PLATFORM_LAYLAOS_KHR" comment="LaylaOS"/>
+     </platforms>
+ 
+     <tags comment="Vulkan vendor/author tags for extensions and layers">
+@@ -404,6 +405,7 @@
+         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkViSurfaceCreateFlagsNN</name>;</type>
+         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkWaylandSurfaceCreateFlagsKHR</name>;</type>
+         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkWin32SurfaceCreateFlagsKHR</name>;</type>
++        <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkLaylaOSSurfaceCreateFlagsKHR</name>;</type>
+         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkXlibSurfaceCreateFlagsKHR</name>;</type>
+         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkXcbSurfaceCreateFlagsKHR</name>;</type>
+         <type                                             category="bitmask">typedef <type>VkFlags</type> <name>VkDirectFBSurfaceCreateFlagsEXT</name>;</type>
+@@ -2145,6 +2147,12 @@
+             <member><type>HINSTANCE</type>                        <name>hinstance</name></member>
+             <member><type>HWND</type>                             <name>hwnd</name></member>
+         </type>
++        <type category="struct" name="VkLaylaOSSurfaceCreateInfoKHR">
++            <member values="VK_STRUCTURE_TYPE_LAYLAOS_SURFACE_CREATE_INFO_KHR"><type>VkStructureType</type> <name>sType</name></member>
++            <member optional="true">const <type>void</type>*                      <name>pNext</name></member>
++            <member optional="true"><type>VkLaylaOSSurfaceCreateFlagsKHR</type>   <name>flags</name></member>
++            <member><type>void</type>*                        <name>window</name></member>
++        </type>
+         <type category="struct" name="VkXlibSurfaceCreateInfoKHR">
+             <member values="VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR"><type>VkStructureType</type> <name>sType</name></member>
+             <member optional="true">const <type>void</type>*                      <name>pNext</name></member>
+@@ -12528,6 +12536,18 @@
+             <param><type>xcb_visualid_t</type> <name>visual_id</name></param>
+         </command>
+         <command successcodes="VK_SUCCESS" errorcodes="VK_ERROR_OUT_OF_HOST_MEMORY,VK_ERROR_OUT_OF_DEVICE_MEMORY">
++            <proto><type>VkResult</type> <name>vkCreateLaylaOSSurfaceKHR</name></proto>
++            <param><type>VkInstance</type> <name>instance</name></param>
++            <param>const <type>VkLaylaOSSurfaceCreateInfoKHR</type>* <name>pCreateInfo</name></param>
++            <param optional="true">const <type>VkAllocationCallbacks</type>* <name>pAllocator</name></param>
++            <param><type>VkSurfaceKHR</type>* <name>pSurface</name></param>
++        </command>
++        <command>
++            <proto><type>VkBool32</type> <name>vkGetPhysicalDeviceLaylaOSPresentationSupportKHR</name></proto>
++            <param><type>VkPhysicalDevice</type> <name>physicalDevice</name></param>
++            <param><type>uint32_t</type> <name>queueFamilyIndex</name></param>
++        </command>
++        <command successcodes="VK_SUCCESS" errorcodes="VK_ERROR_OUT_OF_HOST_MEMORY,VK_ERROR_OUT_OF_DEVICE_MEMORY">
+             <proto><type>VkResult</type> <name>vkCreateDirectFBSurfaceEXT</name></proto>
+             <param><type>VkInstance</type> <name>instance</name></param>
+             <param>const <type>VkDirectFBSurfaceCreateInfoEXT</type>* <name>pCreateInfo</name></param>
+@@ -24296,6 +24316,17 @@
+                 <enum value="&quot;VK_ARM_extension_568&quot;"              name="VK_ARM_EXTENSION_568_EXTENSION_NAME"/>
+             </require>
+         </extension>
++        <extension name="VK_KHR_laylaos_surface" number="569" type="instance" depends="VK_KHR_surface" platform="laylaos" author="KHR" contact="Mohammed Isam" supported="vulkan">
++            <require>
++                <enum value="6"                                                 name="VK_KHR_LAYLAOS_SURFACE_SPEC_VERSION"/>
++                <enum value="&quot;VK_KHR_laylaos_surface&quot;"                    name="VK_KHR_LAYLAOS_SURFACE_EXTENSION_NAME"/>
++                <enum offset="0" extends="VkStructureType"                      name="VK_STRUCTURE_TYPE_LAYLAOS_SURFACE_CREATE_INFO_KHR"/>
++                <type name="VkLaylaOSSurfaceCreateFlagsKHR"/>
++                <type name="VkLaylaOSSurfaceCreateInfoKHR"/>
++                <command name="vkCreateLaylaOSSurfaceKHR"/>
++                <command name="vkGetPhysicalDeviceLaylaOSPresentationSupportKHR"/>
++            </require>
++        </extension>
+     </extensions>
+     <formats>
+         <format name="VK_FORMAT_R4G4_UNORM_PACK8" class="8-bit" blockSize="1" texelsPerBlock="1" packed="8">
