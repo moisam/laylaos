@@ -85,7 +85,7 @@ static inline int write_internal(struct file_t *f,
 {
     KDEBUG("syscall_write: fd %d, buf 0x%x, count %d\n", fd, buf, count);
     ssize_t res;
-    off_t pos;
+    off_t pos = *offset;
 
     // don't bother if count == 0
     if(!count)
@@ -93,8 +93,6 @@ static inline int write_internal(struct file_t *f,
         res = 0;
         goto fin;
     }
-
-	pos = *offset;
 
     /* this call shouldn't modify f->pos */
     res = f->node->write(f, &pos, buf, count, 0);
@@ -145,7 +143,7 @@ int syscall_write(int fd, unsigned char *buf, size_t count, ssize_t *copied)
 	    f->pos = node->size;
 	}
 
-    res = write_internal(f, buf, count, &f->pos, copied);
+    res = write_internal(f, buf, count, &(f->pos), copied);
 
     update_file_node(f);
     sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
@@ -237,7 +235,7 @@ int syscall_writev(int fd, struct iovec *iov, int count, ssize_t *copied)
             break;
         }
 
-        if((res = write_internal(f, iov_base, iov_len, &f->pos, copied)) < 0)
+        if((res = write_internal(f, iov_base, iov_len, &(f->pos), copied)) < 0)
         {
             //printk("syscall_writev: res %d\n", res);
             return res;

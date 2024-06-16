@@ -51,7 +51,7 @@ static inline int read_internal(struct file_t *f,
                                 off_t *offset, ssize_t *copied)
 {
     ssize_t res;
-    off_t pos;
+    off_t pos = *offset;
     
     // don't bother if count == 0
     if(!count)
@@ -59,8 +59,6 @@ static inline int read_internal(struct file_t *f,
         res = 0;
         goto fin;
     }
-
-	pos = *offset;
 
     /* this call shouldn't modify f->pos */
     res = f->node->read(f, &pos, buf, count, 0);
@@ -107,7 +105,7 @@ int syscall_read(int fd, unsigned char *buf, size_t count, ssize_t *copied)
         return -EINVAL;
     }
 
-    res = read_internal(f, buf, count, &f->pos, copied);
+    res = read_internal(f, buf, count, &(f->pos), copied);
 
     sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
     cur_task->read_calls++;
@@ -193,7 +191,7 @@ int syscall_readv(int fd, struct iovec *iov, int count, ssize_t *copied)
             break;
         }
 
-        if((res = read_internal(f, iov_base, iov_len, &f->pos, copied)) < 0)
+        if((res = read_internal(f, iov_base, iov_len, &(f->pos), copied)) < 0)
         {
             return res;
         }
