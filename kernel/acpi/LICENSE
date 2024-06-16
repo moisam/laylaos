@@ -1,0 +1,13 @@
+
+The code in the subdirectories of this source directory is from the Intel ACPICA source.
+It is released under a dual license (including GPLv2). Modifications were added to the
+OS layer to integrate the ACPICA codebase with LaylaOS.
+
+You can find more on Intel website:
+    https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html
+
+The code is also hosted on GitHub:
+    https://github.com/acpica/acpica/
+
+The version we are currently using is from 31 March 2022.
+
