@@ -2,6 +2,7 @@
 
 LaylaOS is a hobby operating system with a kernel that is written in C. The project started around 2015 and took almost 9 years to reach a stable point where I felt it could be shared with the world.
 It is meant as a learning tool to better understand the internal workings of an Operating System's kernel, how system calls work and how to implement a Graphical User Interface (GUI) environment.
+
 It is **definitely** not a system meant for everyday use (not yet, at least).
 
 # Features
@@ -46,7 +47,7 @@ To build LaylaOS from source:
 
 # Licenses
 
-LaylaOS is released under GPL v3.
-PicoTCP (upon which our network stack is build) is released under GPL v2 or v3.
-ACPICA is released under a dual Intel and Unix-compatible licenses.
-All other ported software come with their respective licenses.
+- LaylaOS is released under GPL v3.
+- PicoTCP (upon which our network stack is build) is released under GPL v2 or v3.
+- ACPICA is released under a dual Intel and Unix-compatible licenses.
+- All other ported software come with their respective licenses.
