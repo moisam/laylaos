@@ -25,6 +25,7 @@ The project's features include:
 
 This is mostly to keep track of where we are at and what needs to be done next:
 * More syscalls including POSIX message queues syscalls
+* More GUI functionality (text editor, screenshot facility, paint program, desktop themes, archiver, web browser, etc.)
 * VFAT, ext3, ext4, NFS filesystem support
 * Syslogd server
 * Swap support
@@ -48,7 +49,7 @@ To build LaylaOS from source:
 # Licenses
 
 - LaylaOS is released under GPL v3.
-- PicoTCP (upon which our network stack is build) is released under GPL v2 or v3.
+- PicoTCP (upon which our network stack is built) is released under GPL v2 or v3.
 - ACPICA is released under a dual Intel and Unix-compatible licenses.
 - All other ported software come with their respective licenses.
 - Timidity files (needed for sound in DOOM) are in the public domain (see their `copyright.txt` file).
