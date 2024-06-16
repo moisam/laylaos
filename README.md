@@ -7,7 +7,7 @@ It is **definitely** not a system meant for everyday use (not yet, at least).
 
 # Screenshots
 
-[LaylaOS screenshot](screenshots/screenshot3.png)
+![LaylaOS screenshot](screenshots/screenshot3.png)
 [More screenshots](screenshots)
 
 # Features
