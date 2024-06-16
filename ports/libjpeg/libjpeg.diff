@@ -1,0 +1,139 @@
+diff -rub ./jpeg-9e/configure ./jpeg-9e/configure
+--- ./jpeg-9e/configure	2022-01-01 11:56:45.000000000 +0000
++++ ./jpeg-9e/configure	2023-06-18 03:01:30.237676000 +0100
+@@ -6976,6 +6976,10 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
++laylaos*)
++  lt_cv_deplibs_check_method=pass_all
++  ;;
++
+ hpux10.20* | hpux11*)
+   lt_cv_file_magic_cmd=/usr/bin/file
+   case $host_cpu in
+@@ -7014,7 +7018,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-netbsd*)
++netbsd* | netbsdelf*-gnu)
+   if echo __ELF__ | $CC -E - | $GREP __ELF__ > /dev/null; then
+     lt_cv_deplibs_check_method='match_pattern /lib[^/]+(\.so\.[0-9]+\.[0-9]+|_pic\.a)$'
+   else
+@@ -7394,7 +7398,7 @@
+ fi
+ 
+ : ${AR=ar}
+-: ${AR_FLAGS=cru}
++: ${AR_FLAGS=cr}
+ 
+ 
+ 
+@@ -7918,11 +7922,8 @@
+   test $ac_status = 0; }; then
+     # Now try to grab the symbols.
+     nlist=conftest.nm
+-    if { { eval echo "\"\$as_me\":${as_lineno-$LINENO}: \"$NM conftest.$ac_objext \| "$lt_cv_sys_global_symbol_pipe" \> $nlist\""; } >&5
+-  (eval $NM conftest.$ac_objext \| "$lt_cv_sys_global_symbol_pipe" \> $nlist) 2>&5
+-  ac_status=$?
+-  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+-  test $ac_status = 0; } && test -s "$nlist"; then
++    $ECHO "$as_me:$LINENO: $NM conftest.$ac_objext | $lt_cv_sys_global_symbol_pipe > $nlist" >&5
++    if eval "$NM" conftest.$ac_objext \| "$lt_cv_sys_global_symbol_pipe" \> $nlist 2>&5 && test -s "$nlist"; then
+       # Try sorting and uniquifying the output.
+       if sort "$nlist" | uniq > "$nlist"T; then
+ 	mv -f "$nlist"T "$nlist"
+@@ -9217,8 +9218,8 @@
+ _LT_EOF
+       echo "$LTCC $LTCFLAGS -c -o conftest.o conftest.c" >&5
+       $LTCC $LTCFLAGS -c -o conftest.o conftest.c 2>&5
+-      echo "$AR cru libconftest.a conftest.o" >&5
+-      $AR cru libconftest.a conftest.o 2>&5
++      echo "$AR cr libconftest.a conftest.o" >&5
++      $AR cr libconftest.a conftest.o 2>&5
+       echo "$RANLIB libconftest.a" >&5
+       $RANLIB libconftest.a 2>&5
+       cat > conftest.c << _LT_EOF
+@@ -9250,11 +9251,11 @@
+       # to the OS version, if on x86, and 10.4, the deployment
+       # target defaults to 10.4. Don't you love it?
+       case ${MACOSX_DEPLOYMENT_TARGET-10.0},$host in
+-	10.0,*86*-darwin8*|10.0,*-darwin[91]*)
++	10.0,*86*-darwin8*|10.0,*-darwin[912]*)
+ 	  _lt_dar_allow_undefined='$wl-undefined ${wl}dynamic_lookup' ;;
+ 	10.[012][,.]*)
+ 	  _lt_dar_allow_undefined='$wl-flat_namespace $wl-undefined ${wl}suppress' ;;
+-	10.*)
++	10.*|11.*)
+ 	  _lt_dar_allow_undefined='$wl-undefined ${wl}dynamic_lookup' ;;
+       esac
+     ;;
+@@ -10407,6 +10408,12 @@
+ 	lt_prog_compiler_pic='-KPIC'
+ 	lt_prog_compiler_static='-static'
+         ;;
++      # flang / f18. f95 an alias for gfortran or flang on Debian
++      flang* | f18* | f95*)
++	lt_prog_compiler_wl='-Wl,'
++	lt_prog_compiler_pic='-fPIC'
++	lt_prog_compiler_static='-static'
++        ;;
+       # icc used to be incompatible with GCC.
+       # ICC 10 doesn't accept -KPIC any more.
+       icc* | ifort*)
+@@ -10888,6 +10895,9 @@
+   openbsd* | bitrig*)
+     with_gnu_ld=no
+     ;;
++  linux* | k*bsd*-gnu | gnu*)
++    link_all_deplibs=no
++    ;;
+   esac
+ 
+   ld_shlibs=yes
+@@ -11142,7 +11152,7 @@
+       fi
+       ;;
+ 
+-    netbsd*)
++    netbsd* | netbsdelf*-gnu)
+       if echo __ELF__ | $CC -E - | $GREP __ELF__ >/dev/null; then
+ 	archive_cmds='$LD -Bshareable $libobjs $deplibs $linker_flags -o $lib'
+ 	wlarc=
+@@ -11819,6 +11829,7 @@
+ 	if test yes = "$lt_cv_irix_exported_symbol"; then
+           archive_expsym_cmds='$CC -shared $pic_flag $libobjs $deplibs $compiler_flags $wl-soname $wl$soname `test -n "$verstring" && func_echo_all "$wl-set_version $wl$verstring"` $wl-update_registry $wl$output_objdir/so_locations $wl-exports_file $wl$export_symbols -o $lib'
+ 	fi
++	link_all_deplibs=no
+       else
+ 	archive_cmds='$CC -shared $libobjs $deplibs $compiler_flags -soname $soname `test -n "$verstring" && func_echo_all "-set_version $verstring"` -update_registry $output_objdir/so_locations -o $lib'
+ 	archive_expsym_cmds='$CC -shared $libobjs $deplibs $compiler_flags -soname $soname `test -n "$verstring" && func_echo_all "-set_version $verstring"` -update_registry $output_objdir/so_locations -exports_file $export_symbols -o $lib'
+@@ -11840,7 +11851,7 @@
+       esac
+       ;;
+ 
+-    netbsd*)
++    netbsd* | netbsdelf*-gnu)
+       if echo __ELF__ | $CC -E - | $GREP __ELF__ >/dev/null; then
+ 	archive_cmds='$LD -Bshareable -o $lib $libobjs $deplibs $linker_flags'  # a.out
+       else
+@@ -12750,6 +12761,18 @@
+   esac
+   ;;
+ 
++laylaos*)
++  version_type=linux # correct to gnu/linux during the next big refactor
++  need_lib_prefix=no
++  need_version=no
++  dynamic_linker="$host_os ldso"
++  library_names_spec='$libname$release$shared_ext$versuffix $libname$release$shared_ext$major $libname$shared_ext'
++  soname_spec='$libname$release$shared_ext$major'
++  shlibpath_var=LIBRARY_PATH
++  shlibpath_overrides_runpath=no
++  hardcode_into_libs=yes
++  ;;
++
+ haiku*)
+   version_type=linux # correct to gnu/linux during the next big refactor
+   need_lib_prefix=no

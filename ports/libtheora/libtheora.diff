@@ -1,0 +1,45 @@
+diff -rub ./libtheora-1.2.0alpha1/configure ./libtheora-1.2.0alpha1/configure
+--- ./libtheora-1.2.0alpha1/configure	2010-09-23 21:27:04.000000000 +0100
++++ ./libtheora-1.2.0alpha1/configure	2024-06-10 22:20:08.319355681 +0100
+@@ -6589,7 +6589,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos* | laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -11310,6 +11310,17 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++laylaos*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  dynamic_linker='LaylaOS ld.so'
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
+diff -rub ./libtheora-1.2.0alpha1/examples/png2theora.c ./libtheora-1.2.0alpha1/examples/png2theora.c
+--- ./libtheora-1.2.0alpha1/examples/png2theora.c	2010-09-23 21:21:45.000000000 +0100
++++ ./libtheora-1.2.0alpha1/examples/png2theora.c	2024-06-11 22:02:31.847711550 +0100
+@@ -463,9 +463,9 @@
+   png_set_strip_alpha(png_ptr);
+ 
+   row_data = (png_bytep)png_malloc(png_ptr,
+-    3*height*width*png_sizeof(*row_data));
++    3*height*width*sizeof(*row_data));
+   row_pointers = (png_bytep *)png_malloc(png_ptr,
+-    height*png_sizeof(*row_pointers));
++    height*sizeof(*row_pointers));
+   for(y = 0; y < height; y++) {
+     row_pointers[y] = row_data + y*(3*width);
+   }

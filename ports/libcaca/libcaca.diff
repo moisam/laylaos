@@ -1,0 +1,48 @@
+diff -rub ./libcaca-0.99.beta19/configure ./libcaca-0.99.beta19/configure
+--- ./libcaca-0.99.beta19/configure	2014-05-16 20:15:32.000000000 +0100
++++ ./libcaca-0.99.beta19/configure	2024-06-09 18:49:45.259003684 +0100
+@@ -6774,7 +6774,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos* | laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -11954,6 +11954,17 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++laylaos*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  dynamic_linker='LaylaOS ld.so'
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
+@@ -15786,6 +15797,17 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++laylaos*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  dynamic_linker='LaylaOS ld.so'
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no

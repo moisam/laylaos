@@ -1,0 +1,59 @@
+diff -rub ./libiconv-1.17/configure ./libiconv-1.17/configure
+--- ./libiconv-1.17/configure	2022-05-15 13:58:59.000000000 +0100
++++ ./libiconv-1.17/configure	2024-01-13 10:48:02.660799213 +0000
+@@ -8476,7 +8476,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos* | laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -14339,6 +14339,16 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++laylaos*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  hardcode_into_libs=yes
++  ;;
++
+ hpux9* | hpux10* | hpux11*)
+   # Give a soname corresponding to the major version so that dld.sl refuses to
+   # link against other versions.
+
+diff -rub ./libiconv-1.17/libcharset/configure ./libiconv-1.17/libcharset/configure
+--- ./libiconv-1.17/libcharset/configure	2022-05-15 13:59:11.000000000 +0100
++++ ./libiconv-1.17/libcharset/configure	2024-01-13 10:52:41.330548997 +0000
+@@ -5384,7 +5384,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos* | laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -11295,6 +11295,16 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++laylaos*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  hardcode_into_libs=yes
++  ;;
++
+ hpux9* | hpux10* | hpux11*)
+   # Give a soname corresponding to the major version so that dld.sl refuses to
+   # link against other versions.
