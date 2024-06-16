@@ -8,11 +8,15 @@ It is **definitely** not a system meant for everyday use (not yet, at least).
 # Features
 
 The project's features include:
-* 64 bit pre-emptive kernel written in C
+* 64 bit monolithic multitasking pre-emptive kernel written in C (the 32 bit code is included here but is not fully functional)
 * Network stack (based on [PicoTCP](https://github.com/tass-belgium/picotcp/tree/master))
 * ATA/ATAPI and AHCI support
 * Basic Intel HDA sound support
 * PS2 keyboard and mouse
+* Virtual consoles
+* Virtual Dynamic Shared Object ([vdso](https://man7.org/linux/man-pages/man7/vdso.7.html))
+* Interprocess Communication (IPC) facilities in the form of shared memory, semaphores and message queues
+* Page cache for demand loading of pages
 * ACPI support via [ACPICA](https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html)
 * C library (currently using [musl](https://wiki.musl-libc.org/))
 * Ports of 3rd party software (GNU coreutiles, inetutils, bash, several image and audio/video decoding libraries, etc.)
