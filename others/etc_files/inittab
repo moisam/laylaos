@@ -1,0 +1,4 @@
+id:2:initdefault:
+si::sysinit:/etc/rc
+1:2345:respawn:/sbin/getty 9600 tty1
+2:23:respawn:/sbin/getty 9600 tty2

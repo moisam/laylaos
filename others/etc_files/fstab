@@ -1,0 +1,11 @@
+#/dev/ram0	/	ext2	defaults
+#/dev/hda1   /mnt/hda1   ext2	defaults
+/dev/hda1   /   ext2	sysroot,rw,remount
+/dev/cdrom0    /mnt/cdrom  iso9660 defaults,skip-errors
+/proc		/proc	procfs	defaults
+/dev		/dev	devfs	remount,defaults
+/tmp		/tmp	tmpfs	inode_count=128,block_count=128,block_size=1024
+/tmp		/var/run	tmpfs	inode_count=128,block_count=32,block_size=1024
+/pts        /dev/pts    devpts  defaults
+/tmp		/dev/shm	tmpfs	inode_count=64,block_count=64,block_size=1024
+
