@@ -33,6 +33,10 @@ This is mostly to keep track of where we are at and what needs to be done next:
 * USB support
 * Symmetric Multiprocessing (SMP)
 
+# Prebuilt packages
+
+No prebuilt packages yet, but this is planned (hopefully) soon. For now, you will have to build LaylaOS from source (see below for how to do that).
+
 # How to build
 
 To build LaylaOS from source:
