@@ -1,0 +1,24 @@
+#!/bin/sh
+
+#
+# Copyright 2021-2024 (c) Mohammed Isam
+#
+# This script is part of LaylaOS
+#
+
+ARCH=${BUILD_ARCH}
+SYSROOT="${CROSSCOMPILE_SYSROOT_PATH}"
+
+# Fill these in appropriately:
+export PKG_CONFIG_SYSROOT_DIR=${SYSROOT}
+export PKG_CONFIG_LIBDIR=${SYSROOT}/usr/lib/pkgconfig
+
+# TODO: If it works this should probably just be set to the empty string.
+export PKG_CONFIG_PATH=${PKG_CONFIG_LIBDIR}
+
+# Use --static here if your OS only has static linking.
+# TODO: Perhaps it's a bug in the libraries if their pkg-config files doesn't
+#       record that only static libraries were built.
+#exec pkg-config --static "$@"
+exec pkg-config "$@"
+
