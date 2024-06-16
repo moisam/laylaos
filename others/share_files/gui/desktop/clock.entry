@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Clock
+Command=/bin/desktop/clockapp
+IconPath=Default
+Icon=clock
+ShowOnDesktop=no
+Category=Accessories
+

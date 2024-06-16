@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Tetris
+Command=/bin/desktop/tetrisapp
+IconPath=Default
+Icon=tetris
+ShowOnDesktop=no
+Category=Games
+

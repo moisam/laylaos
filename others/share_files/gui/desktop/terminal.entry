@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Terminal
+Command=/bin/desktop/ltermapp
+IconPath=Default
+Icon=terminal
+ShowOnDesktop=yes
+Category=Utilities
+

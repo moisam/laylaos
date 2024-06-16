@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Minesweeper
+Command=/bin/desktop/minesweeperapp
+IconPath=Default
+Icon=minesweeper
+ShowOnDesktop=no
+Category=Games
+

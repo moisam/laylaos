@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Calculator
+Command=/bin/desktop/calcapp
+IconPath=Default
+Icon=calculator
+ShowOnDesktop=yes
+Category=Accessories
+

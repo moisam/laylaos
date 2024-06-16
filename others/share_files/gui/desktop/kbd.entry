@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Onscreen Keyboard
+Command=/bin/desktop/kbdapp
+IconPath=Default
+Icon=keyboard
+ShowOnDesktop=no
+Category=Utilities
+

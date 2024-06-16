@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=System icon viewer
+Command=/bin/desktop/sysiconviewapp
+IconPath=Default
+Icon=image
+ShowOnDesktop=no
+Category=System Tools
+

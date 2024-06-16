@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Image viewer
+Command=/bin/desktop/imgviewapp
+IconPath=Default
+Icon=image2
+ShowOnDesktop=yes
+Category=Graphics
+

@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Files
+Command=/bin/desktop/filesapp
+IconPath=Default
+Icon=folder
+ShowOnDesktop=yes
+Category=Accessories
+
