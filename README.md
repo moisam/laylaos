@@ -51,3 +51,4 @@ To build LaylaOS from source:
 - PicoTCP (upon which our network stack is build) is released under GPL v2 or v3.
 - ACPICA is released under a dual Intel and Unix-compatible licenses.
 - All other ported software come with their respective licenses.
+- Timidity files (needed for sound in DOOM) are in the public domain (see their `copyright.txt` file).
