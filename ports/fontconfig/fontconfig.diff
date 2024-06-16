@@ -1,0 +1,12 @@
+diff -rub ./fontconfig-2.15.0/src/fcstat.c ./fontconfig-2.15.0/src/fcstat.c
+--- ./fontconfig-2.15.0/src/fcstat.c	2021-07-08 06:47:01.000000000 +0100
++++ ./fontconfig-2.15.0/src/fcstat.c	2024-01-19 05:26:12.434163228 +0000
+@@ -386,7 +386,7 @@
+ #  endif
+ #  if defined(HAVE_STRUCT_STATFS_F_FSTYPENAME)
+ 	p = buf.f_fstypename;
+-#  elif defined(__linux__) || defined (__EMSCRIPTEN__)
++#  elif defined(__linux__) || defined (__EMSCRIPTEN__) || defined(__laylaos__)
+ 	switch (buf.f_type)
+ 	{
+ 	case 0x6969: /* nfs */

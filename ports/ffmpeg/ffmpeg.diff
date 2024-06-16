@@ -1,0 +1,12 @@
+diff -rub ./ffmpeg-6.1.1/configure ./ffmpeg-6.1.1/configure
+--- ./ffmpeg-6.1.1/configure	2023-12-31 00:07:26.000000000 +0000
++++ ./ffmpeg-6.1.1/configure	2024-02-10 12:27:50.477157226 +0000
+@@ -5782,7 +5782,7 @@
+     gnu/kfreebsd)
+         add_cppflags -D_BSD_SOURCE
+         ;;
+-    gnu)
++    gnu|*laylaos)
+         ;;
+     qnx)
+         add_cppflags -D_QNX_SOURCE

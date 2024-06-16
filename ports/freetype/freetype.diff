@@ -1,0 +1,32 @@
+diff -rub ./freetype-2.13.1/builds/unix/configure ./freetype-2.13.1/builds/unix/configure
+--- ./freetype-2.13.1/builds/unix/configure	2023-06-24 07:26:47.000000000 +0100
++++ ./freetype-2.13.1/builds/unix/configure	2024-05-07 18:57:22.330654897 +0100
+@@ -5478,6 +5478,10 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
++laylaos*)
++  lt_cv_deplibs_check_method=pass_all
++  ;;
++
+ # This must be glibc/ELF.
+ linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu*)
+   lt_cv_deplibs_check_method=pass_all
+@@ -11420,6 +11424,17 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++laylaos*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  dynamic_linker='LaylaOS ld.so'
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no

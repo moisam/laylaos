@@ -1,0 +1,634 @@
+diff -rub ./bash-4.4.18/aclocal.m4 ./bash-4.4.18/aclocal.m4
+--- ./bash-4.4.18/aclocal.m4	2015-12-02 14:22:19.000000000 +0000
++++ ./bash-4.4.18/aclocal.m4	2022-08-27 12:10:14.391419000 +0100
+@@ -1401,8 +1401,13 @@
+ 
+ exit(0);
+ }], bash_cv_job_control_missing=present, bash_cv_job_control_missing=missing,
++	echo "host is ${host}"
++
++AS_CASE([$host],
++        [*laylaos*], [bash_cv_job_control_missing=present],
+     [AC_MSG_WARN(cannot check job control if cross-compiling -- defaulting to missing)
+      bash_cv_job_control_missing=missing]
++       )
+ )])
+ AC_MSG_RESULT($bash_cv_job_control_missing)
+ if test $bash_cv_job_control_missing = missing; then
+diff -rub ./bash-4.4.18/config.h.in ./bash-4.4.18/config.h.in
+--- ./bash-4.4.18/config.h.in	2016-08-11 16:03:39.000000000 +0100
++++ ./bash-4.4.18/config.h.in	2022-09-03 18:33:06.023122000 +0100
+@@ -36,7 +36,7 @@
+ 
+ /* Define JOB_CONTROL if your operating system supports
+    BSD-like job control. */
+-#undef JOB_CONTROL
++#define JOB_CONTROL
+ 
+ /* Define ALIAS if you want the alias features. */
+ #undef ALIAS
+@@ -49,16 +49,16 @@
+    foo{a,b} -> fooa foob.  Even if this is compiled in (the default) you
+    can turn it off at shell startup with `-nobraceexpansion', or during
+    shell execution with `set +o braceexpand'. */
+-#undef BRACE_EXPANSION
++#define BRACE_EXPANSION
+ 
+ /* Define READLINE to get the nifty/glitzy editing features.
+    This is on by default.  You can turn it off interactively
+    with the -nolineediting flag. */
+-#undef READLINE
++#define READLINE
+ 
+ /* Define BANG_HISTORY if you want to have Csh style "!" history expansion.
+    This is unrelated to READLINE. */
+-#undef BANG_HISTORY
++#define BANG_HISTORY
+ 
+ /* Define HISTORY if you want to have access to previously typed commands.
+ 
+@@ -68,7 +68,7 @@
+ 
+    If only HISTORY is defined, the `fc' and `history' builtins are
+    available. */
+-#undef HISTORY
++#define HISTORY
+ 
+ /* Define this if you want completion that puts all alternatives into
+    a brace expansion shell expression. */
+@@ -84,13 +84,13 @@
+ 
+ /* Define HELP_BUILTIN if you want the `help' shell builtin and the long
+    documentation strings compiled into the shell. */
+-#undef HELP_BUILTIN
++#define HELP_BUILTIN
+ 
+ /* Define RESTRICTED_SHELL if you want the generated shell to have the
+    ability to be a restricted one.  The shell thus generated can become
+    restricted by being run with the name "rbash", or by setting the -r
+    flag. */
+-#undef RESTRICTED_SHELL
++#define RESTRICTED_SHELL
+ 
+ /* Define DISABLED_BUILTINS if you want "builtin foo" to always run the
+    shell builtin "foo", even if it has been disabled with "enable -n foo". */
+@@ -105,22 +105,22 @@
+ /* Define PROMPT_STRING_DECODE if you want the backslash-escaped special
+    characters in PS1 and PS2 expanded.  Variable expansion will still be
+    performed. */
+-#undef PROMPT_STRING_DECODE
++#define PROMPT_STRING_DECODE
+ 
+ /* Define SELECT_COMMAND if you want the Korn-shell style `select' command:
+ 	select word in word_list; do command_list; done */
+-#undef SELECT_COMMAND
++#define SELECT_COMMAND
+ 
+ /* Define COMMAND_TIMING of you want the ksh-style `time' reserved word and
+    the ability to time pipelines, functions, and builtins. */
+-#undef COMMAND_TIMING
++#define COMMAND_TIMING
+ 
+ /* Define ARRAY_VARS if you want ksh-style one-dimensional array variables. */
+ #undef ARRAY_VARS
+ 
+ /* Define DPAREN_ARITHMETIC if you want the ksh-style ((...)) arithmetic
+    evaluation command. */
+-#undef DPAREN_ARITHMETIC
++#define DPAREN_ARITHMETIC
+ 
+ /* Define EXTENDED_GLOB if you want the ksh-style [*+@?!](patlist) extended
+    pattern matching. */
+@@ -132,7 +132,7 @@
+ 
+ /* Define COND_COMMAND if you want the ksh-style [[...]] conditional
+    command. */
+-#undef COND_COMMAND
++#define COND_COMMAND
+ 
+ /* Define COND_REGEXP if you want extended regular expression matching and the
+    =~ binary operator in the [[...]] conditional command. */
+@@ -396,11 +396,11 @@
+ #undef SYS_SIGLIST_DECLARED
+ 
+ /* Define if `_sys_siglist' is declared by <signal.h> or <unistd.h>.  */
+-#undef UNDER_SYS_SIGLIST_DECLARED
++#define UNDER_SYS_SIGLIST_DECLARED
+ 
+-#undef HAVE_SYS_SIGLIST
++#define HAVE_SYS_SIGLIST
+ 
+-#undef HAVE_UNDER_SYS_SIGLIST
++#define HAVE_UNDER_SYS_SIGLIST
+ 
+ #undef HAVE_SYS_ERRLIST
+ 
+@@ -409,7 +409,7 @@
+ 
+ /* Characteristics of some of the system structures. */
+ 
+-#undef HAVE_STRUCT_DIRENT_D_INO
++#define HAVE_STRUCT_DIRENT_D_INO
+ 
+ #undef HAVE_STRUCT_DIRENT_D_FILENO
+ 
+@@ -444,9 +444,9 @@
+ 
+ #undef WEXITSTATUS_OFFSET
+ 
+-#undef HAVE_STRUCT_TIMESPEC
+-#undef TIME_H_DEFINES_STRUCT_TIMESPEC
+-#undef SYS_TIME_H_DEFINES_STRUCT_TIMESPEC
++#define HAVE_STRUCT_TIMESPEC
++#define TIME_H_DEFINES_STRUCT_TIMESPEC
++#define SYS_TIME_H_DEFINES_STRUCT_TIMESPEC
+ #undef PTHREAD_H_DEFINES_STRUCT_TIMESPEC
+ 
+ #undef TYPEOF_STRUCT_STAT_ST_ATIM_IS_STRUCT_TIMESPEC
+@@ -458,7 +458,7 @@
+ 
+ #undef HAVE_GETPW_DECLS
+ 
+-#undef HAVE_RESOURCE
++#define HAVE_RESOURCE
+ 
+ #undef HAVE_LIBC_FNM_EXTMATCH
+ 
+@@ -496,7 +496,7 @@
+ /* Characteristics of system calls and C library functions. */
+ 
+ /* Define if the `getpgrp' function takes no argument.  */
+-#undef GETPGRP_VOID
++#define GETPGRP_VOID
+ 
+ #undef NAMED_PIPES_MISSING
+ 
+@@ -549,13 +549,13 @@
+ #undef RETSIGTYPE
+ 
+ /* Define if return type of signal handlers is void */
+-#undef VOID_SIGHANDLER
++#define VOID_SIGHANDLER
+ 
+ #undef MUST_REINSTALL_SIGHANDLERS
+ 
+-#undef HAVE_BSD_SIGNALS
++#define HAVE_BSD_SIGNALS
+ 
+-#undef HAVE_POSIX_SIGNALS
++#define HAVE_POSIX_SIGNALS
+ 
+ #undef HAVE_USG_SIGHOLD
+ 
+@@ -573,7 +573,7 @@
+ #undef HAVE_BZERO
+ 
+ /* Define if you have the chown function.  */
+-#undef HAVE_CHOWN
++#define HAVE_CHOWN
+ 
+ /* Define if you have the confstr function.  */
+ #undef HAVE_CONFSTR
+@@ -594,7 +594,7 @@
+ #undef HAVE_DPRINTF
+ 
+ /* Define if you have the dup2 function.  */
+-#undef HAVE_DUP2
++#define HAVE_DUP2
+ 
+ /* Define if you have the eaccess function.  */
+ #undef HAVE_EACCESS
+@@ -603,7 +603,7 @@
+ #undef HAVE_FACCESSAT
+ 
+ /* Define if you have the fcntl function.  */
+-#undef HAVE_FCNTL
++#define HAVE_FCNTL
+ 
+ /* Define if you have the fpurge/__fpurge function.  */
+ #undef HAVE_FPURGE
+@@ -614,19 +614,19 @@
+ #undef HAVE_GETADDRINFO
+ 
+ /* Define if you have the getcwd function.  */
+-#undef HAVE_GETCWD
++#define HAVE_GETCWD
+ 
+ /* Define if you have the getdtablesize function.  */
+ #undef HAVE_GETDTABLESIZE
+ 
+ /* Define if you have the getgroups function.  */
+-#undef HAVE_GETGROUPS
++#define HAVE_GETGROUPS
+ 
+ /* Define if you have the gethostbyname function.  */
+ #undef HAVE_GETHOSTBYNAME
+ 
+ /* Define if you have the gethostname function.  */
+-#undef HAVE_GETHOSTNAME
++#define HAVE_GETHOSTNAME
+ 
+ /* Define if you have the getpagesize function.  */
+ #undef HAVE_GETPAGESIZE
+@@ -635,19 +635,19 @@
+ #undef HAVE_GETPEERNAME
+ 
+ /* Define if you have the getpwent function. */
+-#undef HAVE_GETPWENT
++#define HAVE_GETPWENT
+ 
+ /* Define if you have the getpwnam function. */
+-#undef HAVE_GETPWNAM
++#define HAVE_GETPWNAM
+ 
+ /* Define if you have the getpwuid function. */
+-#undef HAVE_GETPWUID
++#define HAVE_GETPWUID
+ 
+ /* Define if you have the getrlimit function.  */
+-#undef HAVE_GETRLIMIT
++#define HAVE_GETRLIMIT
+ 
+ /* Define if you have the getrusage function.  */
+-#undef HAVE_GETRUSAGE
++#define HAVE_GETRUSAGE
+ 
+ /* Define if you have the getservbyname function.  */
+ #undef HAVE_GETSERVBYNAME
+@@ -656,7 +656,7 @@
+ #undef HAVE_GETSERVENT
+ 
+ /* Define if you have the gettimeofday function.  */
+-#undef HAVE_GETTIMEOFDAY
++#define HAVE_GETTIMEOFDAY
+ 
+ /* Define if you have the getwd function.  */
+ #undef HAVE_GETWD
+@@ -698,13 +698,13 @@
+ #undef HAVE_ISXDIGIT
+ 
+ /* Define if you have the kill function.  */
+-#undef HAVE_KILL
++#define HAVE_KILL
+ 
+ /* Define if you have the killpg function.  */
+ #undef HAVE_KILLPG
+ 
+ /* Define if you have the lstat function. */
+-#undef HAVE_LSTAT
++#define HAVE_LSTAT
+ 
+ /* Define if you have the locale_charset function. */
+ #undef HAVE_LOCALE_CHARSET
+@@ -731,13 +731,13 @@
+ #undef HAVE_MBSRTOWCS
+ 
+ /* Define if you have the memmove function.  */
+-#undef HAVE_MEMMOVE
++#define HAVE_MEMMOVE
+ 
+ /* Define if you have the memset function.  */
+-#undef HAVE_MEMSET
++#define HAVE_MEMSET
+ 
+ /* Define if you have the mkfifo function.  */
+-#undef HAVE_MKFIFO
++#define HAVE_MKFIFO
+ 
+ /* Define if you have the mkstemp function.  */
+ #undef HAVE_MKSTEMP
+@@ -746,19 +746,19 @@
+ #undef HAVE_PATHCONF
+ 
+ /* Define if you have the pselect function.  */
+-#undef HAVE_PSELECT
++#define HAVE_PSELECT
+ 
+ /* Define if you have the putenv function.  */
+-#undef HAVE_PUTENV
++#define HAVE_PUTENV
+ 
+ /* Define if you have the raise function. */
+-#undef HAVE_RAISE
++#define HAVE_RAISE
+ 
+ /* Define if you have the random function. */
+ #undef HAVE_RANDOM
+ 
+ /* Define if you have the readlink function. */
+-#undef HAVE_READLINK
++#define HAVE_READLINK
+ 
+ /* Define if you have the regcomp function. */
+ #undef HAVE_REGCOMP
+@@ -767,22 +767,22 @@
+ #undef HAVE_REGEXEC
+ 
+ /* Define if you have the rename function. */
+-#undef HAVE_RENAME
++#define HAVE_RENAME
+ 
+ /* Define if you have the sbrk function. */
+-#undef HAVE_SBRK
++#define HAVE_SBRK
+ 
+ /* Define if you have the select function.  */
+-#undef HAVE_SELECT
++#define HAVE_SELECT
+ 
+ /* Define if you have the setdtablesize function.  */
+ #undef HAVE_SETDTABLESIZE
+ 
+ /* Define if you have the setenv function.  */
+-#undef HAVE_SETENV
++#define HAVE_SETENV
+ 
+ /* Define if you have the setitimer function.  */
+-#undef HAVE_SETITIMER
++#define HAVE_SETITIMER
+ 
+ /* Define if you have the setlinebuf function.  */
+ #undef HAVE_SETLINEBUF
+@@ -794,8 +794,8 @@
+ #undef HAVE_SETOSTYPE
+ 
+ /* Define if you have the setregid function.  */
+-#undef HAVE_SETREGID
+-#undef HAVE_DECL_SETREGID
++#define HAVE_SETREGID
++#define HAVE_DECL_SETREGID
+ 
+ /* Define if you have the setvbuf function.  */
+ #undef HAVE_SETVBUF
+@@ -870,34 +870,34 @@
+ #undef HAVE_SYSLOG
+ 
+ /* Define if you have the tcgetattr function.  */
+-#undef HAVE_TCGETATTR
++#define HAVE_TCGETATTR
+ 
+ /* Define if you have the tcgetpgrp function.  */
+-#undef HAVE_TCGETPGRP
++#define HAVE_TCGETPGRP
+ 
+ /* Define if you have the times function.  */
+-#undef HAVE_TIMES
++#define HAVE_TIMES
+ 
+ /* Define if you have the towlower function.  */
+-#undef HAVE_TOWLOWER
++#define HAVE_TOWLOWER
+ 
+ /* Define if you have the towupper function.  */
+-#undef HAVE_TOWUPPER
++#define HAVE_TOWUPPER
+ 
+ /* Define if you have the ttyname function.  */
+-#undef HAVE_TTYNAME
++#define HAVE_TTYNAME
+ 
+ /* Define if you have the tzset function. */
+ #undef HAVE_TZSET
+ 
+ /* Define if you have the ulimit function. */
+-#undef HAVE_ULIMIT
++#define HAVE_ULIMIT
+ 
+ /* Define if you have the uname function. */
+-#undef HAVE_UNAME
++#define HAVE_UNAME
+ 
+ /* Define if you have the unsetenv function.  */
+-#undef HAVE_UNSETENV
++#define HAVE_UNSETENV
+ 
+ /* Define if you have the vasprintf function.  */
+ #undef HAVE_VASPRINTF
+@@ -909,7 +909,7 @@
+ #undef HAVE_VSNPRINTF
+ 
+ /* Define if you have the waitpid function. */
+-#undef HAVE_WAITPID
++#define HAVE_WAITPID
+ 
+ /* Define if you have the wait3 function.  */
+ #undef HAVE_WAIT3
+@@ -941,13 +941,13 @@
+ #undef HAVE_ARPA_INET_H
+ 
+ /* Define if you have the <dirent.h> header file.  */
+-#undef HAVE_DIRENT_H
++#define HAVE_DIRENT_H
+ 
+ /* Define if you have the <dlfcn.h> header file.  */
+ #undef HAVE_DLFCN_H
+ 
+ /* Define if you have the <grp.h> header file.  */
+-#undef HAVE_GRP_H
++#define HAVE_GRP_H
+ 
+ /* Define if you have the <inttypes.h> header file. */
+ #undef HAVE_INTTYPES_H
+@@ -962,10 +962,10 @@
+ #undef HAVE_LIBINTL_H
+ 
+ /* Define if you have the <limits.h> header file.  */
+-#undef HAVE_LIMITS_H
++#define HAVE_LIMITS_H
+ 
+ /* Define if you have the <locale.h> header file.  */
+-#undef HAVE_LOCALE_H
++#define HAVE_LOCALE_H
+ 
+ /* Define if you have the <mbstr.h> header file.  */
+ #undef HAVE_MBSTR_H
+@@ -980,25 +980,25 @@
+ #undef HAVE_NETINET_IN_H
+ 
+ /* Define if you have the <pwd.h> header file. */
+-#undef HAVE_PWD_H
++#define HAVE_PWD_H
+ 
+ /* Define if you have the <regex.h> header file. */
+ #undef HAVE_REGEX_H
+ 
+ /* Define if you have the <stdlib.h> header file.  */
+-#undef HAVE_STDLIB_H
++#define HAVE_STDLIB_H
+ 
+ /* Define if you have the <stdarg.h> header file.  */
+ #undef HAVE_STDARG_H
+ 
+ /* Define if you have the <string.h> header file.  */
+-#undef HAVE_STRING_H
++#define HAVE_STRING_H
+ 
+ /* Define if you have the <strings.h> header file.  */
+-#undef HAVE_STRINGS_H
++#define HAVE_STRINGS_H
+ 
+ /* Define if you have the <memory.h> header file.  */
+-#undef HAVE_MEMORY_H
++#define HAVE_MEMORY_H
+ 
+ /* Define if you have the <stdbool.h> header file. */
+ #undef HAVE_STDBOOL_H
+@@ -1007,25 +1007,25 @@
+ #undef HAVE_STDDEF_H
+ 
+ /* Define if you have the <stdint.h> header file. */
+-#undef HAVE_STDINT_H
++#define HAVE_STDINT_H
+ 
+ /* Define if you have the <syslog.h> header file. */
+ #undef HAVE_SYSLOG_H
+ 
+ /* Define if you have the <sys/dir.h> header file.  */
+-#undef HAVE_SYS_DIR_H
++#define HAVE_SYS_DIR_H
+ 
+ /* Define if you have the <sys/file.h> header file.  */
+-#undef HAVE_SYS_FILE_H
++#define HAVE_SYS_FILE_H
+ 
+ /* Define if you have the <sys/ioctl.h> header file.  */
+-#undef HAVE_SYS_IOCTL_H
++#define HAVE_SYS_IOCTL_H
+ 
+ /* Define if you have the <sys/ndir.h> header file.  */
+ #undef HAVE_SYS_NDIR_H
+ 
+ /* Define if you have the <sys/param.h> header file.  */
+-#undef HAVE_SYS_PARAM_H
++#define HAVE_SYS_PARAM_H
+ 
+ /* Define if you have the <sys/pte.h> header file.  */
+ #undef HAVE_SYS_PTE_H
+@@ -1034,33 +1034,33 @@
+ #undef HAVE_SYS_PTEM_H
+ 
+ /* Define if you have the <sys/resource.h> header file.  */
+-#undef HAVE_SYS_RESOURCE_H
++#define HAVE_SYS_RESOURCE_H
+ 
+ /* Define if you have the <sys/select.h> header file.  */
+-#undef HAVE_SYS_SELECT_H
++#define HAVE_SYS_SELECT_H
+ 
+ /* Define if you have the <sys/socket.h> header file.  */
+ #undef HAVE_SYS_SOCKET_H
+ 
+ /* Define if you have the <sys/stat.h> header file. */
+-#undef HAVE_SYS_STAT_H
++#define HAVE_SYS_STAT_H
+ 
+ /* Define if you have the <sys/stream.h> header file.  */
+ #undef HAVE_SYS_STREAM_H
+ 
+ /* Define if you have <sys/time.h> */
+-#undef HAVE_SYS_TIME_H
++#define HAVE_SYS_TIME_H
+ 
+-#undef TIME_WITH_SYS_TIME
++#define TIME_WITH_SYS_TIME
+ 
+ /* Define if you have <sys/times.h> */
+-#undef HAVE_SYS_TIMES_H
++#define HAVE_SYS_TIMES_H
+ 
+ /* Define if you have the <sys/types.h> header file. */
+-#undef HAVE_SYS_TYPES_H
++#define HAVE_SYS_TYPES_H
+ 
+ /* Define if you have <sys/wait.h> that is POSIX.1 compatible.  */
+-#undef HAVE_SYS_WAIT_H
++#define HAVE_SYS_WAIT_H
+ 
+ /* Define if you have the <termcap.h> header file.  */
+ #undef HAVE_TERMCAP_H
+@@ -1069,19 +1069,19 @@
+ #undef HAVE_TERMIO_H
+ 
+ /* Define if you have the <termios.h> header file.  */
+-#undef HAVE_TERMIOS_H
++#define HAVE_TERMIOS_H
+ 
+ /* Define if you have the <ulimit.h> header file.  */
+ #undef HAVE_ULIMIT_H
+ 
+ /* Define if you have the <unistd.h> header file.  */
+-#undef HAVE_UNISTD_H
++#define HAVE_UNISTD_H
+ 
+ /* Define if you have the <varargs.h> header file.  */
+ #undef HAVE_VARARGS_H
+ 
+ /* Define if you have the <wchar.h> header file.  */
+-#undef HAVE_WCHAR_H
++#define HAVE_WCHAR_H
+ 
+ /* Define if you have the <varargs.h> header file.  */
+ #undef HAVE_WCTYPE_H
+@@ -1132,16 +1132,16 @@
+ #undef HAVE_ARGZ_H
+ 
+ /* Define if you have the <errno.h> header file. */
+-#undef HAVE_ERRNO_H
++#define HAVE_ERRNO_H
+ 
+ /* Define if you have the <fcntl.h> header file. */
+-#undef HAVE_FCNTL_H
++#define HAVE_FCNTL_H
+ 
+ /* Define if you have the <malloc.h> header file. */
+-#undef HAVE_MALLOC_H
++#define HAVE_MALLOC_H
+ 
+ /* Define if you have the <stdio_ext.h> header file. */
+-#undef HAVE_STDIO_EXT_H
++#define HAVE_STDIO_EXT_H
+ 
+ /* Define if you have the `dcgettext' function. */
+ #undef HAVE_DCGETTEXT
+@@ -1150,10 +1150,10 @@
+ #undef HAVE_LOCALECONV
+ 
+ /* Define if your system has a working `malloc' function. */
+-/* #undef HAVE_MALLOC */
++#define HAVE_MALLOC
+ 
+ /* Define if you have the `mempcpy' function. */
+-#undef HAVE_MEMPCPY
++#define HAVE_MEMPCPY
+ 
+ /* Define if you have a working `mmap' system call. */
+ #undef HAVE_MMAP
+@@ -1165,13 +1165,13 @@
+ #undef HAVE_NL_LANGINFO
+ 
+ /* Define if you have the `stpcpy' function. */
+-#undef HAVE_STPCPY
++#define HAVE_STPCPY
+ 
+ /* Define if you have the `strcspn' function. */
+-#undef HAVE_STRCSPN
++#define HAVE_STRCSPN
+ 
+ /* Define if you have the `strdup' function. */
+-#undef HAVE_STRDUP
++#define HAVE_STRDUP
+ 
+ /* Define if you have the `__argz_count' function. */
+ #undef HAVE___ARGZ_COUNT
+diff -rub ./bash-4.4.18/support/shobj-conf ./bash-4.4.18/support/shobj-conf
+--- ./bash-4.4.18/support/shobj-conf	2014-02-24 02:06:29.000000000 +0000
++++ ./bash-4.4.18/support/shobj-conf	2022-09-12 19:04:31.128439000 +0100
+@@ -123,7 +123,7 @@
+ 	;;
+ 
+ # All versions of Linux (including Gentoo/FreeBSD) or the semi-mythical GNU Hurd.
+-linux*-*|gnu*-*|k*bsd*-gnu-*|freebsd*-gentoo)
++linux*-*|gnu*-*|k*bsd*-gnu-*|freebsd*-gentoo|laylaos*)
+ 	SHOBJ_CFLAGS=-fPIC
+ 	SHOBJ_LD='${CC}'
+ 	SHOBJ_LDFLAGS='-shared -Wl,-soname,$@'

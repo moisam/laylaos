@@ -1,0 +1,21 @@
+diff -rub ./dav1d-1.4.0/meson.build ./dav1d-1.4.0/meson.build
+--- ./dav1d-1.4.0/meson.build	2024-02-29 00:13:23.000000000 +0000
++++ ./dav1d-1.4.0/meson.build	2024-02-29 17:51:30.594516975 +0000
+@@ -91,7 +91,7 @@
+ optional_arguments = []
+ optional_link_arguments = []
+ 
+-if host_machine.system() in ['linux', 'gnu', 'emscripten']
++if host_machine.system() in ['linux', 'gnu', 'emscripten', 'laylaos']
+     test_args += '-D_GNU_SOURCE'
+     add_project_arguments('-D_GNU_SOURCE', language: 'c')
+ endif
+@@ -173,7 +173,7 @@
+ endif
+ 
+ libdl_dependency = []
+-if host_machine.system() == 'linux'
++if host_machine.system() == 'linux' or host_machine.system() == 'laylaos'
+     libdl_dependency = cc.find_library('dl', required : false)
+     if cc.has_function('dlsym', prefix : '#include <dlfcn.h>', args : test_args, dependencies : libdl_dependency)
+         cdata.set('HAVE_DLSYM', 1)
