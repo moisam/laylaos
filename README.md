@@ -44,7 +44,10 @@ This is mostly to keep track of where we are at and what needs to be done next:
 
 # Prebuilt packages
 
-No prebuilt packages yet, but this is planned (hopefully) soon. For now, you will have to build LaylaOS from source (see below for how to do that).
+You can download a prebuilt bootable disk image that includes everything (including the ported software) from the [releases page](https://github.com/moisam/laylaos/releases).
+Be mindful, however, that the unzipped disk image is likely to be big (3+ GiB in size).
+
+See below if you want to build LaylaOS from source.
 
 # How to build
 
