@@ -38,8 +38,8 @@ sudo chmod 0555 proc
 sudo chmod 0777 tmp
 
 sudo touch root/.profile
-sudo cp ${CWD}/../others/home_files/.inputrc root/
-sudo cp ${CWD}/../others/home_files/.bashrc root/
+sudo cp ${CWD}/../others/home_files/inputrc root/.inputrc
+sudo cp ${CWD}/../others/home_files/bashrc root/.bashrc
 
 sudo cp ${CWD}/../others/share_files/pci.ids usr/share/
 
