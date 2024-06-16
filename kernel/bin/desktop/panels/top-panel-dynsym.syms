@@ -1,0 +1,34 @@
+
+{
+  widget_bg_color;
+  widget_create;
+  widget_char_height;
+  widget_char_width;
+  widget_char_ascender;
+  widget_string_width;
+  widget_child_x;
+  widget_child_y;
+  widget_draw_text;
+  widget_fg_color;
+  widget_fill_rect;
+  widget_fill_background;
+  widget_fill_bitmap;
+  widget_hi_color;
+  widget_image_load;
+  widget_menu_show;
+  widget_menu_hide;
+  widget_menu_draw_text;
+  widget_menu_fill_background;
+  widget_menu_fill_rect;
+  widget_menu_create;
+  widget_menu_bg_color;
+  widget_menu_fg_color;
+  widget_menu_hi_color;
+  widget_menu_invalidate;
+  widget_get_app_categories;
+  widget_get_app_entries;
+  widget_unfocus;
+  widget_is_monospace_font;
+  widget_run_command;
+};
+
