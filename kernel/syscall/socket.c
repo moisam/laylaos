@@ -2336,7 +2336,41 @@ int do_sendto(struct socket_t *so, struct msghdr *msg,
     }
 
     KDEBUG("do_sendto: size %d\n", size);
-    
+
+    // if this is a Unix domain packet, reduce function calls and send the
+    // packet directly as we accept any packet size anyway
+    if(so->domain == AF_UNIX)
+    {
+        struct packet_t *p;
+        //int hoff = sendto_hdr_offset(so);
+
+        if(!(p = packet_alloc(size /* + hoff */, PACKET_TRANSPORT)))
+        {
+            return -ENOMEM;
+        }
+
+        p->sock = so;
+        //p->transport_hdr = p->data;
+        //p->frag = IP_DF;
+        //packet_add_header(p, -hoff);
+
+        if((written = read_iovec(msg->msg_iov, msg->msg_iovlen, p->data, 
+                                 p->count, kernel)) < 0)
+        {
+            packet_free(p);
+            return written;
+        }
+
+        if((written = so->proto->push(p)) > 0)
+        {
+            return p->count;
+        }
+
+        return written;
+    }
+
+    // others domains
+
     if((so->proto->protocol == IPPROTO_UDP ||
         RAW_SOCKET(so)) && size > space)
     {
