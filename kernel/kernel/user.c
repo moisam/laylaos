@@ -41,6 +41,19 @@
 
 /*
  * Userspace address validation.
+ *
+ * This function is a huge bottleneck as it is called frequently, every time
+ * we are about to copy data to/from user space. At the moment we simply
+ * check the given address range to ensure it does not fall in the kernel
+ * space, and if an address turns out to be unmapped when we perform the copy,
+ * we let the pagefault handler deal with it. Fetching the actual page table
+ * entries would take so long it would cripple the system. Checking the
+ * address against the task's memory regions is done again in the page fault
+ * handler, so doing it here does not seem to add much.
+ *
+ * NOTE: It would probably make more sense to check against the task's (or
+ *       more accurately the thread's) LDT limit. Maybe also check for
+ *       read/write access rights, depending on the requested operation.
  */
 int valid_addr(struct task_t *ct, virtual_addr addr, virtual_addr addr_end)
 {
@@ -49,6 +62,8 @@ int valid_addr(struct task_t *ct, virtual_addr addr, virtual_addr addr_end)
     {
         return 0;
     }
+
+#if 0
 
     struct memregion_t *memregion /* = NULL */;
     virtual_addr memregion_end;
@@ -74,6 +89,8 @@ try:
         addr = memregion_end;
         goto try;
     }
+
+#endif
 
     // simple checks for now
     if(addr >= USER_MEM_END)

@@ -62,6 +62,7 @@ volatile int waiter_mutex_locks = 0;
 
 struct task_t *softsleep_task = NULL;
 struct clock_waiter_t *waiter_table = NULL;
+struct clock_waiter_t *last_used_waiter = NULL;
 
 void softsleep_task_func(void *unused);
 
@@ -88,6 +89,7 @@ void init_clock_waiters(void)
     }
 
     A_memset(waiter_table, 0, NWAITERS * sizeof(struct clock_waiter_t));
+    last_used_waiter = waiter_table;
 
     (void)start_kernel_task("softsleep", softsleep_task_func, NULL,
                             &softsleep_task, 0);
@@ -102,6 +104,39 @@ void waiter_free(struct clock_waiter_t *w)
 
 struct clock_waiter_t *waiter_malloc(void)
 {
+    struct clock_waiter_t *w, *end;
+
+    end = &waiter_table[NWAITERS];
+
+    if(last_used_waiter >= end)
+    {
+        last_used_waiter = waiter_table;
+    }
+
+    w = last_used_waiter;
+
+retry:
+
+    for( ; w < end; w++)
+    {
+        if(!w->used)
+        {
+            w->used = 1;
+            last_used_waiter = &w[1];
+            return w;
+        }
+    }
+
+    // if we started searching from the middle, try to search from the 
+    // beginning, maybe we'll find an entry that someone has free'd
+    if((end == &waiter_table[NWAITERS]) && (last_used_waiter != waiter_table))
+    {
+        end = last_used_waiter;
+        w = waiter_table;
+        goto retry;
+    }
+
+    /*
     struct clock_waiter_t *w;
     struct clock_waiter_t *lw = &waiter_table[NWAITERS];
 
@@ -113,6 +148,7 @@ struct clock_waiter_t *waiter_malloc(void)
             return w;
         }
     }
+    */
 
     return NULL;
 }
