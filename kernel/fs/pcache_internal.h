@@ -42,7 +42,7 @@ static const uint32_t fnv1a_seed  = 0x811C9DC5; /* 2166136261 */
  * The FNV-1a hasing function.
  * Returns a 32-bit hash index.
  */
-static uint32_t fnv1a_internal(void *__key, uint32_t hash)
+static inline uint32_t fnv1a_internal(void *__key, uint32_t hash)
 {
     struct pcache_key_t *key = (struct pcache_key_t *)__key;
     uint8_t *p = (uint8_t *)key;
@@ -63,7 +63,7 @@ static uint32_t fnv1a_internal(void *__key, uint32_t hash)
  * TODO: If you want to use another hashing algorithm, change the
  *       function call to fnv1a() to any other function.
  */
-static uint32_t calc_hash_for_pcache(struct hashtab_t *h, void *key)
+static inline uint32_t calc_hash_for_pcache(struct hashtab_t *h, void *key)
 {
     if(!h || !key)
     {
@@ -80,7 +80,7 @@ static uint32_t calc_hash_for_pcache(struct hashtab_t *h, void *key)
  * Returns 0 if the two pointers are equal (similar to strmp(), which we use
  * to compare string hash keys).
  */
-static int pcache_key_compare(void *p1, void *p2)
+static inline int pcache_key_compare(void *p1, void *p2)
 {
     struct pcache_key_t *k1 = (struct pcache_key_t *)p1;
     struct pcache_key_t *k2 = (struct pcache_key_t *)p2;
@@ -99,5 +99,145 @@ void init_pcache(void)
     {
         kpanic("Failed to initialise kernel page cache table\n");
     }
+}
+
+
+/*
+ * The page cache is accessed frequently and needs very fast access.
+ * Below we reimplement some of the hash functions with inlined hashing
+ * and key comparison functions to reduce the overhead of function calls
+ * associated with our generic hash implementation.
+ */
+
+static struct hashtab_item_t *pcache_lookup(struct hashtab_t *h, void *key)
+{
+    struct hashtab_item_t *hitem;
+    unsigned int i;
+
+    if(!h)
+    {
+        return NULL;
+    }
+    
+    i = calc_hash_for_pcache(h, key);
+    hitem = h->items[i];
+    
+    while(hitem)
+    {
+        if(pcache_key_compare(hitem->key, key) == 0)
+        {
+            return hitem;
+        }
+        
+        hitem = hitem->next;
+    }
+    
+    return NULL;
+}
+
+static void pcache_add_hitem(struct hashtab_t *h,
+                             void *key, struct hashtab_item_t *new_hitem)
+{
+    struct hashtab_item_t *hitem, *prev;
+    unsigned int i;
+
+    if(!h || !key)
+    {
+        return;
+    }
+    
+    i = calc_hash_for_pcache(h, key);
+    hitem = h->items[i];
+    
+    if(!hitem)
+    {
+        h->items[i] = new_hitem;
+        return;
+    }
+    
+    prev = NULL;
+    
+    while(hitem)
+    {
+        if(pcache_key_compare(hitem->key, key) == 0)
+        {
+            new_hitem->next = hitem->next;
+            
+            if(prev)
+            {
+                prev->next = new_hitem;
+            }
+            else
+            {
+                h->items[i] = new_hitem;
+            }
+            
+            kfree(hitem);
+            return;
+        }
+        
+        prev = hitem;
+        hitem = hitem->next;
+    }
+    
+    prev->next = new_hitem;
+}
+
+static void pcache_remove(struct hashtab_t *h, void *key)
+{
+    struct hashtab_item_t *hitem, *prev;
+    unsigned int i;
+
+    if(!h || !key)
+    {
+        return;
+    }
+    
+    i = calc_hash_for_pcache(h, key);
+    hitem = h->items[i];
+    
+    if(!hitem)
+    {
+        return;
+    }
+    
+    prev = NULL;
+    
+    while(hitem)
+    {
+        if(pcache_key_compare(hitem->key, key) == 0)
+        {
+            if(prev)
+            {
+                prev->next = hitem->next;
+            }
+            else
+            {
+                h->items[i] = hitem->next;
+            }
+
+            kfree(hitem);
+            return;
+        }
+        
+        prev = hitem;
+        hitem = hitem->next;
+    }
+}
+
+static inline struct hashtab_item_t *pcache_alloc_hitem(void *key, void *val)
+{
+    struct hashtab_item_t *hitem;
+    
+    if(!(hitem = kmalloc(sizeof(struct hashtab_item_t))))
+    {
+        return NULL;
+    }
+
+    A_memset(hitem, 0, sizeof(struct hashtab_item_t));
+    hitem->key = key;
+    hitem->val = val;
+    
+    return hitem;
 }
 

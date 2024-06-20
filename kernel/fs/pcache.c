@@ -70,7 +70,7 @@ void free_cached_page(struct pcache_key_t *pkey, struct cached_page_t *pcache)
         return;
     }
 
-    hashtab_remove(pcachetab, pkey);
+    pcache_remove(pcachetab, pkey);
     kfree(pkey);
     release_page_memory(pcache);
     kernel_mutex_unlock(&pcachetab_lock);
@@ -160,7 +160,7 @@ loop:
     kernel_mutex_lock(&pcachetab_lock);
 
     // first, try to find the page in the page cache
-    if((hitem = hashtab_lookup(pcachetab, &key)))
+    if((hitem = pcache_lookup(pcachetab, &key)))
     {
         pcache = hitem->val;
 
@@ -210,12 +210,12 @@ loop:
     pkey->ino = node->inode;
     pkey->offset = offset;
 
-    if(!(hitem = alloc_hitem(pkey, pcache)))
+    if(!(hitem = pcache_alloc_hitem(pkey, pcache)))
     {
         kpanic("Cannot allocate page cache entry (2)\n");
     }
 
-    hashtab_add_hitem(pcachetab, pkey, hitem);
+    pcache_add_hitem(pcachetab, pkey, hitem);
     kernel_mutex_unlock(&pcachetab_lock);
 
     // get a physical page and map it to kernel virtual space
