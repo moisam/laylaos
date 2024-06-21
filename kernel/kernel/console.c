@@ -796,12 +796,13 @@ static void set_scroll_region(struct tty_t *tty,
 }
 
 
-static inline void __ega_tputchar(struct tty_t *tty, char c, uint8_t color)
+static inline void __ega_tputchar(struct tty_t *tty, char c, 
+                                  uint16_t bold_bit, uint8_t color)
 {
     int i = tty->row * tty->vga_width + tty->col;
     uint16_t col = vga_entry(c, color);
 
-    tty->buf[i] = col;
+    tty->buf[i] = col | bold_bit;
 
     if(NEED_BLIT(tty))
     {
@@ -813,6 +814,22 @@ static void ega_tputchar(struct tty_t *tty, char c)
 {
     uint8_t color = (tty->flags & TTY_FLAG_REVERSE_VIDEO) ?
                         INVERT_COLOR(tty->color) : tty->color;
+
+    // EGA memory is mapped as a 2-byte array of cells, with a byte for color
+    // and a byte for the character. There are 16 possible colors, with the
+    // foreground and background colors taking 4 bits each. As such, we do
+    // not have space to indicate attributes like underline, bold or 
+    // brightness. Some attributes are simulated, e.g. underline is simulated
+    // by a bright foreground. As for bold, our framebuffer uses two different
+    // fonts for bold and regular text. When we switch virtual consoles, we
+    // need to save this info somewhere. As we currently use ASCII text, which
+    // has 127 entries, we can use the highest bit to indicate if the cell is
+    // to be presented in bold face.
+    uint16_t bold_bit = (uint16_t)(c & 0x80);
+
+    // Remove the bold bit. Of course, this will come to bite us in the ass
+    // if we decide to use the whole 8 bits to represent 256 chars!
+    c &= 0x7f;
 
     // line feed, vertical tab, and form feed
     if(c == LF || c == VT || c == FF)
@@ -838,21 +855,21 @@ static void ega_tputchar(struct tty_t *tty, char c)
         
         for( ; tty->col < new_col; tty->col++)
         {
-    	    __ega_tputchar(tty, ' ', color);
+    	    __ega_tputchar(tty, ' ', bold_bit, color);
     	}
     }
     else if(c == '\033' /* '\e' */)
     {
         // print ESC as ^[
-        __ega_tputchar(tty, '^', color);
+        __ega_tputchar(tty, '^', bold_bit, color);
         tty->col++;
         tty_adjust_indices(tty);
-        __ega_tputchar(tty, '[', color);
+        __ega_tputchar(tty, '[', bold_bit, color);
         tty->col++;
     }
     else
     {
-        __ega_tputchar(tty, c, color);
+        __ega_tputchar(tty, c, bold_bit, color);
         tty->col++;
     }
     
