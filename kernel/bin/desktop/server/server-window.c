@@ -43,8 +43,6 @@
 #include "../include/server/event.h"
 #include "../include/server/rects.h"
 
-#include "font-array-bold.h"
-
 #include "inlines.c"
 
 // defined in main.c

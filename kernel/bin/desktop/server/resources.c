@@ -38,6 +38,9 @@
 #include "../include/font.h"
 #include <sys/hash.h>
 
+#include "font-array.h"
+#include "font-array-bold.h"
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
@@ -60,6 +63,10 @@ void server_image_array_resource_free(void *raw);
 void server_font_resource_free(void *raw);
 
 static uint32_t next_resid = 1;
+
+// system monotype font (bold face) - the typical user application does
+// not need it, so those who want it have to request it from the server
+struct font_t font_monobold;
 
 
 static void load_sysfont(char *path, struct font_t *font, char *resname)
@@ -155,7 +162,14 @@ void server_init_resources(void)
     // load the default executable file icon
     server_resource_load(DEFAULT_EXE_ICON_PATH);
     
-    // add the default monospace system font
+    // add the default monospace system font - all user applications request
+    // this font on init
+    GLOB.mono.charw = mono_char_width;
+    GLOB.mono.charh = mono_char_height;
+    GLOB.mono.data = mono_font_array;
+    GLOB.mono.datasz = mono_datasz;
+    GLOB.mono.flags = FONT_FLAG_FIXED_WIDTH | FONT_FLAG_SYSTEM_FONT;
+
     if(!(res = malloc(sizeof(struct resource_t))))
     {
         return;
@@ -165,6 +179,29 @@ void server_init_resources(void)
     res->type = RESOURCE_FONT;
     res->filename = strdup("font-monospace");
     res->data = &GLOB.mono;
+    res->free_func = server_font_resource_free;
+    res->refs = 1;
+
+    hashtab_add(restab, res->filename, res);
+    res->resid = next_resid++;
+
+    // add the default monospace system font (bold face) - only interested
+    // user applications will request this
+    font_monobold.charw = mono_char_width;
+    font_monobold.charh = mono_char_height;
+    font_monobold.data = mono_bold_font_array;
+    font_monobold.datasz = mono_bold_datasz;
+    font_monobold.flags = FONT_FLAG_FIXED_WIDTH | FONT_FLAG_SYSTEM_FONT;
+
+    if(!(res = malloc(sizeof(struct resource_t))))
+    {
+        return;
+    }
+
+    A_memset(res, 0, sizeof(struct resource_t));
+    res->type = RESOURCE_FONT;
+    res->filename = strdup("font-monospace-bold");
+    res->data = &font_monobold;
     res->free_func = server_font_resource_free;
     res->refs = 1;
 

@@ -67,8 +67,6 @@
 #include "../include/clipboard.h"
 #include "../include/directrw.h"
 
-#include "font-array.h"
-
 mutex_t update_lock = MUTEX_INITIALIZER;
 mutex_t input_lock = MUTEX_INITIALIZER;
 
@@ -2433,13 +2431,7 @@ int main(int argc, char **argv)
     GLOB.screen.red_mask_size = vbe_framebuffer.color_info.rgb.red_mask_size;
     GLOB.screen.green_mask_size = vbe_framebuffer.color_info.rgb.green_mask_size;
     GLOB.screen.blue_mask_size = vbe_framebuffer.color_info.rgb.blue_mask_size;
-    
-    GLOB.mono.charw = mono_char_width;
-    GLOB.mono.charh = mono_char_height;
-    GLOB.mono.data = mono_font_array;
-    GLOB.mono.datasz = mono_datasz;
-    GLOB.mono.flags = FONT_FLAG_FIXED_WIDTH | FONT_FLAG_SYSTEM_FONT;
-    
+
     desktop_bounds.top = 0;
     desktop_bounds.left = 0;
     desktop_bounds.bottom = GLOB.screen.h - 1;
