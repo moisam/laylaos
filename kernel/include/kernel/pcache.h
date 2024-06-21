@@ -121,7 +121,7 @@ void free_cached_page(struct pcache_key_t *pkey, struct cached_page_t *pcache);
 void flush_cached_pages(dev_t dev);
 
 /**
- * @brief Remove cached pages.
+ * @brief Remove cached disk pages.
  *
  * Remove the cached pages from the given device from cache.
  *
@@ -129,7 +129,18 @@ void flush_cached_pages(dev_t dev);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int remove_cached_pages(dev_t dev);
+int remove_cached_disk_pages(dev_t dev);
+
+/**
+ * @brief Remove cached node pages.
+ *
+ * Remove the cached pages from the given node from cache.
+ *
+ * @param   node        file node
+ *
+ * @return  zero on success, -(errno) on failure.
+ */
+int remove_cached_node_pages(struct fs_node_t *node);
 
 /**
  * @brief Get cached page count.
