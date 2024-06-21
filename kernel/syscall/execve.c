@@ -576,16 +576,42 @@ int syscall_execveat(int dirfd, char *path,
     // with allocated (but unused) physical memory frames.
     
     // NOTE: we cannot go back if something wrong happens after releasing
-    // our mem pages!
+    //       our mem pages!
 
     // don't free pages as free_user_pages() will do it below.
     // we need two calls as free_user_pages() will also free the page tables.
 
+    // NOTE: we don't free pages if cur_task was created by calling vfork,
+    //       as the parent and child process share the same memory space
+    //       and memory region structs.
+
     kernel_mutex_lock(&(cur_task->mem->mutex));
+
     memregion_detach_user(cur_task, 0);
 
-    free_user_pages(cur_task->pd_virt);
-    
+    if(cur_task->properties & PROPERTY_VFORK)
+    {
+        // if this task was vforked, it used the parent's page directory
+        // and now it needs its own, so clone the idle task's page directory
+        if(clone_task_pd(idle_task, cur_task) != 0)
+        {
+            kernel_mutex_unlock(&(cur_task->mem->mutex));
+            free_tmpmem(new_invk);
+            free_tmpmem(new_argv);
+            free_tmpmem(new_env);
+            kfree(auxv);
+            syscall_exit(-1);
+        }
+
+        // now load the new page directory
+        vmmngr_switch_pdirectory((pdirectory *)cur_task->pd_phys,
+                                 (pdirectory *)cur_task->pd_virt);
+    }
+    else
+    {
+        free_user_pages(cur_task->pd_virt);
+    }
+
     kernel_mutex_unlock(&(cur_task->mem->mutex));
     
     // load ELF file sections to memory
