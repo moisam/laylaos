@@ -218,7 +218,7 @@ int syscall_fork(void)
     
     struct task_t *parent = cur_task;
 
-    int vforking = 0;
+    int vforking = (GET_SYSCALL_NUMBER(parent->regs) == __NR_vfork);
     int cloning = (GET_SYSCALL_NUMBER(parent->regs) == __NR_clone);
     
     //printk("syscall_fork:\n");
@@ -241,10 +241,9 @@ int syscall_fork(void)
     A_memcpy(&r, parent->regs, sizeof(struct regs));
 
     /* if vforking, mark the child as such */
-    if(GET_SYSCALL_NUMBER(&r) == __NR_vfork)
+    if(vforking)
     {
         new_task->properties |= PROPERTY_VFORK;
-        vforking = 1;
     }
 
     // user esp is passed as the 2nd argument to the clone syscall (%ecx on
