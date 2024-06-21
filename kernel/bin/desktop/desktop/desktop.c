@@ -291,17 +291,20 @@ int should_notify_bottom_panel(winid_t winid)
 {
     struct winent_t *winent;
 
+    // do not notify about us or the top or bottom panels
     if(winid == mywinid || winid == top_panel_winid || 
                            winid == bottom_panel_winid)
     {
         return 0;
     }
-    
+
+    // do not notify about the ALT-TAB window    
     if(alttab_win && alttab_win->winid == winid)
     {
         return 0;
     }
     
+    // do not notify if we cannot find the window in our list
     if(!(winent = get_winent(winid)))
     {
         return 0;
@@ -309,6 +312,59 @@ int should_notify_bottom_panel(winid_t winid)
 
     // only notify bottom panel if the window wants to be shown there
     return !(winent->flags & WINDOW_SKIPTASKBAR);
+}
+
+
+// Tell the bottom panel about all the windows that have been created
+// before the bottom panel
+void catch_up_with_bottom_panel(void)
+{
+    struct winent_t *ent = winentries;
+
+    while(ent)
+    {
+        // do not notify about us or the top or bottom panels
+        if(ent->winid == mywinid || ent->winid == top_panel_winid || 
+                                    ent->winid == bottom_panel_winid)
+        {
+            ent = ent->next;
+            continue;
+        }
+    
+        // do not notify about the ALT-TAB window    
+        if(alttab_win && alttab_win->winid == ent->winid)
+        {
+            ent = ent->next;
+            continue;
+        }
+
+        // do not notify if the window does not want to be shown in the list
+        if(ent->flags & WINDOW_SKIPTASKBAR)
+        {
+            ent = ent->next;
+            continue;
+        }
+
+        // send a window creation followed by a window shown event
+        simple_request(EVENT_CHILD_WINDOW_CREATED, bottom_panel_winid, ent->winid);
+        simple_request(EVENT_CHILD_WINDOW_SHOWN, bottom_panel_winid, ent->winid);
+
+        // if the window has a title, send a title set event
+        if(ent->title)
+        {
+            notify_win_title_event(GLOB.serverfd, ent->title, 
+                                   bottom_panel_winid, ent->winid);
+        }
+
+        // if the window has an icon, send an icon set event
+        if(ent->icon)
+        {
+            simple_request(EVENT_CHILD_WINDOW_ICON_SET, 
+                           bottom_panel_winid, ent->winid);
+        }
+
+        ent = ent->next;
+    }
 }
 
 
@@ -467,6 +523,13 @@ int main(int argc, char **argv)
                     if(should_notify_bottom_panel(ev->src))
                     {
                         simple_request(type, bottom_panel_winid, src);
+                    }
+                    // if this is the bottom panel itself, catch up with
+                    // the windows that were created before the bottom panel
+                    // came to life
+                    else if(src == bottom_panel_winid)
+                    {
+                        catch_up_with_bottom_panel();
                     }
                     
                     update_winent(src, type);
