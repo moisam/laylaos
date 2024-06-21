@@ -41,7 +41,8 @@ struct __global_gui_data_t
     // current screen info
     struct screen_t screen;
 
-    // system monotype font
+    // system monotype font - user applications request this from the server 
+    // on initialization
     struct font_t mono;
 
     // different file descriptors

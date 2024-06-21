@@ -43,6 +43,8 @@ extern "C" {
 
 #include "list-struct.h"
 #include "window-defs.h"
+#include "mouse-state-struct.h"
+#include "event.h"
 #include "client/window-struct.h"
 
 int mouse_grab(struct window_t *window, int confine);
