@@ -764,7 +764,7 @@ void flush_cached_pages(dev_t dev)
 }
 
 
-int remove_cached_pages(dev_t dev)
+int remove_cached_disk_pages(dev_t dev)
 {
     struct cached_page_t *pcache;
     struct hashtab_item_t *hitem, *prev;
@@ -785,6 +785,53 @@ loop:
             pcache = hitem->val;
 
             if(pcache->dev == dev)
+            {
+                // remove the page if no one is using it
+                if(!(pcache->flags & (PCACHE_FLAG_BUSY | PCACHE_FLAG_WANTED)))
+                {
+                    release_pcache_internal(hitem, prev, i);
+                    goto loop;
+                }
+
+                res = -EBUSY;
+            }
+
+            prev = hitem;
+            hitem = hitem->next;
+        }
+    }
+
+    kernel_mutex_unlock(&pcachetab_lock);
+    return res;
+}
+
+
+int remove_cached_node_pages(struct fs_node_t *node)
+{
+    struct cached_page_t *pcache;
+    struct hashtab_item_t *hitem, *prev;
+    int res = 0;
+    int i;
+
+    if(!node || node->dev == 0 || node->inode == 0)
+    {
+        return -EINVAL;
+    }
+
+    kernel_mutex_lock(&pcachetab_lock);
+
+loop:
+
+    for(i = 0; i < pcachetab->count; i++)
+    {
+        hitem = pcachetab->items[i];
+        prev = NULL;
+        
+        while(hitem)
+        {
+            pcache = hitem->val;
+
+            if(pcache->dev == node->dev && pcache->ino == node->inode)
             {
                 // remove the page if no one is using it
                 if(!(pcache->flags & (PCACHE_FLAG_BUSY | PCACHE_FLAG_WANTED)))

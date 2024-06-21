@@ -608,7 +608,7 @@ int vfs_umount(dev_t dev, int flags)
     d->dev = 0;
     kernel_mutex_unlock(&mount_table_mutex);
 
-    remove_cached_pages(dev);
+    remove_cached_disk_pages(dev);
 
     // once again, ensure all refs to this device's mount info is invalidated
     for(node = node_table; node < llnode; node++)

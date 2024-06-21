@@ -123,14 +123,13 @@ void release_node(struct fs_node_t *node)
         return;
     }
     
-    //invalidate_dentry(node);
     //release_cached_pages(node);
     
     while(1)
     {
         if(node->links == 0)
         {
-            //release_cached_pages(node);
+            remove_cached_node_pages(node);
             truncate_node(node, 0);
             free_node(node);
             break;
