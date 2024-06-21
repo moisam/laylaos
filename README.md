@@ -60,7 +60,7 @@ To build LaylaOS from source:
 6. Oh, and you need **internet connection** to download the sources of ported software!
 7. When the build is done, create a bootable harddisk image by running: `./create_bootable_disk.sh`
 8. The bootable disk image is named `bootable_disk.img` and is created by default in the current working directory (you can run `./create_bootable_disk.sh help` to see the list of options)
-9. A `bochsrc` file is automatically created alongside `bootable_disk.img`. You can now run Bochs: `bochs -q`
+9. A `bochsrc` file is automatically created alongside `bootable_disk.img` (you might want to fix the name of the wireless device you use in the file). You can now run Bochs: `bochs -q`
 10. Another script called `qemu.sh` is also created to let you test the OS under QEmu. However, you need a TUN/TAP network device to run LaylaOS under QEmu using the provided script. You need to first run `sudo ./netprep.sh` to create the network device, then you can proceed with running `qemu.sh`
 
 # Licenses
@@ -68,5 +68,7 @@ To build LaylaOS from source:
 - LaylaOS is released under GPL v3.
 - PicoTCP (upon which our network stack is built) is released under GPL v2 or v3.
 - ACPICA is released under a dual Intel and Unix-compatible licenses.
-- All other ported software come with their respective licenses.
 - Timidity files (needed for sound in DOOM) are in the public domain (see their `copyright.txt` file).
+- The monospace font used in the system console and the GUI terminal is [Dina font](https://www.dcmembers.com/jibsen/download/61/), which is released under a free license.
+- libaelf32.a and libaelf64.a are part of asmlib, the [software optimisation library](https://www.agner.org/optimize/#asmlib) by Agner Fog, which is released under GPL.
+- All other ported software come with their respective licenses.
