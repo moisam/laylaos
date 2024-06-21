@@ -33,10 +33,13 @@
 #include "../include/gui.h"
 #include "lterm.h"
 #include "../include/client/window.h"
+#include "../include/resources.h"
 #include "../include/rgb.h"
 
 // get the standard terminal RGB color definitions
 #include "../../../gui/rgb_colors.h"
+
+#define GLOB                __global_gui_data
 
 struct tty_cell_t
 {
@@ -95,6 +98,7 @@ uint32_t line_height = 0;   // bytes per line = pitch * char_height
 #define pitch               (main_window->canvas_pitch)
 #define total_char_width    (pixel_width * charw)
 
+struct font_t *boldfont, actual_boldfont;
 
 // functions for painting cells
 void draw_cell8(struct tty_cell_t *cell, uint32_t col, uint32_t row);
@@ -192,6 +196,18 @@ int init_terminal(char *myname, uint32_t w, uint32_t h)
         fprintf(stderr, "%s: failed to alloc buffer: %s\n", 
                         myname, strerror(errno));
         return 0;
+    }
+
+    // Try to get the monospace bold font from the server. If we fail,
+    // fallback to using the monospace font that should have been loaded
+    // by the gui library's init function.
+    if(font_load("font-monospace-bold", &actual_boldfont) != INVALID_RESID)
+    {
+        boldfont = &actual_boldfont;
+    }
+    else
+    {
+        boldfont = &GLOB.mono;
     }
 
     return 1;
@@ -332,9 +348,15 @@ static inline uint32_t ega_to_vga(uint8_t color)
 }
 
 
+static inline struct font_t *select_font(struct tty_cell_t *cell)
+{
+    return cell->bold ? boldfont : &GLOB.mono;
+}
+
+
 void draw_cell8(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 {
-    struct font_t *font = &__global_gui_data.mono;
+    struct font_t *font = select_font(cell);
     uint8_t *chr = &font->data[cell->chr * charh];
     uint8_t fgcol = to_rgb8(main_window->gc, ega_to_vga(cell->fg));
     uint8_t bgcol = to_rgb8(main_window->gc, ega_to_vga(cell->bg));
@@ -369,7 +391,7 @@ void draw_cell8(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 
 void draw_cell16(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 {
-    struct font_t *font = &__global_gui_data.mono;
+    struct font_t *font = select_font(cell);
     uint8_t *chr = &font->data[cell->chr * charh];
     uint16_t fgcol = to_rgb16(main_window->gc, ega_to_vga(cell->fg));
     uint16_t bgcol = to_rgb16(main_window->gc, ega_to_vga(cell->bg));
@@ -405,7 +427,7 @@ void draw_cell16(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 
 void draw_cell24(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 {
-    struct font_t *font = &__global_gui_data.mono;
+    struct font_t *font = select_font(cell);
     uint8_t *chr = &font->data[cell->chr * charh];
     uint32_t fgcol = to_rgb24(main_window->gc, ega_to_vga(cell->fg));
     uint32_t bgcol = to_rgb24(main_window->gc, ega_to_vga(cell->bg));
@@ -444,7 +466,7 @@ void draw_cell24(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 
 void draw_cell32(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 {
-    struct font_t *font = &__global_gui_data.mono;
+    struct font_t *font = select_font(cell);
     uint8_t *chr = &font->data[cell->chr * charh];
     uint32_t fgcol, bgcol;
     int l, i;
@@ -924,6 +946,8 @@ void set_attribs(unsigned long npar, unsigned long *par)
                 fgcolor = default_fg;
                 bgcolor = default_bg;
                 terminal_flags &= ~TTY_FLAG_REVERSE_VIDEO;
+                terminal_flags &= ~(TTY_FLAG_UNDERLINED|TTY_FLAG_BRIGHT|
+                                    TTY_FLAG_BOLD|TTY_FLAG_BLINK);
                 break;
 
             case 1:         // set bold (simulated by a bright color)
