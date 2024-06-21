@@ -56,6 +56,7 @@
 #include "rgb_colors.h"
 #include "rgb.h"
 
+/*
 // change this include to change the font used, e.g. fb_font_8x16.h
 #include "fb_font_8x16.h"
 //#include "fb_font_8x8_alt.h"
@@ -63,6 +64,13 @@
 static uint8_t char_width = CHAR_WIDTH;
 static uint8_t char_height = CHAR_HEIGHT;
 static uint8_t *font_data = FONT_DATA;
+*/
+#include "../bin/desktop/server/font-array.h"
+#include "../bin/desktop/server/font-array-bold.h"
+
+#define char_width          ((uint8_t)mono_char_width)
+#define char_height         ((uint8_t)mono_char_height)
+
 
 unsigned int line_words;
 
@@ -106,16 +114,16 @@ static void vga_set_attribs(struct tty_t *tty, unsigned long npar,
 
 static void vga_restore_screen(struct tty_t *tty);
 
-static inline void __tputchar8(struct tty_t *tty, char c, 
+static inline void __tputchar8(struct tty_t *tty, uint8_t *chr, 
                                                   uint32_t fg, uint32_t bg);
-static inline void __tputchar16(struct tty_t *tty, char c, 
+static inline void __tputchar16(struct tty_t *tty, uint8_t *chr, 
                                                    uint32_t fg, uint32_t bg);
-static inline void __tputchar24(struct tty_t *tty, char c, 
+static inline void __tputchar24(struct tty_t *tty, uint8_t *chr, 
                                                    uint32_t fg, uint32_t bg);
-static inline void __tputchar32(struct tty_t *tty, char c, 
+static inline void __tputchar32(struct tty_t *tty, uint8_t *chr, 
                                                    uint32_t fg, uint32_t bg);
 
-void (*__tputchar)(struct tty_t *, char, uint32_t, uint32_t) = NULL;
+void (*__tputchar)(struct tty_t *, uint8_t *, uint32_t, uint32_t) = NULL;
 
 
 /*
@@ -1093,9 +1101,13 @@ void vga_set_attribs(struct tty_t *tty, unsigned long npar,
                 tty->fb_fgcolor = fb_default_fgcolor;
                 tty->fb_bgcolor = fb_default_bgcolor;
                 tty->flags &= ~TTY_FLAG_REVERSE_VIDEO;
+                tty->attribs &= ~ATTRIB_BOLD;
+                tty->attribs &= ~ATTRIB_BRIGHT_FG;
+                tty->attribs &= ~ATTRIB_BRIGHT_BG;
+                tty->attribs &= ~ATTRIB_UNDERLINE;
                 break;
 
-            case 1:         // set bold (simulated by a bright color)
+            case 1:         // set bold
                 tty->attribs |= ATTRIB_BOLD;
                 break;
 
@@ -1103,8 +1115,7 @@ void vga_set_attribs(struct tty_t *tty, unsigned long npar,
                 tty->attribs |= ATTRIB_BRIGHT_FG;
                 break;
 
-            case 4:         // set underscore (simulated by a
-                            // bright background)
+            case 4:         // set underscore
                 tty->attribs |= ATTRIB_UNDERLINE;
                 break;
 
@@ -1116,14 +1127,17 @@ void vga_set_attribs(struct tty_t *tty, unsigned long npar,
                 tty->flags |= TTY_FLAG_REVERSE_VIDEO;
                 break;
 
-            case 21:        // set underline (simulated by setting 
-                            // normal intensity)
+            case 21:        // set underline
+                tty->attribs |= ATTRIB_UNDERLINE;
+                break;
 
             case 22:        // set normal intensity
-
-            case 24:        // underline off
+                tty->attribs &= ~ATTRIB_BOLD;
                 tty->attribs &= ~ATTRIB_BRIGHT_FG;
                 tty->attribs &= ~ATTRIB_BRIGHT_BG;
+                break;
+
+            case 24:        // underline off
                 tty->attribs &= ~ATTRIB_UNDERLINE;
                 break;
 
@@ -1223,10 +1237,9 @@ void vga_set_attribs(struct tty_t *tty, unsigned long npar,
 }
 
 
-static inline void __tputchar8(struct tty_t *tty, char c, 
+static inline void __tputchar8(struct tty_t *tty, uint8_t *chr, 
                                uint32_t fg, uint32_t bg)
 {
-    uint8_t *chr = &font_data[c * char_height];
     uint8_t fgcol = to_rgb8(fg);
     uint8_t bgcol = to_rgb8(bg);
     int l, i;
@@ -1249,10 +1262,9 @@ static inline void __tputchar8(struct tty_t *tty, char c,
 }
 
 
-static inline void __tputchar16(struct tty_t *tty, char c, 
+static inline void __tputchar16(struct tty_t *tty, uint8_t *chr, 
                                 uint32_t fg, uint32_t bg)
 {
-    uint8_t *chr = &font_data[c * char_height];
     uint16_t fgcol = to_rgb16(fg);
     uint16_t bgcol = to_rgb16(bg);
     int l, i;
@@ -1275,10 +1287,9 @@ static inline void __tputchar16(struct tty_t *tty, char c,
 }
 
 
-static inline void __tputchar24(struct tty_t *tty, char c, 
+static inline void __tputchar24(struct tty_t *tty, uint8_t *chr, 
                                 uint32_t fg, uint32_t bg)
 {
-    uint8_t *chr = &font_data[c * char_height];
     int l, i;
     unsigned where = (tty->col * total_char_width) +
                      (tty->row * line_height);
@@ -1315,10 +1326,9 @@ static inline void __tputchar24(struct tty_t *tty, char c,
 }
 
 
-static inline void __tputchar32(struct tty_t *tty, char c, 
+static inline void __tputchar32(struct tty_t *tty, uint8_t *chr, 
                                 uint32_t fg, uint32_t bg)
 {
-    uint8_t *chr = &font_data[c * char_height];
     int l, i;
     unsigned where = (tty->col * total_char_width) +
                      (tty->row * line_height);
@@ -1356,7 +1366,15 @@ static void vga_tputchar(struct tty_t *tty, char c)
 
     uint8_t color = (tty->flags & TTY_FLAG_REVERSE_VIDEO) ?
                         INVERT_COLOR(tty->color) : tty->color;
-    
+
+    // We use the highest byte in each 2-byte EGA entry to indicate bold text.
+    // See the long comment at the beginning of ega_tputchar() in the 
+    // kernel/console.c source file for details.
+    uint16_t bold_bit = (tty->attribs & ATTRIB_BOLD) ? 0x80 : 0;
+
+    uint8_t *font_data = (tty->attribs & ATTRIB_BOLD) ?
+                        mono_bold_font_array : mono_font_array;
+
     if(tty->flags & TTY_FLAG_REVERSE_VIDEO)
     {
         fg = tty->fb_bgcolor;
@@ -1368,7 +1386,7 @@ static void vga_tputchar(struct tty_t *tty, char c)
         bg = tty->fb_bgcolor;
     }
 
-    if((tty->attribs & ATTRIB_BOLD) ||
+    if(/* (tty->attribs & ATTRIB_BOLD) || */
        (tty->attribs & ATTRIB_BRIGHT_FG))
     {
         fg = brighten(fg);
@@ -1407,10 +1425,10 @@ static void vga_tputchar(struct tty_t *tty, char c)
             // don't update the backbuffer if this is not the foreground tty
             if(tty->flags & TTY_FLAG_ACTIVE)
             {
-        	    __tputchar(tty, ' ', fg, bg);
+        	    __tputchar(tty, &font_data[' ' * char_height], fg, bg);
             }
 
-    	    __ega_tputchar(tty, ' ', color);
+    	    __ega_tputchar(tty, ' ' | bold_bit, color);
     	}
     }
     else if(c == '\033' /* '\e' */)
@@ -1420,29 +1438,29 @@ static void vga_tputchar(struct tty_t *tty, char c)
         // don't update the backbuffer if this is not the foreground tty
         if(tty->flags & TTY_FLAG_ACTIVE)
         {
-            __tputchar(tty, '^', fg, bg);
+            __tputchar(tty, &font_data['^' * char_height], fg, bg);
         }
 
-        __ega_tputchar(tty, '^', color);
+        __ega_tputchar(tty, '^' | bold_bit, color);
         tty->col++;
         tty_adjust_indices(tty);
 
         if(tty->flags & TTY_FLAG_ACTIVE)
         {
-            __tputchar(tty, '[', fg, bg);
+            __tputchar(tty, &font_data['[' * char_height], fg, bg);
         }
 
-        __ega_tputchar(tty, '[', color);
+        __ega_tputchar(tty, '[' | bold_bit, color);
         tty->col++;
     }
     else
     {
         if(tty->flags & TTY_FLAG_ACTIVE)
         {
-            __tputchar(tty, c, fg, bg);
+            __tputchar(tty, &font_data[c * char_height], fg, bg);
         }
 
-        __ega_tputchar(tty, c, color);
+        __ega_tputchar(tty, c | bold_bit, color);
         tty->col++;
     }
     
@@ -1495,10 +1513,15 @@ void vga_restore_screen(struct tty_t *tty)
         {
             for(tty->col = 0; tty->col < tty->vga_width; tty->col++)
             {
-                uint8_t c = egabuf[tty->col] & 0xff;
-                uint8_t color = (egabuf[tty->col] >> 8) & 0xff;
+                uint8_t c, color, *font_data;
 
-                __tputchar(tty, c,
+                c = egabuf[tty->col] & 0xff;
+                color = (egabuf[tty->col] >> 8) & 0xff;
+
+                font_data = (c & 0x80) ?
+                                mono_bold_font_array : mono_font_array;
+
+                __tputchar(tty, &font_data[(c & 0x7f) * char_height],
                               ega_to_vga(color & 0xf), 
                               ega_to_vga((color >> 4) & 0xf));
             }
