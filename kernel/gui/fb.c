@@ -86,10 +86,10 @@ static void vga_erase_line(struct tty_t *tty, unsigned long cmd);
 static void vga_delete_chars(struct tty_t *tty, unsigned long count);
 static void vga_insert_chars(struct tty_t *tty, unsigned long count);
 
-static void vga_move_cur_8(struct tty_t *tty, size_t col, size_t row);
-static void vga_move_cur_16(struct tty_t *tty, size_t col, size_t row);
-static void vga_move_cur_24(struct tty_t *tty, size_t col, size_t row);
-static void vga_move_cur_32(struct tty_t *tty, size_t col, size_t row);
+static void vga_move_cur_8(struct tty_t *tty);
+static void vga_move_cur_16(struct tty_t *tty);
+static void vga_move_cur_24(struct tty_t *tty);
+static void vga_move_cur_32(struct tty_t *tty);
 
 static void vga_hide_cur_8(struct tty_t *tty);
 static void vga_hide_cur_16(struct tty_t *tty);
@@ -157,7 +157,7 @@ void fb_reset(struct tty_t *tty)
 
     erase_display(tty, tty->vga_width, tty->vga_height, 2);
     enable_cursor(tty, 0, tty->vga_height - 1);
-    move_cur(tty, tty->col, tty->row);
+    move_cur(tty);
 }
 
 
@@ -824,31 +824,23 @@ static inline void do_move_cur(struct tty_t *tty,
     }
 }
 
-void vga_move_cur_8(struct tty_t *tty, size_t col, size_t row)
+void vga_move_cur_8(struct tty_t *tty)
 {
-    UNUSED(col);
-    UNUSED(row);
     do_move_cur(tty, invert_8);
 }
 
-void vga_move_cur_16(struct tty_t *tty, size_t col, size_t row)
+void vga_move_cur_16(struct tty_t *tty)
 {
-    UNUSED(col);
-    UNUSED(row);
     do_move_cur(tty, invert_16);
 }
 
-void vga_move_cur_24(struct tty_t *tty, size_t col, size_t row)
+void vga_move_cur_24(struct tty_t *tty)
 {
-    UNUSED(col);
-    UNUSED(row);
     do_move_cur(tty, invert_24);
 }
 
-void vga_move_cur_32(struct tty_t *tty, size_t col, size_t row)
+void vga_move_cur_32(struct tty_t *tty)
 {
-    UNUSED(col);
-    UNUSED(row);
     do_move_cur(tty, invert_32);
 }
 
@@ -1531,7 +1523,7 @@ void vga_restore_screen(struct tty_t *tty)
 
         tty->row = save_row;
         tty->col = save_col;
-        move_cur(tty, tty->col, tty->row);
+        move_cur(tty);
         screen_refresh(NULL);
     }
     else
@@ -1539,7 +1531,7 @@ void vga_restore_screen(struct tty_t *tty)
         fb_cur_backbuf = fb_backbuf_gui;
 
         erase_display(tty, tty->vga_width, tty->vga_height, 2);
-        move_cur(tty, tty->col, tty->row);
+        move_cur(tty);
         screen_refresh(NULL);
         tty_send_signal(tty->pgid, SIGWINCH);
     }
@@ -1646,7 +1638,7 @@ int fb_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
             if((int)(uintptr_t)arg)
             {
                 tty->cursor_enabled = 1;
-                move_cur(tty, tty->col, tty->row);
+                move_cur(tty);
                 tty->cursor_shown = 1;
             }
             else
