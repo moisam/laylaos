@@ -188,7 +188,7 @@ extern void (*erase_display)(struct tty_t *, uint32_t, uint32_t, unsigned long);
 extern void (*erase_line)(struct tty_t *, unsigned long);
 extern void (*delete_chars)(struct tty_t *, unsigned long);
 extern void (*insert_chars)(struct tty_t *, unsigned long);
-extern void (*move_cur)(struct tty_t *, size_t, size_t);
+extern void (*move_cur)(struct tty_t *);
 extern void (*enable_cursor)(struct tty_t *, uint8_t, uint8_t);
 extern void (*hide_cur)(struct tty_t *);
 extern void (*tputchar)(struct tty_t *, char);
