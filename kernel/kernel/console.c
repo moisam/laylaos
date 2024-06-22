@@ -53,7 +53,7 @@ extern void *memsetw(void* bufptr, int value, size_t size);
 
 extern void tty_init_queues(int i);
 
-static void ega_move_cur(struct tty_t *tty, size_t col, size_t row);
+static void ega_move_cur(struct tty_t *tty);
 static void ega_enable_cursor(struct tty_t *tty, uint8_t cursor_start, 
                                                  uint8_t cursor_end);
 static void ega_tputchar(struct tty_t *tty, char c);
@@ -64,7 +64,7 @@ void (*erase_display)(struct tty_t *, uint32_t, uint32_t, unsigned long) = NULL;
 void (*erase_line)(struct tty_t *, unsigned long) = NULL;
 void (*delete_chars)(struct tty_t *, unsigned long) = NULL;
 void (*insert_chars)(struct tty_t *, unsigned long) = NULL;
-void (*move_cur)(struct tty_t *, size_t, size_t) = NULL;
+void (*move_cur)(struct tty_t *) = NULL;
 void (*enable_cursor)(struct tty_t *, uint8_t, uint8_t) = NULL;
 void (*hide_cur)(struct tty_t *) = NULL;
 void (*tputchar)(struct tty_t *, char) = NULL;
@@ -96,7 +96,7 @@ static void console_reset(struct tty_t *tty)
 
     erase_display(tty, tty->vga_width, tty->vga_height, 2);
     enable_cursor(tty, 0, tty->vga_height - 1);
-    move_cur(tty, tty->col, tty->row);
+    move_cur(tty);
 }
 
 
@@ -277,11 +277,9 @@ static void ega_hide_cur(struct tty_t *tty)
  * 0x0E (14 for the high byte) and 0x0F (15 for the low byte). Writing
  * is performed using port 0x3D5.
  */
-static void ega_move_cur(struct tty_t *tty, size_t col, size_t row)
+static void ega_move_cur(struct tty_t *tty)
 {
-    UNUSED(tty);
-
-    size_t location = row * VGA_WIDTH + col;
+    size_t location = tty->row * VGA_WIDTH + tty->col;
     outb(0x3D4, 0x0E);
     outb(0x3D5, location >> 8);
     outb(0x3D4, 0x0F);
@@ -318,11 +316,8 @@ static void ega_hide_cur(struct tty_t *tty)
     }
 }
 
-static void ega_move_cur(struct tty_t *tty, size_t col, size_t row)
+static void ega_move_cur(struct tty_t *tty)
 {
-    UNUSED(col);
-    UNUSED(row);
-    
     if(tty->cursor_enabled)
     {
         invert(tty);
@@ -748,7 +743,7 @@ static void handle_dec_sequence(struct tty_t *tty, unsigned long cmd, int set)
                 
                 if(!tty->cursor_shown)
                 {
-                    move_cur(tty, tty->col, tty->row);
+                    move_cur(tty);
                 }
                 
                 tty->cursor_shown = 1;
@@ -1368,7 +1363,7 @@ void console_write(struct tty_t *tty)
 
     if(tty->flags & TTY_FLAG_ACTIVE)
     {
-        move_cur(tty, tty->col, tty->row);
+        move_cur(tty);
         repaint_screen = 1;
     }
 }
@@ -1400,7 +1395,7 @@ void twritestr(const char *data)
         tputchar(&ttytab[cur_tty], *data);
     }
 
-    move_cur(&ttytab[cur_tty], ttytab[cur_tty].col, ttytab[cur_tty].row);
+    move_cur(&ttytab[cur_tty]);
 
     repaint_screen = 1;
 }
