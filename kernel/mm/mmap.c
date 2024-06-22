@@ -172,7 +172,7 @@ int syscall_mmap(struct syscall_args *__args)
     int flags;
     int fd;
     off_t offset;
-    void **res_addr;
+    volatile void **res_addr;
 
     // get the args
     COPY_SYSCALL7_ARGS(a, __args);
@@ -182,7 +182,7 @@ int syscall_mmap(struct syscall_args *__args)
     flags = (int)(a.args[3]);
     fd = (int)(a.args[4]);
     offset = (off_t)(a.args[5]);
-    res_addr = (void **)(a.args[6]);
+    res_addr = (volatile void **)(a.args[6]);
     
     int overlaps;
     int fixed = FLAG_SET(flags, MAP_FIXED) | FLAG_SET(flags, MAP_FIXED_NOREPLACE);
@@ -545,7 +545,7 @@ int syscall_mremap(struct syscall_args *__args)
     size_t new_size;
     int flags;
     void *new_address;
-    void **res_address;
+    volatile void **res_address;
 
     // get the args
     COPY_SYSCALL6_ARGS(a, __args);
@@ -554,7 +554,7 @@ int syscall_mremap(struct syscall_args *__args)
     new_size = (size_t)(a.args[2]);
     flags = (int)(a.args[3]);
     new_address = (void *)(a.args[4]);
-    res_address = (void **)(a.args[5]);
+    res_address = (volatile void **)(a.args[5]);
     
     if(!PAGE_ALIGNED(old_address))
     {
