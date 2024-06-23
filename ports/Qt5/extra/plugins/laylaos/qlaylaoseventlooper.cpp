@@ -278,12 +278,16 @@ void QLaylaOSEventLooper::removeWindow(winid_t winid)
 void QLaylaOSEventLooper::handleWindowMovedEvent(struct event_t *ev)
 {
     QWindow *win = m_winmap.value(ev->dest);
+    struct window_t *lwin = win_for_winid(ev->dest);
 
-    if(win == nullptr) {
+    if(win == nullptr || lwin == nullptr) {
         return;
     }
 
     QRect rect(ev->win.x, ev->win.y, win->width(), win->height());
+
+    lwin->x = ev->win.x;
+    lwin->y = ev->win.y;
 
     QWindowSystemInterface::handleGeometryChange(win, rect);
     //QWindowSystemInterface::handleExposeEvent(win, rect);
@@ -300,6 +304,8 @@ void QLaylaOSEventLooper::handleWindowResizedEvent(struct event_t *ev)
 
     int16_t x = ev->win.x, y = ev->win.y;
     uint16_t w = ev->win.w, h = ev->win.h;
+
+    //qDebug() << "QLaylaOSEventLooper::handleWindowResizedEvent:" << x << ", " << y << ", " << w << ", " << h;
 
     window_resize(lwin, x, y, w, h);
 

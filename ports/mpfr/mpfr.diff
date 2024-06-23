@@ -1,0 +1,32 @@
+diff -rub ./mpfr-4.1.0/configure ./mpfr-4.1.0/configure
+--- ./mpfr-4.1.0/configure	2020-07-10 12:59:02.000000000 +0100
++++ ./mpfr-4.1.0/configure	2024-06-22 16:51:14.638939484 +0100
+@@ -6390,7 +6390,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos* | laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -12312,6 +12312,19 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++# LaylaOS
++laylaos*)
++  version_type=linux # correct to gnu/linux during the next big refactor
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='$libname$release$shared_ext$versuffix $libname$release$shared_ext$major $libname$shared_ext'
++  soname_spec='$libname$release$shared_ext$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  shlibpath_overrides_runpath=no
++  dynamic_linker='LaylaOS ld.so'
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no

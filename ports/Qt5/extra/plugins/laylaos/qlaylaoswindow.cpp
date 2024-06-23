@@ -126,6 +126,7 @@ QLaylaOSWindow::QLaylaOSWindow(QWindow *window, QLaylaOSEventLooper *eventlooper
     , m_window(nullptr)
     , m_windowState(Qt::WindowNoState)
 {
+    QWindow *p = window->parent();
     const QRect rect = initialGeometry(window, window->geometry(), DefaultWindowWidth, DefaultWindowHeight);
     struct window_attribs_t attribs;
     uint32_t flags = toLaylaOSFlags(window->flags());
@@ -139,16 +140,20 @@ QLaylaOSWindow::QLaylaOSWindow(QWindow *window, QLaylaOSEventLooper *eventlooper
     attribs.h = rect.height();
     attribs.flags = flags;
 
-    qDebug("QLaylaOSWindow::QLaylaOSWindow: x %d, y %d, w %u, h %u, fl 0x%x", attribs.x, attribs.y, attribs.w, attribs.h, attribs.flags);
-    qDebug() << "QLaylaOSWindow::QLaylaOSWindow: isDialog " << isDialog << ", p " << window->parent();
+    //qDebug("QLaylaOSWindow::QLaylaOSWindow: x %d, y %d, w %u, h %u, fl 0x%x", attribs.x, attribs.y, attribs.w, attribs.h, attribs.flags);
 
-    if (isDialog && window->parent()) {
-        QLaylaOSWindow *parent = static_cast<QLaylaOSWindow*>(window->parent()->handle());
+    if (!p)
+        p = QGuiApplication::focusWindow();
+
+    //qDebug() << "QLaylaOSWindow::QLaylaOSWindow: isDialog " << isDialog << ", p " << p;
+
+    if (isDialog && p) {
+        QLaylaOSWindow *parent = static_cast<QLaylaOSWindow*>(p->handle());
 
         if (parent) {
             struct window_t *pwin = parent->nativeHandle();
 
-            qDebug("QLaylaOSWindow::QLaylaOSWindow: parent type %d, ownerid %ld", pwin->type, pwin->winid);
+            //qDebug("QLaylaOSWindow::QLaylaOSWindow: parent type %d, ownerid %ld", pwin->type, pwin->winid);
             m_window = __window_create(&attribs, WINDOW_TYPE_DIALOG, pwin->winid);
         } else {
             m_window = window_create(&attribs);
@@ -187,8 +192,9 @@ void QLaylaOSWindow::detachFromLooper()
 
 void QLaylaOSWindow::setGeometry(const QRect &rect)
 {
-    qDebug() << "QLaylaOSWindow::setGeometry:" << rect;
-    QPlatformWindow::setGeometry(rect);
+    //qDebug() << "QLaylaOSWindow::setGeometry: 1 " << rect;
+    //QPlatformWindow::setGeometry(rect);
+    //qDebug() << "QLaylaOSWindow::setGeometry: 2 " << rect;
 
     window_set_size(m_window, rect.x(), rect.y(), rect.width(), rect.height());
 }
