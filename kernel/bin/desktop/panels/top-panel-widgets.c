@@ -39,6 +39,7 @@
 #include "../include/panels/widget.h"
 #include "../include/client/window.h"
 #include "../include/font.h"
+#include "../desktop/run_command.c"
 
 
 #define GLOB                        __global_gui_data
@@ -539,23 +540,32 @@ void widget_get_app_entries(struct app_entry_t **res)
 
 void widget_run_command(char *cmd)
 {
-    if(!fork())
+    run_command(cmd);
+}
+
+
+void widgets_show_apps(void)
+{
+    struct widget_t *widget;
+    ListNode *current_node;
+
+    for(current_node = main_window->children->root_node;
+        current_node != NULL;
+        current_node = current_node->next)
     {
-        char *argv[] = { cmd, NULL };
-        int fd;
+        widget = (struct widget_t *)current_node->payload;
 
-        /* Release our controlling tty */
-        (void)ioctl(0, TIOCSCTTY, 0);
+        if(widget->win.visible && 
+           widget->win.title && !strcmp(widget->win.title, "Applications"))
+        {
+            if(widget->button_click_callback)
+            {
+                // emulate a mouse click event
+                widget->button_click_callback(widget, 1, 1);
+            }
 
-        fd = open("/dev/null", O_RDWR);
-        dup2(fd, 0);
-        dup2(fd, 1);
-        dup2(fd, 2);
-        close(fd);
-        close(GLOB.serverfd);
-
-        execvp(cmd, argv);
-        exit(EXIT_FAILURE);
+            break;
+        }
     }
 }
 
