@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=FeatherPad
+Command=/usr/bin/featherpad --standalone
+IconPath=Default
+Icon=featherpad
+ShowOnDesktop=no
+Category=Accessories
+
