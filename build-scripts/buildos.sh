@@ -10,8 +10,12 @@
 # crosscompiler toolchain.
 #
 
+##############################################
+# names of ported packages
+##############################################
+
 # libs with no dependencies -- a.k.a. easy wins
-NODEPS_LIBS="zlib xz libiconv libexpat libffi libucontext fribidi gzip"
+NODEPS_LIBS="zlib xz libiconv libexpat libffi libucontext fribidi gzip hunspell"
 
 # image, multimedia and font libs
 IMAGE_LIBS="libjpeg libpng16 libtiff libwebp"
@@ -22,10 +26,22 @@ FONT_LIBS="freetype fontconfig harfbuzz"
 SDL_LIBS="SDL2 SDL2_mixer SDL2_image"
 
 MULTIMEDIA_LIBS2="libtheora libass mplayer ffmpeg"
+
+# terminal apps and games
 TERMINAL_APPS_AND_LIBS="ncurses coreutils bash inetutils nano openssl links curl cups"
 GAMES_APPS="openttd sdl2-doom"
 
-#save these for later
+# compiler
+COMPILER_APPS="binutils gmp mpfr mpc gcc"
+
+# Qt-based apps
+QT_APPS="FeatherPad"
+
+##############################################
+# prepare for the build
+##############################################
+
+# save these for later
 OLDPREFIX=$PREFIX
 OLDEXEC_PREFIX=$EXEC_PREFIX
 OLDBOOTDIR=$BOOTDIR
@@ -299,6 +315,13 @@ build_list "glib"
 build_list "opus"
 build_list "gstreamer gst-plugins-base"
 build_list "Qt5"
+
+##############################################
+# Others
+##############################################
+
+build_list "${COMPILER_APPS}"
+build_list "${QT_APPS}"
 
 ##############################################
 # Done!
