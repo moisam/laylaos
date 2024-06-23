@@ -1,0 +1,52 @@
+diff -rub ./gmp-6.2.1/configure ./gmp-6.2.1/configure
+--- ./gmp-6.2.1/configure	2020-11-14 18:45:15.000000000 +0000
++++ ./gmp-6.2.1/configure	2024-06-20 19:59:34.986290334 +0100
+@@ -12990,7 +12990,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos* | laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -18609,6 +18609,19 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++# LaylaOS
++laylaos*)
++  version_type=linux # correct to gnu/linux during the next big refactor
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='$libname$release$shared_ext$versuffix $libname$release$shared_ext$major $libname$shared_ext'
++  soname_spec='$libname$release$shared_ext$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  shlibpath_overrides_runpath=no
++  dynamic_linker='LaylaOS ld.so'
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
+@@ -22571,6 +22584,19 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++# LaylaOS
++laylaos*)
++  version_type=linux # correct to gnu/linux during the next big refactor
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='$libname$release$shared_ext$versuffix $libname$release$shared_ext$major $libname$shared_ext'
++  soname_spec='$libname$release$shared_ext$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  shlibpath_overrides_runpath=no
++  dynamic_linker='LaylaOS ld.so'
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
