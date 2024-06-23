@@ -1,0 +1,131 @@
+diff -rub ./FeatherPad-1.1.1/CMakeLists.txt ./FeatherPad-1.1.1/CMakeLists.txt
+--- ./FeatherPad-1.1.1/CMakeLists.txt	2022-01-04 20:08:30.000000000 +0000
++++ ./FeatherPad-1.1.1/CMakeLists.txt	2024-06-22 15:25:21.508954722 +0100
+@@ -8,7 +8,7 @@
+     set(CMAKE_INSTALL_PREFIX "/boot/home/config/non-packaged/apps/FeatherPad")
+   elseif(APPLE)
+     set(CMAKE_INSTALL_PREFIX "/Applications")
+-  elseif(UNIX)
++  elseif(UNIX OR LAYLAOS)
+     set(CMAKE_INSTALL_PREFIX "/usr")
+   elseif(OS2)
+     set(CMAKE_INSTALL_PREFIX "/@unixroot/usr/")
+diff -rub ./FeatherPad-1.1.1/featherpad/CMakeLists.txt ./FeatherPad-1.1.1/featherpad/CMakeLists.txt
+--- ./FeatherPad-1.1.1/featherpad/CMakeLists.txt	2022-01-04 20:08:30.000000000 +0000
++++ ./FeatherPad-1.1.1/featherpad/CMakeLists.txt	2024-06-22 15:26:47.237010857 +0100
+@@ -36,7 +36,7 @@
+ endif()
+ 
+ # X11 for Linux/Unix
+-if(NOT WITHOUT_X11 AND UNIX AND NOT APPLE AND NOT HAIKU)
++if(NOT WITHOUT_X11 AND UNIX AND NOT APPLE AND NOT HAIKU AND NOT LAYLAOS)
+   if(QT_VERSION_MAJOR EQUAL 5)
+     find_package(Qt5X11Extras "${QT5_MINIMUM_VERSION}" REQUIRED)
+   endif()
+@@ -52,7 +52,7 @@
+ #find_package(MAGIC_INCLUDE_DIR magic.h)
+ #find_library(MAGIC_LIBRARY magic $ENV{MAGIC_LIB_PATH})
+ 
+-if(NOT WITHOUT_X11 AND UNIX AND NOT APPLE AND NOT HAIKU)
++if(NOT WITHOUT_X11 AND UNIX AND NOT APPLE AND NOT HAIKU AND NOT LAYLAOS)
+   if(QT_VERSION_MAJOR EQUAL 6)
+     include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
+                         ${Qt6Core_INCLUDE_DIRS}
+@@ -89,7 +89,7 @@
+ 
+ if(HAIKU)
+   add_definitions(-DDATADIR="${CMAKE_INSTALL_PREFIX}/data")
+-elseif(UNIX OR OS2)
++elseif(UNIX OR OS2 OR LAYLAOS)
+   add_definitions(-DDATADIR="${CMAKE_INSTALL_PREFIX}/share")
+ endif()
+ 
+@@ -138,7 +138,7 @@
+     highlighter/highlighter-xml.cpp
+     highlighter/highlighter-yaml.cpp)
+ 
+-if(NOT WITHOUT_X11 AND UNIX AND NOT APPLE AND NOT HAIKU)
++if(NOT WITHOUT_X11 AND UNIX AND NOT APPLE AND NOT HAIKU AND NOT LAYLAOS)
+   set(featherpad_SRCS ${featherpad_SRCS} x11.cpp)
+ endif()
+ 
+@@ -178,14 +178,14 @@
+     install(FILES ${QM_FILES} DESTINATION "${CMAKE_INSTALL_PREFIX}/translations")
+   elseif(APPLE)
+     SET_SOURCE_FILES_PROPERTIES(${QM_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/translations)
+-  elseif(UNIX OR OS2)
++  elseif(UNIX OR OS2 OR LAYLAOS)
+     install(FILES ${QM_FILES} DESTINATION "${CMAKE_INSTALL_PREFIX}/share/featherpad/translations")
+   endif()
+ else(Qt${QT_VERSION_MAJOR}LinguistTools_FOUND)
+   add_executable(featherpad ${featherpad_SRCS} ${featherpad_RESOURCES} ${EXTRA_HEADERS} ${DESKTOP_FILE})
+ endif(Qt${QT_VERSION_MAJOR}LinguistTools_FOUND)
+ 
+-if(NOT WITHOUT_X11 AND UNIX AND NOT APPLE AND NOT HAIKU)
++if(NOT WITHOUT_X11 AND UNIX AND NOT APPLE AND NOT HAIKU AND NOT LAYLAOS)
+   if(QT_VERSION_MAJOR EQUAL 6)
+     target_link_libraries(featherpad ${Qt6Core_LIBRARIES}
+                                      ${Qt6Gui_LIBRARIES}
+@@ -228,7 +228,7 @@
+   SET_SOURCE_FILES_PROPERTIES(FILES ${HELP_TR_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/helps)
+   SET_TARGET_PROPERTIES(featherpad PROPERTIES MACOSX_BUNDLE TRUE)
+   INSTALL(TARGETS featherpad DESTINATION ${CMAKE_INSTALL_PREFIX})
+-elseif(UNIX)
++elseif(UNIX OR LAYLAOS)
+   # make symlink
+   add_custom_target(fpad_symlink ALL ${CMAKE_COMMAND} -E create_symlink featherpad fpad DEPENDS featherpad COMMENT "Creating fpad as a symlink to featherpad")
+ 
+diff -rub ./FeatherPad-1.1.1/featherpad/featherpad.pro ./FeatherPad-1.1.1/featherpad/featherpad.pro
+--- ./FeatherPad-1.1.1/featherpad/featherpad.pro	2022-01-04 20:08:30.000000000 +0000
++++ ./FeatherPad-1.1.1/featherpad/featherpad.pro	2024-06-22 15:28:27.217114614 +0100
+@@ -113,7 +113,7 @@
+ contains(WITHOUT_X11, YES) {
+   message("Compiling without X11...")
+ }
+-else:unix:!macx:!haiku:!os2 {
++else:unix:!macx:!haiku:!os2:!laylaos {
+   lessThan(QT_MAJOR_VERSION, 6) {
+     QT += x11extras
+   }
+@@ -151,7 +151,7 @@
+   }
+ }
+ 
+-unix:!haiku:!macx:!os2 {
++unix:laylaos:!haiku:!macx:!os2 {
+   #VARIABLES
+   isEmpty(PREFIX) {
+     PREFIX = /usr
+diff -rub ./FeatherPad-1.1.1/featherpad/highlighter/highlighter.cpp ./FeatherPad-1.1.1/featherpad/highlighter/highlighter.cpp
+--- ./FeatherPad-1.1.1/featherpad/highlighter/highlighter.cpp	2022-01-04 20:08:30.000000000 +0000
++++ ./FeatherPad-1.1.1/featherpad/highlighter/highlighter.cpp	2024-06-22 15:28:51.001144587 +0100
+@@ -569,7 +569,7 @@
+ 
+             /* platforms */
+             keywordFormat.setFontItalic (true);
+-            rule.pattern.setPattern ("(?<=^|\\(|\\s)(APPLE|CRLF|CYGWIN|DOS|HAIKU|LF|MINGW|MSYS|UNIX|WIN32)(?=$|\\)|\\s)");
++            rule.pattern.setPattern ("(?<=^|\\(|\\s)(APPLE|CRLF|CYGWIN|DOS|HAIKU|LF|MINGW|MSYS|UNIX|WIN32|LAYLAOS)(?=$|\\)|\\s)");
+             rule.format = keywordFormat;
+             highlightingRules.append (rule);
+             keywordFormat.setFontItalic (false);
+diff -rub ./FeatherPad-1.1.1/featherpad/singleton.cpp ./FeatherPad-1.1.1/featherpad/singleton.cpp
+--- ./FeatherPad-1.1.1/featherpad/singleton.cpp	2022-01-04 20:08:30.000000000 +0000
++++ ./FeatherPad-1.1.1/featherpad/singleton.cpp	2024-06-23 14:36:48.267295518 +0100
+@@ -25,7 +25,7 @@
+ #include <QCryptographicHash>
+ #include <QThread>
+ 
+-#if defined Q_OS_LINUX || defined Q_OS_FREEBSD || defined Q_OS_OPENBSD || defined Q_OS_NETBSD || defined Q_OS_HURD
++#if defined Q_OS_LINUX || defined Q_OS_FREEBSD || defined Q_OS_OPENBSD || defined Q_OS_NETBSD || defined Q_OS_HURD || defined Q_OS_LAYLAOS
+ #include <unistd.h> // for geteuid()
+ #endif
+ 
+@@ -298,7 +298,7 @@
+ /*************************/
+ void FPsingleton::firstWin (const QString& message)
+ {
+-#if defined Q_OS_LINUX || defined Q_OS_FREEBSD || defined Q_OS_OPENBSD || defined Q_OS_NETBSD || defined Q_OS_HURD
++#if defined Q_OS_LINUX || defined Q_OS_FREEBSD || defined Q_OS_OPENBSD || defined Q_OS_NETBSD || defined Q_OS_HURD || defined Q_OS_LAYLAOS
+     isRoot_ = (geteuid() == 0);
+ #endif
+     int lineNum = 0, posInLine = 0;
