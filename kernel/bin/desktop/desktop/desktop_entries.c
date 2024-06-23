@@ -47,6 +47,7 @@
 #include "../include/mouse.h"
 #include "desktop.h"
 #include "desktop_entries.h"
+#include "run_command.c"
 
 #ifndef MAX
 #define MAX(a, b)               ((a) > (b) ? (a) : (b))
@@ -248,28 +249,7 @@ void desktop_mouseover(struct window_t *window, int x, int y,
         {
             // handle double clicks
             selected_entry->click_count = 0;
-
-            if(!fork())
-            {
-                char *argv[] = { selected_entry->command, NULL };
-                int fd;
-
-                //setenv("GCOV_PREFIX", "/root", 1);
-                //setenv("GCOV_PREFIX_STRIP", "8", 1);
-
-                /* Release our controlling tty */
-                (void)ioctl(0, TIOCSCTTY, 0);
-
-                fd = open("/dev/null", O_RDWR);
-                dup2(fd, 0);
-                dup2(fd, 1);
-                dup2(fd, 2);
-                close(fd);
-                close(GLOB.serverfd);
-
-                execvp(selected_entry->command, argv);
-                exit(EXIT_FAILURE);
-            }
+            run_command(selected_entry->command);
         }
         else if(dragging)
         {
