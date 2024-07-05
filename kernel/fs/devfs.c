@@ -464,7 +464,6 @@ static inline struct dirent *fs_node_to_dirent(int index, char *name,
  */
 int devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
                   struct cached_page_t **dbuf, size_t *dbuf_off)
-                  //struct IO_buffer_s **dbuf, size_t *dbuf_off)
 {
     if(!dir)
     {
@@ -532,7 +531,6 @@ int devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
 int devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
                            struct dirent **entry,
                            struct cached_page_t **dbuf, size_t *dbuf_off)
-                           //struct IO_buffer_s **dbuf, size_t *dbuf_off)
 {
     if(!dir || !devfs_root || dir->inode != devfs_root->inode || !node)
     {

@@ -290,6 +290,8 @@ struct fs_node_t *rootfs_init(void)
 
                 if(devfs_read_inode(rootdisk) == 0)
                 {
+                    printk("Mounting '%s'..\n", path);
+
                     // get the dev id
                     dev = rootdisk->blocks[0];
 
@@ -313,8 +315,6 @@ struct fs_node_t *rootfs_init(void)
 
         kfree(path);
     }
-
-
 
     printk("Trying to remount sysroot readonly..\n");
 
