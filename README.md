@@ -45,9 +45,16 @@ This is mostly to keep track of where we are at and what needs to be done next:
 # Prebuilt packages
 
 You can download a prebuilt bootable disk image that includes everything (including the ported software) from the [releases page](https://github.com/moisam/laylaos/releases).
-Be mindful, however, that the unzipped disk image is likely to be big (3+ GiB in size).
+Be mindful, however, that the unzipped disk image is likely to be big (3+ GiB in size). You can use this image to run LaylaOS under [Bochs](https://bochs.sourceforge.io/) or [QEmu](https://www.qemu.org/).
 
-See below if you want to build LaylaOS from source.
+If you want to try LaylaOS under [Oracle VM VirtualBox](https://www.virtualbox.org/), you will need to convert the bootable disk image into a VDI image. This can be done by running:
+`VBoxManage convertfromraw test_ext2.img test_ext2.vdi`
+
+You can then create a new virtual machine under VirtualBox using the disk image. You will probably face a problem as the image contains two files (`/boot/grub/grub.cfg` and `/etc/fstab`) with a hardcoded boot device name (something like `/dev/hda4`). To be able to use this disk as a SATA (or AHCI) disk under VirtualBox you need to either:
+* Edit these two files in the disk image you downloaded and change the device name to `/dev/sda4` (assuming you connect the disk at SATA port 0; the image contains 4 partitions)
+* Build LaylaOS from source and create the bootable disk image using: `./create_bootable_disk.sh rootdev sda4`
+
+See below if you decided to build LaylaOS from source.
 
 # How to build
 
