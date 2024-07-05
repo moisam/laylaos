@@ -8,13 +8,17 @@
 # Script to create a bootable harddisk image from LaylaOS build tree.
 #
 # Use as:
-#   create_bootable_disk.sh [x86_64|i686] [sysroot PATH] [outdir PATH]
+#   create_bootable_disk.sh [x86_64|i686] [sysroot PATH] [outdir PATH] [rootdev ROOTDEV]
 #
 # If you don't specify an architecture, x86_64 is selected by default.
 # If you don't specify sysroot path, the directory ./build/sysroot/ is
 #   used by default.
 # If you don't specify outdir path, the current working directory is
 #   used by default.
+#
+# Please DO NOT set ROOTDEV unless you know what you are doing. The main
+# reason this option exists is to allow us to test AHCI driver code (in 
+# which case a value like 'sda4' would be expected).
 #
 
 # build 64bit OS by default
@@ -40,13 +44,17 @@ do
             echo "$0: create a bootable harddisk image from LaylaOS build tree"
             echo
             echo "Usage:"
-            echo "  $0 [x86_64|i686] [sysroot PATH] [outdir PATH]"
+            echo "  $0 [x86_64|i686] [sysroot PATH] [outdir PATH] [rootdev ROOTDEV]"
             echo
             echo "If you don't specify an architecture, x86_64 is selected by default."
             echo "If you don't specify sysroot path, the directory ./build/sysroot/ is"
             echo "used by default."
             echo "If you don't specify outdir path, the current working directory is"
             echo "used by default."
+            echo
+            echo "Please DO NOT set ROOTDEV unless you know what you are doing. The main"
+            echo "reason this option exists is to allow us to test AHCI driver code (in "
+            echo "which case a value like 'sda4' would be expected)."
             echo
             exit 0
             ;;
@@ -65,6 +73,11 @@ do
             i=$((i + 1))
             shift 1
             OUTDIR="$1"
+            ;;
+        rootdev)
+            i=$((i + 1))
+            shift 1
+            ROOTDEV="$1"
             ;;
         *)
             # anything else is trash
@@ -270,7 +283,7 @@ sudo grub-install --target=i386-pc \
 # create the disk
 ./copy_files_to_disk.sh tdrive ${SYSROOT}
 
-sudo sed -i -e "s/hda1/${ROOTDEV}/" -e "s/sda1/${ROOTDEV}/" tdrive/etc/fstab
+sudo sed -i -e "s/hda./${ROOTDEV}/" -e "s/sda./${ROOTDEV}/" tdrive/etc/fstab
 
 #sudo mkdir -p tdrive/boot/grub
 
