@@ -121,7 +121,7 @@ int ahci_satapi_write(struct ata_dev_s *dev, size_t lba, int __sectors,
 int ahci_strategy(struct disk_req_t *req)
 {
     uint32_t block;
-    int res;
+    int res = 0;
     int sectors_per_block, sectors_to_read;
     int min = MINOR(req->dev);
     struct ata_dev_s *dev = ahci_disk_dev[min];
@@ -133,7 +133,7 @@ int ahci_strategy(struct disk_req_t *req)
         return -ENODEV;
     }
 
-    KDEBUG("ahci_strategy - dev 0x%x, lba 0x%x, block_no 0x%x, bps 0x%x\n", req->dev, part ? part->lba : 0, req->blockno, dev->bytes_per_sector);
+    //printk("ahci_strategy - dev 0x%x, lba 0x%x, block_no 0x%x, bps 0x%x\n", req->dev, part ? part->lba : 0, req->blockno, dev->bytes_per_sector);
 
     sectors_to_read = req->datasz / dev->bytes_per_sector;
     sectors_per_block = req->fs_blocksz / dev->bytes_per_sector;
@@ -141,43 +141,54 @@ int ahci_strategy(struct disk_req_t *req)
 
     block += part ? part->lba : 0;
 
-    KDEBUG("ata_strategy - sectors 0x%x, block 0x%x, lba 0x%x, block_no 0x%x, linear_addr 0x%x\n", sectors, block, part ? part->lba : 0, req->blockno, block * dev->bytes_per_sector);
+    //printk("ahci_strategy - sectors_to_read 0x%x, block 0x%x, lba 0x%x, block_no 0x%x, linear_addr 0x%x\n", sectors_to_read, block, part ? part->lba : 0, req->blockno, block * dev->bytes_per_sector);
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
+
+    // The page cache layer passes us virtual buffer addresses, but we need
+    // to convert these to physical memory addresses in order to pass them to
+    // the disk driver. We know how big a physical page is, and we can find
+    // out how many disk sectors fit in one page. We can then read a bunch of
+    // sectors at a time (a memory page worth of them), and continue doing this
+    // (in the for-loop below) until we have sectors that do not fill a memory
+    // page, which we read in the if-block after the loop.
+    int sectors_per_page = PAGE_SIZE / dev->bytes_per_sector;
+    int pages = sectors_to_read / sectors_per_page;
+    int i;
+    int (*func)(struct ata_dev_s *, size_t, int, uintptr_t);
+    uintptr_t virt = req->data;
 
     if(!req->write)
     {
-        if(dev->type == IDE_SATA)
-        {
-            res = ahci_sata_read(dev, block, sectors_to_read,
-                                 get_phys_addr(req->data));
-        }
-        else
-        {
-            res = ahci_satapi_read(dev, block, sectors_to_read,
-                                   get_phys_addr(req->data));
-        }
+        func = (dev->type == IDE_SATA) ? ahci_sata_read : ahci_satapi_read;
     }
     else
     {
-        if(dev->type == IDE_SATA)
-        {
-            res = ahci_sata_write(dev, block, sectors_to_read,
-                                  get_phys_addr(req->data));
-        }
-        else
-        {
-            res = ahci_satapi_write(dev, block, sectors_to_read,
-                                    get_phys_addr(req->data));
-        }
-    }
-    
-    if(res != 0)
-    {
-        res = -EIO;
+        func = (dev->type == IDE_SATA) ? ahci_sata_write : ahci_satapi_write;
     }
 
-    KDEBUG("ata_strategy: done\n");
-    return res;
+    for(i = 0; i < pages; i++, block += sectors_per_page, virt += PAGE_SIZE)
+    {
+        //printk("ahci_strategy: i %d/%d\n", i, pages);
+        uintptr_t phys = get_phys_addr(virt) + (virt - align_down(virt));
+
+        if((res = func(dev, block, sectors_per_page, phys)) != 0)
+        {
+            break;
+        }
+
+        sectors_to_read -= sectors_per_page;
+    }
+
+    if(res == 0 && sectors_to_read)
+    {
+        //printk("ahci_strategy: last page\n");
+        uintptr_t phys = get_phys_addr(virt) + (virt - align_down(virt));
+
+        res = func(dev, block, sectors_to_read, phys);
+    }
+
+    //printk("ahci_strategy: done\n");
+    return res ? -EIO : (int)(sectors_to_read * dev->bytes_per_sector);
 }
 
 
