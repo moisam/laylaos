@@ -161,6 +161,7 @@ int widget_init_volume(void)
 
     widget->win.w = 25;
     widget->win.repaint = widget_repaint_volume;
+    widget->win.title = "Volume";
     widget->flags |= WIDGET_FLAG_INITIALIZED;
 
     return 1;

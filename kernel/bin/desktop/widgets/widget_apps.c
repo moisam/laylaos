@@ -418,6 +418,7 @@ int widget_init_apps(void)
     
     apps_widget->win.w = 160;
     apps_widget->win.repaint = widget_repaint_apps;
+    apps_widget->win.title = "Applications";
     apps_widget->button_click_callback = widget_mouseup_apps;
     apps_widget->flags |= (WIDGET_FLAG_INITIALIZED | WIDGET_FLAG_FLOAT_LEFT);
 

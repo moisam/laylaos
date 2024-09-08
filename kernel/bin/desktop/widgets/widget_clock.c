@@ -310,6 +310,7 @@ int widget_init_clock(void)
     
     widget->win.w = 200;
     widget->win.repaint = widget_repaint_clock;
+    widget->win.title = "Clock";
     widget->periodic = widget_periodic_clock;
     widget->button_click_callback = widget_mouseup_clock;
     widget->flags |= WIDGET_FLAG_INITIALIZED;
