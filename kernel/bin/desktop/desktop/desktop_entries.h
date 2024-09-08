@@ -30,6 +30,7 @@
 #define DESKTOP_ENTRIES_H
 
 void load_desktop_entries(void);
+void repaint_desktop_entries(void);
 void desktop_mouseover(struct window_t *window, int x, int y,
                        mouse_buttons_t buttons, unsigned long long ticks);
 

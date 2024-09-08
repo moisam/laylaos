@@ -443,3 +443,32 @@ void load_desktop_entries(void)
     free(p);
 }
 
+
+void repaint_desktop_entries(void)
+{
+    struct app_entry_t *desktop_entry;
+    int x = 0, y = TOPPANEL_HEIGHT;
+    int desktop_height = GLOB.screen.h - TOPPANEL_HEIGHT - BOTTOMPANEL_HEIGHT;
+    struct font_t *font = GLOB.sysfont.data ? &GLOB.sysfont : &GLOB.mono;
+    int charh = char_height(font, ' ');
+
+    for(desktop_entry = first_entry;
+        desktop_entry != NULL;
+        desktop_entry = desktop_entry->next)
+    {
+        paint_entry(desktop_entry);
+        y += ICONWIDTH + (charh * 2);
+        
+        if(y + ICONWIDTH + charh >= desktop_height)
+        {
+            x += ENTRYWIDTH;
+            y = TOPPANEL_HEIGHT;
+            
+            if(x >= GLOB.screen.w)
+            {
+                break;
+            }
+        }
+    }
+}
+

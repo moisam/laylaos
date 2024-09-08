@@ -37,9 +37,9 @@
 #include <sys/hash.h>
 #include <sys/wait.h>
 #include "../include/client/window.h"
+#include "../include/client/paths.h"
 #include "../include/gui.h"
 #include "../include/event.h"
-#include "../include/rect.h"
 #include "../include/panels/bottom-panel.h"
 #include "../include/panels/top-panel.h"
 #include "../include/keys.h"
@@ -49,10 +49,8 @@
 
 #include "../client/inlines.c"
 
-#define BOTTOM_PANEL_EXE        "/bin/desktop/desktop-bottom-panel"
-#define TOP_PANEL_EXE           "/bin/desktop/desktop-top-panel"
-
 #define GLOB                    __global_gui_data
+#define INIT_HASHSZ             256
 
 pid_t bottom_panel_pid = 0;
 pid_t top_panel_pid = 0;
@@ -61,11 +59,11 @@ winid_t top_panel_winid = 0;
 winid_t mywinid = 0;
 winid_t alttab_winid = 0;
 
-#define INIT_HASHSZ             256
-
 struct hashtab_t *loaded_icons = NULL;
 struct window_t *desktop_window;
 struct winent_t *winentries = NULL;
+
+Rect desktop_bounds;
 
 
 void remove_win_entry(winid_t winid)
@@ -393,23 +391,9 @@ void sigsegv_handler(int signum __attribute__((unused)))
 */
 
 
-void draw_desktop_background(void)
-{
-    gc_fill_rect(desktop_window->gc, 0, 0,
-                 desktop_window->w, desktop_window->h, 0x16A085FF);
-}
-
-
-void redraw_desktop_background(int x, int y, int w, int h)
-{
-    gc_fill_rect(desktop_window->gc, x, y, w, h, 0x16A085FF);
-}
-
-
 int main(int argc, char **argv)
 {
     /* volatile */ struct event_t *ev = NULL;
-    Rect desktop_bounds;
     struct window_attribs_t attribs;
     struct sigaction act;
 
@@ -621,10 +605,30 @@ int main(int argc, char **argv)
             }
 
             case EVENT_KEY_PRESS:
+                // if ALT-TAB was pressed, show the tabbing window
                 if(ev->key.code == KEYCODE_TAB &&
                    ev->key.modifiers == MODIFIER_MASK_ALT)
                 {
                     desktop_prep_alttab();
+                }
+                // if the Apps or Calculator key was pressed, pass it to the
+                // top panel so it can show the Applications menu and the
+                // Calculator app, respectively
+                else if((ev->key.code == KEYCODE_APPS || 
+                         ev->key.code == KEYCODE_CALC) &&
+                            top_panel_winid > 0)
+                {
+                    struct event_t ev2;
+
+                    ev2.src = TO_WINID(GLOB.mypid, 0);
+                    ev2.dest = top_panel_winid;
+                    ev2.key.modifiers = ev->key.modifiers;
+                    ev2.key.code = ev->key.code;
+                    ev2.type = EVENT_KEY_PRESS;
+                    ev2.valid_reply = 1;
+
+                    direct_write(GLOB.serverfd, (void *)&ev2, 
+                                                sizeof(struct event_t));
                 }
                 break;
 
@@ -636,6 +640,100 @@ int main(int argc, char **argv)
                     desktop_finish_alttab();
                 }
                 break;
+
+            case REQUEST_GET_DESKTOP_BACKGROUND:
+                if(background_is_image)
+                {
+                    if(!background_image_path)
+                    {
+                        struct event_t ev2;
+
+                        ev2.type = EVENT_DESKTOP_BACKGROUND_INFO;
+                        ev2.seqid = ev->seqid;
+                        ev2.src = TO_WINID(GLOB.mypid, 0);
+                        ev2.dest = ev->src;
+                        ev2.err._errno = EINVAL;
+                        ev2.valid_reply = 0;
+                        direct_write(GLOB.serverfd, (void *)&ev2, sizeof(ev2));
+                        break;
+                    }
+
+                    size_t pathlen = strlen(background_image_path) + 1;
+                    size_t tmpsz = sizeof(struct event_desktop_bg_t) + 
+                                   pathlen;
+                    char tmp[tmpsz];
+                    struct event_desktop_bg_t *evres = 
+                                   (struct event_desktop_bg_t *)tmp;
+
+                    evres->src = TO_WINID(GLOB.mypid, 0);
+                    evres->dest = ev->src;
+                    evres->datasz = pathlen;
+                    A_memcpy(evres->data, background_image_path, pathlen);
+                    evres->seqid = ev->seqid;
+                    evres->bg_is_image = 1;
+                    evres->type = EVENT_DESKTOP_BACKGROUND_INFO;
+                    evres->valid_reply = 1;
+
+                    direct_write(GLOB.serverfd, (void *)evres, tmpsz);
+                }
+                else
+                {
+                    size_t tmpsz = sizeof(struct event_desktop_bg_t) + 
+                                   sizeof(uint32_t);
+                    char tmp[tmpsz];
+                    struct event_desktop_bg_t *evres = 
+                                   (struct event_desktop_bg_t *)tmp;
+
+                    evres->src = TO_WINID(GLOB.mypid, 0);
+                    evres->dest = ev->src;
+                    evres->datasz = sizeof(uint32_t);
+                    *((uint32_t *)evres->data) = background_color;
+                    evres->seqid = ev->seqid;
+                    evres->bg_is_image = 0;
+                    evres->type = EVENT_DESKTOP_BACKGROUND_INFO;
+                    evres->valid_reply = 1;
+
+                    direct_write(GLOB.serverfd, (void *)evres, tmpsz);
+                }
+                break;
+
+            case REQUEST_SET_DESKTOP_BACKGROUND:
+            {
+                struct event_desktop_bg_t *evres =
+                            (struct event_desktop_bg_t *)ev;
+
+                if(evres->bg_is_image)
+                {
+                    if(background_image_path)
+                    {
+                        free(background_image_path);
+                        background_image_path = NULL;
+                    }
+
+                    background_image_path = strdup(evres->data);
+                    background_is_image = 1;
+                    background_image_aspect = evres->bg_image_aspect;
+
+                    if(background_image_aspect < DESKTOP_BACKGROUND_FIRST_ASPECT ||
+                       background_image_aspect > DESKTOP_BACKGROUND_LAST_ASPECT)
+                    {
+                        // invalid value given, use default
+                        background_image_aspect = DESKTOP_BACKGROUND_CENTERED;
+                    }
+
+                    load_desktop_background();
+                }
+                else
+                {
+                    background_color = *((uint32_t *)evres->data);
+                    background_is_image = 0;
+                }
+
+                draw_desktop_background();
+                repaint_desktop_entries();
+                window_invalidate(desktop_window);
+                break;
+            }
 
             default:
                 break;

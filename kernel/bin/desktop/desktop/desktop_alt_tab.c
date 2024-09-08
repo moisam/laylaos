@@ -67,6 +67,9 @@ void desktop_init_alttab(void)
     key_bind(KEYCODE_LALT, 0, KEYBINDING_NOTIFY);
     key_bind(KEYCODE_RALT, 0, KEYBINDING_NOTIFY);
 
+    key_bind(KEYCODE_APPS, 0, KEYBINDING_NOTIFY_ONCE);
+    key_bind(KEYCODE_CALC, 0, KEYBINDING_NOTIFY_ONCE);
+
     default_icon_bitmap.width = ICONWIDTH;
     default_icon_bitmap.height = ICONWIDTH;
     default_icon_bitmap.data = NULL;
