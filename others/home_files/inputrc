@@ -1,14 +1,12 @@
 set editing-mode emacs
 
 # allow the use of the Home/End keys
-# "\e[1~": beginning-of-line
-# "\e[4~": end-of-line
-"\e[H": beginning-of-line
-"\e[Y": end-of-line
+"\e[1~": beginning-of-line
+"\e[4~": end-of-line
+# "\e[H": beginning-of-line
+# "\e[Y": end-of-line
 
 # allow the use of the Delete/Insert keys
-# "\e[3~": delete-char
-# "\e[2~": quoted-insert
 "\e[3~": delete-char
 "\e[2~": quoted-insert
 
@@ -18,6 +16,10 @@ set editing-mode emacs
 "\e[6~": end-of-history
 # "\e[5": beginning-of-history
 # "\e[6": end-of-history
+
+# mappings for Ctrl-left-arrow and Ctrl-right-arrow for word moving
+"\e[1;5C": forward-word
+"\e[1;5D": backward-word
 
 set echo-control-characters Off
 
