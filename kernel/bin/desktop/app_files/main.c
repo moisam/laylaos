@@ -29,6 +29,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
+#undef _GNU_SOURCE
 #define _GNU_SOURCE     1
 #undef __GNU_VISIBLE
 #define __GNU_VISIBLE   1
@@ -1120,7 +1121,7 @@ int main(int argc, char **argv)
     attribs.gravity = WINDOW_ALIGN_CENTERBOTH;
     attribs.x = 0;
     attribs.y = 0;
-    attribs.w = 410;
+    attribs.w = 420;
     attribs.h = 300;
     attribs.flags = WINDOW_HASMENU | WINDOW_HASSTATUSBAR;
 
