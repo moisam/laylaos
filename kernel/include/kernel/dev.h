@@ -400,9 +400,12 @@ ssize_t uranddev_write(dev_t dev, unsigned char *buf, size_t count);
  *
  * Switch function to read bytes from a memory character device.
  *
- * @param   dev     device id
+ * @param   f       open file struct
+ * @param   pos     offset in \a f to read from
  * @param   buf     buffer to read to
  * @param   count   number of bytes to read
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
  *
  * @return number of bytes read on success, -(errno) on failure
  */
@@ -414,9 +417,12 @@ ssize_t memdev_char_read(struct file_t *f, off_t *pos,
  *
  * Switch function to write bytes to a memory character device.
  *
- * @param   dev     device id
+ * @param   f       open file struct
+ * @param   pos     offset in \a f to write to
  * @param   buf     buffer to write from
  * @param   count   number of bytes to write
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
  *
  * @return number of bytes written on success, -(errno) on failure
  */
@@ -429,9 +435,12 @@ ssize_t memdev_char_write(struct file_t *f, off_t *pos,
  *
  * Switch function to read bytes from an input core character device.
  *
- * @param   dev     device id
+ * @param   f       open file struct
+ * @param   pos     offset in \a f to read from
  * @param   buf     buffer to read to
  * @param   count   number of bytes to read
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
  *
  * @return number of bytes read on success, -(errno) on failure
  */
@@ -443,9 +452,12 @@ ssize_t inputdev_read(struct file_t *f, off_t *pos,
  *
  * Switch function to write bytes to an input core character device.
  *
- * @param   dev     device id
+ * @param   f       open file struct
+ * @param   pos     offset in \a f to write to
  * @param   buf     buffer to write from
  * @param   count   number of bytes to write
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
  *
  * @return number of bytes written on success, -(errno) on failure
  */
@@ -580,9 +592,12 @@ int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
  *
  * Switch function to write bytes to a sound character device.
  *
- * @param   dev     device id
+ * @param   f       open file struct
+ * @param   pos     offset in \a f to write to
  * @param   buf     buffer to write from
  * @param   count   number of bytes to write
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
  *
  * @return number of bytes written on success, -(errno) on failure
  */
@@ -594,9 +609,12 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
  *
  * Switch function to read bytes from a sound character device.
  *
- * @param   dev     device id
+ * @param   f       open file struct
+ * @param   pos     offset in \a f to read from
  * @param   buf     buffer to read to
  * @param   count   number of bytes to read
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
  *
  * @return number of bytes read on success, -(errno) on failure
  */
@@ -628,10 +646,12 @@ int snddev_select(struct file_t *f, int which);
  *
  * Perform write operations on block disk devices.
  *
- * @param   dev         device id
- * @param   pos         offset in \a buf to write from
+ * @param   f           open file struct
+ * @param   pos         offset in \a f to write to
  * @param   buf         buffer to write from
  * @param   count       number of bytes to write
+ * @param   kernel      non-zero if the caller is a kernel function, zero if
+ *                        it is a syscall from userland
  *
  * @return number of bytes written on success, -(errno) on failure
  */
@@ -643,10 +663,12 @@ ssize_t block_write(struct file_t *f, off_t *pos,
  *
  * Perform read operations on block disk devices.
  *
- * @param   dev         device id
- * @param   pos         offset in \a buf to read to
+ * @param   f           open file struct
+ * @param   pos         offset in \a f to read from
  * @param   buf         buffer to read to
  * @param   count       number of bytes to read
+ * @param   kernel      non-zero if the caller is a kernel function, zero if
+ *                        it is a syscall from userland
  *
  * @return number of bytes read on success, -(errno) on failure
  */

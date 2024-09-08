@@ -210,7 +210,7 @@ void clock_check_waiters(void);
  * struct representing the task on the waiters queue.
  *
  * @param   head                pointer to the waiters queue head
- * @param   task                the waiting task
+ * @param   pid                 the waiting task's pid
  * @param   timerid             timer id of the POSIX timer the task is
  *                                waiting on
  * @param   remaining_ticks     if the timer has not expired yet, the 
@@ -232,7 +232,7 @@ void waiter_free(struct clock_waiter_t *w);
  * Perform a nanosleep on clock \a clock_id. Internal function that is
  * called by syscall_clock_nanosleep() and syscall_timer_settime().
  *
- * @param   task        the waiting task
+ * @param   pid         the waiting task's pid
  * @param   clock_id    clock id (only CLOCK_REALTIME and CLOCK_MONOTONIC are
  *                        currently supported)
  * @param   flags       flags, either 0 or TIMER_ABSTIME

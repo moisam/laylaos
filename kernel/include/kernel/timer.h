@@ -267,7 +267,7 @@ int syscall_alarm(unsigned int seconds);
  *
  * Search the given \a task's timer list to find the timer with id \a timerid.
  *
- * @param   task        pointer to task
+ * @param   tgid        task group id
  * @param   timerid     timer id (positive integer)
  *
  * @return  POSIX timer on success, NULL on failure.
@@ -348,7 +348,7 @@ int syscall_timer_getoverrun(ktimer_t timerid);
  * Disarm and remove all POSIX timers set by the given \a task.
  * Called during execve() and on task termination.
  *
- * @param   task        pointer to task
+ * @param   tgid        task group id
  *
  * @return  nothing.
  */

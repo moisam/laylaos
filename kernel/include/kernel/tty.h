@@ -62,6 +62,7 @@
 #define TTY_FLAG_NO_TEXT          0x100     /**< no text (used by the gui) */
 #define TTY_FLAG_ACTIVE           0x200     /**< the active tty (there can be
                                                    only one - highlander) */
+#define TTY_FLAG_APP_KEYMODE      0x400     /**< tty in application keypad mode */
 
 /*
  * Flags for pseudo-ttys
@@ -79,6 +80,13 @@
 #define ATTRIB_BRIGHT_BG        0x08        /**< output text with 
                                                    bright background */
 
+/*
+ * Terminal buffer cell attribs
+ */
+#define CELL_FLAG_BOLD          0x01        /**< cell is bold */
+#define CELL_FLAG_CHARSET_LATIN 0x02        /**< uses default Latin charset */
+#define CELL_FLAG_CHARSET_VT100 0x04        /**< uses VT100 graphics charset */
+#define CELL_FLAG_CHARSET_SUPPL 0x08        /**< uses DEC supplemental charset */
 
 #define NTTYS                   7           /**< number of virtual terminals */
 
@@ -140,6 +148,7 @@ struct tty_t
 
     unsigned long npar,             /**< number of CSI-sequence parameters */
                   par[NPAR];        /**< parameters of a CSI-sequence */
+    char palette_str[8];            /**< temp string used when setting palette */
 
     uint32_t vga_width,             /**< display width */
              vga_height;            /**< display height */
@@ -149,6 +158,7 @@ struct tty_t
     uint8_t color,                  /**< current color */
             default_color;          /**< default color */
     uint16_t *buf;                  /**< terminal buffer */
+    uint8_t *cellattribs;           /**< attributes for terminal buffer cells */
 
     // used by the framebuffer device
     uint32_t attribs;               /**< display attributes */
@@ -156,8 +166,15 @@ struct tty_t
         cursor_enabled;             /**< is the cursor enabled? */
     uint32_t fb_fgcolor,            /**< framebuffer foreground color */
              fb_bgcolor;            /**< framebuffer background color */
-
+    uint32_t fb_palette[16];        /**< current color palette */
     uint8_t state;                  /**< terminal state */
+    uint8_t *g[2], *gbold[2];       /**< pointers to G0 and G1 fonts, for both
+                                         bold and normal states */
+    uint8_t *gl, *glbold;           /**< GL is used for chars with the highest
+                                         bit clear, G1 for those with the 
+                                         highest bit set */
+    uint8_t *gr, *grbold;           /**< GR is used for chars with the highest
+                                         bit set */
 
     // saved state
     struct
@@ -277,19 +294,6 @@ int tty_select(struct file_t *f, int which);
 int tty_poll(struct file_t *f, struct pollfd *pfd);
 
 /**
- * @brief Get a terminal device's tty struct.
- *
- * Get the terminal structure (\ref tty_t "struct tty_t") that represents the
- * terminal device (tty) that is identified by the device id given in
- * \a dev.
- *
- * @param   dev device id
- *
- * @return  pointer to the terminal device's tty struct.
- */
-//struct tty_t *get_struct_tty(dev_t dev);
-
-/**
  * @brief Send a tty signal.
  *
  * Send a signal to a terminal device's foreground/background process group.
@@ -317,11 +321,12 @@ int syscall_vhangup(void);
  *
  * Read data from a terminal (tty) device.
  *
- * @param   dev     device number of the terminal device to read from:
- *                    minor 0 is the current (tty0) device, minors 1 through 
- *                    63 are the possible terminal devices (tty1 - tty63)
+ * @param   f       open file struct
+ * @param   pos     offset in \a f to read from
  * @param   buf     input buffer where data is copied
  * @param   count   number of characters to read
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
  *
  * @return  number of characters read on success, -(errno) on failure.
  */
@@ -333,11 +338,12 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
  *
  * Write data to a terminal (tty) device.
  *
- * @param   dev     device number of the terminal device to write to:
- *                    minor 0 is the current (tty0) device, minors 1 through 
- *                    63 are the possible terminal devices (tty1 - tty63)
+ * @param   f       open file struct
+ * @param   pos     offset in \a f to write to
  * @param   buf     output buffer where data is copied from
  * @param   count   number of characters to write
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
  *
  * @return  number of characters written on success, -(errno) on failure.
  */

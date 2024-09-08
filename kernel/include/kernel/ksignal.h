@@ -149,17 +149,6 @@ unsigned long get_ignored_task_signals(struct task_t *task);
 void init_signals(void);
 
 /**
- * @brief Check for pending signals.
- *
- * Check if the given task has at least one pending deliverable signal.
- *
- * @param   task        task whose signals to check
- *
- * @return  1 if task has one or more pending signals, 0 otherwise.
- */
-//int has_pending_signals(struct task_t *task);
-
-/**
  * @brief Check and dispatch pending signals.
  *
  * Check if the current task has at least one pending deliverable signal and 

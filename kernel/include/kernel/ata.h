@@ -437,11 +437,16 @@ extern struct task_t *disk_task;
  * task (if needed) to perform the request. The function sleeps until an
  * IRQ is received and the disk sector is read or written.
  *
- * @param   dev     ATA device
+ * @param   dev         ATA device
  * @param   lba         Logical Block Address (LBA) of the disk sector to
  *                        read or write
  * @param   numsects    number of disk sectors to read or write
  * @param   buf         buffer to read/write from/to
+ * @param   write       non-zero if requesting a write, zero for reads
+ * @param   func        optional function to handle the read/write request
+ *                        (used in special places, like the CD-ROM driver
+ *                         when it is sending a media sense packet). Either
+ *                         \a buf OR \a func should be passed, NOT BOTH
  *
  * @return  count of bytes read or written on success, -(errno) on failure.
  *

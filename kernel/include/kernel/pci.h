@@ -292,6 +292,7 @@ void pci_check_all_buses(void);
  *
  * @param   pci         PCI device
  * @param   handler     the IRQ handler to register
+ * @param   name        IRQ handler short name
  *
  * @return  nothing.
  */

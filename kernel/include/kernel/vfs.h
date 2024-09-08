@@ -742,7 +742,7 @@ ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
  *
  * @see     vfs_read_node()
  */
-ssize_t vfs_read(struct file_t *f, off_t *pos,
+ssize_t vfs_read(struct file_t *file, off_t *pos,
                  unsigned char *buf, size_t count, int kernel);
 
 /**
@@ -782,7 +782,7 @@ ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
  *
  * @see     vfs_write_node()
  */
-ssize_t vfs_write(struct file_t *f, off_t *pos,
+ssize_t vfs_write(struct file_t *file, off_t *pos,
                   unsigned char *buf, size_t count, int kernel);
 
 /**

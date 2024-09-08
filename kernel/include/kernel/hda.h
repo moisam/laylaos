@@ -127,8 +127,8 @@
 /*
  * BDL memory size
  */
-#define BDL_ENTRIES                 8
-#define BDL_BUFSZ                   PAGE_SIZE
+#define BDL_ENTRIES                 16
+#define BDL_BUFSZ                   (PAGE_SIZE >> 1)
 
 
 /*
@@ -172,6 +172,7 @@ struct hda_buf_t
 {
     size_t size;            /**< buffer size in bytes */
     struct hda_buf_t *next; /**< next buffer in device list */
+    uint8_t *curptr;
     uint8_t buf[];          /**< buffer data */
 };
 
@@ -197,6 +198,10 @@ struct hda_out_t
     struct hda_bdl_entry_t *bdl;    /**< BDL entries */
     uintptr_t vbdl[BDL_ENTRIES];    /**< BDL virtual memory address */
 
+    int hasdata[BDL_ENTRIES];
+    uint32_t curdesc;
+    ssize_t bytes_playing;          /**< count of bytes currently playing */
+
     struct hda_out_t *next;         /**< next output for this device */
 };
 
@@ -210,6 +215,7 @@ struct hda_out_t
 struct hda_queue_t
 {
     int queued;                 /**< number of queued entries */
+    size_t bytes;               /**< count of queued bytes in all entries */
     struct hda_buf_t *head,     /**< pointer to queue head */
                      *tail;     /**< pointer to queue tail */
     struct kernel_mutex_t lock; /**< queue lock */

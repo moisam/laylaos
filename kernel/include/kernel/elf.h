@@ -316,7 +316,8 @@ enum elf_type
  *
  * @param   node    file node referring to the ELF file to be loaded
  * @param   block0  buffer containing the first disk block from the ELF file
- * @param   eip     the ELF's entry point is returned here
+ * @param   auxv    the auxiliary vector in which several bits of info, 
+ *                    including the ELF's entry point, is stored
  * @param   flags   zero or \ref ELF_FLAG_LOAD_NOW
  *
  * @return  zero on success, -(errno) on failure.
@@ -330,7 +331,8 @@ int elf_load_file(struct fs_node_t *node, struct cached_page_t *block0,
  * Find the dynamic loader (ldso) executable and load it into memory.
  * The dynamic loader loads dynamically-linked ELF executables.
  *
- * @param   eip     the dynamic loader's entry point is returned here
+ * @param   auxv    the auxiliary vector in which several bits of info, 
+ *                    including the dynamic loader's entry point, is stored
  *
  * @return  zero on success, -(errno) on failure.
  */
