@@ -15,27 +15,30 @@
 ##############################################
 
 # libs with no dependencies -- a.k.a. easy wins
-NODEPS_LIBS="zlib xz libiconv libexpat libffi libucontext fribidi gzip hunspell"
+NODEPS_LIBS="zlib xz libiconv libexpat libffi libucontext fribidi gzip hunspell jsoncpp openssl"
 
 # image, multimedia and font libs
 IMAGE_LIBS="libjpeg libpng16 libtiff libwebp"
 MULTIMEDIA_LIBS="aomedia dav1d libavif libdvdread faad2 twolame liba52 libogg"
-MULTIMEDIA_LIBS="${MULTIMEDIA_LIBS} flac vorbis libcaca"
+MULTIMEDIA_LIBS="${MULTIMEDIA_LIBS} flac vorbis libcaca opus opusfile"
 
 FONT_LIBS="freetype fontconfig harfbuzz"
-SDL_LIBS="SDL2 SDL2_mixer SDL2_image"
+SDL_LIBS="SDL2 SDL2_mixer SDL2_image SDL2_ttf SDL2_net"
 
-MULTIMEDIA_LIBS2="libtheora libass mplayer ffmpeg"
+MULTIMEDIA_LIBS2="libtheora libass ffmpeg openal mplayer"
 
 # terminal apps and games
-TERMINAL_APPS_AND_LIBS="ncurses coreutils bash inetutils nano openssl links curl cups"
-GAMES_APPS="openttd sdl2-doom"
+TERMINAL_APPS_AND_LIBS="ncurses coreutils bash inetutils nano links curl cups gnudos fontopia"
+GAMES_APPS="openttd sdl2-doom uMario DungeonRush freegemas"
 
 # compiler
 COMPILER_APPS="binutils gmp mpfr mpc gcc"
 
 # Qt-based apps
 QT_APPS="FeatherPad"
+
+# PDF
+PDF_APPS_AND_LIBS="DjVuLibre openjpeg jbig2dec mupdf SDLBook"
 
 ##############################################
 # prepare for the build
@@ -121,7 +124,7 @@ build_list()
 
 if [ "x${BUILD_TOOLCHAIN}" == "xyes" ]; then
     cd ../ports/toolchain
-    ./build-toolchain.sh
+    ./build-toolchain.sh || echo "$0: failed to build toolchain"
     cd ${CWD}
 fi
 
@@ -312,8 +315,14 @@ build_list "Vulkan-Headers"
 ##############################################
 
 build_list "glib"
-build_list "opus"
 build_list "gstreamer gst-plugins-base"
+
+# remove the -pthread commandline option from these files (we are using musl,
+# which has pthread functionality built into libc)
+sed -i 's/-pthread//g' ${SYSROOT}/usr/lib/pkgconfig/glib-2.0.pc 
+sed -i 's/-pthread//g' ${SYSROOT}/usr/lib/pkgconfig/gmodule-no-export-2.0.pc 
+sed -i 's/-pthread//g' ${SYSROOT}/usr/lib/pkgconfig/gthread-2.0.pc 
+
 build_list "Qt5"
 
 ##############################################
@@ -322,6 +331,7 @@ build_list "Qt5"
 
 build_list "${COMPILER_APPS}"
 build_list "${QT_APPS}"
+build_list "${PDF_APPS_AND_LIBS}"
 
 ##############################################
 # Done!
