@@ -178,6 +178,14 @@ static void __gui_init(int argc, char **argv, int load_fonts)
         }
     }
 
+    // set the builtin color theme, then request the system theme from
+    // the server
+    for(res = 0; res < THEME_COLOR_LAST; res++)
+    {
+        GLOB.themecolor[res] = builtin_color_theme[res];
+    }
+
+    get_color_theme();
 
     // load default system fonts
     if(load_fonts)

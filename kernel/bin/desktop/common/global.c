@@ -30,4 +30,22 @@
 
 struct __global_gui_data_t __global_gui_data = { {0, }, {0, }, 0, };
 
+uint32_t builtin_color_theme[] =
+{
+    0xCDCFD4FF, 0x3B4047FF, 0x3B4047FF,   // windows
+    0xCDCFD4FF, 0x535E64FF, 0x2E3238FF,
+    0x2E3238FF,
+    0xCDCFD4FF, 0x222226FF, 0x222226FF,   // buttons
+    0xB4B4B8FF, 0x222226FF, 0x222226FF,
+    0xB4B4B8FF /* 0x535E64FF */, 0x222226FF /* 0xCDCFD4FF */, 0x222226FF,
+    0xE0DFE3FF, 0x222226FF, 0x222226FF,
+    0xCDCFD4FF, 0xBABDC4FF, 0x222226FF,
+    0xCDCFD4FF, 0x222226FF,               // status bars
+    0xCDCFD4FF, 0x222226FF,               // scroll bars
+    0xFFFFFFFF, 0x000000FF,               // textboxes
+    0xFFFFFFFF, 0x000000FF,               // inputboxes
+    0x16A085FF, 0xFFFFFFFF,
+    0xCDCFD4FF, 0xBABDC4FF,
+    0x16A085FF, 0x333333FF, 0xDDDDDDFF,   // toggle buttons
+};
 
