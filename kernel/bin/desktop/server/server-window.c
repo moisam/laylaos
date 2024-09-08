@@ -56,6 +56,10 @@ void server_window_draw_border(struct gc_t *gc, struct server_window_t *window)
     int screen_y = window->y;
     int i, iw = 0;
     int ttop = 10;
+    int active = (window->parent->active_child == window);
+    uint32_t border_color = active ?
+                    GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR] :
+                    GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR_INACTIVE];
 
     struct clipping_t saved_clipping;
     gc_get_clipping(gc, &saved_clipping);
@@ -65,7 +69,7 @@ void server_window_draw_border(struct gc_t *gc, struct server_window_t *window)
     gc_fill_rect(gc, screen_x + WINDOW_BORDERWIDTH,
                      screen_y + WINDOW_TITLEHEIGHT - WINDOW_BORDERWIDTH,
                      window->client_w,
-                     WINDOW_BORDERWIDTH, WINDOW_BORDERCOLOR);
+                     WINDOW_BORDERWIDTH, border_color);
 
     if(!(window->flags & WINDOW_NOCONTROLBOX))
     {
@@ -82,9 +86,9 @@ void server_window_draw_border(struct gc_t *gc, struct server_window_t *window)
                      screen_y + WINDOW_BORDERWIDTH,
                      client_w,
                      WINDOW_TITLEHEIGHT - (2 * WINDOW_BORDERWIDTH),
-                     window->parent->active_child == window ? 
-                                                   WINDOW_TITLECOLOR :
-                                                   WINDOW_TITLECOLOR_INACTIVE);
+                     active ? 
+                       GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR] :
+                       GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE]);
 
     // Draw the window title
     if(GLOB.sysfont_bold.data)
@@ -95,9 +99,9 @@ void server_window_draw_border(struct gc_t *gc, struct server_window_t *window)
 
     gc_draw_text(gc, window->title,
                      screen_x + 10 + iw, screen_y + ttop,
-                     window->parent->active_child == window ? 
-                                                 WINDOW_TEXTCOLOR :
-                                                 WINDOW_TEXTCOLOR_INACTIVE, 0);
+                     active ? 
+                       GLOB.themecolor[THEME_COLOR_WINDOW_TEXTCOLOR] :
+                       GLOB.themecolor[THEME_COLOR_WINDOW_TEXTCOLOR_INACTIVE], 0);
 
     gc->font = GLOB.sysfont.data ? &GLOB.sysfont : &GLOB.mono;
 
@@ -132,15 +136,14 @@ void server_window_draw_border(struct gc_t *gc, struct server_window_t *window)
     // Long window titles can spill into the right border, so we draw the
     // border last
     gc_fill_rect(gc, screen_x, screen_y, window->w,
-                     WINDOW_BORDERWIDTH, WINDOW_BORDERCOLOR);
+                     WINDOW_BORDERWIDTH, border_color);
     gc_fill_rect(gc, screen_x, window->yh1 + 1 - WINDOW_BORDERWIDTH,
-                     window->w, WINDOW_BORDERWIDTH, WINDOW_BORDERCOLOR);
+                     window->w, WINDOW_BORDERWIDTH, border_color);
 
     gc_fill_rect(gc, screen_x, screen_y, WINDOW_BORDERWIDTH,
-                     window->h, WINDOW_BORDERCOLOR);
+                     window->h, border_color);
     gc_fill_rect(gc, window->xw1 + 1 - WINDOW_BORDERWIDTH,
-                     screen_y, WINDOW_BORDERWIDTH, window->h, 
-                     WINDOW_BORDERCOLOR);
+                     screen_y, WINDOW_BORDERWIDTH, window->h, border_color);
 
     gc_set_clipping(gc, &saved_clipping);
 }
@@ -155,6 +158,11 @@ void server_window_apply_bound_clipping(struct server_window_t *window,
     Rect *temp_rect, *current_dirty_rect, *clone_dirty_rect;
     List clip_windows;
     struct server_window_t *clipping_window;
+
+    if(!window)
+    {
+        return;
+    }
 
     if((!(window->flags & WINDOW_NODECORATION)) && in_recursion)
     {
@@ -290,6 +298,11 @@ void server_window_paint(struct gc_t *gc, struct server_window_t *window,
     Rect *temp_rect;
     ListNode *current_node;
 
+    if(!window)
+    {
+        return;
+    }
+
     // Start by limiting painting to the window's visible area
     server_window_apply_bound_clipping(window, 0, dirty_regions, 
                                        &window->clipping);
@@ -409,6 +422,11 @@ void server_window_get_windows_above(struct server_window_t *parent,
     clip_windows->root_node = NULL;
     clip_windows->last_node = NULL;
 
+    if(!parent)
+    {
+        return;
+    }
+
     // We just need to get a list of all items in the
     // child list at higher indexes than the passed window
     // We start by finding the passed child in the list
@@ -463,6 +481,11 @@ void server_window_get_windows_below(struct server_window_t *parent,
     clip_windows->count = 0;
     clip_windows->root_node = NULL;
     clip_windows->last_node = NULL;
+
+    if(!parent)
+    {
+        return;
+    }
 
     // We just need to get a list of all items in the
     // child list at higher indexes than the passed window

@@ -59,9 +59,8 @@ extern Rect desktop_bounds;
 extern pid_t mypid;
 
 
-void prep_window_controlbox(void)
+static void alloc_controlbox_bitmaps(void)
 {
-    int x, y;
     static int pixels = CONTROL_BUTTON_LENGTH;
     size_t sz = 4 * pixels * pixels;
 
@@ -84,24 +83,49 @@ void prep_window_controlbox(void)
         abort();
         //return;
     }
+}
+
+
+#define pixels          CONTROL_BUTTON_LENGTH
+
+
+void reinit_window_controlbox(void)
+{
+    int x, y;
+    int sz = sizeof(uint32_t) * pixels * pixels;
+    //uint32_t bgcolor = GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR];
 
     // fill in the backgrounds
+    A_memset(bclose_pixels, 0, sz);
+    A_memset(bmax_pixels, 0, sz);
+    A_memset(bmin_pixels, 0, sz);
+
+    A_memset(bclose_over_pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR, sz);
+    A_memset(bmax_over_pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR, sz);
+    A_memset(bmin_over_pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR, sz);
+
+    A_memset(bclose_disabled_pixels, 0, sz);
+    A_memset(bmax_disabled_pixels, 0, sz);
+    A_memset(bmin_disabled_pixels, 0, sz);
+
+#if 0
     for(y = 0; y < pixels; y++)
     {
         uint32_t where = y * pixels;
 
-        memset32(bclose_pixels + where, CLOSEBUTTON_BGCOLOR, pixels);
-        memset32(bmax_pixels + where, MAXIMIZEBUTTON_BGCOLOR, pixels);
-        memset32(bmin_pixels + where, MINIMIZEBUTTON_BGCOLOR, pixels);
+        memset32(bclose_pixels + where, bgcolor /* CLOSEBUTTON_BGCOLOR */, pixels);
+        memset32(bmax_pixels + where, bgcolor /* MAXIMIZEBUTTON_BGCOLOR */, pixels);
+        memset32(bmin_pixels + where, bgcolor /* MINIMIZEBUTTON_BGCOLOR */, pixels);
 
         memset32(bclose_over_pixels + where, CLOSEBUTTON_MOUSEOVER_BGCOLOR, pixels);
         memset32(bmax_over_pixels + where, MAXIMIZEBUTTON_MOUSEOVER_BGCOLOR, pixels);
         memset32(bmin_over_pixels + where, MINIMIZEBUTTON_MOUSEOVER_BGCOLOR, pixels);
 
-        memset32(bclose_disabled_pixels + where, CLOSEBUTTON_BGCOLOR, pixels);
-        memset32(bmax_disabled_pixels + where, MAXIMIZEBUTTON_BGCOLOR, pixels);
-        memset32(bmin_disabled_pixels + where, MINIMIZEBUTTON_BGCOLOR, pixels);
+        memset32(bclose_disabled_pixels + where, bgcolor /* CLOSEBUTTON_BGCOLOR */, pixels);
+        memset32(bmax_disabled_pixels + where, bgcolor /* MAXIMIZEBUTTON_BGCOLOR */, pixels);
+        memset32(bmin_disabled_pixels + where, bgcolor /* MINIMIZEBUTTON_BGCOLOR */, pixels);
     }
+#endif
     
     // fill the 'X' in the close button
     y = ((pixels / 2) - 4) * pixels;
@@ -221,6 +245,13 @@ void prep_window_controlbox(void)
 }
 
 
+void prep_window_controlbox(void)
+{
+    alloc_controlbox_bitmaps();
+    reinit_window_controlbox();
+}
+
+
 static inline
 void server_window_invalidate_controlbox(int wscreen_x, int wscreen_y,
                                          uint16_t winw)
@@ -242,6 +273,10 @@ void server_window_draw_controlbox(struct gc_t *gc,
     int x, y;
     struct bitmap32_t bitmap = { .width = pixels, .height = pixels };
     struct clipping_t saved_clipping;
+    int active = (window->parent->active_child == window);
+    uint32_t bgcolor = active ?
+                GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR] :
+                GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE];
 
     if(flags & CONTROLBOX_FLAG_CLIP)
     {
@@ -251,18 +286,88 @@ void server_window_draw_controlbox(struct gc_t *gc,
     gc_get_clipping(gc, &saved_clipping);
     gc_set_clipping(gc, &window->clipping);
 
+
+    /*
+    x = wscreen_x + window->w - WINDOW_BORDERWIDTH - pixels;
+    y = wscreen_y + WINDOW_BORDERWIDTH;
+
+    if(window->controlbox_state & CLOSEBUTTON_OVER)
+    {
+        gc_fill_rect(gc, x, y, pixels, pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR);
+        gc_line(gc, x + 8, y + 10, x + 20, y + 18, 1, CLOSEBUTTON_MOUSEOVER_TEXTCOLOR);
+        gc_line(gc, x + 8, y + 18, x + 20, y + 10, 1, CLOSEBUTTON_MOUSEOVER_TEXTCOLOR);
+    }
+    else
+    {
+        gc_fill_rect(gc, x, y, pixels, pixels, bgcolor);
+        gc_line(gc, x + 8, y + 10, x + 20, y + 18, 1, CLOSEBUTTON_TEXTCOLOR);
+        gc_line(gc, x + 8, y + 18, x + 20, y + 10, 1, CLOSEBUTTON_TEXTCOLOR);
+    }
+
+    x -= pixels;
+
+    if(window->flags & WINDOW_NORESIZE)
+    {
+        gc_fill_rect(gc, x, y, pixels, pixels, CLOSEBUTTON_TEXTCOLOR_DISABLED);
+        gc_line(gc, x + 8, y + 24, x + 16, y + 24, 1, CLOSEBUTTON_TEXTCOLOR_DISABLED);
+    }
+    else
+    {
+        if(window->controlbox_state & MAXIMIZEBUTTON_OVER)
+        {
+            gc_fill_rect(gc, x, y, pixels, pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR);
+            gc_line(gc, x + 8, y + 24, x + 16, y + 24, 1, CLOSEBUTTON_MOUSEOVER_TEXTCOLOR);
+        }
+        else
+        {
+            gc_fill_rect(gc, x, y, pixels, pixels, bgcolor);
+            gc_line(gc, x + 8, y + 24, x + 16, y + 24, 1, CLOSEBUTTON_TEXTCOLOR);
+        }
+    }
+
+    x -= pixels;
+
+    if(window->flags & WINDOW_NOMINIMIZE)
+    {
+        gc_fill_rect(gc, x, y, pixels, pixels, CLOSEBUTTON_TEXTCOLOR_DISABLED);
+        gc_draw_rect(gc, x + 8, y + 8, 8, 8, CLOSEBUTTON_TEXTCOLOR_DISABLED);
+        gc_line(gc, x + 8, y + 9, x + 16, y + 9, 1, CLOSEBUTTON_TEXTCOLOR_DISABLED);
+    }
+    else
+    {
+        if(window->controlbox_state & MINIMIZEBUTTON_OVER)
+        {
+            gc_fill_rect(gc, x, y, pixels, pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR);
+            gc_draw_rect(gc, x + 8, y + 8, 8, 8, CLOSEBUTTON_MOUSEOVER_TEXTCOLOR);
+            gc_line(gc, x + 8, y + 9, x + 16, y + 9, 1, CLOSEBUTTON_MOUSEOVER_TEXTCOLOR);
+        }
+        else
+        {
+            gc_fill_rect(gc, x, y, pixels, pixels, bgcolor);
+            gc_draw_rect(gc, x + 8, y + 8, 8, 8, CLOSEBUTTON_TEXTCOLOR);
+            gc_line(gc, x + 8, y + 9, x + 16, y + 9, 1, CLOSEBUTTON_TEXTCOLOR);
+        }
+    }
+    */
+
+    // draw the close button
     bitmap.data = (window->controlbox_state & CLOSEBUTTON_OVER) ?
                         bclose_over_pixels : bclose_pixels;
     x = wscreen_x + window->w - WINDOW_BORDERWIDTH - pixels;
     y = wscreen_y + WINDOW_BORDERWIDTH;
+
+    gc_fill_rect(gc, x - (pixels * 2), y, pixels * 3, pixels, bgcolor);
+
     gc_blit_bitmap_highlighted(gc, &bitmap, x, y, 0, 0, pixels, pixels, 0);
 
+    // draw the maximize button
     bitmap.data = (window->flags & WINDOW_NORESIZE) ? bmax_disabled_pixels :
                      (window->controlbox_state & MAXIMIZEBUTTON_OVER) ?
                         bmax_over_pixels : bmax_pixels;
     x -= pixels;
     gc_blit_bitmap_highlighted(gc, &bitmap, x, y, 0, 0, pixels, pixels, 0);
 
+    // draw the minimize button
     bitmap.data = (window->flags & WINDOW_NOMINIMIZE) ? bmin_disabled_pixels :
                      (window->controlbox_state & MINIMIZEBUTTON_OVER) ?
                         bmin_over_pixels : bmin_pixels;

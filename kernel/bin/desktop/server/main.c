@@ -1763,6 +1763,23 @@ try:
                 
                 break;
 
+            case REQUEST_GET_ROOT_WINID:
+                if(!root_window)
+                {
+                    send_err_event(clientfd->fd, ev->src,
+                                   EVENT_ROOT_WINID, EINVAL, ev->seqid);
+                    break;
+                }
+
+                ev2.type = EVENT_ROOT_WINID;
+                ev2.seqid = ev->seqid;
+                ev2.winattr.winid = root_window->winid;
+                ev2.src = TO_WINID(GLOB.mypid, 0);
+                ev2.dest = ev->src;
+                ev2.valid_reply = 1;
+                direct_write(clientfd->fd, (void *)&ev2, sizeof(struct event_t));
+                break;
+
             case REQUEST_GRAB_MOUSE:
             case REQUEST_GRAB_AND_CONFINE_MOUSE:
                 GET_WINDOW(win, ev->src, EVENT_MOUSE_GRABBED);
@@ -1979,6 +1996,34 @@ try:
 
                 break;
 
+            case REQUEST_COLOR_THEME_GET:
+                send_theme_data(ev->src, ev->seqid, clientfd->fd);
+                break;
+
+            case REQUEST_COLOR_THEME_SET:
+                {
+                    // Get the new theme
+                    struct event_res_t *evbuf = (struct event_res_t *)ev;
+                    uint8_t count = evbuf->palette.color_count;
+
+                    if(count == 0)
+                    {
+                        break;
+                    }
+
+                    if(count > THEME_COLOR_LAST)
+                    {
+                        count = THEME_COLOR_LAST;
+                    }
+
+                    A_memcpy(GLOB.themecolor, evbuf->data, count * sizeof(uint32_t));
+
+                    // Now broadcast it to all apps
+                    broadcast_new_theme();
+                }
+
+                break;
+
             case REQUEST_BIND_KEY:
                 server_key_bind(ev->keybind.key, ev->keybind.modifiers,
                                 ev->keybind.action, ev->src);
@@ -2168,8 +2213,16 @@ try:
                 direct_write(win->clientfd->fd, (void *)ev, sz);
                 break;
 
+            /*
+             * Same for application-private requests and events. Just forward.
+             */
 
             default:
+                if(ev->type >= REQUEST_APPLICATION_PRIVATE)
+                {
+                    GET_WINDOW_SILENT(win, ev->dest);
+                    direct_write(win->clientfd->fd, (void *)ev, sz);
+                }
                 break;
         }
 }
@@ -2442,13 +2495,14 @@ int main(int argc, char **argv)
                 vbe_framebuffer.memsize, vbe_framebuffer.pitch, &GLOB.screen);
 
     //Do a few initializations first
+    server_init_resources();
+    server_init_theme();
+    
     prep_mouse_cursor(gc);
     prep_window_controlbox();
     prep_rect_cache();
     prep_list_cache();
     prep_listnode_cache();
-    
-    server_init_resources();
     
     ungrab_mouse();
     
