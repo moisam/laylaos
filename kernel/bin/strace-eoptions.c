@@ -2,7 +2,7 @@
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
  *    Copyright 2022, 2023, 2024 (c)
  * 
- *    file: strace-options.c
+ *    file: strace-eoptions.c
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,7 +20,7 @@
  */    
 
 /**
- *  \file strace-options.c
+ *  \file strace-eoptions.c
  *
  *  Helper functions to process commandline options. This file is part of
  *  the trace utility program.

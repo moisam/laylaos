@@ -520,7 +520,7 @@ int main(int argc, char **argv)
     }
     else
     {
-        setenv("TERM", "vt100", 1);
+        setenv("TERM", "xterm-color", 1);
     }
 
     login_args[0] = loginprog;

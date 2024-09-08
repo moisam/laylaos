@@ -16,8 +16,9 @@ LDFLAGS_GUI:=-lfreetype
 LIBCPATH:=$(SYSROOT)/usr/local/lib/libc.a
 #CPPFLAGS:=-fprofile-arcs -ftest-coverage
 CPPFLAGS?=
+
 PROGS=dispman getty login chvt \
-      cal more mount reboot ps umount \
+      cal more mount reboot ps umount free \
       init
 
 # these should be installed from coreutils:
@@ -46,6 +47,7 @@ GUISERVER_SRCS:=$(GUISERVER_DIR)/cursor.c \
                 $(GUISERVER_DIR)/server-window.c \
                 $(GUISERVER_DIR)/server-window-controlbox.c \
                 $(GUISERVER_DIR)/server-window-mouse.c \
+                $(GUISERVER_DIR)/theme.c \
                 $(GUICOMMON_DIR)/event.c \
                 $(GUICOMMON_DIR)/font.c \
                 $(GUICOMMON_DIR)/global.c \
@@ -61,6 +63,7 @@ GUISERVER_OBJS:=$(patsubst %.c, %.o, $(GUISERVER_SRCS))
 
 LIBGUI_SRCS:=$(GUICOMMON_DIR)/event.c $(GUICOMMON_DIR)/next-event.c \
              $(GUICOMMON_DIR)/font.c \
+             $(GUICLIENT_DIR)/colorchooser-dialog.c \
              $(GUICOMMON_DIR)/gc.c \
              $(GUICOMMON_DIR)/gc-arc.c \
              $(GUICOMMON_DIR)/gc-bitmap.c \
@@ -79,9 +82,11 @@ LIBGUI_SRCS:=$(GUICOMMON_DIR)/event.c $(GUICOMMON_DIR)/next-event.c \
              $(GUICLIENT_DIR)/push-imgbutton.c \
              $(GUICLIENT_DIR)/listview.c \
              $(GUICLIENT_DIR)/file-selector.c \
+             $(GUICLIENT_DIR)/gallery-view.c \
              $(GUICLIENT_DIR)/group-border.c \
              $(GUICLIENT_DIR)/combobox.c \
              $(GUICLIENT_DIR)/inputbox.c \
+             $(GUICLIENT_DIR)/radio-button.c \
              $(GUICLIENT_DIR)/textbox.c \
              $(GUICLIENT_DIR)/statusbar.c \
              $(GUICLIENT_DIR)/scrollbar.c \
@@ -104,15 +109,18 @@ LIBGUI_SRCS:=$(GUICOMMON_DIR)/event.c $(GUICOMMON_DIR)/next-event.c \
              $(GUICLIENT_DIR)/resources.c \
              $(GUICLIENT_DIR)/request.c \
              $(GUICLIENT_DIR)/screen.c \
+             $(GUICLIENT_DIR)/theme.c \
              $(GUICLIENT_DIR)/widget.c \
              $(GUI_DIR)/imglib/ico.c \
              $(GUI_DIR)/imglib/png.c \
-             $(GUI_DIR)/imglib/png_crc.c
+             $(GUI_DIR)/imglib/png_crc.c \
+             $(GUI_DIR)/imglib/jpeg.c
 LIBGUI_OBJS:=$(patsubst %.c, %.o, $(LIBGUI_SRCS))
 
 DESKTOP_SRCS:=$(GUI_DIR)/hash.c $(GUI_DIR)/ptrhash.c \
               $(GUI_DIR)/desktop/desktop_alt_tab.c \
               $(GUI_DIR)/desktop/desktop_entries.c \
+              $(GUI_DIR)/desktop/desktop_background.c \
               $(GUI_DIR)/desktop/desktop.c
 DESKTOP_OBJS:=$(patsubst %.c, %.o, $(DESKTOP_SRCS))
 
@@ -167,12 +175,20 @@ MINESWEEPERAPP_OBJS:=$(patsubst %.c, %.o, $(MINESWEEPERAPP_SRCS))
 CLOCKAPP_SRCS:=$(GUI_DIR)/app_clock/main.c
 CLOCKAPP_OBJS:=$(patsubst %.c, %.o, $(CLOCKAPP_SRCS))
 
+SETTINGSAPP_SRCS:=$(GUI_DIR)/app_settings/main.c \
+                  $(GUI_DIR)/app_settings/show_background.c \
+                  $(GUI_DIR)/app_settings/show_theme.c \
+                  $(GUI_DIR)/app_settings/show_sysinfo.c \
+                  $(GUI_DIR)/app_settings/show_display.c
+SETTINGSAPP_OBJS:=$(patsubst %.c, %.o, $(SETTINGSAPP_SRCS))
+
 PNGTEST_SRCS:= \
              $(GUI_DIR)/imglib/png_test.c
 PNGTEST_OBJS:=$(patsubst %.c, %.o, $(PNGTEST_SRCS))
 
 LIBGUI:=$(GUI_DIR)/libgui.a
 LIBGUISO:=$(GUI_DIR)/libgui.so
+GUIFLAGS=$(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
 
 GUI_PROGS:=$(GUI_DIR)/server/guiserver \
            $(GUI_DIR)/desktop/desktop \
@@ -187,6 +203,7 @@ GUI_PROGS:=$(GUI_DIR)/server/guiserver \
            $(GUI_DIR)/sysiconviewapp \
            $(GUI_DIR)/tetrisapp \
            $(GUI_DIR)/minesweeperapp \
+           $(GUI_DIR)/settingsapp \
            $(GUI_DIR)/gui_test \
            $(GUI_DIR)/png_test
 
@@ -239,10 +256,7 @@ $(LIBGUI): $(LIBGUI_OBJS)
 
 $(LIBGUISO): $(LIBGUI_OBJS)
 	echo "    Creating shared lib " $@
-	$(CC) $(CFLAGS) $(CPPFLAGS) -shared -fPIC -DPIC -o $@ $(LIBGUI_OBJS)
-#	$(CC) $(CFLAGS) $(CPPFLAGS) -shared -fPIC -DPIC -o $@ $< $(LIBAELF)
-
-#widgets: $(GUIWIDGET_OBJS)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -shared -fPIC -DPIC -o $@ $(LIBGUI_OBJS) -ljpeg
 
 widgets:
 	for i in $(GUIWIDGET_OBJS) ; do \
@@ -277,23 +291,19 @@ $(GUI_DIR)/list.o: ../../misc/list.c
 
 $(GUI_DIR)/desktop/desktop: $(DESKTOP_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(DESKTOP_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
-#	$(CC) -o $@ $(DESKTOP_OBJS) $(LIBGUI) $(LIBAELF) $(CFLAGS) $(CPPFLAGS)
+	$(CC) -o $@ $(DESKTOP_OBJS) $(GUIFLAGS) -ljpeg
 
 $(GUI_DIR)/panels/desktop-bottom-panel: $(DESKTOP_BOTTOMPANEL_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(DESKTOP_BOTTOMPANEL_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
-#	$(CC) -o $@ $(DESKTOP_BOTTOMPANEL_OBJS) $(LIBGUI) $(LIBAELF) $(CFLAGS) $(CPPFLAGS)
+	$(CC) -o $@ $(DESKTOP_BOTTOMPANEL_OBJS) $(GUIFLAGS)
 
 $(GUI_DIR)/panels/desktop-top-panel: $(DESKTOP_TOPPANEL_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(DESKTOP_TOPPANEL_OBJS) -Wl,-dynamic-list,$(GUI_DIR)/panels/top-panel-dynsym.syms -ldl $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
-#	$(CC) -o $@ $(DESKTOP_TOPPANEL_OBJS) -Wl,-dynamic-list,$(GUI_DIR)/panels/top-panel-dynsym.syms -ldl $(LIBGUI) $(LIBAELF) $(CFLAGS) $(CPPFLAGS)
+	$(CC) -o $@ $(DESKTOP_TOPPANEL_OBJS) -Wl,-dynamic-list,$(GUI_DIR)/panels/top-panel-dynsym.syms -ldl $(GUIFLAGS)
 
 $(GUI_DIR)/ltermapp: $(TERMAPP_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(TERMAPP_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
-#	$(CC) -o $@ $(TERMAPP_OBJS) $(LIBGUI) $(LIBAELF) $(CFLAGS) $(CPPFLAGS)
+	$(CC) -o $@ $(TERMAPP_OBJS) $(GUIFLAGS)
 
 $(GUI_DIR)/memsetw.o: ../../libk/string/memsetw.c
 	echo "    Compiling " $<
@@ -301,47 +311,47 @@ $(GUI_DIR)/memsetw.o: ../../libk/string/memsetw.c
 
 $(GUI_DIR)/calcapp: $(CALCAPP_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(CALCAPP_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
-#	$(CC) -o $@ $(CALCAPP_OBJS) $(LIBGUI) $(LIBAELF) $(CFLAGS) $(CPPFLAGS)
+	$(CC) -o $@ $(CALCAPP_OBJS) $(GUIFLAGS)
 
 $(GUI_DIR)/filesapp: $(FILESAPP_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(FILESAPP_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
-#	$(CC) -o $@ $(FILESAPP_OBJS) $(LIBGUI) $(LIBAELF) $(CFLAGS) $(CPPFLAGS)
+	$(CC) -o $@ $(FILESAPP_OBJS) $(GUIFLAGS)
 
 $(GUI_DIR)/kbdapp: $(KBDAPP_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(KBDAPP_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
+	$(CC) -o $@ $(KBDAPP_OBJS) $(GUIFLAGS)
 
 $(GUI_DIR)/imgviewapp: $(IMGVIEWAPP_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(IMGVIEWAPP_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
+	$(CC) -o $@ $(IMGVIEWAPP_OBJS) $(GUIFLAGS) -ljpeg
 
 $(GUI_DIR)/sysiconviewapp: $(SYSICONVIEWAPP_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(SYSICONVIEWAPP_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
+	$(CC) -o $@ $(SYSICONVIEWAPP_OBJS) $(GUIFLAGS)
 
 $(GUI_DIR)/tetrisapp: $(TETRISAPP_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(TETRISAPP_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
+	$(CC) -o $@ $(TETRISAPP_OBJS) $(GUIFLAGS)
 
 $(GUI_DIR)/minesweeperapp: $(MINESWEEPERAPP_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(MINESWEEPERAPP_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
+	$(CC) -o $@ $(MINESWEEPERAPP_OBJS) $(GUIFLAGS)
 
 $(GUI_DIR)/clockapp: $(CLOCKAPP_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(CLOCKAPP_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
+	$(CC) -o $@ $(CLOCKAPP_OBJS) $(GUIFLAGS)
+
+$(GUI_DIR)/settingsapp: $(SETTINGSAPP_OBJS)
+	echo "    Linking   " $@
+	$(CC) -o $@ $(SETTINGSAPP_OBJS) $(GUIFLAGS)
 
 $(GUI_DIR)/gui_test: $(GUI_DIR)/gui_test.o
 	echo "    Linking   " $@
-	$(CC) -o $@ $< $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
-
-
+	$(CC) -o $@ $< $(GUIFLAGS)
 
 $(GUI_DIR)/png_test: $(PNGTEST_OBJS)
 	echo "    Linking   " $@
-	$(CC) -o $@ $(PNGTEST_OBJS) $(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
+	$(CC) -o $@ $(PNGTEST_OBJS) $(GUIFLAGS)
 
 %.o: %.c
 	echo "    Compiling " $<
