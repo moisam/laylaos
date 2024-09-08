@@ -88,6 +88,7 @@ struct widget_t *widget_create(void);
 int widgets_redraw(void);
 void widgets_periodic(void);
 void widget_menu_may_hide(winid_t);
+void widgets_show_apps(void);
 
 /**********************************************
  * Public functions for widget perusal
