@@ -1,0 +1,45 @@
+diff -rub ./fontopia-mirror/src/args.c ./fontopia-mirror/src/args.c
+--- ./fontopia-mirror/src/args.c	2024-09-08 11:09:28.112505201 +0100
++++ ./fontopia-mirror/src/args.c	2024-09-05 17:43:44.879705200 +0100
+@@ -21,7 +21,7 @@
+ #include <stdlib.h>
+ #include <unistd.h>
+ #include <getopt.h>
+-#include <asm/types.h>
++//#include <asm/types.h>
+ #include <limits.h>
+ #include <sys/stat.h>
+ #include "defs.h"
+diff -rub ./fontopia-mirror/src/font_ops.h ./fontopia-mirror/src/font_ops.h
+--- ./fontopia-mirror/src/font_ops.h	2024-09-08 11:09:28.112505201 +0100
++++ ./fontopia-mirror/src/font_ops.h	2024-09-04 21:59:19.850476470 +0100
+@@ -24,7 +24,7 @@
+ #include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+-#include <asm/types.h>
++//#include <asm/types.h>
+ #include "modules/modules.h"
+ 
+ //check endianness of the system
+diff -rub ./fontopia-mirror/src/main.c ./fontopia-mirror/src/main.c
+--- ./fontopia-mirror/src/main.c	2024-09-08 11:09:28.112505201 +0100
++++ ./fontopia-mirror/src/main.c	2024-09-08 10:25:00.711914995 +0100
+@@ -27,7 +27,7 @@
+ #include "modules/cp.h"
+ #include "menu.h"
+ 
+-extern int fcloseall (void);    /* stdio.h */
++//extern int fcloseall (void);    /* stdio.h */
+ 
+ //char *readme_file = "/usr/share/doc/fontopia/README";
+ //char *keys_file   = "/usr/share/doc/fontopia/READMEkeys";
+@@ -61,7 +61,7 @@
+     reset_attribs();
+     showCursor();
+     restoreTerminal(); 
+-    fcloseall();
++    //fcloseall();
+     exit(0);
+ }
+ 

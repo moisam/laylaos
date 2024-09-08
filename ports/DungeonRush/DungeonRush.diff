@@ -1,0 +1,120 @@
+diff -rub ./DungeonRush-1.1-beta/CMakeLists.txt ./DungeonRush-1.1-beta/CMakeLists.txt
+--- ./DungeonRush-1.1-beta/CMakeLists.txt	2020-11-21 13:22:39.000000000 +0000
++++ ./DungeonRush-1.1-beta/CMakeLists.txt	2024-08-26 16:59:55.850217761 +0100
+@@ -22,6 +22,10 @@
+ 
+ add_executable(${BIN_NAME} ${SRC})
+ 
++if(LAYLAOS)
++    add_compile_definitions(SOFTWARE_ACC)
++endif()
++
+ target_include_directories(${BIN_NAME} PUBLIC src)
+ target_include_directories(${BIN_NAME} PUBLIC ${SDL2_INCLUDE_DIR})
+ target_link_libraries(${BIN_NAME} SDL2::Main SDL2::Net SDL2::Image SDL2::Mixer 
+diff -rub ./DungeonRush-1.1-beta/src/res.c ./DungeonRush-1.1-beta/src/res.c
+--- ./DungeonRush-1.1-beta/src/res.c	2020-11-21 13:22:39.000000000 +0000
++++ ./DungeonRush-1.1-beta/src/res.c	2024-08-26 17:32:28.626626120 +0100
+@@ -12,59 +12,59 @@
+ #include "render.h"
+ #include "weapon.h"
+ 
+-
++#define RESOURCE_PATH           "/usr/share/games/DungeonRush/"
+ 
+ // Constants
+ const int n = SCREEN_WIDTH/UNIT;
+ const int m = SCREEN_HEIGHT/UNIT;
+ 
+ const char tilesetPath[TILESET_SIZE][PATH_LEN] = {
+-    "res/drawable/0x72_DungeonTilesetII_v1_3",
+-    "res/drawable/fireball_explosion1",
+-    "res/drawable/halo_explosion1",
+-    "res/drawable/halo_explosion2",
+-    "res/drawable/fireball",
+-    "res/drawable/floor_spike",
+-    "res/drawable/floor_exit",
+-    "res/drawable/HpMed",
+-    "res/drawable/SwordFx",
+-    "res/drawable/ClawFx",
+-    "res/drawable/Shine",
+-    "res/drawable/Thunder",
+-    "res/drawable/BloodBound",
+-    "res/drawable/arrow",
+-    "res/drawable/explosion-2",
+-    "res/drawable/ClawFx2",
+-    "res/drawable/Axe",
+-    "res/drawable/cross_hit",
+-    "res/drawable/blood",
+-    "res/drawable/SolidFx",
+-    "res/drawable/IcePick",
+-    "res/drawable/IceShatter",
+-    "res/drawable/Ice",
+-    "res/drawable/SwordPack",
+-    "res/drawable/HolyShield",
+-    "res/drawable/golden_cross_hit",
+-    "res/drawable/ui",
+-    "res/drawable/title",
+-    "res/drawable/purple_ball",
+-    "res/drawable/purple_exp",
+-    "res/drawable/staff",
+-    "res/drawable/Thunder_Yellow",
+-    "res/drawable/attack_up",
+-    "res/drawable/powerful_bow"};
+-const char fontPath[] = "res/font/m5x7.ttf";
+-const char textsetPath[] = "res/text.txt";
++    RESOURCE_PATH "res/drawable/0x72_DungeonTilesetII_v1_3",
++    RESOURCE_PATH "res/drawable/fireball_explosion1",
++    RESOURCE_PATH "res/drawable/halo_explosion1",
++    RESOURCE_PATH "res/drawable/halo_explosion2",
++    RESOURCE_PATH "res/drawable/fireball",
++    RESOURCE_PATH "res/drawable/floor_spike",
++    RESOURCE_PATH "res/drawable/floor_exit",
++    RESOURCE_PATH "res/drawable/HpMed",
++    RESOURCE_PATH "res/drawable/SwordFx",
++    RESOURCE_PATH "res/drawable/ClawFx",
++    RESOURCE_PATH "res/drawable/Shine",
++    RESOURCE_PATH "res/drawable/Thunder",
++    RESOURCE_PATH "res/drawable/BloodBound",
++    RESOURCE_PATH "res/drawable/arrow",
++    RESOURCE_PATH "res/drawable/explosion-2",
++    RESOURCE_PATH "res/drawable/ClawFx2",
++    RESOURCE_PATH "res/drawable/Axe",
++    RESOURCE_PATH "res/drawable/cross_hit",
++    RESOURCE_PATH "res/drawable/blood",
++    RESOURCE_PATH "res/drawable/SolidFx",
++    RESOURCE_PATH "res/drawable/IcePick",
++    RESOURCE_PATH "res/drawable/IceShatter",
++    RESOURCE_PATH "res/drawable/Ice",
++    RESOURCE_PATH "res/drawable/SwordPack",
++    RESOURCE_PATH "res/drawable/HolyShield",
++    RESOURCE_PATH "res/drawable/golden_cross_hit",
++    RESOURCE_PATH "res/drawable/ui",
++    RESOURCE_PATH "res/drawable/title",
++    RESOURCE_PATH "res/drawable/purple_ball",
++    RESOURCE_PATH "res/drawable/purple_exp",
++    RESOURCE_PATH "res/drawable/staff",
++    RESOURCE_PATH "res/drawable/Thunder_Yellow",
++    RESOURCE_PATH "res/drawable/attack_up",
++    RESOURCE_PATH "res/drawable/powerful_bow"};
++const char fontPath[] = RESOURCE_PATH "res/font/m5x7.ttf";
++const char textsetPath[] = RESOURCE_PATH "res/text.txt";
+ 
+ const int bgmNums = 4;
+ const char bgmsPath[AUDIO_BGM_SIZE][PATH_LEN] = {
+-  "res/audio/main_title.ogg",
+-  "res/audio/bg1.ogg",
+-  "res/audio/bg2.ogg",
+-  "res/audio/bg3.ogg"
++  RESOURCE_PATH "res/audio/main_title.ogg",
++  RESOURCE_PATH "res/audio/bg1.ogg",
++  RESOURCE_PATH "res/audio/bg2.ogg",
++  RESOURCE_PATH "res/audio/bg3.ogg"
+ };
+-const char soundsPath[PATH_LEN] = "res/audio/sounds";
+-const char soundsPathPrefix[PATH_LEN] = "res/audio/";
++const char soundsPath[PATH_LEN] = RESOURCE_PATH "res/audio/sounds";
++const char soundsPathPrefix[PATH_LEN] = RESOURCE_PATH "res/audio/";
+ // Gloabls
+ int texturesCount;
+ Texture textures[TEXTURES_SIZE];
