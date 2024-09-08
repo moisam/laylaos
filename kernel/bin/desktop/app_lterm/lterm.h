@@ -58,6 +58,8 @@
 #define TTY_FLAG_UNDERLINED       0x40
 #define TTY_FLAG_BLINK            0x80
 #define TTY_FLAG_BRIGHT           0x100
+#undef TTY_FLAG_APP_KEYMODE         // undef the kernel's definition
+#define TTY_FLAG_APP_KEYMODE      0x200
 
 
 #define COLOR_BLACK		        0
@@ -90,6 +92,7 @@ extern uint32_t terminal_width;
 extern uint32_t terminal_height;
 extern uint32_t terminal_row;
 extern uint32_t terminal_col;
+extern uint32_t terminal_flags;
 extern uint32_t first_text_row, first_visible_row, mouse_scroll_top;
 extern struct winsize windowsz;
 

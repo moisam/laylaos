@@ -48,11 +48,11 @@ static inline void ext_key(volatile char *codes, int c)
 }
 
 
-static inline void cur_key(volatile char *codes, int c)
+static inline void cur_key(volatile char *codes, int c1, int c2)
 {
     codes[0] = '\033' /* '\e' */;
-    codes[1] = '[';
-    codes[2] = alt_keypad[c - KEYCODE_KP_7];
+    codes[1] = c1;
+    codes[2] = alt_keypad[c2 - KEYCODE_KP_7];
 }
 
 
@@ -163,7 +163,7 @@ void process_key(char c, char modifiers)
             if(!(modifiers & MODIFIER_MASK_NUM) ||
                 (modifiers & MODIFIER_MASK_SHIFT))     // same as KEYCODE_HOME
             {
-                cur_key(codes, c);
+                cur_key(codes, '[', c);
                 count = 3;
             }
             else
@@ -189,34 +189,48 @@ void process_key(char c, char modifiers)
             break;
 
         case KEYCODE_HOME:
-            cur_key(codes, KEYCODE_KP_7);
-            count = 3;
+            //cur_key(codes, '[', KEYCODE_KP_7);
+            //count = 3;
+            codes[0] = '\033';
+            codes[1] = '[';
+            codes[2] = '1';
+            codes[3] = '~';
+            count = 4;
             break;
 
         case KEYCODE_END:
-            cur_key(codes, KEYCODE_KP_1);
-            count = 3;
+            //cur_key(codes, '[', KEYCODE_KP_1);
+            //count = 3;
+            codes[0] = '\033';
+            codes[1] = '[';
+            codes[2] = '4';
+            codes[3] = '~';
+            count = 4;
             break;
 
+#define __KEYF      (terminal_flags & TTY_FLAG_APP_KEYMODE) ? 'O' : '['
+
         case KEYCODE_UP:
-            cur_key(codes, KEYCODE_KP_8);
+            cur_key(codes, __KEYF, KEYCODE_KP_8);
             count = 3;
             break;
 
         case KEYCODE_LEFT:
-            cur_key(codes, KEYCODE_KP_4);
+            cur_key(codes, __KEYF, KEYCODE_KP_4);
             count = 3;
             break;
 
         case KEYCODE_RIGHT:
-            cur_key(codes, KEYCODE_KP_6);
+            cur_key(codes, __KEYF, KEYCODE_KP_6);
             count = 3;
             break;
 
         case KEYCODE_DOWN:
-            cur_key(codes, KEYCODE_KP_2);
+            cur_key(codes, __KEYF, KEYCODE_KP_2);
             count = 3;
             break;
+
+#undef __KEYF
             
         default:
             if((modifiers & MODIFIER_MASK_CTRL))

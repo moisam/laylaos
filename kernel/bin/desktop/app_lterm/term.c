@@ -32,6 +32,7 @@
 #include <string.h>
 #include "../include/gui.h"
 #include "lterm.h"
+#include "vt100_graphics_data.h"
 #include "../include/client/window.h"
 #include "../include/resources.h"
 #include "../include/rgb.h"
@@ -47,7 +48,8 @@ struct tty_cell_t
              underlined: 1,
              bright:1,
              blink:1,
-             dirty:1;
+             dirty:1,
+             is_line_graphic:1;
     uint16_t fg:8, bg:8;
     uint8_t chr;
 };
@@ -63,6 +65,17 @@ struct tty_cell_t
 
 // parameters of a CSI-sequence
 unsigned long npar, par[NPAR];
+
+// parameter for setting a palette color
+char palette_str[8];
+
+// parameter for setting window title, which will be dynamically allocated
+char *window_str = NULL;
+size_t window_str_alloced = 0;
+size_t window_str_bytes = 0;
+int window_str_arg = 0;     // 0 - set icon name and window title
+                            // 1 - set icon name
+                            // 2 - set window title
 
 uint32_t terminal_width = 0;
 uint32_t terminal_height = 0;
@@ -98,7 +111,15 @@ uint32_t line_height = 0;   // bytes per line = pitch * char_height
 #define pitch               (main_window->canvas_pitch)
 #define total_char_width    (pixel_width * charw)
 
+uint32_t console_palette[16];
+
 struct font_t *boldfont, actual_boldfont;
+
+// stuff to handle charsets
+uint8_t *latin_font_data, *vt100_graphics_font_data;
+uint8_t *latin_font_data_bold, *vt100_graphics_font_data_bold;
+uint8_t *g[2], *gbold[2];
+uint8_t *gcur, *gcurbold;
 
 // functions for painting cells
 void draw_cell8(struct tty_cell_t *cell, uint32_t col, uint32_t row);
@@ -118,6 +139,27 @@ static cell_repaint_func_t cell_repaint_funcs[] =
 };
 
 
+static inline void console_reset_palette(void)
+{
+    console_palette[0] = RGB_COLOR_BLACK;
+    console_palette[1] = RGB_COLOR_BLUE;
+    console_palette[2] = RGB_COLOR_GREEN;
+    console_palette[3] = RGB_COLOR_CYAN;
+    console_palette[4] = RGB_COLOR_RED;
+    console_palette[5] = RGB_COLOR_MAGENTA;
+    console_palette[6] = RGB_COLOR_BROWN;
+    console_palette[7] = RGB_COLOR_LIGHT_GREY;
+    console_palette[8] = RGB_COLOR_DARK_GREY;
+    console_palette[9] = RGB_COLOR_LIGHT_BLUE;
+    console_palette[10] = RGB_COLOR_LIGHT_GREEN;
+    console_palette[11] = RGB_COLOR_LIGHT_CYAN;
+    console_palette[12] = RGB_COLOR_LIGHT_RED;
+    console_palette[13] = RGB_COLOR_LIGHT_MAGENTA;
+    console_palette[14] = RGB_COLOR_LIGHT_BROWN;
+    console_palette[15] = RGB_COLOR_WHITE;
+}
+
+
 static inline void console_reset_colors(void)
 {
     default_fg = COLOR_LIGHT_GREY;
@@ -126,6 +168,19 @@ static inline void console_reset_colors(void)
     bgcolor = default_bg;
     saved_fg = default_fg;
     saved_bg = default_bg;
+    console_reset_palette();
+}
+
+
+static inline void console_reset_charsets(void)
+{
+    g[0] = latin_font_data;
+    gbold[0] = latin_font_data_bold;
+    g[1] = latin_font_data;
+    gbold[1] = latin_font_data_bold;
+
+    gcur = latin_font_data;
+    gcurbold = latin_font_data_bold;
 }
 
 
@@ -138,10 +193,36 @@ static inline void console_reset(void)
     first_text_row = terminal_height * (BACKBUF_PAGES - 1);
     first_visible_row = first_text_row;
     mouse_scroll_top = first_text_row;
+
+    console_reset_charsets();
     console_reset_colors();
 
     erase_display(terminal_width, terminal_height, 2);
     repaint_cursor();
+}
+
+
+static inline void make_vt100_font(uint8_t *dest, uint8_t *src,
+                                   size_t chars, size_t charsz)
+{
+    size_t i;
+
+    A_memset(dest, 0, boldfont->datasz);
+
+    for(i = 0; i < chars; i++)
+    {
+        if(i >= 0x60 && i <= 0x7f)
+        {
+            A_memcpy(dest, vt100_graphics_data_src + ((i - 0x60) * 16), 16);
+        }
+        else
+        {
+            A_memcpy(dest, src, charsz);
+        }
+
+        src += charsz;
+        dest += charsz;
+    }
 }
 
 
@@ -163,8 +244,6 @@ int init_terminal(char *myname, uint32_t w, uint32_t h)
     first_visible_row = first_text_row;
     mouse_scroll_top = first_text_row;
     line_height = main_window->canvas_pitch * charh;
-
-    console_reset_colors();
     
     // init window size
     windowsz.ws_row = h;
@@ -209,6 +288,40 @@ int init_terminal(char *myname, uint32_t w, uint32_t h)
     {
         boldfont = &GLOB.mono;
     }
+
+    latin_font_data = GLOB.mono.data;
+    latin_font_data_bold = boldfont->data;
+
+    // Create a new font data array for our VT100 line graphics.
+    // The font width should be 8, and the height should be 16, but we
+    // use the height from our mono font just to make sure.
+    size_t charsz = boldfont->charh * (boldfont->charw / 8);
+    size_t chars = boldfont->datasz / charsz;
+
+    if((vt100_graphics_font_data = malloc(boldfont->datasz)))
+    {
+        make_vt100_font(vt100_graphics_font_data, 
+                            latin_font_data, chars, charsz);
+    }
+    else
+    {
+        // not ideal, but ensures we don't segfault
+        vt100_graphics_font_data = latin_font_data;
+    }
+
+    if((vt100_graphics_font_data_bold = malloc(boldfont->datasz)))
+    {
+        make_vt100_font(vt100_graphics_font_data_bold, 
+                            latin_font_data_bold, chars, charsz);
+    }
+    else
+    {
+        // not ideal, but ensures we don't segfault
+        vt100_graphics_font_data_bold = latin_font_data_bold;
+    }
+
+    console_reset_charsets();
+    console_reset_colors();
 
     return 1;
 }
@@ -303,6 +416,7 @@ static inline void clear_cell(struct tty_cell_t *cell)
     cell->underlined = 0;
     cell->blink = 0;
     cell->bright = 0;
+    cell->is_line_graphic = 0;
 }
 
 
@@ -318,6 +432,7 @@ static inline void clear_cells(struct tty_cell_t *dest, uint32_t count)
         dest->underlined = 0;
         dest->blink = 0;
         dest->bright = 0;
+        dest->is_line_graphic = 0;
         dest++;
     }
 }
@@ -327,37 +442,43 @@ static inline uint32_t ega_to_vga(uint8_t color)
 {
     switch(color)
     {
-        case COLOR_BLACK         : return RGB_COLOR_BLACK;
-        case COLOR_BLUE          : return RGB_COLOR_BLUE;
-        case COLOR_GREEN         : return RGB_COLOR_GREEN;
-        case COLOR_CYAN          : return RGB_COLOR_CYAN;
-        case COLOR_RED           : return RGB_COLOR_RED;
-        case COLOR_MAGENTA       : return RGB_COLOR_MAGENTA;
-        case COLOR_BROWN         : return RGB_COLOR_BROWN;
-        case COLOR_WHITE         : return RGB_COLOR_WHITE;
-        case COLOR_LIGHT_GREY    : return RGB_COLOR_LIGHT_GREY;
-        case COLOR_DARK_GREY     : return RGB_COLOR_DARK_GREY;
-        case COLOR_LIGHT_BLUE    : return RGB_COLOR_LIGHT_BLUE;
-        case COLOR_LIGHT_GREEN   : return RGB_COLOR_LIGHT_GREEN;
-        case COLOR_LIGHT_CYAN    : return RGB_COLOR_LIGHT_CYAN;
-        case COLOR_LIGHT_RED     : return RGB_COLOR_LIGHT_RED;
-        case COLOR_LIGHT_MAGENTA : return RGB_COLOR_LIGHT_MAGENTA;
-        case COLOR_LIGHT_BROWN   : return RGB_COLOR_LIGHT_BROWN;
-        default                  : return RGB_COLOR_WHITE;
+        case COLOR_BLACK         : return console_palette[COLOR_BLACK];
+        case COLOR_BLUE          : return console_palette[COLOR_BLUE];
+        case COLOR_GREEN         : return console_palette[COLOR_GREEN];
+        case COLOR_CYAN          : return console_palette[COLOR_CYAN];
+        case COLOR_RED           : return console_palette[COLOR_RED];
+        case COLOR_MAGENTA       : return console_palette[COLOR_MAGENTA];
+        case COLOR_BROWN         : return console_palette[COLOR_BROWN];
+        case COLOR_WHITE         : return console_palette[COLOR_WHITE];
+        case COLOR_LIGHT_GREY    : return console_palette[COLOR_LIGHT_GREY];
+        case COLOR_DARK_GREY     : return console_palette[COLOR_DARK_GREY];
+        case COLOR_LIGHT_BLUE    : return console_palette[COLOR_LIGHT_BLUE];
+        case COLOR_LIGHT_GREEN   : return console_palette[COLOR_LIGHT_GREEN];
+        case COLOR_LIGHT_CYAN    : return console_palette[COLOR_LIGHT_CYAN];
+        case COLOR_LIGHT_RED     : return console_palette[COLOR_LIGHT_RED];
+        case COLOR_LIGHT_MAGENTA : return console_palette[COLOR_LIGHT_MAGENTA];
+        case COLOR_LIGHT_BROWN   : return console_palette[COLOR_LIGHT_BROWN];
+        default                  : return console_palette[COLOR_WHITE];
     }
 }
 
 
-static inline struct font_t *select_font(struct tty_cell_t *cell)
+static inline uint8_t *select_font(struct tty_cell_t *cell)
 {
-    return cell->bold ? boldfont : &GLOB.mono;
+    if(cell->is_line_graphic)
+    {
+        return cell->bold ? vt100_graphics_font_data_bold : 
+                            vt100_graphics_font_data;
+    }
+
+    return cell->bold ? latin_font_data_bold : latin_font_data;
 }
 
 
 void draw_cell8(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 {
-    struct font_t *font = select_font(cell);
-    uint8_t *chr = &font->data[cell->chr * charh];
+    uint8_t *font_data = select_font(cell);
+    uint8_t *chr = &font_data[cell->chr * charh];
     uint8_t fgcol = to_rgb8(main_window->gc, ega_to_vga(cell->fg));
     uint8_t bgcol = to_rgb8(main_window->gc, ega_to_vga(cell->bg));
     int l, i;
@@ -391,8 +512,8 @@ void draw_cell8(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 
 void draw_cell16(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 {
-    struct font_t *font = select_font(cell);
-    uint8_t *chr = &font->data[cell->chr * charh];
+    uint8_t *font_data = select_font(cell);
+    uint8_t *chr = &font_data[cell->chr * charh];
     uint16_t fgcol = to_rgb16(main_window->gc, ega_to_vga(cell->fg));
     uint16_t bgcol = to_rgb16(main_window->gc, ega_to_vga(cell->bg));
     int l, i, j;
@@ -427,8 +548,8 @@ void draw_cell16(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 
 void draw_cell24(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 {
-    struct font_t *font = select_font(cell);
-    uint8_t *chr = &font->data[cell->chr * charh];
+    uint8_t *font_data = select_font(cell);
+    uint8_t *chr = &font_data[cell->chr * charh];
     uint32_t fgcol = to_rgb24(main_window->gc, ega_to_vga(cell->fg));
     uint32_t bgcol = to_rgb24(main_window->gc, ega_to_vga(cell->bg));
     int l, i;
@@ -466,8 +587,8 @@ void draw_cell24(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 
 void draw_cell32(struct tty_cell_t *cell, uint32_t col, uint32_t row)
 {
-    struct font_t *font = select_font(cell);
-    uint8_t *chr = &font->data[cell->chr * charh];
+    uint8_t *font_data = select_font(cell);
+    uint8_t *chr = &font_data[cell->chr * charh];
     uint32_t fgcol, bgcol;
     int l, i;
     unsigned where = (col * charw * 4) + (row * line_height);
@@ -681,6 +802,7 @@ void scroll_down(uint32_t width, uint32_t height)
             src->underlined = dest->underlined;
             src->blink = dest->blink;
             src->bright = dest->bright;
+            src->is_line_graphic = dest->is_line_graphic;
             src++;
             dest++;
         }
@@ -1175,6 +1297,8 @@ static inline void tputcharat(char c, uint32_t x, uint32_t y,
     cell->underlined = !!(terminal_flags & TTY_FLAG_UNDERLINED);
     cell->blink = !!(terminal_flags & TTY_FLAG_BLINK);
     cell->bright = !!(terminal_flags & TTY_FLAG_BRIGHT);
+
+    cell->is_line_graphic = !!(gcur == vt100_graphics_font_data);
     
     pending_refresh = 1;
 }
@@ -1368,6 +1492,82 @@ void status_report(unsigned long cmd)
 
 
 /*
+ * Define the G0 or G1 character sets. The parameter c should be one of:
+ *    B   - select default (ISO/IEC 8859-1 mapping)
+ *    0   - select VT100 graphics mapping
+ *    U   - select null mapping (not currently implemented)
+ *    K   - select user mapping (not currently implemented)
+ *
+ * If param which is 0, G0 is set, otherwie G1 is set. We do not currently
+ * handle G2 or G3.
+ *
+ * For more info, see: https://man7.org/linux/man-pages/man4/console_codes.4.html
+ */
+void change_charset(int which, char c)
+{
+    switch(c)
+    {
+        case 'B':
+            g[which] = latin_font_data;
+            gbold[which] = latin_font_data_bold;
+            break;
+
+        case '0':
+            g[which] = vt100_graphics_font_data;
+            gbold[which] = vt100_graphics_font_data_bold;
+            break;
+    }
+}
+
+
+static int is_hex(char c)
+{
+    return ((c >= '0' && c <= '9') ||
+            (c >= 'a' && c <= 'f') ||
+            (c >= 'A' && c <= 'F'));
+}
+
+static uint32_t from_hex(char c)
+{
+    return (c >= 'A' && c <= 'F') ? (c - 'A' + 10) :
+                (c >= 'a' && c <= 'f') ? (c - 'a' + 10) : (c - '0');
+}
+
+/*
+ * Set a palette color. The str is formatted as nrrggbb, which
+ * gives us the following information:
+ *    n    : color number (0-15)
+ *    rr   : red component (0-255)
+ *    gg   : green component (0-255)
+ *    bb   : blue component (0-255)
+ *
+ * For more info, see: https://man7.org/linux/man-pages/man4/console_codes.4.html
+ */
+void set_palette_from_str(char *str)
+{
+    int i;
+    uint32_t r, g, b;
+
+    // sanity check
+    for(i = 0; i < 7; i++)
+    {
+        if(!is_hex(str[i]))
+        {
+            // bail out
+            return;
+        }
+    }
+
+    i = from_hex(str[0]);
+    r = (from_hex(str[1]) << 4) | from_hex(str[2]);
+    g = (from_hex(str[3]) << 4) | from_hex(str[4]);
+    b = (from_hex(str[5]) << 4) | from_hex(str[6]);
+
+    console_palette[i] = (r << 24) | (g << 16) | (b << 8) | 0xff;
+}
+
+
+/*
  * Write output to the system console.
  *
  * See: https://man7.org/linux/man-pages/man4/console_codes.4.html
@@ -1407,6 +1607,18 @@ void console_write(char c)
             else if(c == '\033' /* '\e' */)
             {
                 state = 1;
+            }
+            else if(c == 0x0e)
+            {
+                // activate the G1 character set into GL
+                gcur = g[1];
+                gcurbold = gbold[1];
+            }
+            else if(c == 0x0f)
+            {
+                // activate the G0 character set into GL
+                gcur = g[0];
+                gcurbold = gbold[0];
             }
             else if(c == (char)termios.c_cc[VERASE])
             {
@@ -1474,6 +1686,18 @@ void console_write(char c)
                         
                 case '8':       // restore current state
                     restore_state();
+                    break;
+
+                case '>':       // set numeric keypad mode
+                    terminal_flags &= ~TTY_FLAG_APP_KEYMODE;
+                    break;
+
+                case '=':       // set application keypad mode
+                    terminal_flags |= TTY_FLAG_APP_KEYMODE;
+                    break;
+
+                case ']':       // set/reset palette
+                    state = 7;
                     break;
             }
             break;
@@ -1733,6 +1957,7 @@ void console_write(char c)
          *        For more info, see the link above.
          */
         case 5:
+            change_charset(0, c);
             state = 0;
             break;
 
@@ -1742,7 +1967,122 @@ void console_write(char c)
          *        For more info, see the link above.
          */
         case 6:
+            change_charset(1, c);
             state = 0;
+            break;
+
+        /*
+         * Set/reset palette:
+         *        If ESC-] is followed by R, reset the palette.
+         *        If ESC-] is followed by P, set palette color. The param
+         *          is given as 7 digits: nrrggbb (n is the color 0-15),
+         *          and rrggbb indicate the red/green/blue component
+         *          values (0-255). We currently use palette in the
+         *          framebuffer mode only.
+         *        For more info, see the link above.
+         */
+        case 7:
+            if(c == 'R')
+            {
+                console_reset_palette();
+                state = 0;
+            }
+            else if(c == 'P')
+            {
+                state = 8;
+            }
+            else if(c == '0' || c == '1' || c == '2')
+            {
+                // xterm escape sequences -- see case 9 below
+                if(!window_str)
+                {
+                    if((window_str = malloc(64)))
+                    {
+                        window_str_alloced = 64;
+                    }
+                }
+
+                window_str_bytes = 0;
+                window_str_arg = c - '0';
+                state = 9;
+            }
+            else
+            {
+                state = 0;
+            }
+
+            npar = 0;
+            break;
+
+        case 8:
+            if(npar < 7)
+            {
+                palette_str[npar++] = c;
+            }
+
+            if(npar == 7)
+            {
+                palette_str[7] = '\0';
+                set_palette_from_str(palette_str);
+                npar = 0;
+                state = 0;
+            }
+            break;
+
+        /*
+         * This is part of an xterm escape sequence to set the window title.
+         * We know the string is finished when we receive a BELL character.
+         *
+         * See: https://tldp.org/HOWTO/Xterm-Title-3.html
+         */
+        case 9:
+            if(window_str)
+            {
+                if(window_str_bytes >= window_str_alloced)
+                {
+                    char *tmp;
+
+                    if(!(tmp = realloc(window_str, window_str_alloced * 2)))
+                    {
+                        if(c == '\a')
+                        {
+                            state = 0;
+                        }
+
+                        // we could not extend our buffer, so bail out
+                        break;
+                    }
+
+                    window_str = tmp;
+                    window_str_alloced *= 2;
+                }
+            }
+
+            if(c == '\a')
+            {
+                window_str[window_str_bytes] = '\0';
+
+                if(window_str_arg == 0 || window_str_arg == 2)
+                {
+                    window_set_title(main_window, window_str);
+                }
+
+                if(window_str_arg == 0 || window_str_arg == 1)
+                {
+                    window_set_icon(main_window, window_str);
+                }
+
+                state = 0;
+                break;
+            }
+
+            // skip the first ; after the escape sequence
+            if(window_str_bytes == 0 && c == ';')
+            {
+                break;
+            }
+
+            window_str[window_str_bytes++] = c;
             break;
     }
 }
