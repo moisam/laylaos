@@ -1,16 +1,15 @@
 #!/bin/bash
 
 #
-# Script to download and build ncurses
+# Script to download and build opusfile
 #
 
-DOWNLOAD_NAME="ncurses"
-DOWNLOAD_VERSION="6.4"
-DOWNLOAD_URL="https://ftp.gnu.org/gnu/ncurses/"
-DOWNLOAD_PREFIX="ncurses-"
+DOWNLOAD_NAME="opusfile"
+DOWNLOAD_VERSION="0.12"
+DOWNLOAD_URL="https://github.com/xiph/opusfile/releases/download/v0.12/"
+DOWNLOAD_PREFIX="opusfile-"
 DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
-PATCH_FILE=${DOWNLOAD_NAME}.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -20,7 +19,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libncurses.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libopusfile.so
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -33,40 +32,33 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
+cd ${DOWNLOAD_SRCDIR}
+
+autoreconf -if
+
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
+cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
 
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
+autoreconf
 
 # build
 mkdir ${DOWNLOAD_SRCDIR}/build2
 cd ${DOWNLOAD_SRCDIR}/build2
 
-# build the lib without progs (tic, ...)
-
-LD=${CROSSCOMPILE_TOOLS_PATH}/bin/${BUILD_ARCH}-laylaos-ld \
-    CPPFLAGS="${CPPFLAGS} -I${CROSSCOMPILE_SYSROOT_PATH}/usr/include" \
-    LDFLAGS="-L${CROSSCOMPILE_SYSROOT_PATH}/usr/lib" \
-    ../configure  \
-    --host=${BUILD_TARGET} --prefix=/usr \
-    --with-termlib --with-ticlib --without-tests \
-    --enable-xmc-glitch --without-ada --without-cxx-binding \
-    --with-shared --without-pkg-config --enable-widec \
+../configure CFLAGS="-mstackrealign" \
+    --host=${BUILD_TARGET} \
+    --disable-static \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
-# make symlinks for those who need ncurses
-for lib in form menu ncurses panel tinfo tic curses; do
-    ln -s "lib${lib}w.so" "${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/lib${lib}.so"
-done
+# Fix opusfile.pc for the future generations
+sed -i "s/Version.*/Version: ${DOWNLOAD_VERSION}/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/pkgconfig/opusfile.pc
 
-#rm -rf ${CROSSCOMPILE_SYSROOT_PATH}/usr/include/ncurses
-#ln -s ncursesw ${CROSSCOMPILE_SYSROOT_PATH}/usr/include/ncurses
-
-# Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 
