@@ -2,7 +2,7 @@
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
  *    Copyright 2023, 2024 (c)
  * 
- *    file: rects.c
+ *    file: rects.h
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,7 +20,7 @@
  */    
 
 /**
- *  \file rects.c
+ *  \file rects.h
  *
  *  Functions to work with rectangles. These functions are similar and
  *  complementary to those in include/rect.h, except this file is only used

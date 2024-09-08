@@ -38,11 +38,17 @@ extern struct server_window_t *root_window;
 
 extern int mouse_is_confined;
 extern Rect mouse_bounds;
+extern Rect desktop_bounds;
 extern struct gc_t *gc;
 
 void may_change_mouse_cursor(struct server_window_t *win);
 
 // server-login.c
 void server_login(char *myname);
+
+// theme.c
+void server_init_theme(void);
+void send_theme_data(winid_t dest, uint32_t seqid, int fd);
+void broadcast_new_theme(void);
 
 #endif      /* GUI_SERVER_H */

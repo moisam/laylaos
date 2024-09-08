@@ -126,6 +126,7 @@ void server_window_create_canvas(struct gc_t *gc,
 
 // server-window-controlbox.c
 void prep_window_controlbox(void);
+void reinit_window_controlbox(void);
 void server_window_draw_controlbox(struct gc_t *gc, 
                                     struct server_window_t *window,
                                     int wscreen_x, int wscreen_y, int flags);
