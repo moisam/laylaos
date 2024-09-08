@@ -35,9 +35,9 @@
 #endif
 
 #define OSNAME          "LaylaOS"
-#define OSRELEASE       "0.0.1"
+#define OSRELEASE       "0.0.2"
 #define OSREVISION      1
-#define OSVERSION       "0.0.1"
+#define OSVERSION       "0.0.2"
 
 char osrelease[] = OSRELEASE;
 char ostype[] = OSNAME;

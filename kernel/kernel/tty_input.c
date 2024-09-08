@@ -153,9 +153,40 @@ void process_key(struct tty_t *tty, int c)
     {
         return;
     }
-    
+
     count = 0;
-    
+
+    if(c >= KEYCODE_UP && c <= KEYCODE_RIGHT)
+    {
+        // For arrow keys, we emit the following sequences (taking arrow Right
+        // as an example):
+        //   - Right             =>   ^[[C
+        //   - SHIFT-Right       =>   ^[[1;2C
+        //   - CTRL-Right        =>   ^[[1;5C
+        //   - CTRL-SHIFT-Right  =>   ^[[1;6C
+
+        if((scancode & 0x5b00) == 0x5b00)
+        {
+            // In application keypad mode, cursor keys send ESC O x instead of ESC [ x.
+            // Modify the code by removing the '[' and putting an 'O' in its place.
+            if((tty->flags & TTY_FLAG_APP_KEYMODE))
+            {
+                scancode &= 0xffff00ff;
+                scancode |= 0x4f00;
+            }
+        }
+        else
+        {
+            uint32_t scancode2 = CTRL_ARROW_PROLOGUE;
+
+            while(scancode2 != 0)
+            {
+                codes[count++] = scancode2 & 0xff;
+                scancode2 >>= 8;
+            }
+        }
+    }
+
     while(scancode != 0)
     {
         codes[count++] = scancode & 0xff;

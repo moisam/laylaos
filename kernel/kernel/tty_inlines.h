@@ -132,8 +132,16 @@ INLINE void sleep_if_full(struct kqueue_t *q)
 }
 
 
-/*
- * Get a terminal device's tty struct.
+/**
+ * @brief Get a terminal device's tty struct.
+ *
+ * Get the terminal structure (\ref tty_t "struct tty_t") that represents the
+ * terminal device (tty) that is identified by the device id given in
+ * \a dev.
+ *
+ * @param   dev device id
+ *
+ * @return  pointer to the terminal device's tty struct.
  */
 INLINE struct tty_t *get_struct_tty(dev_t dev)
 {

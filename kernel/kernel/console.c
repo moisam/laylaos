@@ -48,6 +48,13 @@
 // NOTE: uncomment to use the hardware (instead of software) cursor
 //#define USE_HARDWARE_CURSOR
 
+// Early during boot, we initialize the console to print boot messages.
+// We use a static buffer to represent cell attribs as we know the width 
+// and height of our standard display. Later on, when the framebuffer is
+// initialisted (and the virtual memory manager is running), we allocate a
+// dynamic buffer with the proper VGA width and height.
+uint8_t tty1_cellattribs[STANDARD_VGA_WIDTH * STANDARD_VGA_HEIGHT];
+
 // function prototypes
 extern void *memsetw(void* bufptr, int value, size_t size);
 
@@ -77,26 +84,14 @@ void (*restore_screen)(struct tty_t *) = NULL;
 
 static void console_reset(struct tty_t *tty)
 {
-    tty->row = 0;
-    tty->col = 0;
+    // Do our bit
     tty->default_color = make_color(COLOR_LIGHT_GREY, COLOR_BLACK);
     tty->color = tty->default_color;
-
     tty->vga_width = STANDARD_VGA_WIDTH;
     tty->vga_height = STANDARD_VGA_HEIGHT;
-    tty->attribs = 0;
-    tty->cursor_shown = 0;
-    tty->cursor_enabled = 0;
 
-    tty->state = 0;
-
-    fb_reset_colors(tty);
-
-    save_tty_state(tty);
-
-    erase_display(tty, tty->vga_width, tty->vga_height, 2);
-    enable_cursor(tty, 0, tty->vga_height - 1);
-    move_cur(tty);
+    // Then let the framebuffer device handle the rest
+    fb_reset(tty);
 }
 
 
@@ -119,6 +114,9 @@ void console_init(void)
 
     ttytab[1].buf = (uint16_t *)VGA_MEMORY_VIRTUAL;
     ttytab[1].flags = TTY_FLAG_ACTIVE | TTY_FLAG_AUTOWRAP;
+
+    ttytab[1].cellattribs = tty1_cellattribs;
+    //A_memset(ttytab[1].cellattribs, 0, ttytab[1].vga_width * ttytab[1].vga_height);
     
     // set our functions
     erase_display = ega_erase_display;
@@ -224,6 +222,7 @@ static inline void may_blit_buffer(struct tty_t *tty)
 void ega_scroll_up(struct tty_t *tty, uint32_t width, 
                                       uint32_t height, uint32_t row)
 {
+    // Scroll the text cells
     uint16_t *dest = tty->buf + (row * width);
     uint16_t *src = tty->buf + ((row + 1) * width);
     uint16_t *end = tty->buf + ((height - 1) * width);
@@ -234,8 +233,21 @@ void ega_scroll_up(struct tty_t *tty, uint32_t width,
         A_memcpy(dest, src, count);
     }
     
-    // reset last line to spaces
+    // Reset last line to spaces
     memsetw(dest, vga_entry(' ', tty->color), width);
+
+    // Now scroll their attributes
+    uint8_t *adest = tty->cellattribs + (row * width);
+    uint8_t *asrc = tty->cellattribs + ((row + 1) * width);
+    uint8_t *aend = tty->cellattribs + ((height - 1) * width);
+    
+    for( ; adest < aend; asrc += width, adest += width)
+    {
+        A_memcpy(adest, asrc, width);
+    }
+    
+    // Reset last line to default attribs
+    A_memset(adest, 0, width);
 
     may_blit_buffer(tty);
 }
@@ -247,6 +259,7 @@ void ega_scroll_up(struct tty_t *tty, uint32_t width,
  */
 void ega_scroll_down(struct tty_t *tty, uint32_t width, uint32_t height)
 {
+    // Scroll the text cells
     uint16_t *dest = tty->buf + ((height - 1) * width);
     uint16_t *src = tty->buf + ((height - 2) * width);
     uint16_t *end = tty->buf + (tty->row * width);
@@ -257,8 +270,21 @@ void ega_scroll_down(struct tty_t *tty, uint32_t width, uint32_t height)
         A_memcpy(dest, src, count);
     }
     
-    // reset last line to spaces
+    // Reset last line to spaces
     memsetw(dest, vga_entry(' ', tty->color), width);
+
+    // Now scroll their attributes
+    uint8_t *adest = tty->cellattribs + ((height - 1) * width);
+    uint8_t *asrc = tty->cellattribs + ((height - 2) * width);
+    uint8_t *aend = tty->cellattribs + (tty->row * width);
+
+    for( ; adest > aend; asrc -= width, adest -= width)
+    {
+        A_memcpy(adest, asrc, width);
+    }
+    
+    // Reset last line to default attribs
+    A_memset(adest, 0, width);
 
     may_blit_buffer(tty);
 }
@@ -373,6 +399,7 @@ void ega_erase_display(struct tty_t *tty,
 
     count = end - start;
     memsetw(tty->buf + start, vga_entry(' ', tty->color), count);
+    memset(tty->cellattribs + start, 0, count);
 
     may_blit_buffer(tty);
 }
@@ -413,6 +440,7 @@ void ega_erase_line(struct tty_t *tty, unsigned long cmd)
 
     count = end - start;
     memsetw(tty->buf + start, vga_entry(' ', tty->color), count);
+    A_memset(tty->cellattribs + start, 0, count);
 
     may_blit_buffer(tty);
 }
@@ -492,13 +520,16 @@ void ega_delete_chars(struct tty_t *tty, unsigned long count)
         uint16_t *dest = tty->buf + location;
         uint16_t *src = dest + 1;
         uint16_t *end = tty->buf + last;
+        uint8_t *attrdest = tty->cellattribs + location;
         
-        for( ; dest < end; src++, dest++)
+        for( ; dest < end; src++, dest++, attrdest++)
         {
             *dest = *src;
+            *attrdest = attrdest[1];
         }
         
         *dest = vga_entry(' ', tty->color);
+        *attrdest = 0;
     }
 
     may_blit_buffer(tty);
@@ -535,13 +566,16 @@ void ega_insert_chars(struct tty_t *tty, unsigned long count)
         uint16_t *src = tty->buf + last;
         uint16_t *dest = src - 1;
         uint16_t *end = tty->buf + location;
-        
-        for( ; dest > end; src--, dest--)
+        uint8_t *attrdest = tty->cellattribs + last - 1;
+
+        for( ; dest > end; src--, dest--, attrdest--)
         {
             *dest = *src;
+            *attrdest = attrdest[1];
         }
         
         *dest = vga_entry(' ', tty->color);
+        *attrdest = 0;
     }
 
     may_blit_buffer(tty);
@@ -568,31 +602,45 @@ void ega_set_attribs(struct tty_t *tty, unsigned long npar,
                 tty->flags &= ~TTY_FLAG_REVERSE_VIDEO;
                 break;
 
-            case 1:       // set bold (simulated by a bright color)
-            case 2:       // set bright
-                tty->color |= 0x8;
+            case 1:         // set bold
+                tty->attribs |= ATTRIB_BOLD;
                 break;
 
-            case 4:       // set underscore (simulated by a bright background)
-            case 5:       // set blink (simulated by a bright background)
-                tty->color |= 0x80;
+            case 2:         // set bright
+                tty->attribs |= ATTRIB_BRIGHT_FG;
+                break;
+
+            case 4:         // set underscore
+                tty->attribs |= ATTRIB_UNDERLINE;
+                break;
+
+            case 5:         // set blink (simulated by a bright background)
+                tty->attribs |= ATTRIB_BRIGHT_BG;
                 break;
 
             case 7:       // set reverse video
                 tty->flags |= TTY_FLAG_REVERSE_VIDEO;
                 break;
 
-            case 21:      // set underline (simulated by normal intensity)
-            case 22:      // set normal intensity
-            case 24:      // underline off
-                tty->color &= ~0x88;
+            case 21:        // set underline
+                tty->attribs |= ATTRIB_UNDERLINE;
                 break;
 
-            case 25:      // blink off
-                tty->color &= ~0x80;
+            case 22:        // set normal intensity
+                tty->attribs &= ~ATTRIB_BOLD;
+                tty->attribs &= ~ATTRIB_BRIGHT_FG;
+                tty->attribs &= ~ATTRIB_BRIGHT_BG;
                 break;
 
-            case 27:      // reverse video off
+            case 24:        // underline off
+                tty->attribs &= ~ATTRIB_UNDERLINE;
+                break;
+
+            case 25:        // blink off
+                tty->attribs &= ~ATTRIB_BRIGHT_BG;
+                break;
+
+            case 27:        // reverse video off
                 tty->flags &= ~TTY_FLAG_REVERSE_VIDEO;
                 break;
 
@@ -792,12 +840,13 @@ static void set_scroll_region(struct tty_t *tty,
 
 
 static inline void __ega_tputchar(struct tty_t *tty, char c, 
-                                  uint16_t bold_bit, uint8_t color)
+                                  uint8_t flags, uint8_t color)
 {
     int i = tty->row * tty->vga_width + tty->col;
     uint16_t col = vga_entry(c, color);
 
-    tty->buf[i] = col | bold_bit;
+    tty->buf[i] = col;
+    tty->cellattribs[i] = flags;
 
     if(NEED_BLIT(tty))
     {
@@ -817,14 +866,10 @@ static void ega_tputchar(struct tty_t *tty, char c)
     // brightness. Some attributes are simulated, e.g. underline is simulated
     // by a bright foreground. As for bold, our framebuffer uses two different
     // fonts for bold and regular text. When we switch virtual consoles, we
-    // need to save this info somewhere. As we currently use ASCII text, which
-    // has 127 entries, we can use the highest bit to indicate if the cell is
-    // to be presented in bold face.
-    uint16_t bold_bit = (uint16_t)(c & 0x80);
-
-    // Remove the bold bit. Of course, this will come to bite us in the ass
-    // if we decide to use the whole 8 bits to represent 256 chars!
-    c &= 0x7f;
+    // need to save this info somewhere. We use a separate struct to store
+    // this information for each cell.
+    uint8_t flags = ((tty->attribs & ATTRIB_BOLD) ? CELL_FLAG_BOLD : 0) |
+                    CELL_FLAG_CHARSET_LATIN;
 
     // line feed, vertical tab, and form feed
     if(c == LF || c == VT || c == FF)
@@ -850,21 +895,21 @@ static void ega_tputchar(struct tty_t *tty, char c)
         
         for( ; tty->col < new_col; tty->col++)
         {
-    	    __ega_tputchar(tty, ' ', bold_bit, color);
+    	    __ega_tputchar(tty, ' ', flags, color);
     	}
     }
     else if(c == '\033' /* '\e' */)
     {
         // print ESC as ^[
-        __ega_tputchar(tty, '^', bold_bit, color);
+        __ega_tputchar(tty, '^', flags, color);
         tty->col++;
         tty_adjust_indices(tty);
-        __ega_tputchar(tty, '[', bold_bit, color);
+        __ega_tputchar(tty, '[', flags, color);
         tty->col++;
     }
     else
     {
-        __ega_tputchar(tty, c, bold_bit, color);
+        __ega_tputchar(tty, c, flags, color);
         tty->col++;
     }
     
@@ -1012,12 +1057,31 @@ void console_write(struct tty_t *tty)
                 {
                     tty->state = 1;
                 }
+                else if(c == 0x0e)
+                {
+                    // activate the G1 character set into GL
+                    tty->gl = tty->g[1];
+                    tty->glbold = tty->gbold[1];
+                }
+                else if(c == 0x0f)
+                {
+                    // activate the G0 character set into GL
+                    tty->gl = tty->g[0];
+                    tty->glbold = tty->gbold[0];
+                }
                 else if(c == (char)tty->termios.c_cc[VERASE])
                 {
                     PUTCH('\b');
                     PUTCH(' ');
                     PUTCH('\b');
                 }
+                /*
+                else
+                {
+                    __asm__ __volatile__("xchg %%bx, %%bx":::);
+                    printk("%s: Unknown chr '%c' - '%d'    ", __func__, c, c);
+                }
+                */
                 break;
                 
             /*
@@ -1079,6 +1143,24 @@ void console_write(struct tty_t *tty)
                     case '8':       // restore current state
                         restore_tty_state(tty);
                         break;
+
+                    case '>':       // set numeric keypad mode
+                        tty->flags &= ~TTY_FLAG_APP_KEYMODE;
+                        break;
+
+                    case '=':       // set application keypad mode
+                        tty->flags |= TTY_FLAG_APP_KEYMODE;
+                        break;
+
+                    case ']':       // set/reset palette
+                        tty->state = 7;
+                        break;
+
+                    /*
+                    default:
+                        __asm__ __volatile__("xchg %%bx, %%bx":::);
+                        printk("%s: Unknown CSI '%c' - '%d'    ", __func__, c, c);
+                    */
                 }
                 break;
                 
@@ -1327,9 +1409,11 @@ void console_write(struct tty_t *tty)
                         break;
 
                     default:
+                        /*
                         printk("%s: Unknown cmd '%c' - '%d'    ", 
                                 __func__, c, tty->par[0]);
                         __asm__ __volatile__("xchg %%bx, %%bx"::);
+                        */
                         break;
                 }
                 break;
@@ -1344,6 +1428,8 @@ void console_write(struct tty_t *tty)
              *        For more info, see the link above.
              */
             case 5:
+                // We only use charsets in framebuffer mode (for now)
+                fb_change_charset(tty, 0, c);
                 tty->state = 0;
                 break;
 
@@ -1353,7 +1439,74 @@ void console_write(struct tty_t *tty)
              *        For more info, see the link above.
              */
             case 6:
+                // We only use charsets in framebuffer mode (for now)
+                fb_change_charset(tty, 1, c);
                 tty->state = 0;
+                break;
+
+            /*
+             * Set/reset palette:
+             *        If ESC-] is followed by R, reset the palette.
+             *        If ESC-] is followed by P, set palette color. The param
+             *          is given as 7 digits: nrrggbb (n is the color 0-15),
+             *          and rrggbb indicate the red/green/blue component
+             *          values (0-255). We currently use palette in the
+             *          framebuffer mode only.
+             *        For more info, see the link above.
+             */
+            case 7:
+                if(c == 'R')
+                {
+                    fb_reset_palette(tty);
+                    tty->state = 0;
+                }
+                else if(c == 'P')
+                {
+                    tty->state = 8;
+                }
+                else if(c == '0' || c == '1' || c == '2')
+                {
+                    // xterm escape sequences -- see case 9 below
+                    tty->state = 9;
+                }
+                else
+                {
+                    tty->state = 0;
+                }
+
+                tty->npar = 0;
+                break;
+
+            case 8:
+                if(tty->npar < 7)
+                {
+                    tty->palette_str[tty->npar++] = c;
+                }
+
+                if(tty->npar == 7)
+                {
+                    tty->palette_str[7] = '\0';
+                    fb_set_palette_from_str(tty, tty->palette_str);
+                    tty->npar = 0;
+                    tty->state = 0;
+                }
+                break;
+
+            /*
+             * We lie and say we are xterm-color (mainly to make ncurses-aware
+             * programs run in color). As a result, some programs (e.g. bash)
+             * might try and set the window title and/or icon. Obviously, there
+             * is no window in the console, so we have to silently wait for
+             * the whole string to come in and discard it. We know the string
+             * is finished when we receive a BELL character.
+             *
+             * See: https://tldp.org/HOWTO/Xterm-Title-3.html
+             */
+            case 9:
+                if(c == '\a')
+                {
+                    tty->state = 0;
+                }
                 break;
         }
 

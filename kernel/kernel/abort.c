@@ -29,12 +29,14 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <kernel/laylaos.h>
+#include <kernel/tty.h>
 
 /*
  * Kernel abort function.
  */
 __attribute__((noreturn)) void kabort(char *caller)
 {
+    switch_tty(1);
     printk("kabort() called by %s\n", caller);
     kpanic("kabort()");
     //__asm__ __volatile__("xchg %%bx, %%bx"::);

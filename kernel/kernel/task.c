@@ -659,8 +659,14 @@ int block_task2(void *wait_channel, int timeout_ticks)
 
 extern sigset_t unblockable_signals;    // signal.c
 
-/*
+/**
+ * @brief Check for pending signals.
+ *
  * Check if the given task has at least one pending deliverable signal.
+ *
+ * @param   task        task whose signals to check
+ *
+ * @return  1 if task has one or more pending signals, 0 otherwise.
  */
 static inline int has_pending_signals(struct task_t *task)
 {

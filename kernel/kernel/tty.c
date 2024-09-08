@@ -50,6 +50,7 @@
 #include <kernel/vga.h>
 #include <kernel/syscall.h>
 #include <kernel/fcntl.h>
+#include <mm/kheap.h>
 #include <fs/devpts.h>
 #include <gui/vbe.h>
 #include <gui/fb.h>
@@ -120,6 +121,16 @@ void tty_init(void)
         ttytab[i].process_key = process_key;
         ttytab[i].copy_to_buf = copy_to_buf;
 
+        if(!(ttytab[i].cellattribs =
+                kmalloc(ttytab[i].vga_width * ttytab[i].vga_height)))
+        {
+            kpanic("tty: failed to alloc internal buffer\n");
+        }
+
+        A_memset(ttytab[i].cellattribs, 0, ttytab[i].vga_width * ttytab[i].vga_height);
+
+        fb_reset_charsets(&ttytab[i]);
+        fb_reset_colors(&ttytab[i]);
         tty_set_defaults(&ttytab[i]);
     }
 }
