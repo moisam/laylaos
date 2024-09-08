@@ -2,7 +2,7 @@
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
  *    Copyright 2023, 2024 (c)
  * 
- *    file: procfs-bufinfo.c
+ *    file: procfs_bufinfo.c
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,7 +20,7 @@
  */    
 
 /**
- *  \file procfs-bufinfo.c
+ *  \file procfs_bufinfo.c
  *
  *  This file implements the functions needed to read /proc/buffers.
  */

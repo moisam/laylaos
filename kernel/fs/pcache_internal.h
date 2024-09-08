@@ -2,7 +2,7 @@
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
  *    Copyright 2022, 2023, 2024 (c)
  * 
- *    file: pcache-internal.h
+ *    file: pcache_internal.h
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,7 +20,7 @@
  */    
 
 /**
- *  \file pcache-internal.h
+ *  \file pcache_internal.h
  *
  *  Internal functions for the page cache use.
  */
