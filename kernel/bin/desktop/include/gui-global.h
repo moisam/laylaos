@@ -72,10 +72,13 @@ struct __global_gui_data_t
 
     // system font - regular & bold
     struct font_t sysfont, sysfont_bold;
+
+    // system color theme - not all of it is used (see theme.h)
+    uint32_t themecolor[64];
 };
 
 extern struct __global_gui_data_t __global_gui_data;
-
+extern uint32_t builtin_color_theme[];
 extern uint32_t __seqid;
 
 static inline uint32_t __next_seqid(void)

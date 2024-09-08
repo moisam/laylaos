@@ -238,7 +238,13 @@ enum
     REQUEST_CLIPBOARD_GET,
     REQUEST_CLIPBOARD_QUERY,
     REQUEST_COLOR_PALETTE,
-    REQUEST_LAST,       // currently 58
+    REQUEST_COLOR_THEME_GET,
+    REQUEST_COLOR_THEME_SET,
+    REQUEST_GET_ROOT_WINID,
+    REQUEST_LAST,       // currently 62
+    REQUEST_APPLICATION_PRIVATE = 65536,    // apps can define whatever 
+                                            // requests they want starting
+                                            // from here
 };
 
 /*
@@ -255,7 +261,6 @@ enum
     EVENT_WINDOW_HIDDEN,
     EVENT_WINDOW_RAISED,
     EVENT_WINDOW_LOWERED,
-    //EVENT_WINDOW_RESIZE,
     EVENT_WINDOW_RESIZE_OFFER,
     EVENT_WINDOW_RESIZE_CONFIRM,
     EVENT_WINDOW_POS_CHANGED,
@@ -300,6 +305,12 @@ enum
     //EVENT_ICON_LOADED,
     EVENT_COLOR_PALETTE_DATA,
     EVENT_ERROR,
+    EVENT_COLOR_THEME_DATA,
+    EVENT_ROOT_WINID,
+    EVENT_LAST,             // currently 174
+    EVENT_APPLICATION_PRIVATE = 16777216,   // apps can define whatever 
+                                            // events they want starting
+                                            // from here
 };
 
 /*

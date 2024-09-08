@@ -134,6 +134,8 @@
 #define WINDOW_TYPE_TOGGLE          15
 #define WINDOW_TYPE_PUSHBUTTON      16
 #define WINDOW_TYPE_COMBOBOX        17
+#define WINDOW_TYPE_GALLERY_VIEW    18
+#define WINDOW_TYPE_RADIOBUTTON     19
 
 // macro to check if a widget is TAB-able
 #define TABABLE(widget)             ((widget)->type != WINDOW_TYPE_LABEL && \

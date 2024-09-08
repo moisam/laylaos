@@ -128,6 +128,9 @@ static inline void bitmap32_array_free(struct bitmap32_array_t *ba)
 struct bitmap32_t *png_load(char *file_name, struct bitmap32_t *loaded_bitmap);
 struct bitmap32_t *png_load_file(FILE *file, struct bitmap32_t *loaded_bitmap);
 
+struct bitmap32_t *jpeg_load(char *file_name, struct bitmap32_t *loaded_bitmap);
+struct bitmap32_t *jpeg_load_file(FILE *file, struct bitmap32_t *loaded_bitmap);
+
 struct bitmap32_array_t *ico_load(char *file_name);
 
 #ifdef __cplusplus
