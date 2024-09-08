@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=PDF viewer
+Command=/usr/bin/sdlbook
+IconPath=Default
+Icon=sdlbook
+ShowOnDesktop=no
+Category=Office
+

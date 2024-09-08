@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Freegemas
+Command=/usr/bin/freegemas
+IconPath=Default
+Icon=freegemas
+ShowOnDesktop=no
+Category=Games
+

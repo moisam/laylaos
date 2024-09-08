@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=uMario
+Command=/usr/bin/uMario
+IconPath=Default
+Icon=uMario
+ShowOnDesktop=no
+Category=Games
+

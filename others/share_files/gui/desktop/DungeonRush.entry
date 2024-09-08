@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=DungeonRush
+Command=/usr/bin/dungeon_rush
+IconPath=Default
+Icon=DungeonRush
+ShowOnDesktop=no
+Category=Games
+

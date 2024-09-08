@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=System settings
+Command=/bin/desktop/settingsapp
+IconPath=Default
+Icon=settings
+ShowOnDesktop=no
+Category=System Tools
+
