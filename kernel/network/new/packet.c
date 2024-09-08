@@ -65,22 +65,27 @@ struct packet_t *packet_alloc(size_t len, int type)
         return NULL;
     }
     
-    A_memset(p, 0, sizeof(struct packet_t));
+    //A_memset(p, 0, sizeof(struct packet_t));
+    for(size_t i = 0; i < sizeof(struct packet_t); i++) ((char *)p)[i] = 0;
     /*
+    p->transport_hdr = NULL;
+    p->incoming_iphdr = NULL;
     p->flags = 0;
     p->ifp = NULL;
     p->next = NULL;
     p->sock = NULL;
     p->nfailed = 0;
+    p->transport_flags_saved = 0;
+    p->frag = 0;
+    p->free_packet = NULL;
+    p->timestamp = 0ULL;
+    p->remote_addr = 0;
+    p->remote_port = 0;
     */
 
     p->count = len;
     p->malloced = len + min_size;
     p->data = (void *)((char *)p + sizeof(struct packet_t) + offset);
-    /*
-    p->transport_hdr = NULL;
-    p->free_packet = NULL;
-    */
     
     return p;
 }

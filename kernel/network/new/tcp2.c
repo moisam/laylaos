@@ -2,7 +2,7 @@
  *    Copyright 2022, 2023, 2024 (c) Mohammed Isam [mohammed_isam1984@yahoo.com].
  *    PicoTCP. Copyright (c) 2012-2017 Altran Intelligent Systems. Some rights reserved.
  * 
- *    file: tcp.c
+ *    file: tcp2.c
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,7 +20,7 @@
  */    
 
 /**
- *  \file tcp.c
+ *  \file tcp2.c
  *
  *  Transmission Control Protocol (TCP) implementation.
  */
