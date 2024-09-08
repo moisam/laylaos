@@ -79,6 +79,10 @@ cp -r ../include/vk_video/ ${CROSSCOMPILE_SYSROOT_PATH}/usr/include
 cp LaylaOS/libvulkan.so.1 ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib
 ln -s libvulkan.so.1 ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libvulkan.so
 
+# set the SONAME so everybody else can link to it without using the full pathname
+patchelf --set-soname libvulkan.so ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libvulkan.so
+patchelf --set-soname libSPIRV.so ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libSPIRV.so
+
 # As we installed the .so manually, we need to create a pkgconfig file for other
 # software to be able to find this lib (save this as $SYSROOT/usr/lib/pkgconfig/vulkan.pc):
 

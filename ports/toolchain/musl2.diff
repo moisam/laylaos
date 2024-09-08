@@ -1,0 +1,70 @@
+diff -rub ./musl-1.2.4/src/thread/pthread_cond_timedwait.c ./musl-1.2.4/src/thread/pthread_cond_timedwait.c
+--- ./musl-1.2.4/src/thread/pthread_cond_timedwait.c	2024-08-26 09:22:56.723298993 +0100
++++ ./musl-1.2.4/src/thread/pthread_cond_timedwait.c	2024-08-15 20:51:22.694087659 +0100
+@@ -247,8 +247,9 @@
+                              pthread_mutex_t *restrict m,
+                              const struct timespec *restrict ts)
+ {
+-    struct cond_waiter_t waiter = { NULL, 0 };
++    struct cond_waiter_t *w, waiter = { NULL, 0 };
+     struct timespec now;
++    int res;
+ 
+     lock(&c->lock);
+ 
+@@ -271,12 +272,14 @@
+         {
+         	if(clock_gettime(c->clockid, &now) < 0)
+         	{
+-        		return errno;
++        		res = errno;
++        		goto err;
+         	}
+ 
+     		if(timespec_cmp(ts, &now) <= 0)
+     		{
+-    			return ETIMEDOUT;
++    			res = ETIMEDOUT;
++    			goto err;
+     		}
+ 		}
+ 
+@@ -286,6 +289,28 @@
+     }
+     
+     return 0;
++
++err:
++
++    lock(&c->lock);
++
++    if(c->first_waiter == &waiter) c->first_waiter = waiter.next;
++    else
++    {
++        w = c->first_waiter;
++        while(w && w->next != &waiter) w = w->next;
++
++        if(w && w->next == &waiter)
++        {
++            w->next = w->next->next;
++            if(c->last_waiter == &waiter) c->last_waiter = w;
++        }
++    }
++
++    if(c->first_waiter == NULL) c->last_waiter = NULL;
++    unlock(&c->lock);
++
++    return res;
+ }
+ 
+ int __private_cond_signal(pthread_cond_t *c, int n)
+@@ -307,7 +332,9 @@
+         if(--n == 0) break;
+     }
+     
++    if(!c->first_waiter) c->last_waiter = NULL;
+     unlock(&c->lock);
++
+     return 0;
+ }
+ 

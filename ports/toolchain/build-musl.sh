@@ -11,6 +11,7 @@ DOWNLOAD_PREFIX="musl-"
 DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 PATCH_FILE=musl.diff
+PATCH2_FILE=musl2.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -42,6 +43,7 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
+cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH2_FILE} -p0 && cd ${CWD}
 
 # we will replace some of musl's original files with our own
 rm ${DOWNLOAD_SRCDIR}/src/process/x86_64/vfork.s
@@ -50,23 +52,23 @@ rm ${DOWNLOAD_SRCDIR}/src/thread/x86_64/clone.s
 rm ${DOWNLOAD_SRCDIR}/src/thread/x86_64/__set_thread_area.s
 rm ${DOWNLOAD_SRCDIR}/src/thread/x86_64/__unmapself.s
 
-copy_or_die extra-musl/x84_64/vfork.S ${DOWNLOAD_SRCDIR}/src/process/x86_64/
-copy_or_die extra-musl/x84_64/restore.S ${DOWNLOAD_SRCDIR}/src/signal/x86_64
-copy_or_die extra-musl/x84_64/clone.S ${DOWNLOAD_SRCDIR}/src/thread/x86_64
-copy_or_die extra-musl/x84_64/__set_thread_area.S ${DOWNLOAD_SRCDIR}/src/thread/x86_64
-copy_or_die extra-musl/x84_64/__unmapself.S ${DOWNLOAD_SRCDIR}/src/thread/x86_64
+copy_or_die ${CWD}/extra-musl/x84_64/vfork.S ${DOWNLOAD_SRCDIR}/src/process/x86_64/
+copy_or_die ${CWD}/extra-musl/x84_64/restore.S ${DOWNLOAD_SRCDIR}/src/signal/x86_64/
+copy_or_die ${CWD}/extra-musl/x84_64/clone.S ${DOWNLOAD_SRCDIR}/src/thread/x86_64/
+copy_or_die ${CWD}/extra-musl/x84_64/__set_thread_area.S ${DOWNLOAD_SRCDIR}/src/thread/x86_64/
+copy_or_die ${CWD}/extra-musl/x84_64/__unmapself.S ${DOWNLOAD_SRCDIR}/src/thread/x86_64/
 
 rm ${DOWNLOAD_SRCDIR}/src/signal/i386/restore.s
 
-copy_or_die extra-musl/i386/restore.S ${DOWNLOAD_SRCDIR}/src/signal/i386
+copy_or_die ${CWD}/extra-musl/i386/restore.S ${DOWNLOAD_SRCDIR}/src/signal/i386/
 
 # and we have some new files as well
-copy_or_die extra-musl/syscall-laylaos.h.in ${DOWNLOAD_SRCDIR}/arch/x86_64/bits
-copy_or_die extra-musl/gnu_posix_fallocate.c ${DOWNLOAD_SRCDIR}/src/fcntl
-copy_or_die extra-musl/sysctl.c ${DOWNLOAD_SRCDIR}/src/misc
+copy_or_die ${CWD}/extra-musl/syscall-laylaos.h.in ${DOWNLOAD_SRCDIR}/arch/x86_64/bits/
+copy_or_die ${CWD}/extra-musl/gnu_posix_fallocate.c ${DOWNLOAD_SRCDIR}/src/fcntl/
+copy_or_die ${CWD}/extra-musl/sysctl.c ${DOWNLOAD_SRCDIR}/src/misc/
 
 # sys/socket.h needs this from our kernel source
-copy_or_die extra-musl/ucred.h ${CROSSCOMPILE_SYSROOT_PATH}/usr/include/sys
+copy_or_die ${CWD}/extra-musl/ucred.h ${CROSSCOMPILE_SYSROOT_PATH}/usr/include/sys/
 
 # build musl
 echo " ==>"

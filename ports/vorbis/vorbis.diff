@@ -1,7 +1,7 @@
-diff -rub ./libvorbis-1.3.3/configure ./libvorbis-1.3.3/configure
---- ./libvorbis-1.3.3/configure	2012-02-03 22:01:11.000000000 +0000
-+++ ./libvorbis-1.3.3/configure	2024-02-10 20:19:19.261138330 +0000
-@@ -5579,7 +5579,7 @@
+diff -rub ./libvorbis-1.3.7/configure ./libvorbis-1.3.7/configure
+--- ./libvorbis-1.3.7/configure	2020-07-04 07:20:13.000000000 +0100
++++ ./libvorbis-1.3.7/configure	2024-08-26 18:17:18.828947341 +0100
+@@ -5772,7 +5772,7 @@
    lt_cv_deplibs_check_method=pass_all
    ;;
  
@@ -10,7 +10,7 @@ diff -rub ./libvorbis-1.3.3/configure ./libvorbis-1.3.3/configure
    lt_cv_deplibs_check_method=pass_all
    ;;
  
-@@ -10703,6 +10703,17 @@
+@@ -11392,6 +11392,17 @@
    hardcode_into_libs=yes
    ;;
  

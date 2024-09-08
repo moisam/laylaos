@@ -5,8 +5,8 @@
 #
 
 DOWNLOAD_NAME="vorbis"
-DOWNLOAD_VERSION="1.3.3"
-DOWNLOAD_URL="http://downloads.xiph.org/releases/vorbis/"
+DOWNLOAD_VERSION="1.3.7"
+DOWNLOAD_URL="https://ftp.osuosl.org/pub/xiph/releases/vorbis/"
 DOWNLOAD_PREFIX="libvorbis-"
 DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"

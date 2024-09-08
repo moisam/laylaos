@@ -1,0 +1,156 @@
+diff -rub ./uMario_Jakowski/uNext/CFG.cpp ./uMario_Jakowski/uNext/CFG.cpp
+--- ./uMario_Jakowski/uNext/CFG.cpp	2024-08-26 08:14:41.172974085 +0100
++++ ./uMario_Jakowski/uNext/CFG.cpp	2024-08-25 12:16:56.607383068 +0100
+@@ -28,6 +28,7 @@
+ int CCFG::keyIDS = 0;
+ int CCFG::keyIDSpace = 0;
+ int CCFG::keyIDShift = 0;
++int CCFG::mixerRefs = 0;
+ 
+ bool CCFG::canMoveBackward = true;
+ 
+diff -rub ./uMario_Jakowski/uNext/CFG.h ./uMario_Jakowski/uNext/CFG.h
+--- ./uMario_Jakowski/uNext/CFG.h	2024-08-26 08:14:41.172974085 +0100
++++ ./uMario_Jakowski/uNext/CFG.h	2024-08-25 12:16:40.967337493 +0100
+@@ -23,6 +23,7 @@
+ 	static bool keySpace;
+ 
+ 	static int keyIDA, keyIDS, keyIDD, keyIDSpace, keyIDShift;
++	static int mixerRefs;
+ 
+ 	static std::string getKeyString(int keyID);
+ 
+diff -rub ./uMario_Jakowski/uNext/Core.cpp ./uMario_Jakowski/uNext/Core.cpp
+--- ./uMario_Jakowski/uNext/Core.cpp	2024-08-26 08:14:41.172974085 +0100
++++ ./uMario_Jakowski/uNext/Core.cpp	2024-08-25 12:19:09.751893747 +0100
+@@ -5,6 +5,8 @@
+ #include "Text.h"
+ #include "SDL_mixer.h"
+ 
++#define DATA_PATH               "/usr/share/games/uMario/"
++
+ /* ******************************************** */
+ 
+ Map* CCore::oMap = new Map();
+@@ -38,10 +40,10 @@
+ 		quitGame = true;
+ 	}
+ 
+-	rR = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
++	rR = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE /* SDL_RENDERER_ACCELERATED */);
+ 
+ 	// ----- ICO
+-	std::string fileName = "files/images/ico.bmp";
++	std::string fileName = DATA_PATH "files/images/ico.bmp";
+ 	SDL_Surface* loadedSurface = SDL_LoadBMP(fileName.c_str());
+ 	SDL_SetColorKey(loadedSurface, SDL_TRUE, SDL_MapRGB(loadedSurface->format, 255, 0, 255));
+ 
+@@ -52,6 +54,7 @@
+ 	// ----- ICO
+ 	
+ 	Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048);
++	CCFG::mixerRefs = CCFG::mixerRefs + 1;
+ 	
+ 	oMap = new Map(rR);
+ 	CCFG::getMM()->setActiveOption(rR);
+diff -rub ./uMario_Jakowski/uNext/IMG.cpp ./uMario_Jakowski/uNext/IMG.cpp
+--- ./uMario_Jakowski/uNext/IMG.cpp	2024-08-26 08:14:41.216974675 +0100
++++ ./uMario_Jakowski/uNext/IMG.cpp	2024-08-25 08:52:41.957819967 +0100
+@@ -1,5 +1,7 @@
+ #include "IMG.h"
+ 
++#define DATA_PATH               "/usr/share/games/uMario/"
++
+ /* ******************************************** */
+ 
+ CIMG::CIMG(void) { }
+@@ -46,7 +48,7 @@
+ /* ******************************************** */
+ 
+ void CIMG::setIMG(std::string fileName, SDL_Renderer* rR) {
+-	fileName = "files/images/" + fileName + ".bmp";
++	fileName = DATA_PATH "files/images/" + fileName + ".bmp";
+ 	SDL_Surface* loadedSurface = SDL_LoadBMP(fileName.c_str());
+ 	SDL_SetColorKey(loadedSurface, SDL_TRUE, SDL_MapRGB(loadedSurface->format, 255, 0, 255));
+ 
+diff -rub ./uMario_Jakowski/uNext/main.cpp ./uMario_Jakowski/uNext/main.cpp
+--- ./uMario_Jakowski/uNext/main.cpp	2024-08-26 08:14:41.792982387 +0100
++++ ./uMario_Jakowski/uNext/main.cpp	2024-08-25 12:53:11.473354416 +0100
+@@ -7,5 +7,7 @@
+ 	
+ 	oCore.mainLoop();
+ 
++	for(int i = 0; i < CCFG::mixerRefs; i++) Mix_CloseAudio();
++
+ 	return 0;
+ }
+diff -rub ./uMario_Jakowski/uNext/Music.cpp ./uMario_Jakowski/uNext/Music.cpp
+--- ./uMario_Jakowski/uNext/Music.cpp	2024-08-26 08:14:41.216974675 +0100
++++ ./uMario_Jakowski/uNext/Music.cpp	2024-08-25 12:18:11.319644152 +0100
+@@ -2,10 +2,13 @@
+ #include "Core.h"
+ #include "SDL_mixer.h"
+ 
++#define DATA_PATH               "/usr/share/games/uMario/"
++
+ /* ******************************************** */
+ 
+ Music::Music(void) {
+ 	Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048);
++	CCFG::mixerRefs = CCFG::mixerRefs + 1;
+ 
+ 	vMusic.push_back(loadMusic("overworld"));
+ 	vMusic.push_back(loadMusic("overworld-fast"));
+@@ -157,12 +160,12 @@
+ /* ******************************************** */
+ 
+ Mix_Music* Music::loadMusic(std::string fileName) {
+-	fileName = "files/sounds/" + fileName + ".wav";
++	fileName = DATA_PATH "files/sounds/" + fileName + ".wav";
+ 	return Mix_LoadMUS(fileName.c_str());
+ }
+ 
+ Mix_Chunk* Music::loadChunk(std::string fileName) {
+-	fileName = "files/sounds/" + fileName + ".wav";
++	fileName = DATA_PATH "files/sounds/" + fileName + ".wav";
+ 	return Mix_LoadWAV(fileName.c_str());
+ }
+ 
+diff -rub ./uMario_Jakowski/uNext/MusicManager.cpp ./uMario_Jakowski/uNext/MusicManager.cpp
+--- ./uMario_Jakowski/uNext/MusicManager.cpp	2024-08-26 08:14:41.216974675 +0100
++++ ./uMario_Jakowski/uNext/MusicManager.cpp	2024-08-25 12:20:43.352365239 +0100
+@@ -5,6 +5,9 @@
+  ************************/
+ 
+ #include "MusicManager.h"
++#include "CFG.h"
++
++#define DATA_PATH               "/usr/share/games/uMario/"
+ 
+ /* ******************************************** */
+ 
+@@ -21,18 +24,19 @@
+ /* ******************************************** */
+ 
+ void MusicManager::PlayMusic() {
+-	vMusic.push_back(Mix_LoadMUS("files/sounds/overworld.wav"));
+-	vMusic.push_back(Mix_LoadMUS("files/sounds/overworld.wav"));
++	vMusic.push_back(Mix_LoadMUS(DATA_PATH "files/sounds/overworld.wav"));
++	vMusic.push_back(Mix_LoadMUS(DATA_PATH "files/sounds/overworld.wav"));
+ 	Mix_VolumeMusic(100);
+ 	Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048);
++	CCFG::mixerRefs = CCFG::mixerRefs + 1;
+ 	Mix_PlayMusic(vMusic[0], -1);
+ }
+ 
+ /* ******************************************** */
+ 
+ Mix_Music* MusicManager::loadMusic(std::string fileName) {
+-	fileName = "files/sounds/" + fileName + ".wav";
+-	return Mix_LoadMUS("files/sounds/overworld.wav");
++	fileName = DATA_PATH "files/sounds/" + fileName + ".wav";
++	return Mix_LoadMUS(DATA_PATH "files/sounds/overworld.wav");
+ }
+ 
+ /* ******************************************** */
+\ No newline at end of file

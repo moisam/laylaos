@@ -3417,7 +3417,7 @@ diff -rub ./musl-1.2.4/src/thread/pthread_cond_init.c ./musl-1.2.4/src/thread/pt
 +    c->pshared = a ? a->pshared : 0;
 +    c->first_waiter = NULL;
 +    c->last_waiter = NULL;
-+    
++    c->lock = 0;
 +    return 0;
 +}
 +
