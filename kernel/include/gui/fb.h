@@ -71,6 +71,54 @@
 void fb_reset_colors(struct tty_t *tty);
 
 /**
+ * @brief Reset framebuffer palette.
+ *
+ * This function resets the framebuffer device color palette to its builtin
+ * default (see fb.c for the actual color values).
+ *
+ * @param   tty     pointer to terminal device
+ *
+ * @return  nothing.
+ */
+void fb_reset_palette(struct tty_t *tty);
+
+/**
+ * @brief Reset framebuffer charsets.
+ *
+ * This function resets the framebuffer device character sets to their
+ * builtin defaults.
+ *
+ * @param   tty     pointer to terminal device
+ *
+ * @return  nothing.
+ */
+void fb_reset_charsets(struct tty_t *tty);
+
+/**
+ * @brief Reset framebuffer device.
+ *
+ * This function resets the framebuffer device to its builtin defaults.
+ *
+ * @param   tty     pointer to terminal device
+ *
+ * @return  nothing.
+ */
+void fb_reset(struct tty_t *tty);
+
+/**
+ * @brief Set framebuffer palette.
+ *
+ * This function sets the value of one color in the framebuffer device color 
+ * palette. Format of the given string can be found in the source file fb.c.
+ *
+ * @param   tty     pointer to terminal device
+ * @param   str     string containing color information
+ *
+ * @return  nothing.
+ */
+void fb_set_palette_from_str(struct tty_t *tty, char *str);
+
+/**
  * @brief Initialize the framebuffer device.
  *
  * This function initializes the framebuffer, sets video size, assigns the
@@ -115,14 +163,44 @@ void fb_init_screen(void);
 int fb_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
 
 /**
- * @var framebuf_mem
- * @brief VBE front buffer.
+ * @brief Set framebuffer charset.
  *
- * This variable holds the address of the video screen's front buffer (i.e.
- * whatever is actually shown on the screen).
+ * This function sets the value of one of the character sets G0, G1, G2 or G3
+ * to use either the default, VT100 graphics mapping, null mapping, or a user
+ * defined mapping. Format of the given arguments can be found in the source 
+ * file fb.c.
+ *
+ * @param   tty     pointer to terminal device
+ * @param   which   number from 0 to 3
+ * @param   c       char indicating which charset to use
+ *
+ * @return  nothing.
  */
-//extern virtual_addr framebuf_mem;
-extern uint8_t *fb_backbuf_text, *fb_backbuf_gui, *fb_cur_backbuf;
+void fb_change_charset(struct tty_t *tty, int which, char c);
+
+/**
+ * @var fb_backbuf_text
+ * @brief Framebuffer text-mode back buffer.
+ *
+ * The back buffer used by the framebuffer device for text-mode terminals.
+ */
+extern uint8_t *fb_backbuf_text;
+
+/**
+ * @var fb_backbuf_gui
+ * @brief Framebuffer graphical back buffer.
+ *
+ * The back buffer used by the framebuffer device for the graphical terminal.
+ */
+extern uint8_t *fb_backbuf_gui;
+
+/**
+ * @var fb_cur_backbuf
+ * @brief Framebuffer current buffer.
+ *
+ * The back buffer currently used by the framebuffer device.
+ */
+extern uint8_t *fb_cur_backbuf;
 
 #endif      /* KERNEL */
 
