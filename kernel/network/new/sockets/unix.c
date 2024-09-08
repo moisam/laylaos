@@ -524,6 +524,20 @@ int unix_push(struct packet_t *p)
 }
 
 
+static int socket_unix_connect2(struct socket_t *s1, struct socket_t *s2)
+{
+    if(!s1 || !s2)
+    {
+        return -EINVAL;
+    }
+
+    s1->pairedsock = s2;
+    s2->pairedsock = s1;
+    
+    return 0;
+}
+
+
 /*
 void unix_init(void)
 {
@@ -533,7 +547,7 @@ void unix_init(void)
 
 struct sockops_t unix_sockops =
 {
-    .connect2 = NULL,
+    .connect2 = socket_unix_connect2,
     .socket = socket_unix_open,
     .getsockopt = socket_unix_getsockopt,
     .setsockopt = socket_unix_setsockopt,
