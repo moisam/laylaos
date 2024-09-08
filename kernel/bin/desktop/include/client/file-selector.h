@@ -28,12 +28,22 @@
 #ifndef FILE_SELECTOR_H
 #define FILE_SELECTOR_H
 
-#include "../client/window.h"
+#include "window.h"
 #include "scrollbar.h"
+#include "listview.h"
 
 #define FILE_SELECTOR_ICON_VIEW             0
 #define FILE_SELECTOR_LIST_VIEW             1
 #define FILE_SELECTOR_COMPACT_VIEW          2
+
+#define LISTVIEW_ENTRYHEIGHT                LISTVIEW_LINE_HEIGHT
+#define LISTVIEW_LEFT_MARGIN                4
+#define LISTVIEW_ICONWIDTH                  20
+
+#define ICONVIEW_ENTRYWIDTH                 128
+#define ICONVIEW_ENTRYHEIGHT                112
+#define ICONVIEW_LEFT_MARGIN                32
+#define ICONVIEW_ICONWIDTH                  64
 
 // File selector is multiselect by default.
 // Unset the FILE_SELECTOR_FLAG_MULTISELECT flag to make it single-select.
@@ -93,6 +103,11 @@ struct file_selector_t
                                         struct file_entry_t *);
     void (*selection_change_callback)(struct file_selector_t *);
 };
+
+
+/****************************************
+ * Function prototypes
+ ****************************************/
 
 struct file_selector_t *file_selector_new(struct gc_t *, struct window_t *,
                                           int x, int y, 

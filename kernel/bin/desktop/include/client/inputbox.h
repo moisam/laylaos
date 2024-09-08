@@ -77,4 +77,6 @@ int inputbox_keypress(struct window_t *inputbox_window,
 int inputbox_keyrelease(struct window_t *inputbox_window, 
                         char key, char modifiers);
 
+void inputbox_theme_changed(struct window_t *window);
+
 #endif //INPUTBOX_H

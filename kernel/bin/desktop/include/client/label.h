@@ -58,4 +58,6 @@ void label_set_text_alignment(struct label_t *label, int alignment);
 void label_set_foreground(struct label_t *label, uint32_t color);
 void label_set_background(struct label_t *label, uint32_t color);
 
+void label_theme_changed(struct window_t *window);
+
 #endif      /* LABEL_H */

@@ -41,6 +41,9 @@ struct combobox_t
     int list_shown;
     int show_later;
 
+#define COMBOBOX_FLAG_DISABLED          1
+    int flags;
+
     // callback functions (optional)
     void (*entry_click_callback)(struct combobox_t *, int);
 };
@@ -67,5 +70,10 @@ void combobox_add_item(struct combobox_t *combobox, int index, char *str);
 void combobox_append_item(struct combobox_t *combobox, char *str);
 void combobox_remove_item(struct combobox_t *combobox, int index);
 void combobox_set_selected_item(struct combobox_t *combobox, int index);
+
+void combobox_disable(struct combobox_t *combobox);
+void combobox_enable(struct combobox_t *combobox);
+
+void combobox_theme_changed(struct window_t *window);
 
 #endif //COMBOBOX_H

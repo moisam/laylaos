@@ -79,4 +79,6 @@ void spinner_set_max(struct spinner_t *spinner, int max);
 void spinner_set_min(struct spinner_t *spinner, int min);
 void spinner_set_val(struct spinner_t *spinner, int val);
 
+void spinner_theme_changed(struct window_t *window);
+
 #endif //SPINNER_H

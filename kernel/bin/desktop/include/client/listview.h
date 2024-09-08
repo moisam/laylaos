@@ -100,4 +100,6 @@ int listview_get_selected(struct listview_t *listv,
                           struct listview_entry_t **res);
 void listview_free_list(struct listview_entry_t *entries, int entry_count);
 
+void listview_theme_changed(struct window_t *window);
+
 #endif //LISTVIEW_H

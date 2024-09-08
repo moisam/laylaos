@@ -54,4 +54,6 @@ void textbox_repaint(struct window_t *textbox_window, int is_active_child);
 void textbox_append_text(struct window_t *textbox_window, char *addstr);
 void textbox_set_text(struct window_t *textbox_window, char *addstr);
 
+void textbox_theme_changed(struct window_t *window);
+
 #endif //TEXTBOX_H

@@ -59,6 +59,11 @@ struct dialog_button_t
     int type;
 };
 
+#undef _GNU_SOURCE
+#define _GNU_SOURCE                 1
+#include <pthread.h>
+#include <signal.h>
+
 /*
  * Internal structure to represent dialog box status.
  */
@@ -66,6 +71,7 @@ struct dialog_status_t
 {
     int selected_button;
     volatile int close_dialog;
+    pthread_t dialog_thread;
 };
 
 
@@ -228,8 +234,41 @@ struct opensave_dialog_t
                             // The user can of course change it.
 
     // Internal fields;
-    //struct file_selector_t *selector;
     struct __opensave_internal_state_t internal;
+};
+
+struct __colorchooser_internal_state_t
+{
+    // MUST be first so we can cast to struct dialog_status_t
+    struct dialog_status_t status;
+    struct label_t *label_rainbow, *label_spectrum;
+    struct label_t *label_colorbox, *label_palette;
+    struct inputbox_t *inputbox_colorbox, *inputbox_r, *inputbox_g, *inputbox_b;
+    int paletterow, palettecol; // col & row of selected bucket (-1 if none)
+
+    /*
+     * Used internally to store and update the color spectrum.
+     */
+    uint32_t *color_spectrum;
+    int spectrumx, spectrumy;   // x & y of selected color
+
+    /*
+     * The selected color. Can be set before showing the dialog to change
+     * the color that is selected when the dialog is shown.
+     */
+    uint32_t color;
+};
+
+/*
+ * Structure to represent a Color Chooser dialog box.
+ */
+struct colorchooser_dialog_t
+{
+    struct window_t *window;
+    winid_t ownerid;
+
+    // Internal fields;
+    struct __colorchooser_internal_state_t internal;
 };
 
 
@@ -315,5 +354,24 @@ void saveas_dialog_destroy(struct opensave_dialog_t *dialog);
 int saveas_dialog_get_selected(struct opensave_dialog_t *dialog, 
                                struct opensave_file_t **res);
 void saveas_dialog_free_list(struct opensave_file_t *entries, int entry_count);
+
+/**************************************************************
+ * Functions to work with Color Chooser dialog boxes
+ **************************************************************/
+
+// Create a Color Chooser dialog box
+struct colorchooser_dialog_t *colorchooser_dialog_create(winid_t owner);
+
+// Show a Color Chooser dialog box
+int colorchooser_dialog_show(struct colorchooser_dialog_t *dialog);
+
+// Destroy a Color Chooser dialog box and free its resources
+void colorchooser_dialog_destroy(struct colorchooser_dialog_t *dialog);
+
+// Set a Color Chooser dialog box selected color
+void colorchooser_dialog_set_color(struct colorchooser_dialog_t *dialog, uint32_t color);
+
+// Get the selected color from a Color Chooser dialog box
+uint32_t colorchooser_dialog_get_color(struct colorchooser_dialog_t *dialog);
 
 #endif      /* GUI_DIALOG_H */

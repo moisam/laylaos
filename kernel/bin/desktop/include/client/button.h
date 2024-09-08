@@ -68,4 +68,6 @@ void button_set_bordered(struct button_t *button, int bordered);
 void button_disable(struct button_t *button);
 void button_enable(struct button_t *button);
 
+void button_theme_changed(struct window_t *window);
+
 #endif //BUTTON_H

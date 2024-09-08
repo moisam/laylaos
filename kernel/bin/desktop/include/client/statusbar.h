@@ -59,4 +59,6 @@ void statusbar_append_text(struct window_t *statusbar_window, char *addstr);
 void statusbar_set_text(struct window_t *statusbar_window, char *addstr);
 void statusbar_size_changed(struct window_t *statusbar_window);
 
+void statusbar_theme_changed(struct window_t *window);
+
 #endif //STATUSBAR_H

@@ -82,4 +82,6 @@ void scrollbar_set_max(struct scrollbar_t *sbar, int max);
 void scrollbar_set_min(struct scrollbar_t *sbar, int min);
 void scrollbar_set_val(struct scrollbar_t *sbar, int val);
 
+void scrollbar_theme_changed(struct window_t *window);
+
 #endif //SCROLLBAR_H

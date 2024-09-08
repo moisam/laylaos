@@ -103,6 +103,7 @@ struct window_t
     int resize_hints;
 
     void (*size_changed)(struct window_t *);
+    void (*theme_changed)(struct window_t *);
 };
 
 #endif      /* CLIENT_WINDOW_STRUCT_DEFINED */
