@@ -45,7 +45,7 @@ struct task_rlimit_t default_rlimits[] =
     { "Max cpu time", "seconds", { RLIM_INFINITY, RLIM_INFINITY, } },
     { "Max file size", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
     { "Max data size", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
-    { "Max stack size", "bytes", { 128 * 1024 /* 128K */, RLIM_INFINITY, } },
+    { "Max stack size", "bytes", { 256 * 1024 /* 256K */, RLIM_INFINITY, } },
     { "Max core file size", "bytes", { 0, RLIM_INFINITY, } },
     { "Max resident set", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
     { "Max processes", "processes", { NR_TASKS, NR_TASKS, } },

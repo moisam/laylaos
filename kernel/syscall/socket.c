@@ -82,6 +82,27 @@ static int syscall_recvfrom_internal(int s, void *buf, size_t len, int flags,
                                      struct sockaddr *from, 
                                      socklen_t *fromlenaddr);
 
+static int (*sockops_table[18])() =
+{
+    [SOCK_socket] = syscall_socket,
+    [SOCK_bind] = syscall_bind,
+    [SOCK_connect] = syscall_connect,
+    [SOCK_listen] = syscall_listen,
+    [SOCK_accept] = syscall_accept,
+    [SOCK_getsockname] = syscall_getsockname,
+    [SOCK_getpeername] = syscall_getpeername,
+    [SOCK_socketpair] = syscall_socketpair,
+    [SOCK_send] = syscall_sendto_internal,
+    [SOCK_recv] = syscall_recvfrom_internal,
+    [SOCK_sendto] = syscall_sendto_internal,
+    [SOCK_recvfrom] = syscall_recvfrom_internal,
+    [SOCK_shutdown] = syscall_shutdown,
+    [SOCK_setsockopt] = syscall_setsockopt,
+    [SOCK_getsockopt] = syscall_getsockopt,
+    [SOCK_sendmsg] = syscall_sendmsg,
+    [SOCK_recvmsg] = syscall_recvmsg,
+};
+
 // tcp and udp socket ports
 struct sockport_t *tcp_ports;
 struct sockport_t *udp_ports;
@@ -108,7 +129,7 @@ int syscall_socketcall(int call, uintptr_t *args)
     //printk("syscall_socketcall: call %d\n", call);
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
-    uintptr_t a[asz(6)];
+    uintptr_t a[asz(6)] = { 0, };
     unsigned int len;
 
     if(call < 1 || call > SOCK_recvmsg)
@@ -128,79 +149,8 @@ int syscall_socketcall(int call, uintptr_t *args)
         return -EFAULT;
         SYSCALL_EFAULT(args);
     }
-    
-    switch(call)
-    {
-        case SOCK_socket:
-            return syscall_socket(a[0], a[1], a[2]);
-            
-        case SOCK_bind:
-            return syscall_bind(a[0], (struct sockaddr *)a[1],
-                                (socklen_t)a[2]);
-            
-        case SOCK_connect:
-            return syscall_connect(a[0], (struct sockaddr *)a[1],
-                                   (socklen_t)a[2]);
-            
-        case SOCK_listen:
-            return syscall_listen(a[0], a[1]);
-            
-        case SOCK_accept:
-            return syscall_accept(a[0], (struct sockaddr *)a[1],
-                                  (socklen_t *)a[2]);
-            
-        case SOCK_getsockname:
-            return syscall_getsockname(a[0], (struct sockaddr *)a[1],
-                                       (socklen_t *)a[2]);
-            
-        case SOCK_getpeername:
-            return syscall_getpeername(a[0], (struct sockaddr *)a[1],
-                                       (socklen_t *)a[2]);
-            
-        case SOCK_socketpair:
-            return syscall_socketpair(a[0], a[1], a[2], (int *)a[3]);
-            //return -ENOSYS;
-            
-        case SOCK_send:
-            return syscall_sendto_internal(a[0], (void *)a[1], (size_t)a[2], 
-                                           a[3], (struct sockaddr *)NULL, 0);
-            
-        case SOCK_recv:
-            return syscall_recvfrom_internal(a[0], (caddr_t)a[1], 
-                                             (size_t)a[2], a[3],
-                                             (struct sockaddr *)NULL, 
-                                             (socklen_t *)0);
-            
-        case SOCK_sendto:
-            return syscall_sendto_internal(a[0], (void *)a[1], (size_t)a[2], 
-                                           a[3], (struct sockaddr *)a[4], 
-                                           (socklen_t)a[5]);
-            
-        case SOCK_recvfrom:
-            return syscall_recvfrom_internal(a[0], (void *)a[1], 
-                                             (size_t)a[2], a[3],
-                                             (struct sockaddr *)a[4], 
-                                             (socklen_t *)a[5]);
-            
-        case SOCK_shutdown:
-            return syscall_shutdown(a[0], a[1]);
-            
-        case SOCK_setsockopt:
-            return syscall_setsockopt(a[0], a[1], a[2], 
-                                      (void *)a[3], (socklen_t)a[4]);
-            
-        case SOCK_getsockopt:
-            return syscall_getsockopt(a[0], a[1], a[2], 
-                                      (caddr_t)a[3], (int *)a[4]);
-            
-        case SOCK_sendmsg:
-            return syscall_sendmsg(a[0], (struct msghdr *)a[1], a[2]);
-            
-        case SOCK_recvmsg:
-            return syscall_recvmsg(a[0], (struct msghdr *)a[1], a[2]);
-    }
-    
-    return -EINVAL;
+
+    return sockops_table[call](a[0], a[1], a[2], a[3], a[4], a[5]);
 }
 
 
@@ -1745,17 +1695,19 @@ int syscall_socketpair(int domain, int type, int protocol, int *rsv)
 	int sv[2];
 	int res;
     struct task_t *ct = cur_task;
-    
-    
-
-    return -ENOSYS;
-
-    
 
     if((res = sock_createf(domain, type, protocol, 
                                     O_RDWR | O_NOATIME, NULL)) < 0)
     {
         return res;
+    }
+
+	so1 = ct->ofiles->ofile[res]->node->data;
+
+    if(so1->proto->sockops->connect2 == NULL)
+    {
+        syscall_close(res);
+        return -EPROTONOSUPPORT;
     }
 
 	sv[0] = res;
@@ -1768,10 +1720,9 @@ int syscall_socketpair(int domain, int type, int protocol, int *rsv)
     }
 
 	sv[1] = res;
-	so1 = ct->ofiles->ofile[sv[0]]->node->data;
 	so2 = ct->ofiles->ofile[sv[1]]->node->data;
 	
-	if(so1->proto != so2->proto || so1->proto->sockops->connect2 == NULL)
+	if(so1->proto != so2->proto)
 	{
         syscall_close(sv[0]);
         syscall_close(sv[1]);
@@ -1787,6 +1738,11 @@ int syscall_socketpair(int domain, int type, int protocol, int *rsv)
     	//softint_unblock(SOFTINT_NET);
 		return res;
 	}
+
+    socket_update_state(so1, SOCKET_STATE_BOUND, 0, 0);
+    socket_update_state(so1, SOCKET_STATE_CONNECTED, 0, 0);
+    socket_update_state(so2, SOCKET_STATE_BOUND, 0, 0);
+    socket_update_state(so2, SOCKET_STATE_CONNECTED, 0, 0);
 
 	//softint_unblock(SOFTINT_NET);
 	return copy_to_user(rsv, sv, 2 * sizeof (int));
