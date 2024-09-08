@@ -493,11 +493,9 @@ void vmmngr_initialize(multiboot_info_t *mbd);
  *
  * @param   parent      parent task
  * @param   child       child task
- * @param   cow         if non-zero, mark pages as Copy-on-Write (CoW)
  *
  * @return  0 on success, 1 on failure.
  */
-//int clone_task_pd(struct task_t *parent, struct task_t *child, int cow);
 int clone_task_pd(struct task_t *parent, struct task_t *child);
 
 /**

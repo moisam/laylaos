@@ -956,7 +956,9 @@ DLMALLOC_EXPORT int mspace_mallopt(int, int);
 
 /* we don't want to use mmap in the kernel */
 #undef HAVE_MMAP
+#undef HAVE_MREMAP
 #define HAVE_MMAP               0
+#define HAVE_MREMAP             0
 
 #include <mm/kheap.h>
 #define MORECORE_CANNOT_TRIM    1

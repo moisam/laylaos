@@ -31,14 +31,10 @@
 #include <mm/mmngr_virtual.h>
 
 
-/**
- * @brief Initialise kernel heap.
- *
- * Called during boot to initialize the kernel heap.
- *
- * @return  nothing.
- */
-void kheap_init(void);
+#include <mm/malloc.h>
+#include <kernel/task.h>
+
+extern struct kernel_mutex_t kheap_lock;
 
 /**
  * @brief Free dynamic memory.
@@ -50,7 +46,17 @@ void kheap_init(void);
  *
  * @return  nothing.
  */
-void kfree(void *p);
+static inline void kfree(void *p)
+{
+    int old_prio = 0, old_policy = 0;
+    elevate_priority(cur_task, &old_prio, &old_policy);
+
+    kernel_mutex_lock(&kheap_lock);
+    dlfree(p);
+    kernel_mutex_unlock(&kheap_lock);
+
+    restore_priority(cur_task, old_prio, old_policy);
+}
 
 /**
  * @brief Allocate dynamic memory.
@@ -62,10 +68,22 @@ void kfree(void *p);
  *
  * @return  pointer to allocated memory on success, NULL on failure.
  */
-void *kmalloc(size_t sz);
+static inline void *kmalloc(size_t sz)
+{
+    int old_prio = 0, old_policy = 0;
+    elevate_priority(cur_task, &old_prio, &old_policy);
+
+    kernel_mutex_lock(&kheap_lock);
+    void *res = dlmalloc(sz);
+    kernel_mutex_unlock(&kheap_lock);
+
+    restore_priority(cur_task, old_prio, old_policy);
+
+    return res;
+}
 
 /**
- * @brief Allocate dynamic memory.
+ * @brief Reallocate dynamic memory.
  *
  * Reallocate a previously allocated region of memory on the kernel heap. 
  * It can be freed later by calling kfree().
@@ -75,7 +93,29 @@ void *kmalloc(size_t sz);
  *
  * @return  pointer to reallocated memory on success, NULL on failure.
  */
-void *krealloc(void *addr, size_t sz);
+static inline void *krealloc(void *addr, size_t sz)
+{
+    int old_prio = 0, old_policy = 0;
+    elevate_priority(cur_task, &old_prio, &old_policy);
+
+    kernel_mutex_lock(&kheap_lock);
+    void *res = dlrealloc(addr, sz);
+    kernel_mutex_unlock(&kheap_lock);
+
+    restore_priority(cur_task, old_prio, old_policy);
+
+    return res;
+}
+
+
+/**
+ * @brief Initialise kernel heap.
+ *
+ * Called during boot to initialize the kernel heap.
+ *
+ * @return  nothing.
+ */
+void kheap_init(void);
 
 /**
  * @brief Allocate dynamic memory.
