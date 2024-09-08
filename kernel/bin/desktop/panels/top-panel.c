@@ -37,9 +37,11 @@
 #include <sys/time.h>
 #include <kernel/clock.h>
 #include "../include/client/window.h"
+#include "../include/client/paths.h"
 #include "../include/gui.h"
 #include "../include/event.h"
 #include "../include/font.h"
+#include "../include/keys.h"
 #include "../include/panels/top-panel.h"
 #include "../include/panels/widget.h"
 
@@ -136,6 +138,22 @@ int main(int argc, char **argv)
                     {
                         case EVENT_WINDOW_LOWERED:
                             widget_menu_may_hide(GLOB.evbuf_internal->dest);
+                            break;
+
+                        case EVENT_KEY_PRESS:
+                            // if the Apps key was pressed, show the 
+                            // Applications menu
+                            if(ev->key.code == KEYCODE_APPS)
+                            {
+                                widgets_show_apps();
+                            }
+                            // if the Calculator key was pressed, run the 
+                            // Calculator app
+                            else if(ev->key.code == KEYCODE_CALC)
+                            {
+                                widget_run_command(CALCULATOR_EXE);
+                            }
+
                             break;
 
                         default:
