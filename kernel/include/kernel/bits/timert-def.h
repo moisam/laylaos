@@ -2,7 +2,7 @@
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
  *    Copyright 2023, 2024 (c)
  * 
- *    file: timert-defs.h
+ *    file: timert-def.h
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,7 +20,7 @@
  */    
 
 /**
- *  \file timert-defs.h
+ *  \file timert-def.h
  *
  *  Timer-related structure and macro definitions.
  */
