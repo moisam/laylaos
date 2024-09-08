@@ -48,6 +48,8 @@
 #include <mm/mmap.h>
 #include <gui/vbe.h>
 
+#include <fs/dentry.h>
+
 
 static void print_err(struct regs *r, struct task_t *ct, 
                       virtual_addr faulting_address)
@@ -144,6 +146,14 @@ static inline void __pagefault_cleanup(struct task_t *ct,
 }
 
 
+static inline void hang(void)
+{
+    cli();
+    hlt();
+	empty_loop();
+}
+
+
 //#pragma GCC push_options
 //#pragma GCC optimize("O0")
 
@@ -167,14 +177,13 @@ int page_fault(struct regs *r, int arg)
 	
 	if(!ct || !ct->mem)
 	{
+        switch_tty(1);
         printk("page_fault: faulting_address " _XPTR_ "\n", faulting_address);
 	    printk("pagefault handler cannot find current task!\n");
 	    print_err(r, NULL, faulting_address);
 	    screen_refresh(NULL);
 	    __asm__ __volatile__("xchg %%bx, %%bx"::);
-	    cli();
-	    hlt();
-	    empty_loop();
+        hang();
 	}
 
     // The error code gives us details of what happened.
@@ -187,6 +196,11 @@ int page_fault(struct regs *r, int arg)
     volatile physical_addr tmp_phys = 0;
     volatile virtual_addr  tmp_virt = 0;
     int recursive_pagefault = (ct->properties & PROPERTY_HANDLING_PAGEFAULT);
+
+	if(faulting_address > KERNEL_MEM_START)
+	{
+	    goto unresolved;
+	}
     
     /*
      * There is a good chance we will need to either load the page from disk,
@@ -408,7 +422,7 @@ unresolved:
 
     // unresolved page fault in a kernel task
     // output an error message
-    if(!ct->user)
+    //if(!ct->user)
     {
         switch_tty(1);
         print_err(r, ct, faulting_address);
@@ -420,9 +434,7 @@ unresolved:
         kpanic("page fault");
         __asm__ __volatile__("xchg %%bx, %%bx"::);
         */
-        cli();
-        hlt();
-        empty_loop();
+        hang();
     }
 
     // user task

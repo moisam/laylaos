@@ -71,6 +71,7 @@
  *      %r9     arg6
  */
 syscall_entry64:
+    cli
     swapgs
 
     //xchg %bx, %bx
