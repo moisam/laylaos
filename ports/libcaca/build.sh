@@ -47,6 +47,7 @@ cd ${DOWNLOAD_SRCDIR}/build2
 ../configure --host=${BUILD_TARGET} --enable-shared \
     --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --prefix=/usr \
     --disable-x11 --disable-win32 --disable-conio --disable-gl \
+    --disable-doc \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"

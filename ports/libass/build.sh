@@ -52,6 +52,9 @@ make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
+# Fix libass.la for the future generations
+sed -i "s/dependency_libs=.*/dependency_libs='-liconv -lfribidi -lharfbuzz -lfontconfig -lfreetype -lpng16 -lexpat -lm -lpng16 -lz'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libass.la
+
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 

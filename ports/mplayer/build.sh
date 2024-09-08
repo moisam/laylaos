@@ -47,7 +47,7 @@ CFLAGS= CPPFLAGS= ./configure \
     --target=${BUILD_TARGET} \
     --with-freetype-config="$PKGCONFIG freetype2" \
     --extra-cflags="-D__laylaos__ -D__${BUILD_ARCH}__" \
-    --extra-libs="-ldvdread" \
+    --extra-libs="-ldvdread -lopenal" --enable-openal \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"

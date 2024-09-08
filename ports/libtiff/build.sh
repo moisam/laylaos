@@ -49,6 +49,10 @@ make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
+# Fix libtiff.la for the future generations
+sed -i "s/dependency_libs=.*/dependency_libs='-llzma -ljpeg -lz -lm'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libtiff.la
+
+# Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 

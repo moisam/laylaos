@@ -98,11 +98,11 @@ diff -rub ./MPlayer-1.5/configure ./MPlayer-1.5/configure
 +if test "$_laylaos" = yes ; then
 +  def_laylaos='#define CONFIG_LAYLAOS 1'
 +  vomodules="laylaos $vomodules"
-+  aomodules="laylaos $aomodules"
++  #aomodules="laylaos $aomodules"
 +else
 +  def_laylaos='#undef CONFIG_LAYLAOS'
 +  novomodules="laylaos $novomodules"
-+  noaomodules="laylaos $noaomodules"
++  #noaomodules="laylaos $noaomodules"
 +fi
 +echores "$_laylaos"
 +
@@ -162,7 +162,7 @@ diff -rub ./MPlayer-1.5/libvo/video_out.c ./MPlayer-1.5/libvo/video_out.c
  extern const vo_functions_t video_out_matrixview;
  extern const vo_functions_t video_out_dga;
  extern const vo_functions_t video_out_sdl;
-+extern const vo_functions_t video_out_laylaos;
++//extern const vo_functions_t video_out_laylaos;
  extern const vo_functions_t video_out_3dfx;
  extern const vo_functions_t video_out_tdfxfb;
  extern const vo_functions_t video_out_s3fb;
@@ -170,9 +170,9 @@ diff -rub ./MPlayer-1.5/libvo/video_out.c ./MPlayer-1.5/libvo/video_out.c
  #ifdef CONFIG_SDL
          &video_out_sdl,
  #endif
-+#ifdef CONFIG_LAYLAOS
-+        &video_out_laylaos,
-+#endif
++//#ifdef CONFIG_LAYLAOS
++//        &video_out_laylaos,
++//#endif
  #ifdef CONFIG_GL
          &video_out_gl,
  #endif

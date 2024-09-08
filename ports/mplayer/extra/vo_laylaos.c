@@ -164,9 +164,9 @@ static void flip_page(void)
 
 static int draw_frame(uint8_t *src[])
 {
-    uint32_t *s = (uint32_t *)(src[0]);
-    uint32_t *d = (uint32_t *)image_data;
-    uint32_t *dend = (uint32_t *)(image_data + image_size);
+    //uint32_t *s = (uint32_t *)(src[0]);
+    //uint32_t *d = (uint32_t *)image_data;
+    //uint32_t *dend = (uint32_t *)(image_data + image_size);
 
     // As for now, LaylaOS's GUI library expects all bitmaps to be in the RGBA
     // color format, i.e.
@@ -178,16 +178,16 @@ static int draw_frame(uint8_t *src[])
     // So what we do is select the BGR32 format, then shift every pixel 8 bits
     // to the left (discarding the alpha component), then OR with 0xff (which
     // gives full alpha or 255)
-
+    /*
     while(d < dend)
     {
         *d = (*s << 8) | 0xff;
         d++;
         s++;
     }
-
-	//memcpy(image_data, src[0], image_size);
-
+    */
+	__builtin_memcpy(&image_data[1], src[0], image_size - 1);
+    image_data[0] = 0xff;
 	return 0;
 }
 
