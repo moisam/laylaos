@@ -317,8 +317,6 @@ LAYLAOSAUDIO_PlayDevice(_THIS)
 }
 
 
-#if 0
-
 /* This function waits until it is possible to write a full sound buffer */
 static void
 LAYLAOSAUDIO_WaitDevice(_THIS)
@@ -373,8 +371,6 @@ LAYLAOSAUDIO_WaitDevice(_THIS)
 #endif /* !USE_BLOCKING_WRITES */
 }
 
-#endif
-
 
 static Uint8 *
 LAYLAOSAUDIO_GetDeviceBuf(_THIS)
@@ -388,6 +384,7 @@ LAYLAOSAUDIO_CloseDevice(_THIS)
 {
     if(this->hidden->audio_fd >= 0)
     {
+        (void) ioctl(this->hidden->audio_fd, AUDIO_FLUSH, NULL);
         close(this->hidden->audio_fd);
     }
 
@@ -470,7 +467,7 @@ LAYLAOSAUDIO_Init(SDL_AudioDriverImpl * impl)
     impl->DetectDevices = LAYLAOSAUDIO_DetectDevices;
     impl->OpenDevice = LAYLAOSAUDIO_OpenDevice;
     impl->PlayDevice = LAYLAOSAUDIO_PlayDevice;
-    //impl->WaitDevice = LAYLAOSAUDIO_WaitDevice;
+    impl->WaitDevice = LAYLAOSAUDIO_WaitDevice;
     impl->GetDeviceBuf = LAYLAOSAUDIO_GetDeviceBuf;
     impl->CloseDevice = LAYLAOSAUDIO_CloseDevice;
     impl->CaptureFromDevice = LAYLAOSAUDIO_CaptureFromDevice;

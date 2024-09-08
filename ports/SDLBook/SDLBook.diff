@@ -1,0 +1,27 @@
+diff -rub SDLBook/ezsdl.h SDLBook/ezsdl.h
+--- SDLBook/ezsdl.h	2024-08-09 23:10:59.642039827 +0100
++++ SDLBook/ezsdl.h	2024-08-09 21:40:38.225902497 +0100
+@@ -201,7 +201,11 @@
+ 	init_done = 1;
+ #ifdef USE_SDL2
+ 	if(!d->win) {
++# ifdef __laylaos__
++		d->win = SDL_CreateWindow("ezsdl", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, SDL_WINDOW_RESIZABLE);
++# else
+ 		d->win = SDL_CreateWindow("ezsdl", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE);
++# endif
+ 		SDL_DisplayMode dm = {.format = EZSDL_PIXEL_FMT, .w = width, .h = height };
+ 		SDL_SetWindowDisplayMode(d->win, &dm);
+ 	}
+@@ -209,7 +213,11 @@
+ 		SDL_DestroyTexture(d->tex);
+ 	if(d->ren)
+ 		SDL_DestroyRenderer(d->ren);
++# ifdef __laylaos__
++	d->ren = SDL_CreateRenderer(d->win, -1, SDL_RENDERER_TARGETTEXTURE);
++# else
+ 	d->ren = SDL_CreateRenderer(d->win, -1, SDL_RENDERER_ACCELERATED|SDL_RENDERER_TARGETTEXTURE);
++# endif
+ 	d->tex = SDL_CreateTexture(d->ren, EZSDL_PIXEL_FMT, SDL_TEXTUREACCESS_STREAMING, width, height);
+ #else
+ 	d->surface = SDL_SetVideoMode(width, height, EZSDL_BITDEPTH, flags);

@@ -9,6 +9,7 @@ typedef struct
 {
     SDL_Window *window;
     struct window_t *xwindow;
+    uint8_t *backbuffer;
     SDL_bool created;
     SDL_bool mouse_grabbed;
     struct SDL_VideoData *videodata;

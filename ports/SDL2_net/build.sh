@@ -1,13 +1,13 @@
 #!/bin/bash
 
 #
-# Script to download and build SDL2_mixer
+# Script to download and build SDL2_net
 #
 
-DOWNLOAD_NAME="SDL2_mixer"
-DOWNLOAD_VERSION="2.6.3"
-DOWNLOAD_URL="https://www.libsdl.org/projects/SDL_mixer/release/"
-DOWNLOAD_PREFIX="SDL2_mixer-"
+DOWNLOAD_NAME="SDL2_net"
+DOWNLOAD_VERSION="2.2.0"
+DOWNLOAD_URL="https://github.com/libsdl-org/SDL_net/releases/download/release-${DOWNLOAD_VERSION}/"
+DOWNLOAD_PREFIX="SDL2_net-"
 DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 PATCH_FILE=${DOWNLOAD_NAME}.diff
@@ -20,7 +20,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libSDL2_mixer.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libSDL2_net.so
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -33,28 +33,24 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-mv ${DOWNLOAD_SRCDIR}/build-scripts/config.sub ${DOWNLOAD_SRCDIR}/build-scripts/config.sub.OLD
-cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/build-scripts/config.sub
-mv ${DOWNLOAD_SRCDIR}/acinclude/libtool.m4 ${DOWNLOAD_SRCDIR}/acinclude/libtool.m4.OLD
-cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/acinclude/libtool.m4
+mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
+cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+#mv ${DOWNLOAD_SRCDIR}/acinclude/libtool.m4 ${DOWNLOAD_SRCDIR}/acinclude/libtool.m4.OLD
+#cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/acinclude/libtool.m4
 
 cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 
-# build SDL2_mixer
+# build SDL2_image
 mkdir ${DOWNLOAD_SRCDIR}/build2
 cd ${DOWNLOAD_SRCDIR}/build2
-
-# force SDL_mixer to dynamically load vorbis and not use its stub, as it cannot
-# play some Ogg files
 
 ../configure \
     CFLAGS="-I${CROSSCOMPILE_SYSROOT_PATH}/usr/include -mstackrealign" \
     LDFLAGS="-L${CROSSCOMPILE_SYSROOT_PATH}/usr/lib" \
-    --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --host=${BUILD_TARGET} \
+    --host=${BUILD_TARGET} \
     --prefix=/usr --enable-shared=yes --enable-static=yes \
     --with-sdl-prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \
     --with-sdl-exec-prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \
-    --enable-music-ogg-vorbis --disable-music-ogg-stb \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"

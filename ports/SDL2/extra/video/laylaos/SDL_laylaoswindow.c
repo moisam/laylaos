@@ -638,6 +638,13 @@ LAYLAOS_DestroyWindow(_THIS, SDL_Window *window)
         if(data->created)
         {
             window_destroy(data->xwindow);
+
+            // and the back buffer
+            if(data->backbuffer)
+            {
+                free(data->backbuffer);
+                data->backbuffer = NULL;
+            }
         }
 
         SDL_free(data);
