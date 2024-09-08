@@ -60,6 +60,7 @@ void kheap_init(void)
  * See: https://en.wikipedia.org/wiki/Priority_inversion
  */
 
+/*
 void kfree(void *p)
 {
     int old_prio = 0, old_policy = 0;
@@ -86,6 +87,7 @@ void *kmalloc(size_t sz)
 
     return res;
 }
+*/
 
 
 void *kcalloc(size_t m, size_t n)
@@ -116,6 +118,7 @@ void *kcalloc(size_t m, size_t n)
 }
 
 
+/*
 void *krealloc(void *addr, size_t sz)
 {
     int old_prio = 0, old_policy = 0;
@@ -129,6 +132,7 @@ void *krealloc(void *addr, size_t sz)
 
     return res;
 }
+*/
 
 
 void *kheap_brk(int incr)

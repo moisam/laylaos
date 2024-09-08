@@ -958,17 +958,22 @@ int memregion_detach(struct task_t *task, struct memregion_t *memregion,
     size_t sz = memregion->size * PAGE_SIZE;
     int res;
     
-    if(memregion->type == MEMREGION_TYPE_SHMEM)
+    // don't remove shared memory mappings if this task was vforked, as the
+    // parent will essentially be stuffed
+    if(!(task->properties & PROPERTY_VFORK))
     {
-        if((res = shmdt_internal(task, memregion, 
-                                    (void *)memregion->addr)) < 0)
+        if(memregion->type == MEMREGION_TYPE_SHMEM)
         {
-            return res;
+            if((res = shmdt_internal(task, memregion, 
+                                        (void *)memregion->addr)) < 0)
+            {
+                return res;
+            }
         }
-    }
-    else
-    {
-        msync_internal(memregion, sz, MS_SYNC);
+        else
+        {
+            msync_internal(memregion, sz, MS_SYNC);
+        }
     }
 
     // detach region from task
