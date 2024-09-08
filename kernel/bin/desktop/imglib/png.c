@@ -134,7 +134,7 @@ typedef struct
 
 typedef struct
 {
-  pal_rgb color[256];
+    pal_rgb color[256];
 } PLTE;
 
 
@@ -142,34 +142,34 @@ typedef struct
 //Chromaticities and White Point', all fields are 4-bytes long.
 struct
 {
-   uint32_t white_point_x;
-   uint32_t white_point_y;
-   uint32_t red_x;
-   uint32_t red_y;
-   uint32_t green_x;
-   uint32_t green_y;
-   uint32_t blue_x;
-   uint32_t blue_y;
+    uint32_t white_point_x;
+    uint32_t white_point_y;
+    uint32_t red_x;
+    uint32_t red_y;
+    uint32_t green_x;
+    uint32_t green_y;
+    uint32_t blue_x;
+    uint32_t blue_y;
 } cHRM;
 
 //if pHYs chunk is defined, it defines Physical Pixel Dimensions.
 //The unit specifier can be 0 (unknown) or 1 (meter).
 struct
 {
-  uint32_t pixels_per_unit_x;
-  uint32_t pixels_per_unit_y;
-  char unit_spec;
+    uint32_t pixels_per_unit_x;
+    uint32_t pixels_per_unit_y;
+    char unit_spec;
 } pHYs;
 
 //If defined, tIME defines Image Last-Modification Time.
 struct
 {
-   uint16_t year;
-   uint8_t month;
-   uint8_t day;
-   uint8_t hour;
-   uint8_t minute;
-   uint8_t second;
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
 } tIME;
 
 static char png_sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
