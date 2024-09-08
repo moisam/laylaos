@@ -106,12 +106,12 @@ void packet_free(struct packet_t *p);
  *
  * Add space at the front of the packet data to accommodate a new header.
  *
- * @param   p       network packet
- * @param   len     header size
+ * @param   p           network packet
+ * @param   hdr_len     header size
  *
  * @return  zero on success, -(errno) on failure.
  */
-int packet_add_header(struct packet_t *p, size_t len);
+int packet_add_header(struct packet_t *p, size_t hdr_len);
 
 /**
  * @brief Duplicate a packet.
