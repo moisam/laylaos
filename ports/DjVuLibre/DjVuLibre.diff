@@ -1,0 +1,10 @@
+--- include/libdjvu/ddjvuapi.h	2024-08-09 22:10:08.540256953 +0100
++++ include/libdjvu/ddjvuapi.h	2024-08-09 20:03:08.717830825 +0100
+@@ -66,6 +66,7 @@
+ 
+ #include <stddef.h>
+ #include <stdlib.h>
++#include <stdbool.h>
+ #include <stdio.h>
+ 
+ #ifndef DDJVUAPI
