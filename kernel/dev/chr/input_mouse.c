@@ -82,7 +82,7 @@ void mouse_task_func(void *arg)
         }
 
         //block_task(incoming_mouse_packets, 0);
-        block_task2(incoming_mouse_packets, 1000);
+        block_task2(incoming_mouse_packets, PIT_FREQUENCY);
     }
 }
 

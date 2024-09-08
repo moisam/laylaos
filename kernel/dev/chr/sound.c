@@ -39,6 +39,7 @@
 #include <kernel/asm.h>
 
 #define MAX_QUEUED                      256
+#define MAX_BYTES                       (BDL_ENTRIES * BDL_BUFSZ)
 
 #if BYTE_ORDER == LITTLE_ENDIAN
 # define AUDIO_ENCODING_PLATFORM        AUDIO_ENCODING_SLINEAR_LE
@@ -242,6 +243,7 @@ int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
 
                 hda->outq.tail = NULL;
                 hda->outq.queued = 0;
+                hda->outq.bytes = 0;
 
                 elevated_priority_unlock(&hda->outq.lock);
             }
@@ -290,6 +292,21 @@ int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
 
 
 /*
+static inline void free_bufs(struct hda_buf_t *head)
+{
+    struct hda_buf_t *hdabuf, *next;
+
+    for(hdabuf = head; hdabuf; )
+    {
+        next = hdabuf->next;
+        kfree(hdabuf);
+        hdabuf = next;
+    }
+}
+*/
+
+
+/*
  * Write to a sound device (major = 14).
  */
 ssize_t snddev_write(struct file_t *f, off_t *pos,
@@ -299,8 +316,11 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
     UNUSED(kernel);
 
     struct hda_dev_t *hda;
-    struct hda_buf_t *hdabuf;
-    volatile int queued;
+    struct hda_buf_t *hdabuf /* , *head, *tail */;
+    volatile size_t pending;
+    //volatile int queued;
+    //int bufcount;
+    //size_t left, len;
     dev_t dev = f->node->blocks[0];
 
     if(!(hda = hda_for_devid(dev)))
@@ -319,40 +339,28 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
 
         return -EINVAL;
     }
-    
-    // For simplicity, we output a maximum of BDL_BUFSZ bytes. It is the
-    // caller's responsibility to check the result and issue another call
-    // with the rest of the stream data
-    if(count > BDL_BUFSZ)
-    {
-        count = BDL_BUFSZ;
-    }
 
     if(hda->flags & HDA_FLAG_DUMMY)
     {
         return count;
     }
 
-    if(!(hdabuf = kmalloc(sizeof(struct hda_buf_t) + count)))
-    {
-        return -ENOMEM;
-    }
-    
-    A_memset(hdabuf, 0, sizeof(struct hda_buf_t));
-    hdabuf->size = count;
-    //hdabuf->buf = &hdabuf[1];
-    
-    if(copy_from_user(hdabuf->buf, buf, count) != 0)
-    {
-        kfree(hdabuf);
-        return -EFAULT;
-    }
-    
     elevated_priority_lock(&hda->outq.lock);
+
+#if 0
+
+    if(hda->outq.bytes >= MAX_BYTES)
+    {
+        elevated_priority_unlock(&hda->outq.lock);
+        unblock_kernel_task(hda->task);
+        return -EAGAIN;
+    }
+
+#endif
+
+    pending = hda->outq.bytes;
     
-    queued = hda->outq.queued;
-    
-    while(queued >= MAX_QUEUED)
+    while(pending + count /* + bufcount */ >= MAX_BYTES /* MAX_QUEUED */)
     {
         elevated_priority_unlock(&hda->outq.lock);
         //block_task2(&hda->outq, PIT_FREQUENCY);
@@ -360,21 +368,87 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
         scheduler();
         unlock_scheduler();
         elevated_priority_relock(&hda->outq.lock);
-        queued = hda->outq.queued;
+        pending = hda->outq.bytes;
     }
+
+    elevated_priority_unlock(&hda->outq.lock);
+
+    // The HDA driver expects buffers <= BDL_BUFSZ in length. If the data
+    // is larger, break it down into multiple buffers and then them to the
+    // device's queue.
+
+    if(!(hdabuf = kmalloc(sizeof(struct hda_buf_t) + count)))
+    {
+        return -ENOMEM;
+    }
+
+    A_memset(hdabuf, 0, sizeof(struct hda_buf_t));
+    hdabuf->size = count;
+    hdabuf->curptr = hdabuf->buf;
+
+    if(copy_from_user(hdabuf->buf, buf, count) != 0)
+    {
+        return -EFAULT;
+    }
+
+    /*
+    left = count;
+    bufcount = 0;
+    head = NULL;
+    tail = NULL;
+
+    while(left != 0)
+    {
+        len = (left > BDL_BUFSZ) ? BDL_BUFSZ : left;
+
+        if(!(hdabuf = kmalloc(sizeof(struct hda_buf_t) + len)))
+        {
+            free_bufs(head);
+            return -ENOMEM;
+        }
+
+        A_memset(hdabuf, 0, sizeof(struct hda_buf_t));
+        hdabuf->size = len;
+        hdabuf->curptr = hdabuf->buf;
+
+        if(copy_from_user(hdabuf->buf, buf, len) != 0)
+        {
+            free_bufs(head);
+            return -EFAULT;
+        }
+
+        if(head == NULL)
+        {
+            head = hdabuf;
+            tail = hdabuf;
+        }
+        else
+        {
+            tail->next = hdabuf;
+        }
+
+        buf += len;
+        left -= len;
+        bufcount++;
+    }
+    */
+    
+    elevated_priority_relock(&hda->outq.lock);
     
     if(hda->outq.head == NULL)
     {
-        hda->outq.head = hdabuf;
-        hda->outq.tail = hdabuf;
+        hda->outq.head = hdabuf /* head */;
+        hda->outq.tail = hdabuf /* tail */;
     }
     else
     {
-        hda->outq.tail->next = hdabuf;
-        hda->outq.tail = hdabuf;
+        hda->outq.tail->next = hdabuf /* head */;
+        hda->outq.tail = hdabuf /* tail */;
     }
     
     hda->outq.queued++;
+    //hda->outq.queued += bufcount;
+    hda->outq.bytes += count;
     
     elevated_priority_unlock(&hda->outq.lock);
     unblock_kernel_task(hda->task);
@@ -419,6 +493,8 @@ ssize_t snddev_read(struct file_t *f, off_t *pos,
 int snddev_select(struct file_t *f, int which)
 {
     dev_t dev;
+    //int res;
+    struct hda_dev_t *hda;
 
     if(!f || !f->node)
     {
@@ -432,7 +508,7 @@ int snddev_select(struct file_t *f, int which)
 	
 	dev = f->node->blocks[0];
 
-    if(!hda_for_devid(dev))
+    if(!(hda = hda_for_devid(dev)))
     {
         return 0;
     }
@@ -446,10 +522,14 @@ int snddev_select(struct file_t *f, int which)
              */
             return 0;
 
-    	case FWRITE:
+    	case FWRITE: ;
             /*
-             * We buffer writing anyway, so return success always.
-             */
+            elevated_priority_lock(&hda->outq.lock);
+            //res = !(hda->outq.queued >= MAX_QUEUED);
+            res = !(hda->outq.bytes >= MAX_BYTES);
+            elevated_priority_unlock(&hda->outq.lock);
+            return res;
+            */
             return 1;
     	    
     	case 0:
