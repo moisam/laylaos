@@ -90,7 +90,8 @@ struct inputbox_t *inputbox_new(struct gc_t *gc, struct window_t *parent,
     // border, but this is complicated and messy. Instead, we draw the border
     // here, once and for all, and we never need to worry about it again.
     gc_fill_rect(&inputbox->backbuf_gc, 1, 1,
-                         w - 2, INPUTBOX_HEIGHT - 2, INPUTBOX_BGCOLOR);
+                         w - 2, INPUTBOX_HEIGHT - 2,
+                         GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR]);
     draw_inverted_3d_border(&inputbox->backbuf_gc, 0, 0, w, INPUTBOX_HEIGHT);
     reset_backbuf_clipping(inputbox);
 
@@ -125,8 +126,8 @@ struct inputbox_t *inputbox_new(struct gc_t *gc, struct window_t *parent,
     inputbox->window.gc = gc;
     inputbox->window.flags = WINDOW_NODECORATION | WINDOW_3D_WIDGET;
     inputbox->window.visible = 1;
-    inputbox->window.bgcolor = INPUTBOX_BGCOLOR /* 0xFFFFFFFF */;
-    inputbox->window.fgcolor = INPUTBOX_TEXTCOLOR /* 0x000000FF */;
+    inputbox->window.bgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR];
+    inputbox->window.fgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_TEXTCOLOR];
     
     if(title)
     {
@@ -152,6 +153,7 @@ struct inputbox_t *inputbox_new(struct gc_t *gc, struct window_t *parent,
     inputbox->window.keypress = inputbox_keypress;
     //inputbox->window.keyrelease = inputbox_keyrelease;
     inputbox->window.size_changed = inputbox_size_changed;
+    inputbox->window.theme_changed = inputbox_theme_changed;
 
     window_insert_child(parent, (struct window_t *)inputbox);
 
@@ -211,12 +213,12 @@ void inputbox_repaint(struct window_t *inputbox_window, int is_active_child)
                                  x, TOP_INNER_MARGIN,
                                  charw,
                                  inputbox_window->h - (TOP_INNER_MARGIN * 2),
-                                 INPUTBOX_SELECT_BGCOLOR);
+                                 GLOB.themecolor[THEME_COLOR_INPUTBOX_SELECT_BGCOLOR]);
 
                     func(&inputbox->backbuf_gc,
                          &inputbox->backbuf_gc.clipping, buf,
                          x, TOP_INNER_MARGIN,
-                         INPUTBOX_SELECT_TEXTCOLOR, 0);
+                         GLOB.themecolor[THEME_COLOR_INPUTBOX_SELECT_TEXTCOLOR], 0);
                 }
                 else
                 {
@@ -1109,12 +1111,24 @@ void inputbox_size_changed(struct window_t *inputbox_window)
 
         gc_fill_rect(&inputbox->backbuf_gc, 1, 1,
                          inputbox_window->w - 2,
-                         INPUTBOX_HEIGHT - 2, INPUTBOX_BGCOLOR);
+                         INPUTBOX_HEIGHT - 2, 
+                         GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR]);
         draw_inverted_3d_border(&inputbox->backbuf_gc, 0, 0, 
                                 inputbox_window->w, INPUTBOX_HEIGHT);
         reset_backbuf_clipping(inputbox);
     }
 
     widget_size_changed(inputbox_window);
+}
+
+
+/*
+ * Called when the system color theme changes.
+ * Updates the widget's colors.
+ */
+void inputbox_theme_changed(struct window_t *window)
+{
+    window->bgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR];
+    window->fgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_TEXTCOLOR];
 }
 

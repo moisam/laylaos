@@ -546,7 +546,8 @@ void draw_menuitem_to_canvas(struct gc_t *gc, struct menu_item_t *mi,
     {
         gc_fill_rect(gc, 1, y + 1, w - 2, MENU_HEIGHT - 2, MENU_BGCOLOR);
         gc_horizontal_line(gc, 4, y + (MENU_HEIGHT / 2),
-                               w - 8, WINDOW_BORDERCOLOR);
+                               w - 8, 
+                               GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR]);
     }
     else
     {
@@ -615,7 +616,8 @@ void draw_menu_to_canvas(struct window_t *frame, int unused)
     int fontsz;
     
     gc_fill_rect(frame->gc, 0, 0, frame->w, frame->h, MENU_BGCOLOR);
-    gc_draw_rect(frame->gc, 0, 0, frame->w, frame->h, WINDOW_BORDERCOLOR);
+    gc_draw_rect(frame->gc, 0, 0, frame->w, frame->h, 
+                    GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR]);
 
     if(!frame->menu_item)
     {
@@ -853,10 +855,12 @@ void menuframe_mouseover(struct window_t *frame, int mouse_x, int mouse_y,
         tmp_gc.pitch = frame->w * frame->gc->pixel_width;
 
         // draw temporary left border
-        gc_vertical_line(&tmp_gc, 0, 0, MENU_HEIGHT, WINDOW_BORDERCOLOR);
+        gc_vertical_line(&tmp_gc, 0, 0, MENU_HEIGHT, 
+                            GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR]);
+
         // draw temporary right border
-        gc_vertical_line(&tmp_gc, frame->w - 1, 0, 
-                         MENU_HEIGHT, WINDOW_BORDERCOLOR);
+        gc_vertical_line(&tmp_gc, frame->w - 1, 0, MENU_HEIGHT, 
+                            GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR]);
     }
 
 
@@ -1465,6 +1469,34 @@ int event_dispatch(struct event_t *ev)
                 // might need to hide menus
                 window_hide_menu(window);
                 break;
+
+            case EVENT_COLOR_THEME_DATA:
+                // set the new color theme
+                set_color_theme(ev);
+
+                // inform all the child widgets of this window
+                struct window_t *current_child;
+                ListNode *current_node;
+
+                if(window->children)
+                {
+                    for(current_node = window->children->root_node;
+                        current_node != NULL;
+                        current_node = current_node->next)
+                    {
+                        current_child = (struct window_t *)current_node->payload;
+
+                        if(current_child->theme_changed)
+                        {
+                            current_child->theme_changed((struct window_t *)current_child);
+                        }
+                    }
+                }
+
+                // repaint the window itself
+                window_repaint(window);
+                window_invalidate(window);
+                return 1;
 
             case EVENT_WINDOW_POS_CHANGED:
                 // might need to hide menus

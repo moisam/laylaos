@@ -112,22 +112,22 @@ void toggle_repaint(struct window_t *toggle_window, int is_active_child)
         gc_fill_rect(toggle_window->gc,
                      x, y,
                      toggle_window->w, toggle_window->h,
-                     TOGGLE_BGCOLOR_ON);
+                     GLOB.themecolor[THEME_COLOR_TOGGLE_BGCOLOR_ON]);
 
         gc_fill_rect(toggle_window->gc,
                      x + 28, y + 2, 20, 20,
-                     TOGGLE_BUTTON_COLOR);
+                     GLOB.themecolor[THEME_COLOR_TOGGLE_BUTTON_COLOR]);
     }
     else
     {
         gc_fill_rect(toggle_window->gc,
                      x, y,
                      toggle_window->w, toggle_window->h,
-                     TOGGLE_BGCOLOR_OFF);
+                     GLOB.themecolor[THEME_COLOR_TOGGLE_BGCOLOR_OFF]);
 
         gc_fill_rect(toggle_window->gc,
                      x + 2, y + 2, 20, 20,
-                     TOGGLE_BUTTON_COLOR);
+                     GLOB.themecolor[THEME_COLOR_TOGGLE_BUTTON_COLOR]);
     }
 }
 

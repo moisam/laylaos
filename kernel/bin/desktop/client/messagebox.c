@@ -155,14 +155,20 @@ void messagebox_dispatch_event(struct event_t *ev)
 }
 
 
-static void dialog_button_handler(struct button_t *button, int x, int y)
+void dialog_button_handler(struct button_t *button, int x, int y)
 {
     struct window_t *dialog_window = (struct window_t *)button->window.parent;
     struct dialog_status_t *status = dialog_window->internal_data;
     
     status->selected_button = (int)(intptr_t)button->internal_data;
     status->close_dialog = 1;
-    //dialog_window->internal_data = button->internal_data;
+
+    // if we are not running on the same thread as the dialog box, send a
+    // SIGCONT signal to the dialog box's thread
+    if(status->dialog_thread && !pthread_equal(pthread_self(), status->dialog_thread))
+    {
+        pthread_kill(status->dialog_thread, SIGCONT);
+    }
 }
 
 
@@ -446,6 +452,7 @@ int messagebox_prepare(winid_t owner, char *title, char *message,
     (*dialog_window)->event_handler = messagebox_dispatch_event;
     status->selected_button = -1;
     status->close_dialog = 0;
+    status->dialog_thread = pthread_self();
     (*dialog_window)->internal_data = status;
     //dialog_window->internal_data = (void *)-1;
     window_set_title(*dialog_window, title);
@@ -501,23 +508,14 @@ int messagebox_show(winid_t owner, char *title, char *message,
     while(1)
     {
         struct event_t *ev = NULL;
-        
-        if((ev = next_event_for_seqid(/* NULL */ dialog_window, 0, 0)))
+
+        if((ev = next_event_for_seqid(NULL /* dialog_window */, 0, 1)))
         {
-            //if(win_for_winid(ev->dest) == dialog_window)
-            {
-                messagebox_dispatch_event(ev);
-            }
+            //messagebox_dispatch_event(ev);
+            event_dispatch(ev);
+            free(ev);
         }
-        
-        /*
-        if(dialog_window->internal_data != (void *)-1)
-        {
-            // someone else (or us) has processed the event and we've got a result
-            i = (int)(intptr_t)dialog_window->internal_data;
-            break;
-        }
-        */
+
         if(status.close_dialog)
         {
             i = status.selected_button;
@@ -558,25 +556,14 @@ char *inputbox_show(winid_t owner, char *title, char *message)
     while(1)
     {
         struct event_t *ev = NULL;
-        
-        if((ev = next_event_for_seqid(/* NULL */ dialog_window, 0, 0)))
-        {
-            //if(win_for_winid(ev->dest) == dialog_window)
-            {
-                messagebox_dispatch_event(ev);
-            }
 
+        if((ev = next_event_for_seqid(NULL /* dialog_window */, 0, 1)))
+        {
+            //messagebox_dispatch_event(ev);
+            event_dispatch(ev);
             free(ev);
         }
         
-        /*
-        if(dialog_window->internal_data != (void *)-1)
-        {
-            // someone else (or us) has processed the event and we've got a result
-            i = (int)(intptr_t)dialog_window->internal_data;
-            break;
-        }
-        */
         if(status.close_dialog)
         {
             i = status.selected_button;

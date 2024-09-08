@@ -120,8 +120,8 @@ struct listview_t *listview_new(struct gc_t *gc, struct window_t *parent,
     list->window.gc = gc;
     list->window.flags = WINDOW_NODECORATION | WINDOW_3D_WIDGET;
     list->window.visible = 1;
-    list->window.bgcolor = INPUTBOX_BGCOLOR;
-    list->window.fgcolor = INPUTBOX_TEXTCOLOR;
+    list->window.bgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR];
+    list->window.fgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_TEXTCOLOR];
 
     list->cur_entry = -1;
 
@@ -136,6 +136,7 @@ struct listview_t *listview_new(struct gc_t *gc, struct window_t *parent,
     list->window.keypress = listview_keypress;
     list->window.keyrelease = listview_keyrelease;
     list->window.size_changed = listview_size_changed;
+    list->window.theme_changed = listview_theme_changed;
 
     if(!(list->vscroll = scrollbar_new(&list->backbuf_gc,
                                            (struct window_t *)list, 1)))
@@ -188,13 +189,15 @@ static inline void paint_entry(struct window_t *listview_window,
 
     gc_fill_rect(&listv->backbuf_gc, 2, y,
                  w, LISTVIEW_LINE_HEIGHT,
-                 entry->selected ? INPUTBOX_SELECT_BGCOLOR :
-                                   listview_window->bgcolor);
+                 entry->selected ? 
+                        GLOB.themecolor[THEME_COLOR_INPUTBOX_SELECT_BGCOLOR] :
+                        listview_window->bgcolor);
 
     gc_draw_text(&listv->backbuf_gc, entry->text,
                  4, y + ((LISTVIEW_LINE_HEIGHT - charh) / 2),
-                 entry->selected ? INPUTBOX_SELECT_TEXTCOLOR :
-                                   listview_window->fgcolor, 0);
+                 entry->selected ? 
+                        GLOB.themecolor[THEME_COLOR_INPUTBOX_SELECT_TEXTCOLOR] :
+                        listview_window->fgcolor, 0);
 }
 
 
@@ -1293,5 +1296,16 @@ void listview_set_multiselect(struct listview_t *listv, int enable)
     {
         listv->flags &= ~LISTVIEW_FLAG_MULTISELECT;
     }
+}
+
+
+/*
+ * Called when the system color theme changes.
+ * Updates the widget's colors.
+ */
+void listview_theme_changed(struct window_t *window)
+{
+    window->bgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR];
+    window->fgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_TEXTCOLOR];
 }
 

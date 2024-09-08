@@ -32,6 +32,8 @@
 #include "../include/gc.h"
 #include "../include/theme.h"
 
+#define GLOB        __global_gui_data
+
 
 static inline int send_menu_event(winid_t dest, winid_t src,
                                   uint16_t menu_id, uint16_t entry_id)
@@ -122,10 +124,12 @@ static inline void draw_inverted_3d_border(struct gc_t *gc,
     gc_vertical_line(gc, x + 1, y,  h, GLOBAL_DARK_SIDE_COLOR);
     // bottom
     gc_horizontal_line(gc, x, y + h - 1, w, GLOBAL_LIGHT_SIDE_COLOR);
-    gc_horizontal_line(gc, x + 1, y + h - 2, w - 1, WINDOW_BGCOLOR);
+    gc_horizontal_line(gc, x + 1, y + h - 2, w - 1, 
+                            GLOB.themecolor[THEME_COLOR_WINDOW_BGCOLOR]);
     // right
     gc_vertical_line(gc, x + w - 1, y, h, GLOBAL_LIGHT_SIDE_COLOR);
-    gc_vertical_line(gc, x + w - 2, y + 1, h - 2, WINDOW_BGCOLOR);
+    gc_vertical_line(gc, x + w - 2, y + 1, h - 2, 
+                            GLOB.themecolor[THEME_COLOR_WINDOW_BGCOLOR]);
 }
 
 

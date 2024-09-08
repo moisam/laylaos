@@ -1063,10 +1063,17 @@ static int __dialog_show(struct opensave_dialog_t *dialog)
 
     while(1)
     {
-        struct window_t *combobox_window = 
-                    internal->filter_combobox->internal_frame;
+        //struct window_t *combobox_window = 
+        //            internal->filter_combobox->internal_frame;
         struct event_t *ev = NULL;
         
+        if((ev = next_event_for_seqid(NULL, 0, 1)))
+        {
+            event_dispatch(ev);
+            free(ev);
+        }
+
+        /*
         if(!pending_events_timeout(1))
         {
             continue;
@@ -1085,6 +1092,7 @@ static int __dialog_show(struct opensave_dialog_t *dialog)
             combobox_window->event_handler(ev);
             free(ev);
         }
+        */
         
         if(internal->status.close_dialog)
         {

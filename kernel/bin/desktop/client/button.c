@@ -33,8 +33,11 @@
 #include "../include/menu.h"
 #include "../include/keys.h"
 
+#include "inlines.c"
+
 #define GLOB        __global_gui_data
 
+#if 0
 struct button_color_t default_colors[BUTTON_COLOR_ARRAY_LENGTH] =
 {
     // { background, text, border } for normal, mouse-over and pressed states
@@ -46,6 +49,41 @@ struct button_color_t default_colors[BUTTON_COLOR_ARRAY_LENGTH] =
     { BUTTON_DISABLED_BGCOLOR, BUTTON_DISABLED_TEXTCOLOR, 
                                BUTTON_DISABLED_BORDERCOLOR },
 };
+#endif
+
+void button_get_default_colors(struct button_color_t *colors)
+{
+    colors[0].bg = GLOB.themecolor[THEME_COLOR_BUTTON_BGCOLOR];
+    colors[0].text = GLOB.themecolor[THEME_COLOR_BUTTON_TEXTCOLOR];
+    colors[0].border = GLOB.themecolor[THEME_COLOR_BUTTON_BORDERCOLOR];
+
+    colors[1].bg = GLOB.themecolor[THEME_COLOR_BUTTON_MOUSEOVER_BGCOLOR];
+    colors[1].text = GLOB.themecolor[THEME_COLOR_BUTTON_MOUSEOVER_TEXTCOLOR];
+    colors[1].border = GLOB.themecolor[THEME_COLOR_BUTTON_MOUSEOVER_BORDERCOLOR];
+
+    colors[2].bg = GLOB.themecolor[THEME_COLOR_BUTTON_DOWN_BGCOLOR];
+    colors[2].text = GLOB.themecolor[THEME_COLOR_BUTTON_DOWN_TEXTCOLOR];
+    colors[2].border = GLOB.themecolor[THEME_COLOR_BUTTON_DOWN_BORDERCOLOR];
+
+    colors[3].bg = GLOB.themecolor[THEME_COLOR_BUTTON_PUSH_BGCOLOR];
+    colors[3].text = GLOB.themecolor[THEME_COLOR_BUTTON_PUSH_TEXTCOLOR];
+    colors[3].border = GLOB.themecolor[THEME_COLOR_BUTTON_PUSH_BORDERCOLOR];
+
+    colors[4].bg = GLOB.themecolor[THEME_COLOR_BUTTON_DISABLED_BGCOLOR];
+    colors[4].text = GLOB.themecolor[THEME_COLOR_BUTTON_DISABLED_TEXTCOLOR];
+    colors[4].border = GLOB.themecolor[THEME_COLOR_BUTTON_DISABLED_BORDERCOLOR];
+}
+
+
+/*
+ * Called when the system color theme changes.
+ * Updates the widget's colors.
+ */
+void button_theme_changed(struct window_t *window)
+{
+    struct button_t *button = (struct button_t *)window;
+    button_get_default_colors(button->colors);
+}
 
 
 struct button_t *button_new(struct gc_t *gc, struct window_t *parent,
@@ -106,13 +144,12 @@ struct button_t *button_new(struct gc_t *gc, struct window_t *parent,
     button->window.destroy = button_destroy;
     button->window.size_changed = widget_size_changed;
     button->window.keypress = button_keypress;
-
-    //button->button_click_callback = NULL;
+    button->window.theme_changed = button_theme_changed;
 
     button->state = BUTTON_STATE_NORMAL;
     button->flags |= BUTTON_FLAG_BORDERED;
     
-    memcpy(button->colors, default_colors, sizeof(default_colors));
+    button_get_default_colors(button->colors);
 
     window_insert_child(parent, (struct window_t *)button);
 
@@ -144,6 +181,7 @@ void button_repaint(struct window_t *button_window, int is_active_child)
                  button_window->w - 1, button_window->h - 1,
                  bg_color);
 
+    /*
     if(button->flags & BUTTON_FLAG_BORDERED)
     {
         gc_draw_rect(button_window->gc,
@@ -157,17 +195,20 @@ void button_repaint(struct window_t *button_window, int is_active_child)
         gc_draw_rect(button_window->gc,
                      x + 3, y + 3,
                      button_window->w - 6, button_window->h - 6,
-                     WINDOW_TITLECOLOR);
+                     GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR]);
 
         gc_draw_rect(button_window->gc,
                      x + 4, y + 4,
                      button_window->w - 8, button_window->h - 8,
-                     WINDOW_TITLECOLOR);    
+                     GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR]);
     }
+    */
 
     if(button_window->title)
     {
         int charh = char_height(button_window->gc->font, ' ');
+        int off = !!(button->state == BUTTON_STATE_DOWN);
+        int ty, tx;
 
         // Get the title length
         title_len = string_width(button_window->gc->font, 
@@ -179,12 +220,78 @@ void button_repaint(struct window_t *button_window, int is_active_child)
         gc_get_clipping(button_window->gc, &saved_clipping);
         gc_set_clipping(button_window->gc, &new_clipping);
 
+        // calculate the title's y position
+        if(button_window->text_alignment & TEXT_ALIGN_BOTTOM)
+        {
+            ty = y + button_window->h - charh - 4;
+        }
+        else if(button_window->text_alignment & TEXT_ALIGN_TOP)
+        {
+            ty = y + 4;
+        }
+        else
+        {
+            ty = y + (button_window->h / 2) - (charh / 2);
+        }
+
+        // calculate the title's x position
+        if(button_window->text_alignment & TEXT_ALIGN_RIGHT)
+        {
+            tx = x + button_window->w - title_len - 4;
+        }
+        else if(button_window->text_alignment & TEXT_ALIGN_LEFT)
+        {
+            tx = x + 4;
+        }
+        else
+        {
+            tx = x + (button_window->w / 2) - (title_len / 2);
+        }
+
         gc_draw_text(button_window->gc, button_window->title,
-                                x + (button_window->w / 2) - (title_len / 2),
-                                y + (button_window->h / 2) - (charh / 2),
-                                text_color, 0);
+                     tx + off, ty + off, text_color, 0);
 
         gc_set_clipping(button_window->gc, &saved_clipping);
+    }
+
+    // draw the border last to avoid the title overlapping it
+    if(button->flags & BUTTON_FLAG_BORDERED)
+    {
+        if(button->flags & BUTTON_FLAG_FLATBORDER)
+        {
+            gc_draw_rect(button_window->gc,
+                         x, y,
+                         button_window->w, button_window->h,
+                         border_color);
+        }
+        else
+        {
+            if(button->state == BUTTON_STATE_DOWN)
+            {
+                // draw the inverted 3d border if pushed
+                if(is_active_child)
+                {
+                    // black border
+                    gc_draw_rect(button_window->gc, x, y,
+                                 button_window->w, button_window->h,
+                                 GLOBAL_BLACK_COLOR);
+                    draw_inverted_3d_border(button_window->gc, x + 1, y + 1,
+                                            button_window->w - 2,
+                                            button_window->h - 2);
+                }
+                else
+                {
+                    draw_inverted_3d_border(button_window->gc, x, y,
+                                            button_window->w, button_window->h);
+                }
+            }
+            else
+            {
+                draw_3d_border(button_window->gc, x, y,
+                               button_window->w, button_window->h,
+                               is_active_child);
+            }
+        }
     }
 }
 

@@ -32,11 +32,15 @@
 #include "../include/font.h"
 #include "../include/menu.h"
 
+#define GLOB                            __global_gui_data
 
-#define _B          SCROLLBAR_BGCOLOR
-#define _T          SCROLLBAR_TEXTCOLOR
+#define TEMPLATE_BGCOLOR                0xCDCFD4FF
+#define TEMPLATE_TEXTCOLOR              0x222226FF
 
-static uint32_t arrow_up_img[] =
+#define _B                              TEMPLATE_BGCOLOR
+#define _T                              TEMPLATE_TEXTCOLOR
+
+static uint32_t arrow_up_img_template[] =
 {
     _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T,
     _T, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _T,
@@ -56,7 +60,7 @@ static uint32_t arrow_up_img[] =
     _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T,
 };
 
-static uint32_t arrow_down_img[] =
+static uint32_t arrow_down_img_template[] =
 {
     _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T,
     _T, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _T,
@@ -76,7 +80,7 @@ static uint32_t arrow_down_img[] =
     _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T,
 };
 
-static uint32_t arrow_left_img[] =
+static uint32_t arrow_left_img_template[] =
 {
     _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T,
     _T, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _T,
@@ -96,7 +100,7 @@ static uint32_t arrow_left_img[] =
     _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T,
 };
 
-static uint32_t arrow_right_img[] =
+static uint32_t arrow_right_img_template[] =
 {
     _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T,
     _T, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _T,
@@ -115,6 +119,11 @@ static uint32_t arrow_right_img[] =
     _T, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _B, _T,
     _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T, _T,
 };
+
+static uint32_t arrow_up_img[16 * 16 * 4];
+static uint32_t arrow_down_img[16 * 16 * 4];
+static uint32_t arrow_left_img[16 * 16 * 4];
+static uint32_t arrow_right_img[16 * 16 * 4];
 
 #undef _B
 #undef _T
@@ -218,8 +227,8 @@ struct scrollbar_t *scrollbar_new(struct gc_t *gc, struct window_t *parent,
     sbar->window.gc = gc;
     sbar->window.flags = WINDOW_NODECORATION;
     sbar->window.visible = 1;
-    sbar->window.bgcolor = SCROLLBAR_BGCOLOR;
-    sbar->window.fgcolor = SCROLLBAR_TEXTCOLOR;
+    sbar->window.bgcolor = GLOB.themecolor[THEME_COLOR_SCROLLBAR_BGCOLOR];
+    sbar->window.fgcolor = GLOB.themecolor[THEME_COLOR_SCROLLBAR_TEXTCOLOR];
     
     sbar->window.repaint = scrollbar_repaint;
     sbar->window.mousedown = scrollbar_mousedown;
@@ -232,6 +241,7 @@ struct scrollbar_t *scrollbar_new(struct gc_t *gc, struct window_t *parent,
     sbar->window.keypress = scrollbar_keypress;
     sbar->window.keyrelease = scrollbar_keyrelease;
     sbar->window.size_changed = widget_size_changed;
+    sbar->window.theme_changed = scrollbar_theme_changed;
 
     window_insert_child(parent, (struct window_t *)sbar);
 
@@ -635,5 +645,55 @@ void scrollbar_set_val(struct scrollbar_t *sbar, int val)
     {
         sbar->val = val;
     }
+}
+
+
+static inline
+void color_from_template(uint32_t *array, uint32_t *template, int index)
+{
+    if(template[index] == TEMPLATE_BGCOLOR)
+    {
+        array[index] = GLOB.themecolor[THEME_COLOR_SCROLLBAR_BGCOLOR];
+    }
+    else if(template[index] == TEMPLATE_TEXTCOLOR)
+    {
+        array[index] = GLOB.themecolor[THEME_COLOR_SCROLLBAR_TEXTCOLOR];
+    }
+    else
+    {
+        array[index] = template[index];
+    }
+}
+
+
+/*
+ * Called on startup and when the system color theme changes.
+ * Updates the global arrow bitmaps.
+ */
+void scrollbar_theme_changed_global(void)
+{
+    int i, j, k;
+
+    for(i = 0, k = 0; i < 16; i++)
+    {
+        for(j = 0; j < 16; j++, k++)
+        {
+            color_from_template(arrow_up_img, arrow_up_img_template, k);
+            color_from_template(arrow_down_img, arrow_down_img_template, k);
+            color_from_template(arrow_left_img, arrow_left_img_template, k);
+            color_from_template(arrow_right_img, arrow_right_img_template, k);
+        }
+    }
+}
+
+
+/*
+ * Called when the system color theme changes.
+ * Updates the widget's colors.
+ */
+void scrollbar_theme_changed(struct window_t *window)
+{
+    window->bgcolor = GLOB.themecolor[THEME_COLOR_SCROLLBAR_BGCOLOR];
+    window->fgcolor = GLOB.themecolor[THEME_COLOR_SCROLLBAR_TEXTCOLOR];
 }
 

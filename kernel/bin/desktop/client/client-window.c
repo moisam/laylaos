@@ -203,7 +203,7 @@ struct window_t *__window_create(struct window_attribs_t *attribs,
     }
 
     window->visible = 1;
-    window->bgcolor = WINDOW_BGCOLOR;
+    window->bgcolor = GLOB.themecolor[THEME_COLOR_WINDOW_BGCOLOR];
     window->repaint = window_repaint_default_bg;
     window->gc = gc_new(window->w, window->h,
                         GLOB.screen.pixel_width, window->canvas,
@@ -409,6 +409,11 @@ struct window_t *win_for_winid(winid_t winid)
 
 void window_show(struct window_t *window)
 {
+    if(!window)
+    {
+        return;
+    }
+
     if(window->type == WINDOW_TYPE_DIALOG)
     {
         window_request(window, REQUEST_DIALOG_SHOW);
@@ -428,6 +433,11 @@ void window_show(struct window_t *window)
 
 void window_hide(struct window_t *window)
 {
+    if(!window)
+    {
+        return;
+    }
+
     if(window->type == WINDOW_TYPE_DIALOG)
     {
         window_request(window, REQUEST_DIALOG_HIDE);
@@ -522,6 +532,11 @@ void __window_set_title(struct window_t *window, char *new_title,
 {
     char *title_copy;
     size_t new_len = new_title ? strlen(new_title) + 1 : 0;
+
+    if(!window)
+    {
+        return;
+    }
     
     if(!new_title || !new_len)
     {
@@ -600,6 +615,11 @@ void window_resize(struct window_t *window, int16_t x, int16_t y,
     struct event_t ev, *ev2;
     uint32_t seqid = __next_seqid();
 
+    if(!window)
+    {
+        return;
+    }
+
     ev.type = REQUEST_WINDOW_RESIZE_ACCEPT;
     ev.seqid = seqid;
     ev.win.x = x;
@@ -671,6 +691,11 @@ void window_resize(struct window_t *window, int16_t x, int16_t y,
 
 void window_repaint(struct window_t *window)
 {
+    if(!window)
+    {
+        return;
+    }
+
     if(window->type == WINDOW_TYPE_WINDOW || 
        window->type == WINDOW_TYPE_DIALOG)
     {
@@ -726,6 +751,11 @@ void window_set_icon(struct window_t *window, char *name)
     size_t bufsz;
     /* volatile */ struct event_buf_t *evbuf;
 
+    if(!window)
+    {
+        return;
+    }
+
     if(!name || !*name)
     {
         return;
@@ -773,6 +803,11 @@ void window_load_icon(struct window_t *window,
     size_t bufsz;
     struct event_res_t *evbuf;
 
+    if(!window)
+    {
+        return;
+    }
+
     // if we have data, we must have valid dimensions
     if(data && !len)
     {
@@ -813,6 +848,20 @@ void window_load_icon(struct window_t *window,
 
 void window_insert_child(struct window_t *window, struct window_t *child)
 {
+    if(!window)
+    {
+        return;
+    }
+
+    if(window->children == NULL)
+    {
+        if(!(window->children = List_new()))
+        {
+            __set_errno(ENOMEM);
+            return;
+        }
+    }
+
     child->parent = window;
     List_add(window->children, child);
 
@@ -835,6 +884,11 @@ void window_set_pos(struct window_t *window, int x, int y)
 {
     /* volatile */ struct event_t ev;
 
+    if(!window)
+    {
+        return;
+    }
+
     ev.type = REQUEST_WINDOW_SET_POS;
     ev.seqid = __next_seqid();
     ev.win.x = x;
@@ -856,6 +910,11 @@ void window_set_size(struct window_t *window, int x, int y,
     struct event_t ev;
     uint32_t seqid = __next_seqid();
 
+    if(!window)
+    {
+        return;
+    }
+
     ev.type = REQUEST_WINDOW_RESIZE;
     ev.seqid = seqid;
     ev.win.x = x;
@@ -873,6 +932,11 @@ void window_set_min_size(struct window_t *window, uint16_t w, uint16_t h)
     struct event_t ev;
     uint32_t seqid = __next_seqid();
 
+    if(!window)
+    {
+        return;
+    }
+
     ev.type = REQUEST_WINDOW_SET_MIN_SIZE;
     ev.seqid = seqid;
     ev.win.x = 0;
@@ -889,6 +953,11 @@ void window_set_attrib_xxx(struct window_t *window, int which, int unset)
 {
     struct window_attribs_t attribs;
     /* volatile */ struct event_t ev;
+
+    if(!window)
+    {
+        return;
+    }
     
     A_memset(&attribs, 0, sizeof(struct window_attribs_t));
     attribs.flags = window->flags;
@@ -936,6 +1005,11 @@ void window_set_ontop(struct window_t *window, int ontop)
 
 void window_destroy_canvas(struct window_t *window)
 {
+    if(!window)
+    {
+        return;
+    }
+
     if(window->gc)
     {
         free(window->gc);
@@ -1001,6 +1075,11 @@ void window_set_focus_child(struct window_t *window, struct window_t *child)
 {
     struct window_t *old_active;
 
+    if(!window)
+    {
+        return;
+    }
+
     if(!window->children)
     {
         return;
@@ -1023,6 +1102,11 @@ void window_resize_layout(struct window_t *window)
     struct window_t *current_child;
     ListNode *current_node;
     int y, h, sbarh;
+
+    if(!window)
+    {
+        return;
+    }
 
     if(!window->children)
     {
@@ -1166,5 +1250,15 @@ void window_resize_layout(struct window_t *window)
     {
         window->size_changed(window);
     }
+}
+
+
+/*
+ * Called when the system color theme changes.
+ * Updates the widget's colors.
+ */
+void window_theme_changed(struct window_t *window)
+{
+    window->bgcolor = GLOB.themecolor[THEME_COLOR_WINDOW_BGCOLOR];
 }
 

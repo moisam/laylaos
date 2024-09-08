@@ -79,8 +79,8 @@ struct textbox_t *textbox_new(struct gc_t *gc, struct window_t *parent,
     text_box->window.gc = gc;
     text_box->window.flags = WINDOW_NODECORATION | WINDOW_3D_WIDGET;
     text_box->window.visible = 1;
-    text_box->window.bgcolor = TEXTBOX_BGCOLOR /* 0xFFFFFFFF */;
-    text_box->window.fgcolor = TEXTBOX_TEXTCOLOR /* 0x000000FF */;
+    text_box->window.bgcolor = GLOB.themecolor[THEME_COLOR_TEXTBOX_BGCOLOR];
+    text_box->window.fgcolor = GLOB.themecolor[THEME_COLOR_TEXTBOX_TEXTCOLOR];
     
     if(title)
     {
@@ -97,6 +97,7 @@ struct textbox_t *textbox_new(struct gc_t *gc, struct window_t *parent,
     text_box->window.focus = textbox_focus;
     text_box->window.destroy = textbox_destroy;
     text_box->window.size_changed = widget_size_changed;
+    text_box->window.theme_changed = textbox_theme_changed;
 
     window_insert_child(parent, (struct window_t *)text_box);
 
@@ -188,5 +189,16 @@ void textbox_unfocus(struct window_t *textbox_window)
 
 void textbox_focus(struct window_t *textbox_window)
 {
+}
+
+
+/*
+ * Called when the system color theme changes.
+ * Updates the widget's colors.
+ */
+void textbox_theme_changed(struct window_t *window)
+{
+    window->bgcolor = GLOB.themecolor[THEME_COLOR_TEXTBOX_BGCOLOR];
+    window->fgcolor = GLOB.themecolor[THEME_COLOR_TEXTBOX_TEXTCOLOR];
 }
 

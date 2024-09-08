@@ -43,6 +43,7 @@
 
 
 extern void messagebox_dispatch_event(struct event_t *ev);
+extern void dialog_button_handler(struct button_t *button, int x, int y);
 
 
 /*
@@ -82,15 +83,6 @@ struct about_dialog_t *aboutbox_create(winid_t owner)
     dialog->app_icon_resid = window_icon_get(owner, &dialog->app_icon);
     
     return dialog;
-}
-
-
-static void dialog_button_handler(struct button_t *button, int x, int y)
-{
-    struct window_t *dialog_window = (struct window_t *)button->window.parent;
-    struct dialog_status_t *status = dialog_window->internal_data;
-    
-    status->close_dialog = 1;
 }
 
 
@@ -167,6 +159,7 @@ int aboutbox_show(struct about_dialog_t *dialog)
 
     dialog->window->event_handler = messagebox_dispatch_event;
     status.close_dialog = 0;
+    status.dialog_thread = pthread_self();
     dialog->window->internal_data = &status;
     window_set_title(dialog->window, dialog->title ? dialog->title : "About");
 
@@ -253,26 +246,14 @@ int aboutbox_show(struct about_dialog_t *dialog)
     while(1)
     {
         struct event_t *ev = NULL;
-        
-        /*
-        if((ev = next_event()))
-        {
-            if(win_for_winid(ev->dest) == dialog_window)
-            {
-                messagebox_dispatch_event(ev);
-            }
-        }
-        */
-        if((ev = next_event_for_seqid(/* NULL */ dialog->window, 0, 0)))
-        {
-            //if(win_for_winid(ev->dest) == dialog->window)
-            {
-                messagebox_dispatch_event(ev);
-            }
 
+        if((ev = next_event_for_seqid(NULL /* dialog->window */, 0, 1)))
+        {
+            //messagebox_dispatch_event(ev);
+            event_dispatch(ev);
             free(ev);
         }
-        
+
         if(status.close_dialog)
         {
             break;

@@ -50,12 +50,15 @@
 
 #define GLOB                            __global_gui_data
 
-#define _B          SCROLLBAR_BGCOLOR,
-#define _T          SCROLLBAR_TEXTCOLOR,
-#define _L          GLOBAL_LIGHT_SIDE_COLOR,
-#define _D          GLOBAL_DARK_SIDE_COLOR,
+#define TEMPLATE_BGCOLOR                0xCDCFD4FF
+#define TEMPLATE_TEXTCOLOR              0x222226FF
 
-static uint32_t arrow_up_img[] =
+#define _B                              TEMPLATE_BGCOLOR,
+#define _T                              TEMPLATE_TEXTCOLOR,
+#define _L                              GLOBAL_LIGHT_SIDE_COLOR,
+#define _D                              GLOBAL_DARK_SIDE_COLOR,
+
+static uint32_t arrow_up_img_template[] =
 {
     _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D
     _B _L _L _L _L _L _L _L _L _L _L _L _L _L _D _D
@@ -72,7 +75,7 @@ static uint32_t arrow_up_img[] =
     _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D
 };
 
-static uint32_t arrow_down_img[] =
+static uint32_t arrow_down_img_template[] =
 {
     _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D
     _B _L _L _L _L _L _L _L _L _L _L _L _L _L _D _D
@@ -88,6 +91,9 @@ static uint32_t arrow_down_img[] =
     _B _L _D _D _D _D _D _D _D _D _D _D _D _D _D _D
     _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D
 };
+
+static uint32_t arrow_up_img[ARROW_WIDTH * ARROW_HEIGHT * 4];
+static uint32_t arrow_down_img[ARROW_WIDTH * ARROW_HEIGHT * 4];
 
 #undef _B
 #undef _T
@@ -157,7 +163,8 @@ struct spinner_t *spinner_new(struct gc_t *gc, struct window_t *parent,
     // border, but this is complicated and messy. Instead, we draw the border
     // here, once and for all, and we never need to worry about it again.
     gc_fill_rect(&spinner->backbuf_gc, 1, 1,
-                         w - 2, INPUTBOX_HEIGHT - 2, INPUTBOX_BGCOLOR);
+                         w - 2, INPUTBOX_HEIGHT - 2, 
+                         GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR]);
     draw_inverted_3d_border(&spinner->backbuf_gc, 0, 0, w, INPUTBOX_HEIGHT);
     reset_backbuf_clipping(spinner);
 
@@ -190,8 +197,8 @@ struct spinner_t *spinner_new(struct gc_t *gc, struct window_t *parent,
     spinner->window.gc = gc;
     spinner->window.flags = WINDOW_NODECORATION;
     spinner->window.visible = 1;
-    spinner->window.bgcolor = INPUTBOX_BGCOLOR;
-    spinner->window.fgcolor = INPUTBOX_TEXTCOLOR;
+    spinner->window.bgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR];
+    spinner->window.fgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_TEXTCOLOR];
 
     spinner->val = 0;
     __window_set_title(&spinner->window, "0", 0);
@@ -214,6 +221,7 @@ struct spinner_t *spinner_new(struct gc_t *gc, struct window_t *parent,
     spinner->window.keypress = spinner_keypress;
     //spinner->window.keyrelease = spinner_keyrelease;
     spinner->window.size_changed = spinner_size_changed;
+    spinner->window.theme_changed = spinner_theme_changed;
 
     window_insert_child(parent, (struct window_t *)spinner);
 
@@ -280,12 +288,12 @@ void spinner_repaint(struct window_t *spinner_window, int is_active_child)
                              x, TOP_INNER_MARGIN,
                              charw,
                              spinner_window->h - (TOP_INNER_MARGIN * 2),
-                             INPUTBOX_SELECT_BGCOLOR);
+                             GLOB.themecolor[THEME_COLOR_INPUTBOX_SELECT_BGCOLOR]);
 
                 func(&spinner->backbuf_gc,
                      &spinner->backbuf_gc.clipping, buf,
                      x, TOP_INNER_MARGIN,
-                     INPUTBOX_SELECT_TEXTCOLOR, 0);
+                     GLOB.themecolor[THEME_COLOR_INPUTBOX_SELECT_TEXTCOLOR], 0);
             }
             else
             {
@@ -1249,7 +1257,8 @@ void spinner_size_changed(struct window_t *spinner_window)
 
         gc_fill_rect(&spinner->backbuf_gc, 1, 1,
                          spinner_window->w - 2,
-                         INPUTBOX_HEIGHT - 2, INPUTBOX_BGCOLOR);
+                         INPUTBOX_HEIGHT - 2, 
+                         GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR]);
         draw_inverted_3d_border(&spinner->backbuf_gc, 0, 0, 
                                 spinner_window->w, INPUTBOX_HEIGHT);
         reset_backbuf_clipping(spinner);
@@ -1283,5 +1292,53 @@ void spinner_set_val(struct spinner_t *spinner, int val)
         __window_set_title(&spinner->window, buf, 0);
         adjust_indices(spinner, 0);
     }
+}
+
+
+static inline
+void color_from_template(uint32_t *array, uint32_t *template, int index)
+{
+    if(template[index] == TEMPLATE_BGCOLOR)
+    {
+        array[index] = GLOB.themecolor[THEME_COLOR_SCROLLBAR_BGCOLOR];
+    }
+    else if(template[index] == TEMPLATE_TEXTCOLOR)
+    {
+        array[index] = GLOB.themecolor[THEME_COLOR_SCROLLBAR_TEXTCOLOR];
+    }
+    else
+    {
+        array[index] = template[index];
+    }
+}
+
+
+/*
+ * Called on startup and when the system color theme changes.
+ * Updates the global arrow bitmaps.
+ */
+void spinner_theme_changed_global(void)
+{
+    int i, j, k;
+
+    for(i = 0, k = 0; i < 16; i++)
+    {
+        for(j = 0; j < 16; j++, k++)
+        {
+            color_from_template(arrow_up_img, arrow_up_img_template, k);
+            color_from_template(arrow_down_img, arrow_down_img_template, k);
+        }
+    }
+}
+
+
+/*
+ * Called when the system color theme changes.
+ * Updates the widget's colors.
+ */
+void spinner_theme_changed(struct window_t *window)
+{
+    window->bgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR];
+    window->fgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_TEXTCOLOR];
 }
 

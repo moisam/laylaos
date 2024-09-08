@@ -55,8 +55,55 @@ void widget_destroy(struct window_t *widget)
     {
         free(widget->title);
     }
+
+    // This only frees the children list, but does not destroy children.
+    // The widget must call widget_destroy_children() before calling this
+    // function to ensure its children are destroyed.
+    if(widget->children)
+    {
+        ListNode *current_node = widget->children->root_node;
+
+        while(current_node)
+        {
+            ListNode *next_node = current_node->next;
+            Listnode_free(current_node); 
+            current_node = next_node;
+        }
+
+        List_free(widget->children);
+        widget->children = NULL;
+    }
     
     free(widget);
+}
+
+
+/*
+ * This function calls each child widget's destroy function.
+ * It does not free the children list.
+ */
+void widget_destroy_children(struct window_t *widget)
+{
+    struct window_t *current_child;
+    ListNode *current_node;
+
+    if(!widget || !widget->children)
+    {
+        return;
+    }
+
+    for(current_node = widget->children->root_node;
+        current_node != NULL;
+        current_node = current_node->next)
+    {
+        current_child = (struct window_t *)current_node->payload;
+        
+        if(current_child->destroy)
+        {
+            current_child->destroy(current_child);
+            current_node->payload = NULL;
+        }
+    }
 }
 
 

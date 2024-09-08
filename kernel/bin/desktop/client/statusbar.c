@@ -32,6 +32,8 @@
 #include "../include/font.h"
 #include "../include/menu.h"
 
+#define GLOB                            __global_gui_data
+
 
 struct statusbar_t *statusbar_new(struct gc_t *gc, struct window_t *parent)
 {
@@ -71,8 +73,8 @@ struct statusbar_t *statusbar_new(struct gc_t *gc, struct window_t *parent)
     sbar->window.gc = gc;
     sbar->window.flags = WINDOW_NODECORATION;
     sbar->window.visible = 1;
-    sbar->window.bgcolor = STATUSBAR_BGCOLOR;
-    sbar->window.fgcolor = STATUSBAR_TEXTCOLOR;
+    sbar->window.bgcolor = GLOB.themecolor[THEME_COLOR_STATUSBAR_BGCOLOR];
+    sbar->window.fgcolor = GLOB.themecolor[THEME_COLOR_STATUSBAR_TEXTCOLOR];
     
     sbar->window.repaint = statusbar_repaint;
     sbar->window.mousedown = statusbar_mousedown;
@@ -83,6 +85,7 @@ struct statusbar_t *statusbar_new(struct gc_t *gc, struct window_t *parent)
     sbar->window.focus = statusbar_focus;
     sbar->window.destroy = statusbar_destroy;
     sbar->window.size_changed = statusbar_size_changed;
+    sbar->window.theme_changed = statusbar_theme_changed;
 
     window_insert_child(parent, (struct window_t *)sbar);
 
@@ -181,5 +184,16 @@ void statusbar_size_changed(struct window_t *statusbar_window)
 {
     statusbar_window->w = statusbar_window->parent->w;
     widget_size_changed(statusbar_window);
+}
+
+
+/*
+ * Called when the system color theme changes.
+ * Updates the widget's colors.
+ */
+void statusbar_theme_changed(struct window_t *window)
+{
+    window->bgcolor = GLOB.themecolor[THEME_COLOR_STATUSBAR_BGCOLOR];
+    window->fgcolor = GLOB.themecolor[THEME_COLOR_STATUSBAR_TEXTCOLOR];
 }
 

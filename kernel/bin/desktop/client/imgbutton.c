@@ -42,7 +42,7 @@
 #define ICONWIDTH               64
 
 // defined in button.c
-extern struct button_color_t default_colors[BUTTON_COLOR_ARRAY_LENGTH];
+void button_get_default_colors(struct button_color_t *colors);
 
 
 struct imgbutton_t *imgbutton_new(struct gc_t *gc, struct window_t *parent,
@@ -99,8 +99,8 @@ struct imgbutton_t *imgbutton_new(struct gc_t *gc, struct window_t *parent,
 
     button->state = BUTTON_STATE_NORMAL;
     button->flags |= BUTTON_FLAG_BORDERED;
-    
-    memcpy(button->colors, default_colors, sizeof(default_colors));
+
+    button_get_default_colors(button->colors);
 
     window_insert_child(parent, (struct window_t *)button);
 
@@ -477,7 +477,7 @@ void imgbutton_disable(struct imgbutton_t *button)
 {
     struct window_t *button_window = (struct window_t *)button;
 
-    if(button->state == BUTTON_STATE_DISABLED)
+    if(!button || button->state == BUTTON_STATE_DISABLED)
     {
         return;
     }
@@ -492,7 +492,7 @@ void imgbutton_enable(struct imgbutton_t *button)
 {
     struct window_t *button_window = (struct window_t *)button;
 
-    if(button->state != BUTTON_STATE_DISABLED)
+    if(!button || button->state != BUTTON_STATE_DISABLED)
     {
         return;
     }

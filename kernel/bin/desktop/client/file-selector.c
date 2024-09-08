@@ -36,7 +36,6 @@
 #include "../include/gui.h"
 #include "../include/resources.h"
 #include "../include/client/file-selector.h"
-#include "../include/client/listview.h"
 #include "../include/rect.h"
 #include "../include/font.h"
 #include "../include/menu.h"
@@ -45,7 +44,7 @@
 #include "../include/kbd.h"
 
 #include "../desktop/desktop_entry_lines.c"
-
+#include "file-selector-inlines.c"
 #include "inlines.c"
 
 
@@ -57,18 +56,9 @@
 
 #define BUFSZ                           0x1000
 
-#define LISTVIEW_ENTRYHEIGHT            LISTVIEW_LINE_HEIGHT
-#define LISTVIEW_LEFT_MARGIN            4
-#define LISTVIEW_ICONWIDTH              20
-
-#define ICONVIEW_ENTRYWIDTH             128
-#define ICONVIEW_ENTRYHEIGHT            112
-#define ICONVIEW_LEFT_MARGIN            32
-#define ICONVIEW_ICONWIDTH              64
-
 #define HIGHLIGHT_COLOR                 0x1F9EDEAA
-#define BG_COLOR                        0xFFFFFFFF
-#define TEXT_COLOR                      0x000000FF
+#define BG_COLOR                        GLOBAL_WHITE_COLOR
+#define TEXT_COLOR                      GLOBAL_BLACK_COLOR
 
 #define GENERIC_FILE_ICON_PATH          DEFAULT_ICON_PATH "/file_generic.ico"
 #define GENERIC_DIR_ICON_PATH           DEFAULT_ICON_PATH "/folder.ico"
@@ -126,6 +116,7 @@ struct extension_t extensions[] =
     { ".c", "code-csrc.ico", NULL },
     { ".h", "code-chdr.ico", NULL },
     { ".sh", "code-sh.ico", NULL },
+    { ".pdf", "pdf.ico", NULL },
     { NULL, NULL },
 };
 
@@ -318,20 +309,6 @@ void file_selector_destroy(struct window_t *selector_window)
 }
 
 
-static inline int usable_width(struct file_selector_t *selector)
-{
-    // make sure not to paint over the right side vertical scrollbar!
-    return selector->window.w - (selector->vscroll->window.visible ? 20 : 4);
-}
-
-
-static inline int usable_height(struct file_selector_t *selector)
-{
-    // make sure not to paint over the bottom side horizontal scrollbar!
-    return selector->window.h - (selector->hscroll->window.visible ? 20 : 4);
-}
-
-
 void paint_entry_iconview(struct window_t *selector_window, 
                           struct file_entry_t *entry,
                           int x, int y)
@@ -342,7 +319,7 @@ void paint_entry_iconview(struct window_t *selector_window,
     int highlighted = (entry->highlighted);
     int x1;
     size_t i, pixels;
-    uint32_t text_color = highlighted ? 0xFFFFFFFF : selector_window->fgcolor;
+    uint32_t text_color = highlighted ? GLOBAL_WHITE_COLOR : selector_window->fgcolor;
     uint32_t bg_color = highlighted ? HIGHLIGHT_COLOR : BG_COLOR;
     /*
     int want_selection_box = (selector->cur_entry >= 0 &&
@@ -354,10 +331,18 @@ void paint_entry_iconview(struct window_t *selector_window,
                  entry == &selector->entries[selector->selection_box_entry]);
 
     // paint the icon (highlighted if necessary)
+    gc_stretch_bitmap_highlighted(&selector->backbuf_gc, entry->icon,
+                                  x + ICONVIEW_LEFT_MARGIN, y,
+                                  ICONVIEW_ICONWIDTH, ICONVIEW_ICONWIDTH,
+                                  0, 0,
+                                  entry->icon->width, entry->icon->height,
+                                  highlighted ? HIGHLIGHT_COLOR : 0);
+    /*
     gc_blit_bitmap_highlighted(&selector->backbuf_gc, entry->icon,
                                x + ICONVIEW_LEFT_MARGIN, y, 0, 0,
                                ICONVIEW_ICONWIDTH, ICONVIEW_ICONWIDTH,
                                highlighted ? HIGHLIGHT_COLOR : 0);
+    */
 
     y += ICONVIEW_ICONWIDTH;
 
@@ -423,7 +408,7 @@ void paint_entry_listview(struct window_t *selector_window,
     int highlighted = (entry->highlighted);
     int w = usable_width(selector);
     int y1;
-    uint32_t text_color = highlighted ? 0xFFFFFFFF : selector_window->fgcolor;
+    uint32_t text_color = highlighted ? GLOBAL_WHITE_COLOR : selector_window->fgcolor;
     uint32_t bg_color = highlighted ? HIGHLIGHT_COLOR : BG_COLOR;
     /*
     int want_selection_box = (selector->cur_entry >= 0 &&
@@ -442,7 +427,7 @@ void paint_entry_listview(struct window_t *selector_window,
                                   LISTVIEW_LEFT_MARGIN, y + 2,
                                   LISTVIEW_ICONWIDTH, LISTVIEW_ICONWIDTH,
                                   0, 0,
-                                  ICONVIEW_ICONWIDTH, ICONVIEW_ICONWIDTH,
+                                  entry->icon->width, entry->icon->height,
                                   highlighted ? HIGHLIGHT_COLOR : 0);
 
     y1 = y + ((LISTVIEW_ENTRYHEIGHT - charh) / 2);
@@ -530,7 +515,7 @@ void paint_entry_compactview(struct window_t *selector_window,
     int charh = char_height(font, ' ');
     int highlighted = (entry->highlighted);
     int y1;
-    uint32_t text_color = highlighted ? 0xFFFFFFFF : selector_window->fgcolor;
+    uint32_t text_color = highlighted ? GLOBAL_WHITE_COLOR : selector_window->fgcolor;
     uint32_t bg_color = highlighted ? HIGHLIGHT_COLOR : BG_COLOR;
     /*
     int want_selection_box = (selector->cur_entry >= 0 &&
@@ -549,7 +534,7 @@ void paint_entry_compactview(struct window_t *selector_window,
                                   x + 4, y + 2,
                                   LISTVIEW_ICONWIDTH, LISTVIEW_ICONWIDTH,
                                   0, 0,
-                                  ICONVIEW_ICONWIDTH, ICONVIEW_ICONWIDTH,
+                                  entry->icon->width, entry->icon->height,
                                   highlighted ? HIGHLIGHT_COLOR : 0);
 
     y1 = y + ((LISTVIEW_ENTRYHEIGHT - charh) / 2);
@@ -595,7 +580,7 @@ void file_selector_repaint(struct window_t *selector_window,
     gc_fill_rect(&selector->backbuf_gc,
                  2, 2,
                  selector_window->w - 4, selector_window->h - 4,
-                 selector_window->bgcolor /* 0xFFFFFFFF */);
+                 selector_window->bgcolor);
 
     if(!selector->entries)
     {
@@ -1578,112 +1563,11 @@ void file_selector_free_list(struct file_entry_t *entries, int entry_count)
 }
 
 
-static inline void may_need_vscroll(struct file_selector_t *selector)
-{
-    scrollbar_parent_size_changed((struct window_t *)selector,
-                                      (struct window_t *)selector->vscroll);
-
-    // we may need a vertical scrollbar
-    if(selector->vh > selector->window.h)
-    {
-        scrollbar_set_max(selector->vscroll, selector->vh - selector->window.h);
-        scrollbar_set_val(selector->vscroll, selector->scrolly);
-        scrollbar_set_step(selector->vscroll, 16);
-        scrollbar_enable(selector->vscroll);
-        selector->vscroll->window.visible = 1;
-    }
-    else
-    {
-        scrollbar_disable(selector->vscroll);
-        selector->vscroll->window.visible = 0;
-    }
-}
-
-
-static inline void may_need_hscroll(struct file_selector_t *selector)
-{
-    scrollbar_parent_size_changed((struct window_t *)selector,
-                                      (struct window_t *)selector->hscroll);
-
-    // we may need a horizontal scrollbar
-    if(selector->vw > selector->window.w)
-    {
-        scrollbar_set_max(selector->hscroll, selector->vw - selector->window.w);
-        scrollbar_set_val(selector->hscroll, selector->scrollx);
-        scrollbar_set_step(selector->hscroll, 16);
-        scrollbar_enable(selector->hscroll);
-        selector->hscroll->window.visible = 1;
-    }
-    else
-    {
-        scrollbar_disable(selector->hscroll);
-        selector->hscroll->window.visible = 0;
-    }
-}
-
-
-static inline int get_entries_per_line(struct file_selector_t *selector)
-{
-    if(selector->viewmode != FILE_SELECTOR_ICON_VIEW)
-    {
-        return 1;
-    }
-    else
-    {
-        //return (selector->window.w - VSCROLLBAR_WIDTH) / ICONVIEW_ENTRYWIDTH;
-        return usable_width(selector) / ICONVIEW_ENTRYWIDTH;
-    }
-}
-
-
-static inline int get_entries_per_col(struct file_selector_t *selector)
-{
-    //return (selector->window.h - HSCROLLBAR_HEIGHT) / LISTVIEW_ENTRYHEIGHT;
-    return usable_height(selector) / LISTVIEW_ENTRYHEIGHT;
-}
-
-
-static inline void reset_vh(struct file_selector_t *selector,
-                            int entry_count, int entries_per_line)
-{
-    if(selector->viewmode == FILE_SELECTOR_LIST_VIEW)
-    {
-        selector->vh = entry_count * LISTVIEW_ENTRYHEIGHT;
-    }
-    else if(selector->viewmode == FILE_SELECTOR_COMPACT_VIEW)
-    {
-        selector->vh = 0;
-    }
-    else
-    {
-        selector->vh = ICONVIEW_ENTRYHEIGHT * 
-                ((entry_count + entries_per_line - 1) / entries_per_line);
-    }
-}
-
-
-static inline void reset_vw(struct file_selector_t *selector,
-                            int entry_count, int entries_per_col)
-{
-    if(selector->viewmode != FILE_SELECTOR_COMPACT_VIEW)
-    {
-        selector->vw = 0;
-    }
-    else
-    {
-        selector->vw = selector->longest_entry_width * 
-                ((entry_count + entries_per_col - 1) / entries_per_col);
-    }
-}
-
-
 int file_selector_set_path(struct file_selector_t *selector, char *new_path)
 {
     int entry_count, longestw;
     struct file_entry_t *entries;
     struct window_t *selector_window = (struct window_t *)selector;
-    //int entries_per_line = selector_window->w / ENTRYWIDTH;
-    int entries_per_line = get_entries_per_line(selector);
 
     if(!new_path || !*new_path)
     {
@@ -1713,18 +1597,11 @@ int file_selector_set_path(struct file_selector_t *selector, char *new_path)
     selector->entry_count = entry_count;
     selector->longest_entry_width = longestw;
 
-    reset_vh(selector, entry_count, entries_per_line);
-    reset_vw(selector, entry_count, get_entries_per_col(selector));
-
     selector->scrolly = 0;
-    may_need_vscroll(selector);
     selector->scrollx = 0;
-    may_need_hscroll(selector);
+    file_selector_reset_scrolls(selector);
+    file_selector_reset_click_count(selector);
 
-    selector->last_click_time = 0;
-    selector->last_down = NULL;
-    selector->last_clicked = NULL;
-    selector->cur_entry = -1;
     selector->selection_box_entry = -1;
 
     if(default_file_icon.data == NULL)
@@ -2531,8 +2408,6 @@ int file_selector_keyrelease(struct window_t *selector_window,
 void file_selector_size_changed(struct window_t *window)
 {
     struct file_selector_t *selector = SELECTOR(window);
-    //int entries_per_line = window->w / ENTRYWIDTH;
-    int entries_per_line = get_entries_per_line(selector);
 
     if(selector->backbuf_gc.w != window->w ||
        selector->backbuf_gc.h != window->h)
@@ -2555,11 +2430,7 @@ void file_selector_size_changed(struct window_t *window)
     window->clip_rects->root->bottom = window->y + window->h - 2;
     window->clip_rects->root->right = window->x + window->w - 2;
 
-    reset_vh(selector, selector->entry_count, entries_per_line);
-    reset_vw(selector, selector->entry_count, get_entries_per_col(selector));
-
-    may_need_vscroll(selector);
-    may_need_hscroll(selector);
+    file_selector_reset_scrolls(selector);
 }
 
 
@@ -2610,18 +2481,10 @@ void file_selector_set_viewmode(struct file_selector_t *selector, int mode)
         unselect_all(selector);
     }
 
-    reset_vh(selector, selector->entry_count, get_entries_per_line(selector));
     selector->scrolly = 0;
-    may_need_vscroll(selector);
-
-    reset_vw(selector, selector->entry_count, get_entries_per_col(selector));
     selector->scrollx = 0;
-    may_need_hscroll(selector);
-
-    selector->last_click_time = 0;
-    selector->last_down = NULL;
-    selector->last_clicked = NULL;
-    selector->cur_entry = -1;
+    file_selector_reset_scrolls(selector);
+    file_selector_reset_click_count(selector);
 }
 
 
@@ -2629,7 +2492,6 @@ void file_selector_reload_entries(struct file_selector_t *selector)
 {
     int entry_count, longestw;
     struct file_entry_t *entries;
-    int entries_per_line = get_entries_per_line(selector);
 
     errno = 0;
     
@@ -2653,18 +2515,10 @@ void file_selector_reload_entries(struct file_selector_t *selector)
     selector->entry_count = entry_count;
     selector->longest_entry_width = longestw;
 
-    reset_vh(selector, entry_count, entries_per_line);
-    reset_vw(selector, entry_count, get_entries_per_col(selector));
-
     selector->scrolly = 0;
-    may_need_vscroll(selector);
     selector->scrollx = 0;
-    may_need_hscroll(selector);
-
-    selector->last_click_time = 0;
-    selector->last_down = NULL;
-    selector->last_clicked = NULL;
-    selector->cur_entry = -1;
+    file_selector_reset_scrolls(selector);
+    file_selector_reset_click_count(selector);
     selector->selection_box_entry = -1;
 }
 

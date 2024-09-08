@@ -76,9 +76,9 @@ struct label_t *label_new(struct gc_t *gc, struct window_t *parent,
     label->window.gc = gc;
     label->window.flags = WINDOW_NODECORATION;
     label->window.visible = 1;
-    label->window.bgcolor = WINDOW_BGCOLOR;
-    label->window.fgcolor = 0x000000FF;
-    
+    label->window.bgcolor = GLOB.themecolor[THEME_COLOR_WINDOW_BGCOLOR];
+    label->window.fgcolor = GLOBAL_BLACK_COLOR;
+
     if(title)
     {
         char **lines;
@@ -131,6 +131,7 @@ struct label_t *label_new(struct gc_t *gc, struct window_t *parent,
     label->window.focus = label_focus;
     label->window.destroy = label_destroy;
     label->window.size_changed = widget_size_changed;
+    label->window.theme_changed = label_theme_changed;
 
     //label->set_text = label_set_text;
     label->window.text_alignment = TEXT_ALIGN_TOP | TEXT_ALIGN_LEFT;
@@ -317,5 +318,15 @@ void label_set_background(struct label_t *label, uint32_t color)
     }
 
     label->window.bgcolor = color;
+}
+
+
+/*
+ * Called when the system color theme changes.
+ * Updates the widget's colors.
+ */
+void label_theme_changed(struct window_t *window)
+{
+    window->bgcolor = GLOB.themecolor[THEME_COLOR_WINDOW_BGCOLOR];
 }
 

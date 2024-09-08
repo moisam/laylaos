@@ -45,12 +45,15 @@
 
 #define GLOB                            __global_gui_data
 
-#define _B          SCROLLBAR_BGCOLOR,
-#define _T          SCROLLBAR_TEXTCOLOR,
+#define TEMPLATE_BGCOLOR                0xCDCFD4FF
+#define TEMPLATE_TEXTCOLOR              0x222226FF
+
+#define _B          TEMPLATE_BGCOLOR,
+#define _T          TEMPLATE_TEXTCOLOR,
 #define _L          GLOBAL_LIGHT_SIDE_COLOR,
 #define _D          GLOBAL_DARK_SIDE_COLOR,
 
-static uint32_t arrow_down_img[] =
+static uint32_t arrow_down_img_template[] =
 {
     _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D
     _B _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _D _D
@@ -78,6 +81,40 @@ static uint32_t arrow_down_img[] =
     _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D
 };
 
+#undef _T
+#define _T          GLOBAL_DARK_SIDE_COLOR,
+
+static uint32_t arrow_down_disabled_img_template[] =
+{
+    _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D
+    _B _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _L _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _T _T _T _T _T _T _T _T _T _T _T _T _T _T _B _B _B _D _D
+    _B _L _B _B _B _T _T _T _T _T _T _T _T _T _T _T _T _T _T _B _B _B _D _D
+    _B _L _B _B _B _B _T _T _T _T _T _T _T _T _T _T _T _T _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _T _T _T _T _T _T _T _T _T _T _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _T _T _T _T _T _T _T _T _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _T _T _T _T _T _T _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _T _T _T _T _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _T _T _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _L _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _B _D _D
+    _B _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D
+    _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D _D
+};
+
+static uint32_t arrow_down_img[ARROW_WIDTH * ARROW_HEIGHT * 4];
+static uint32_t arrow_down_disabled_img[ARROW_WIDTH * ARROW_HEIGHT * 4];
+
 #undef _B
 #undef _T
 #undef _D
@@ -86,6 +123,11 @@ static uint32_t arrow_down_img[] =
 static struct bitmap32_t arrow_down =
 {
     .width = ARROW_WIDTH, .height = ARROW_HEIGHT, .data = arrow_down_img,
+};
+
+static struct bitmap32_t arrow_down_disabled =
+{
+    .width = ARROW_WIDTH, .height = ARROW_HEIGHT, .data = arrow_down_disabled_img,
 };
 
 
@@ -140,8 +182,8 @@ struct combobox_t *combobox_new(struct gc_t *gc, struct window_t *parent,
     combobox->window.gc = gc;
     combobox->window.flags = WINDOW_NODECORATION | WINDOW_3D_WIDGET;
     combobox->window.visible = 1;
-    combobox->window.bgcolor = INPUTBOX_BGCOLOR;
-    combobox->window.fgcolor = INPUTBOX_TEXTCOLOR;
+    combobox->window.bgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR];
+    combobox->window.fgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_TEXTCOLOR];
     
     if(title)
     {
@@ -157,6 +199,7 @@ struct combobox_t *combobox_new(struct gc_t *gc, struct window_t *parent,
     combobox->window.focus = combobox_focus;
     combobox->window.destroy = combobox_destroy;
     combobox->window.size_changed = widget_size_changed;
+    combobox->window.theme_changed = combobox_theme_changed;
 
     window_insert_child(parent, (struct window_t *)combobox);
 
@@ -221,13 +264,21 @@ void combobox_destroy(struct window_t *combobox_window)
 
 void combobox_repaint(struct window_t *combobox_window, int is_active_child)
 {
+    struct combobox_t *combobox = (struct combobox_t *)combobox_window;
     int x = to_child_x(combobox_window, 0);
     int y = to_child_y(combobox_window, 0);
     int charh = char_height(combobox_window->gc->font, ' ');
-    uint32_t bgcolor = is_active_child ? INPUTBOX_SELECT_BGCOLOR :
-                                         INPUTBOX_BGCOLOR;
-    uint32_t fgcolor = is_active_child ? INPUTBOX_SELECT_TEXTCOLOR :
-                                         INPUTBOX_TEXTCOLOR;
+    int disabled = (combobox->flags & COMBOBOX_FLAG_DISABLED);
+    uint32_t bgcolor = disabled ?
+                    GLOB.themecolor[THEME_COLOR_INPUTBOX_DISABLED_BGCOLOR] :
+                    is_active_child ? 
+                    GLOB.themecolor[THEME_COLOR_INPUTBOX_SELECT_BGCOLOR] :
+                    GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR];
+    uint32_t fgcolor = disabled ?
+                    GLOB.themecolor[THEME_COLOR_INPUTBOX_DISABLED_TEXTCOLOR] :
+                    is_active_child ?
+                    GLOB.themecolor[THEME_COLOR_INPUTBOX_SELECT_TEXTCOLOR] :
+                    GLOB.themecolor[THEME_COLOR_INPUTBOX_TEXTCOLOR];
 
     // white background
     gc_fill_rect(combobox_window->gc,
@@ -247,7 +298,8 @@ void combobox_repaint(struct window_t *combobox_window, int is_active_child)
     }
 
     // draw the arrow
-    gc_blit_bitmap(combobox_window->gc, &arrow_down,
+    gc_blit_bitmap(combobox_window->gc,
+                   disabled ? &arrow_down_disabled : &arrow_down,
                    x + combobox_window->w - ARROW_WIDTH - 2, y + 2,
                    0, 0, ARROW_WIDTH, ARROW_HEIGHT);
 
@@ -299,6 +351,11 @@ void combobox_mousedown(struct window_t *combobox_window,
 {
     struct combobox_t *combobox = (struct combobox_t *)combobox_window;
     struct listview_t *listv = (struct listview_t *)combobox->internal_list;
+
+    if(combobox->flags & COMBOBOX_FLAG_DISABLED)
+    {
+        return;
+    }
 
     // toggle showing/hiding the list
     if(combobox->list_shown)
@@ -566,5 +623,94 @@ static void list_frame_dispatch_event(struct event_t *ev)
 
             return;
     }
+}
+
+
+void combobox_disable(struct combobox_t *combobox)
+{
+    struct window_t *combobox_window = (struct window_t *)combobox;
+
+    if(combobox->list_shown)
+    {
+        window_hide(combobox->internal_frame);
+        combobox->list_shown = 0;
+    }
+
+    if(combobox->flags & COMBOBOX_FLAG_DISABLED)
+    {
+        return;
+    }
+
+    combobox->flags |= COMBOBOX_FLAG_DISABLED;
+    combobox_repaint(combobox_window, IS_ACTIVE_CHILD(combobox_window));
+    child_invalidate(combobox_window);
+}
+
+
+void combobox_enable(struct combobox_t *combobox)
+{
+    struct window_t *combobox_window = (struct window_t *)combobox;
+
+    if(!(combobox->flags & COMBOBOX_FLAG_DISABLED))
+    {
+        return;
+    }
+
+    combobox->flags &= ~COMBOBOX_FLAG_DISABLED;
+    combobox_repaint(combobox_window, IS_ACTIVE_CHILD(combobox_window));
+    child_invalidate(combobox_window);
+}
+
+
+/*
+ * Called on startup and when the system color theme changes.
+ * Updates the global 'down arrow' bitmap.
+ */
+void combobox_theme_changed_global(void)
+{
+    int i, j, k;
+
+    for(i = 0, k = 0; i < ARROW_HEIGHT; i++)
+    {
+        for(j = 0; j < ARROW_WIDTH; j++, k++)
+        {
+            if(arrow_down_img_template[k] == TEMPLATE_BGCOLOR)
+            {
+                arrow_down_img[k] = GLOB.themecolor[THEME_COLOR_SCROLLBAR_BGCOLOR];
+            }
+            else if(arrow_down_img_template[k] == TEMPLATE_TEXTCOLOR)
+            {
+                arrow_down_img[k] = GLOB.themecolor[THEME_COLOR_SCROLLBAR_TEXTCOLOR];
+            }
+            else
+            {
+                arrow_down_img[k] = arrow_down_img_template[k];
+            }
+
+            if(arrow_down_disabled_img_template[k] == TEMPLATE_BGCOLOR)
+            {
+                arrow_down_disabled_img[k] = GLOB.themecolor[THEME_COLOR_SCROLLBAR_BGCOLOR];
+            }
+            else if(arrow_down_disabled_img_template[k] == TEMPLATE_TEXTCOLOR)
+            {
+                arrow_down_disabled_img[k] = GLOB.themecolor[THEME_COLOR_SCROLLBAR_TEXTCOLOR];
+            }
+            else
+            {
+                arrow_down_disabled_img[k] = arrow_down_disabled_img_template[k];
+            }
+        }
+    }
+}
+
+
+/*
+ * Called when the system color theme changes.
+ * Updates the widget's colors.
+ */
+void combobox_theme_changed(struct window_t *window)
+{
+    window->bgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_BGCOLOR];
+    window->fgcolor = GLOB.themecolor[THEME_COLOR_INPUTBOX_TEXTCOLOR];
 }
 
