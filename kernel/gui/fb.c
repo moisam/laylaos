@@ -65,8 +65,11 @@ static uint8_t char_width = CHAR_WIDTH;
 static uint8_t char_height = CHAR_HEIGHT;
 static uint8_t *font_data = FONT_DATA;
 */
-#include "../bin/desktop/server/font-array.h"
-#include "../bin/desktop/server/font-array-bold.h"
+
+//#include "../bin/desktop/server/font-array.h"
+//#include "../bin/desktop/server/font-array-bold.h"
+#include "fb_font_vt100_8x16.h"
+#include "fb_font_vt100_8x16_bold.h"
 
 #define char_width          ((uint8_t)mono_char_width)
 #define char_height         ((uint8_t)mono_char_height)
@@ -127,6 +130,29 @@ void (*__tputchar)(struct tty_t *, uint8_t *, uint32_t, uint32_t) = NULL;
 
 
 /*
+ * Reset framebuffer palette.
+ */
+void fb_reset_palette(struct tty_t *tty)
+{
+    tty->fb_palette[0] = RGB_COLOR_BLACK;
+    tty->fb_palette[1] = RGB_COLOR_BLUE;
+    tty->fb_palette[2] = RGB_COLOR_GREEN;
+    tty->fb_palette[3] = RGB_COLOR_CYAN;
+    tty->fb_palette[4] = RGB_COLOR_RED;
+    tty->fb_palette[5] = RGB_COLOR_MAGENTA;
+    tty->fb_palette[6] = RGB_COLOR_BROWN;
+    tty->fb_palette[7] = RGB_COLOR_LIGHT_GREY;
+    tty->fb_palette[8] = RGB_COLOR_DARK_GREY;
+    tty->fb_palette[9] = RGB_COLOR_LIGHT_BLUE;
+    tty->fb_palette[10] = RGB_COLOR_LIGHT_GREEN;
+    tty->fb_palette[11] = RGB_COLOR_LIGHT_CYAN;
+    tty->fb_palette[12] = RGB_COLOR_LIGHT_RED;
+    tty->fb_palette[13] = RGB_COLOR_LIGHT_MAGENTA;
+    tty->fb_palette[14] = RGB_COLOR_LIGHT_BROWN;
+    tty->fb_palette[15] = RGB_COLOR_WHITE;
+}
+
+/*
  * Reset framebuffer colors.
  */
 void fb_reset_colors(struct tty_t *tty)
@@ -135,6 +161,23 @@ void fb_reset_colors(struct tty_t *tty)
     tty->fb_bgcolor = fb_default_bgcolor;
     tty->saved_state.fb_fgcolor = fb_default_fgcolor;
     tty->saved_state.fb_bgcolor = fb_default_bgcolor;
+    fb_reset_palette(tty);
+}
+
+/*
+ * Reset framebuffer character sets.
+ */
+void fb_reset_charsets(struct tty_t *tty)
+{
+    tty->g[0] = ascii_font_array;
+    tty->gbold[0] = ascii_font_array_bold;
+    tty->g[1] = supplemental_font_array;
+    tty->gbold[1] = supplemental_font_array_bold;
+
+    tty->gl = ascii_font_array;
+    tty->glbold = ascii_font_array_bold;
+    tty->gr = supplemental_font_array;
+    tty->grbold = supplemental_font_array_bold;
 }
 
 /*
@@ -151,8 +194,8 @@ void fb_reset(struct tty_t *tty)
 
     tty->state = 0;
 
+    fb_reset_charsets(tty);
     fb_reset_colors(tty);
-
     save_tty_state(tty);
 
     erase_display(tty, tty->vga_width, tty->vga_height, 2);
@@ -240,6 +283,13 @@ void fb_init(void)
     {
         A_memset(ttytab[1].buf, 0, VGA_MEMORY_SIZE(&ttytab[1]));
     }
+
+    if(!(ttytab[1].cellattribs = kmalloc(vgaw * vgah)))
+    {
+        kpanic("fb: failed to alloc internal buffer\n");
+    }
+
+    A_memset(ttytab[1].cellattribs, 0, vgaw * vgah);
 
     for(i = 1; i < NTTYS; i++)
     {
@@ -1085,6 +1135,10 @@ void vga_set_attribs(struct tty_t *tty, unsigned long npar,
 {
     unsigned long i;
     
+    // Here we only set/unset the attribs and flags specific to the 
+    // framebuffer. Most of the tty flags are set/unset in the
+    // ega_set_attribs() call after the loop.
+
     for(i = 0; i < npar; i++)
     {
         switch(par[i])
@@ -1092,85 +1146,42 @@ void vga_set_attribs(struct tty_t *tty, unsigned long npar,
             case 0:         // reset to default
                 tty->fb_fgcolor = fb_default_fgcolor;
                 tty->fb_bgcolor = fb_default_bgcolor;
-                tty->flags &= ~TTY_FLAG_REVERSE_VIDEO;
                 tty->attribs &= ~ATTRIB_BOLD;
                 tty->attribs &= ~ATTRIB_BRIGHT_FG;
                 tty->attribs &= ~ATTRIB_BRIGHT_BG;
                 tty->attribs &= ~ATTRIB_UNDERLINE;
-                break;
-
-            case 1:         // set bold
-                tty->attribs |= ATTRIB_BOLD;
-                break;
-
-            case 2:         // set bright
-                tty->attribs |= ATTRIB_BRIGHT_FG;
-                break;
-
-            case 4:         // set underscore
-                tty->attribs |= ATTRIB_UNDERLINE;
-                break;
-
-            case 5:         // set blink (simulated by a bright background)
-                tty->attribs |= ATTRIB_BRIGHT_BG;
-                break;
-
-            case 7:         // set reverse video
-                tty->flags |= TTY_FLAG_REVERSE_VIDEO;
-                break;
-
-            case 21:        // set underline
-                tty->attribs |= ATTRIB_UNDERLINE;
-                break;
-
-            case 22:        // set normal intensity
-                tty->attribs &= ~ATTRIB_BOLD;
-                tty->attribs &= ~ATTRIB_BRIGHT_FG;
-                tty->attribs &= ~ATTRIB_BRIGHT_BG;
-                break;
-
-            case 24:        // underline off
-                tty->attribs &= ~ATTRIB_UNDERLINE;
-                break;
-
-            case 25:        // blink off
-                tty->attribs &= ~ATTRIB_BRIGHT_BG;
-                break;
-
-            case 27:        // reverse video off
-                tty->flags &= ~TTY_FLAG_REVERSE_VIDEO;
                 break;
 
             case 30:        // set black foreground
-                tty->fb_fgcolor = RGB_COLOR_BLACK;
+                tty->fb_fgcolor = tty->fb_palette[COLOR_BLACK];
                 break;
 
             case 31:        // set red foreground
-                tty->fb_fgcolor = RGB_COLOR_RED;
+                tty->fb_fgcolor = tty->fb_palette[COLOR_RED];
                 break;
 
             case 32:        // set green foreground
-                tty->fb_fgcolor = RGB_COLOR_GREEN;
+                tty->fb_fgcolor = tty->fb_palette[COLOR_GREEN];
                 break;
 
             case 33:        // set brown foreground
-                tty->fb_fgcolor = RGB_COLOR_BROWN;
+                tty->fb_fgcolor = tty->fb_palette[COLOR_BROWN];
                 break;
 
             case 34:        // set blue foreground
-                tty->fb_fgcolor = RGB_COLOR_BLUE;
+                tty->fb_fgcolor = tty->fb_palette[COLOR_BLUE];
                 break;
 
             case 35:        // set magenta foreground
-                tty->fb_fgcolor = RGB_COLOR_MAGENTA;
+                tty->fb_fgcolor = tty->fb_palette[COLOR_MAGENTA];
                 break;
 
             case 36:        // set cyan foreground
-                tty->fb_fgcolor = RGB_COLOR_CYAN;
+                tty->fb_fgcolor = tty->fb_palette[COLOR_CYAN];
                 break;
 
             case 37:        // set white foreground
-                tty->fb_fgcolor = RGB_COLOR_WHITE;
+                tty->fb_fgcolor = tty->fb_palette[COLOR_WHITE];
                 break;
 
             case 38:
@@ -1180,42 +1191,42 @@ void vga_set_attribs(struct tty_t *tty, unsigned long npar,
 
             case 40:        // set black background
             case 100:
-                tty->fb_bgcolor = RGB_COLOR_BLACK;
+                tty->fb_bgcolor = tty->fb_palette[COLOR_BLACK];
                 break;
 
             case 41:        // set red background
             case 101:
-                tty->fb_bgcolor = RGB_COLOR_RED;
+                tty->fb_bgcolor = tty->fb_palette[COLOR_RED];
                 break;
 
             case 42:        // set green background
             case 102:
-                tty->fb_bgcolor = RGB_COLOR_GREEN;
+                tty->fb_bgcolor = tty->fb_palette[COLOR_GREEN];
                 break;
 
             case 43:        // set brown background
             case 103:
-                tty->fb_bgcolor = RGB_COLOR_BROWN;
+                tty->fb_bgcolor = tty->fb_palette[COLOR_BROWN];
                 break;
 
             case 44:        // set blue background
             case 104:
-                tty->fb_bgcolor = RGB_COLOR_BLUE;
+                tty->fb_bgcolor = tty->fb_palette[COLOR_BLUE];
                 break;
 
             case 45:        // set magenta background
             case 105:
-                tty->fb_bgcolor = RGB_COLOR_MAGENTA;
+                tty->fb_bgcolor = tty->fb_palette[COLOR_MAGENTA];
                 break;
 
             case 46:        // set cyan background
             case 106:
-                tty->fb_bgcolor = RGB_COLOR_CYAN;
+                tty->fb_bgcolor = tty->fb_palette[COLOR_CYAN];
                 break;
 
             case 47:        // set white background
             case 107:
-                tty->fb_bgcolor = RGB_COLOR_WHITE;
+                tty->fb_bgcolor = tty->fb_palette[COLOR_WHITE];
                 break;
 
             case 48:
@@ -1344,11 +1355,27 @@ static inline void __tputchar32(struct tty_t *tty, uint8_t *chr,
 }
 
 
-static inline void __ega_tputchar(struct tty_t *tty, char c, uint8_t color)
+static inline void __ega_tputchar(struct tty_t *tty, char c,
+                                  uint8_t flags, uint8_t color)
 {
     int i = tty->row * tty->vga_width + tty->col;
 
     tty->buf[i] = vga_entry(c, color);
+    tty->cellattribs[i] = flags;
+}
+
+
+static inline uint8_t charset_to_flag(struct tty_t *tty, char c)
+{
+    // We have GR fixed at the supplemental charset
+    if(c & 0x80)
+    {
+        return CELL_FLAG_CHARSET_SUPPL;
+    }
+
+    // Check which GL is in use
+    return (tty->gl == ascii_font_array) ? CELL_FLAG_CHARSET_LATIN :
+                                           CELL_FLAG_CHARSET_VT100;
 }
 
 
@@ -1359,13 +1386,23 @@ static void vga_tputchar(struct tty_t *tty, char c)
     uint8_t color = (tty->flags & TTY_FLAG_REVERSE_VIDEO) ?
                         INVERT_COLOR(tty->color) : tty->color;
 
-    // We use the highest byte in each 2-byte EGA entry to indicate bold text.
     // See the long comment at the beginning of ega_tputchar() in the 
     // kernel/console.c source file for details.
-    uint16_t bold_bit = (tty->attribs & ATTRIB_BOLD) ? 0x80 : 0;
+    uint8_t flags = ((tty->attribs & ATTRIB_BOLD) ? CELL_FLAG_BOLD : 0) |
+                     charset_to_flag(tty, c);
 
-    uint8_t *font_data = (tty->attribs & ATTRIB_BOLD) ?
-                        mono_bold_font_array : mono_font_array;
+    uint8_t *font_data;
+    //uint8_t *font_data = (tty->attribs & ATTRIB_BOLD) ?
+    //                    mono_bold_font_array : mono_font_array;
+
+    if(c & 0x80)
+    {
+        font_data = (tty->attribs & ATTRIB_BOLD) ? tty->grbold : tty->gr;
+    }
+    else
+    {
+        font_data = (tty->attribs & ATTRIB_BOLD) ? tty->glbold : tty->gl;
+    }
 
     if(tty->flags & TTY_FLAG_REVERSE_VIDEO)
     {
@@ -1420,7 +1457,7 @@ static void vga_tputchar(struct tty_t *tty, char c)
         	    __tputchar(tty, &font_data[' ' * char_height], fg, bg);
             }
 
-    	    __ega_tputchar(tty, ' ' | bold_bit, color);
+    	    __ega_tputchar(tty, ' ', flags, color);
     	}
     }
     else if(c == '\033' /* '\e' */)
@@ -1433,7 +1470,7 @@ static void vga_tputchar(struct tty_t *tty, char c)
             __tputchar(tty, &font_data['^' * char_height], fg, bg);
         }
 
-        __ega_tputchar(tty, '^' | bold_bit, color);
+        __ega_tputchar(tty, '^', flags, color);
         tty->col++;
         tty_adjust_indices(tty);
 
@@ -1442,7 +1479,7 @@ static void vga_tputchar(struct tty_t *tty, char c)
             __tputchar(tty, &font_data['[' * char_height], fg, bg);
         }
 
-        __ega_tputchar(tty, '[' | bold_bit, color);
+        __ega_tputchar(tty, '[', flags, color);
         tty->col++;
     }
     else
@@ -1452,7 +1489,7 @@ static void vga_tputchar(struct tty_t *tty, char c)
             __tputchar(tty, &font_data[c * char_height], fg, bg);
         }
 
-        __ega_tputchar(tty, c | bold_bit, color);
+        __ega_tputchar(tty, c, flags, color);
         tty->col++;
     }
     
@@ -1460,27 +1497,27 @@ static void vga_tputchar(struct tty_t *tty, char c)
 }
 
 
-static inline uint32_t ega_to_vga(uint8_t color)
+static inline uint32_t ega_to_vga(struct tty_t *tty, uint8_t color)
 {
     switch(color)
     {
-        case COLOR_BLACK         : return RGB_COLOR_BLACK;
-        case COLOR_BLUE          : return RGB_COLOR_BLUE;
-        case COLOR_GREEN         : return RGB_COLOR_GREEN;
-        case COLOR_CYAN          : return RGB_COLOR_CYAN;
-        case COLOR_RED           : return RGB_COLOR_RED;
-        case COLOR_MAGENTA       : return RGB_COLOR_MAGENTA;
-        case COLOR_BROWN         : return RGB_COLOR_BROWN;
-        case COLOR_WHITE         : return RGB_COLOR_WHITE;
-        case COLOR_LIGHT_GREY    : return RGB_COLOR_LIGHT_GREY;
-        case COLOR_DARK_GREY     : return RGB_COLOR_DARK_GREY;
-        case COLOR_LIGHT_BLUE    : return RGB_COLOR_LIGHT_BLUE;
-        case COLOR_LIGHT_GREEN   : return RGB_COLOR_LIGHT_GREEN;
-        case COLOR_LIGHT_CYAN    : return RGB_COLOR_LIGHT_CYAN;
-        case COLOR_LIGHT_RED     : return RGB_COLOR_LIGHT_RED;
-        case COLOR_LIGHT_MAGENTA : return RGB_COLOR_LIGHT_MAGENTA;
-        case COLOR_LIGHT_BROWN   : return RGB_COLOR_LIGHT_BROWN;
-        default                  : return RGB_COLOR_WHITE;
+        case COLOR_BLACK         : return tty->fb_palette[COLOR_BLACK];
+        case COLOR_BLUE          : return tty->fb_palette[COLOR_BLUE];
+        case COLOR_GREEN         : return tty->fb_palette[COLOR_GREEN];
+        case COLOR_CYAN          : return tty->fb_palette[COLOR_CYAN];
+        case COLOR_RED           : return tty->fb_palette[COLOR_RED];
+        case COLOR_MAGENTA       : return tty->fb_palette[COLOR_MAGENTA];
+        case COLOR_BROWN         : return tty->fb_palette[COLOR_BROWN];
+        case COLOR_WHITE         : return tty->fb_palette[COLOR_WHITE];
+        case COLOR_LIGHT_GREY    : return tty->fb_palette[COLOR_LIGHT_GREY];
+        case COLOR_DARK_GREY     : return tty->fb_palette[COLOR_DARK_GREY];
+        case COLOR_LIGHT_BLUE    : return tty->fb_palette[COLOR_LIGHT_BLUE];
+        case COLOR_LIGHT_GREEN   : return tty->fb_palette[COLOR_LIGHT_GREEN];
+        case COLOR_LIGHT_CYAN    : return tty->fb_palette[COLOR_LIGHT_CYAN];
+        case COLOR_LIGHT_RED     : return tty->fb_palette[COLOR_LIGHT_RED];
+        case COLOR_LIGHT_MAGENTA : return tty->fb_palette[COLOR_LIGHT_MAGENTA];
+        case COLOR_LIGHT_BROWN   : return tty->fb_palette[COLOR_LIGHT_BROWN];
+        default                  : return tty->fb_palette[COLOR_WHITE];
     }
 }
 
@@ -1497,10 +1534,11 @@ void vga_restore_screen(struct tty_t *tty)
         }
 
         uint16_t *egabuf = tty->buf;
+        uint8_t *attribbuf = tty->cellattribs;
         uint32_t save_row = tty->row, save_col = tty->col;
 
         ega_restore_screen(tty);
-        
+
         for(tty->row = 0; tty->row < tty->vga_height; tty->row++)
         {
             for(tty->col = 0; tty->col < tty->vga_width; tty->col++)
@@ -1510,15 +1548,30 @@ void vga_restore_screen(struct tty_t *tty)
                 c = egabuf[tty->col] & 0xff;
                 color = (egabuf[tty->col] >> 8) & 0xff;
 
-                font_data = (c & 0x80) ?
-                                mono_bold_font_array : mono_font_array;
+                if(attribbuf[tty->col] & CELL_FLAG_CHARSET_VT100)
+                {
+                    font_data = (attribbuf[tty->col] & CELL_FLAG_BOLD) ?
+                                    vt100_font_array_bold : vt100_font_array;
+                }
+                else if(attribbuf[tty->col] & CELL_FLAG_CHARSET_SUPPL)
+                {
+                    font_data = (attribbuf[tty->col] & CELL_FLAG_BOLD) ?
+                                    supplemental_font_array_bold : 
+                                    supplemental_font_array;
+                }
+                else
+                {
+                    font_data = (attribbuf[tty->col] & CELL_FLAG_BOLD) ?
+                                    ascii_font_array_bold : ascii_font_array;
+                }
 
                 __tputchar(tty, &font_data[(c & 0x7f) * char_height],
-                              ega_to_vga(color & 0xf), 
-                              ega_to_vga((color >> 4) & 0xf));
+                              ega_to_vga(tty, color & 0xf), 
+                              ega_to_vga(tty, (color >> 4) & 0xf));
             }
             
             egabuf += tty->vga_width;
+            attribbuf += tty->vga_width;
         }
 
         tty->row = save_row;
@@ -1534,6 +1587,75 @@ void vga_restore_screen(struct tty_t *tty)
         move_cur(tty);
         screen_refresh(NULL);
         tty_send_signal(tty->pgid, SIGWINCH);
+    }
+}
+
+
+static int is_hex(char c)
+{
+    return ((c >= '0' && c <= '9') ||
+            (c >= 'a' && c <= 'f') ||
+            (c >= 'A' && c <= 'F'));
+}
+
+static uint32_t from_hex(char c)
+{
+    return (c >= 'A' && c <= 'F') ? (c - 'A' + 10) :
+                (c >= 'a' && c <= 'f') ? (c - 'a' + 10) : (c - '0');
+}
+
+/*
+ * Set a framebuffer palette color. The str is formatted as nrrggbb, which
+ * gives us the following information:
+ *    n    : color number (0-15)
+ *    rr   : red component (0-255)
+ *    gg   : green component (0-255)
+ *    bb   : blue component (0-255)
+ *
+ * For more info, see: https://man7.org/linux/man-pages/man4/console_codes.4.html
+ */
+void fb_set_palette_from_str(struct tty_t *tty, char *str)
+{
+    int i;
+    uint32_t r, g, b;
+
+    // sanity check
+    for(i = 0; i < 7; i++)
+    {
+        if(!is_hex(str[i]))
+        {
+            // bail out
+            return;
+        }
+    }
+
+    i = from_hex(str[0]);
+    r = (from_hex(str[1]) << 4) | from_hex(str[2]);
+    g = (from_hex(str[3]) << 4) | from_hex(str[4]);
+    b = (from_hex(str[5]) << 4) | from_hex(str[6]);
+
+    tty->fb_palette[i] = (r << 24) | (g << 16) | (b << 8) | 0xff;
+}
+
+
+/*
+ * Define the G0 or G1 character sets. The parameter c should be one of:
+ *    B   - select default (ISO/IEC 8859-1 mapping)
+ *    0   - select VT100 graphics mapping
+ *    U   - select null mapping (not currently implemented)
+ *    K   - select user mapping (not currently implemented)
+ *
+ * If param which is 0, G0 is set, otherwie G1 is set. We do not currently
+ * handle G2 or G3.
+ *
+ * For more info, see: https://man7.org/linux/man-pages/man4/console_codes.4.html
+ */
+void fb_change_charset(struct tty_t *tty, int which, char c)
+{
+    switch(c)
+    {
+        case 'B': tty->g[which] = ascii_font_array; break;
+        case '0': tty->g[which] = vt100_font_array; break;
     }
 }
 
