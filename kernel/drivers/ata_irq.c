@@ -236,7 +236,7 @@ void disk_task_func(void *arg)
     {
         while(!serving)
         {
-            block_task2(&disk_task, 6000);
+            block_task2(&disk_task, 2000);
             //block_task(&disk_task, 0);
         }
         

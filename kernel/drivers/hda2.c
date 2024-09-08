@@ -38,6 +38,7 @@
 #include <mm/kheap.h>
 #include <mm/kstack.h>
 #include <gui/vbe.h>
+#include <kernel/asm.h>
 
 
 uint8_t __inb(uintptr_t port) { return inb(port); }
@@ -216,7 +217,7 @@ static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
     out->bdl = (struct hda_bdl_entry_t *)virt;
     out->pbdl_base = phys;
 
-    for(i = 0; i < BDL_ENTRIES; i++)
+    for(i = 0; i < BDL_ENTRIES; i += 2)
     {
         if(get_next_addr(&phys, &virt, PAGE_FLAGS, REGION_DMA) != 0)
         {
@@ -228,6 +229,11 @@ static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
         out->bdl[i].flags = 1;
         out->bdl[i].paddr = phys;
         out->vbdl[i] = virt;
+
+        out->bdl[i + 1].len = BDL_BUFSZ;
+        out->bdl[i + 1].flags = 1;
+        out->bdl[i + 1].paddr = phys + (PAGE_SIZE >> 1);
+        out->vbdl[i + 1] = virt + (PAGE_SIZE >> 1);
     }
 
 #undef PAGE_FLAGS
@@ -781,6 +787,22 @@ int hda_intr(struct regs *r, int unit)
         if(outsts & 0x4)
         {
             unblock = 1;
+
+            out->bytes_playing -= BDL_BUFSZ;
+
+            if(out->bytes_playing < 0)
+            {
+                out->bytes_playing = 0;
+            }
+
+            /*
+            out->hasdata[out->curdesc++] = 0;
+
+            if(out->curdesc == BDL_ENTRIES)
+            {
+                out->curdesc = 0;
+            }
+            */
         }
         
         hda_outb(out->base_port + REG_OFFSET_OUT_STS, outsts);
@@ -788,7 +810,6 @@ int hda_intr(struct regs *r, int unit)
     }
     
     hda_outl(REG_INTSTS, isr);
-    
     pic_send_eoi(hda->pci->irq[0]);
 
     if(unblock && hda->task)
@@ -803,8 +824,7 @@ int hda_intr(struct regs *r, int unit)
 void hda_task_func(void *arg)
 {
     struct hda_dev_t *hda = (struct hda_dev_t *)arg;
-    uint32_t lpib, curbuf;
-    //struct hda_out_t *out;
+    uint32_t /* lpib, */ curbuf, stopatbuf;
     struct hda_buf_t *buf;
     uintptr_t ptr;
     size_t left;
@@ -816,75 +836,143 @@ void hda_task_func(void *arg)
     
     for(;;)
     {
+        // task started too eary during boot
+        if(!hda->out)
+        {
+            block_task2(hda, PIT_FREQUENCY);
+            continue;
+        }
+
+        // check nothing is currently playing
+        if(hda->out->bytes_playing)
+        {
+            block_task2(hda, PIT_FREQUENCY);
+            continue;
+        }
+
+        /*
+        for(curbuf = 0; curbuf < BDL_ENTRIES; curbuf++)
+        {
+            if(hda->out->hasdata[curbuf])
+            {
+                if(!(hda->flags & HDA_FLAG_PLAYING))
+                {
+                    hda_play_stop(hda, 1);
+                }
+
+                block_task2(hda, PIT_FREQUENCY);
+                continue;
+            }
+        }
+
+        A_memset(hda->out->hasdata, 0, sizeof(hda->out->hasdata));
+        hda->out->curdesc = 0;
+        */
+
         kernel_mutex_lock(&hda->outq.lock);
+
+        if((hda->flags & HDA_FLAG_PLAYING))
+        {
+            hda_play_stop(hda, 0);
+        }
 
         if(hda->outq.head == NULL)
         {
             kernel_mutex_unlock(&hda->outq.lock);
-            
-            if((hda->flags & HDA_FLAG_PLAYING))
-            //if(hda->playing)
-            {
-                hda_play_stop(hda, 0);
-            }
-            
-            block_task2(hda, PIT_FREQUENCY * 2);
+            block_task2(hda, PIT_FREQUENCY);
             continue;
         }
 
         // get link position in buffer
+        /*
         lpib = hda_inl(hda->out->base_port + REG_OFFSET_OUT_LPIB);
-        curbuf = (lpib / BDL_BUFSZ);
-        
+        curbuf = ((lpib + (BDL_BUFSZ - 1)) / BDL_BUFSZ);
+
         if(curbuf == BDL_ENTRIES)
         {
             curbuf = 0;
         }
-        
-        ptr = hda->out->vbdl[curbuf];
-        left = BDL_BUFSZ;
+        */
+
+        for(curbuf = 0; curbuf < BDL_ENTRIES; curbuf += 2)
+        {
+            A_memset((void *)hda->out->vbdl[curbuf], 0, PAGE_SIZE);
+        }
+
+        //stopatbuf = (curbuf == 0 ? BDL_ENTRIES : curbuf) - 1;
+        curbuf = 0;
+        stopatbuf = BDL_ENTRIES;
+        hda->out->bytes_playing = 0;
 
         while(hda->outq.head)
         {
-            buf = hda->outq.head;
-
-            if(buf->size > left)
+            if(curbuf == stopatbuf)
             {
                 break;
             }
 
-            hda->outq.head = hda->outq.head->next;
+            ptr = hda->out->vbdl[curbuf];
+            left = BDL_BUFSZ;
 
-            if(hda->outq.head == NULL)
+            while(hda->outq.head)
             {
-                hda->outq.tail = NULL;
+                buf = hda->outq.head;
+
+                // Buffer bigger than space left. Copy whatever we can and
+                // leave the rest for the next HDA buffer.
+                if(buf->size > left)
+                {
+                    A_memcpy((void *)ptr, buf->curptr, left);
+                    buf->curptr += left;
+                    buf->size -= left;
+                    ptr += left;
+                    hda->outq.bytes -= left;
+                    //hda->out->hasdata[curbuf] = 1;
+                    hda->out->bytes_playing += left;
+                    left = 0;
+                    break;
+                }
+
+                hda->outq.head = hda->outq.head->next;
+
+                if(hda->outq.head == NULL)
+                {
+                    hda->outq.tail = NULL;
+                }
+
+                hda->outq.queued--;
+                hda->outq.bytes -= buf->size;
+                //hda->out->hasdata[curbuf] = 1;
+                hda->out->bytes_playing += buf->size;
+
+                kernel_mutex_unlock(&hda->outq.lock);
+
+                A_memcpy((void *)ptr, buf->curptr, buf->size);
+                ptr += buf->size;
+                left -= buf->size;
+                kfree(buf);
+
+                kernel_mutex_lock(&hda->outq.lock);
             }
 
-            hda->outq.queued--;
+            /*
+            if(left)
+            {
+                A_memset((void *)ptr, 0, left);
+            }
+            */
 
-            kernel_mutex_unlock(&hda->outq.lock);
-
-            A_memcpy((void *)ptr, buf->buf, buf->size);
-            ptr += buf->size;
-            left -= buf->size;
-            kfree(buf);
-
-            kernel_mutex_lock(&hda->outq.lock);
+            curbuf++;
         }
 
         kernel_mutex_unlock(&hda->outq.lock);
 
-        if(left)
-        {
-            A_memset((void *)ptr, 0, left);
-        }
-
-        if(!(hda->flags & HDA_FLAG_PLAYING))
+        //if(!(hda->flags & HDA_FLAG_PLAYING))
         {
             hda_play_stop(hda, 1);
         }
 
-        block_task2(hda, PIT_FREQUENCY * 2);
+        block_task2(hda, PIT_FREQUENCY);
 
         /*
         kernel_mutex_lock(&hda->outq.lock);
