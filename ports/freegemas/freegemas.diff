@@ -1,0 +1,48 @@
+diff -rub ./freegemas/src/go_window.cpp ./freegemas/src/go_window.cpp
+--- ./freegemas/src/go_window.cpp	2024-09-04 18:45:59.079519516 +0100
++++ ./freegemas/src/go_window.cpp	2024-09-04 18:14:57.966842679 +0100
+@@ -15,7 +15,11 @@
+     mLastTicks = SDL_GetTicks();
+ 
+     // Init SDL
++#ifdef __laylaos__
++    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) < 0)
++#else
+     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0)
++#endif
+     {
+         throw std::runtime_error(SDL_GetError());
+     }
+@@ -48,7 +52,11 @@
+     }
+ 
+     // Create renderer for the window
++#ifdef __laylaos__
++    mRenderer = SDL_CreateRenderer( mWindow, -1, SDL_RENDERER_SOFTWARE );
++#else
+     mRenderer = SDL_CreateRenderer( mWindow, -1, SDL_RENDERER_ACCELERATED );
++#endif
+ 
+     // If rendered could not be created, throw an error
+     if (mRenderer == NULL )
+diff -rub ./freegemas/src/Util.cpp ./freegemas/src/Util.cpp
+--- ./freegemas/src/Util.cpp	2024-09-04 18:45:59.079519516 +0100
++++ ./freegemas/src/Util.cpp	2024-09-04 18:24:32.471632625 +0100
+@@ -12,6 +12,9 @@
+ {
+     std::string basePathStr;
+ 
++#ifdef __laylaos__
++    basePathStr = "/usr/share/games/freegemas/";
++#else
+     char *basePath = SDL_GetBasePath();
+     if (basePath) {
+         basePathStr = basePath;
+@@ -26,6 +29,7 @@
+             closedir(dir);
+         }
+     #endif
++#endif
+ 
+     return basePathStr;
+ }

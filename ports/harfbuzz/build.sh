@@ -52,6 +52,11 @@ make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
+# Fix libharfbuzz.la et al for the future generations
+sed -i "s/dependency_libs=.*/dependency_libs='-lm -lfreetype -lpng16 -lz'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libharfbuzz.la
+sed -i "s/dependency_libs=.*/dependency_libs='-lharfbuzz -lm -lfreetype -lpng16 -lz'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libharfbuzz-cairo.la
+sed -i "s/dependency_libs=.*/dependency_libs='-lharfbuzz -lm -lfreetype -lpng16 -lz'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libharfbuzz-subset.la
+
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 

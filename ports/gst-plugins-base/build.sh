@@ -35,8 +35,8 @@ cd ${DOWNLOAD_SRCDIR}
 
 meson setup build --cross-file ${CWD}/../crossfile.meson.laylaos \
     --buildtype=release \
-    -D doc=disabled -D examples=disabled \
-    -D tests=disabled -D nls=disabled -D orc=disabled \
+    -D doc=disabled -D examples=disabled -D tools=enabled \
+    -D tests=enabled -D nls=disabled -D orc=disabled -D videotestsrc=enabled \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 # Search & Replace any '-pthread' to nothing in build/build.ninja
