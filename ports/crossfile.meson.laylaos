@@ -1,0 +1,17 @@
+
+[binaries]
+c = '/home/mima/src/build-laylaos/build-scripts/build/cross/bin/x86_64-laylaos-gcc'
+cpp = '/home/mima/src/build-laylaos/build-scripts/build/cross/bin/x86_64-laylaos-g++'
+ar = '/home/mima/src/build-laylaos/build-scripts/build/cross/bin/x86_64-laylaos-ar'
+strip = '/home/mima/src/build-laylaos/build-scripts/build/cross/bin/x86_64-laylaos-strip'
+
+[host_machine]
+system = 'laylaos'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'
+
+[properties]
+sys_root = '/home/mima/src/build-laylaos/build-scripts/build/sysroot'
+pkg_config_libdir = '/home/mima/src/build-laylaos/build-scripts/build/sysroot/usr/lib/pkgconfig'
+
