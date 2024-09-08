@@ -188,6 +188,14 @@ void load_file(char *filename)
             return;
         }
     }
+    else if(strcasecmp(ext, ".jpeg") == 0 || strcasecmp(ext, ".jpg") == 0)
+    {
+        if(!jpeg_load(filename, &new_bitmap))
+        {
+            //__asm__ __volatile__("xchg %%bx, %%bx"::);
+            return;
+        }
+    }
     else if(strcasecmp(ext, ".ico") == 0)
     {
         struct bitmap32_array_t *imga;
@@ -270,10 +278,33 @@ void load_file(char *filename)
     menu_item_set_enabled(properties_mi, 1);
 
     // resize the window if needed
-    neww = (loaded_bitmap.width < WIN_MIN_WIDTH) ? WIN_MIN_WIDTH :
-                                                   loaded_bitmap.width;
-    newh = (loaded_bitmap.height < WIN_MIN_HEIGHT) ? WIN_MIN_HEIGHT :
-                                                     loaded_bitmap.height;
+    if(loaded_bitmap.width > 600)
+    {
+        zoom = (600 / loaded_bitmap.width) * 100.0f;
+
+        // find the nearest zoom
+        for(i = 0; i < zoom_count; i++)
+        {
+            if(zoom < zoom_sizes[i])
+            {
+                zoom = zoom_sizes[i];
+                menu_item_set_checked(zoom_mi[2], 0);
+                menu_item_set_checked(zoom_mi[i], 1);
+                break;
+            }
+        }
+
+        neww = loaded_bitmap.width * (zoom / 100.0f);
+        newh = loaded_bitmap.height * (zoom / 100.0f);
+    }
+    else
+    {
+        neww = (loaded_bitmap.width < WIN_MIN_WIDTH) ? WIN_MIN_WIDTH :
+                                                       loaded_bitmap.width;
+        newh = (loaded_bitmap.height < WIN_MIN_HEIGHT) ? WIN_MIN_HEIGHT :
+                                                         loaded_bitmap.height;
+    }
+
     newh += MENU_HEIGHT;
 
     if(neww != main_window->w || newh != main_window->h)
@@ -359,7 +390,8 @@ void menu_file_open_handler(winid_t winid)
     }
 
     dialog->multiselect = 0;
-    dialog->filetype_filter = "ICO images|*.ico|"
+    dialog->filetype_filter = "All formats|*.ico;*.jpg;*.jpeg;*.png|"
+                              "ICO images|*.ico|"
                               "JPEG images|*.jpg;*.jpeg|"
                               "PNG images|*.png";
 
