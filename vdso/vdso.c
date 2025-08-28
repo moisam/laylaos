@@ -12,20 +12,6 @@ int __vdso_clock_gettime(uintptr_t vdso_base, clockid_t clock_id, struct timespe
     unsigned long res;
     struct timespec *vdso_monotonic;
 
-    /*
-    if(vdso_base == 0)
-    {
-        __asm__ __volatile__ ("syscall" : 
-                              "=a"(res) :
-                              "a"(__NR_vdso_shared_page), "D"(&vdso_base) :
-                              "rcx", "r9", "r11", "memory");
-
-        if(res < 0)
-        {
-            goto do_syscall;
-        }
-    }
-    */
     vdso_base += VDSO_STATIC_CODE_SIZE;
 
     vdso_monotonic = (struct timespec *)(vdso_base + VDSO_OFFSET_CLOCK_GETTIME);
@@ -50,8 +36,6 @@ int __vdso_clock_gettime(uintptr_t vdso_base, clockid_t clock_id, struct timespe
         tp->tv_nsec = vdso_monotonic->tv_nsec;
         return 0;
     }
-
-//do_syscall:
 
     __asm__ __volatile__ ("syscall" : 
                           "=a"(res) :

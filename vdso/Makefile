@@ -27,9 +27,10 @@ check-config:
 	$(CC) -c $< -o $@ -std=gnu11 $(CFLAGS) $(CPPFLAGS)
 
 vdso.so: vdso.o
+	# Force the linker to produce a DT_HASH dynamic section in addition to a
+	# DT_GNU_HASH section, as musl libc reads the former to find symbols
 	echo "    Linking " $@
-	$(CC) -shared $(CFLAGS) -o $@ -T link.ld $<
-	#$(CC) -shared -o $@ $(CFLAGS) $<
+	$(CC) -shared $(CFLAGS) -Wl,--hash-style=both -o $@ -T link.ld $<
 
 clean:
 	echo "    Removing objects"
