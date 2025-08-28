@@ -39,10 +39,10 @@
 #include <kernel/io.h>
 #include <kernel/pic.h>
 #include <kernel/asm.h>
+#include <kernel/net.h>
 #include <kernel/net/ne2000.h>
 #include <kernel/net/ether.h>
 #include <kernel/net/packet.h>
-#include <kernel/net/ipv6.h>
 
 #define NE2000_DEVS             1
 
@@ -99,6 +99,8 @@ uint32_t ne2000_in_buffer_use_bitmap = 0;
 char *ne2000_in_buffers = NULL;
 uint32_t ne2000_in_packet_bitmap = 0;
 
+static void ne2000_func(void *arg);
+
 
 static void ne2000_packet_free(struct packet_t *_p)
 {
@@ -124,36 +126,12 @@ static void ne2000_packet_free(struct packet_t *_p)
  * and possible deadlocks when an IRQ interrupt happens while some other
  * task is holding the kernel heap's lock.
  */
-static struct packet_t *ne2000_alloc_packet(size_t len, int type)
+static struct packet_t *ne2000_alloc_packet(size_t len)
 {
     struct packet_t *p;
-    static size_t min_size = sizeof(struct packet_t) + 20 + IPv6_HLEN + ETHER_HLEN;
-    size_t offset = 0;
-    int i;
-    
-    switch(type)
-    {
-        case PACKET_LINK:
-            offset = ETHER_HLEN;
-            break;
+    static size_t min_size = sizeof(struct packet_t);
+    volatile int i;
 
-        case PACKET_IP:
-            offset = IPv6_HLEN + ETHER_HLEN;
-            break;
-
-        case PACKET_TRANSPORT:
-            offset = 20 + IPv6_HLEN + ETHER_HLEN;
-            break;
-
-        case PACKET_RAW:
-            offset = 0;
-            break;
-
-        default:
-            printk("ne2000: unknown package type: 0x%x\n", type);
-            return NULL;
-    }
-    
     if((len + min_size) > NE2000_IN_BUFFER_SIZE)
     {
         printk("ne2000: requested packet size larger than buffer size\n");
@@ -178,23 +156,14 @@ static struct packet_t *ne2000_alloc_packet(size_t len, int type)
     ne2000_in_buffer_use_bitmap |= (1 << i);
     //ne2000_in_packet_bitmap |= (1 << i);
     p = (struct packet_t *)(ne2000_in_buffers + (i * NE2000_IN_BUFFER_SIZE));
-    
-    //A_memset(p, 0, sizeof(struct packet_t));
-    p->flags = 0;
-    //p->src.sa_family = 0;
-    //p->src.sa_data[0] = 0;
-    p->ifp = NULL;
-    p->next = NULL;
-    p->sock = NULL;
-    p->transport_hdr = NULL;
 
-
+    A_memset(p, 0, sizeof(struct packet_t) + len);
+    p->data = ((uint8_t *)p + sizeof(struct packet_t));
+    p->head = p->data;
+    p->end = p->data + len;
+    p->refs = 1;
     p->count = len;
-    p->malloced = len + min_size;
-    //p->tcount = len;
-    p->data = (void *)((char *)p + sizeof(struct packet_t) + offset);
     p->free_packet = ne2000_packet_free;
-    //p->refs = 1;
     
     return p;
 }
@@ -238,15 +207,14 @@ int ne2000_init(struct pci_dev_t *pci)
             vmmngr_alloc_and_map(NE2000_IN_BUFFER_TOTALMEM, 0,
                                  PTE_FLAGS_PW, NULL, REGION_DMA)))
     {
-        printk("  Failed to alloc ne2000 receive buffers\n");
+        printk("net: failed to alloc ne2000 receive buffers\n");
         return -ENOMEM;
     }
     
     ne2000_in_buffer_use_bitmap = 0;
     ne2000_in_packet_bitmap = 0;
 
-
-    //KDEBUG("ne2000_init: bar[0] 0x%x\n", pci->bar[0]);
+    (void)start_kernel_task("ne2000", ne2000_func, (void *)(uintptr_t)pci->unit, &ne->task, 0);
 
     pci_register_irq_handler(pci, ne2000_intr, "ne2000");
 
@@ -312,24 +280,21 @@ int ne2000_init(struct pci_dev_t *pci)
     // 0x0E = accept broadcast, multicast, and runt packets (< 64 bytes)
     OUTB(ne->iobase + REG_RECEIVE_CONFIGURATION, 0x0E);
 
-    printk("  Found a NE2000 (or similar) network adapter\n");
-    printk("    MAC address: %02x:%02x:%02x:%02x:%02x:%02x\n",
+    printk("net: found a NE2000 (or similar) network adapter\n");
+    printk("     MAC address: %02x:%02x:%02x:%02x:%02x:%02x\n",
            ne->nsaddr[0], ne->nsaddr[1], ne->nsaddr[2],
            ne->nsaddr[3], ne->nsaddr[4], ne->nsaddr[5]);
-    printk("    IRQ: 0x%02x, IOBase: 0x%02x\n",
+    printk("     IRQ: 0x%02x, IOBase: 0x%02x\n",
            ne->dev->irq[0], ne->iobase);
 
 	ne->netif.unit = pci->unit;
-	ne->netif.flags = IFF_UP | IFF_BROADCAST;
+	ne->netif.flags = IFF_UP | IFF_RUNNING | IFF_BROADCAST;
 	ne->netif.transmit = ne2000_transmit;
-	ne->netif.process_input = ne2000_process_input;
-	ne->netif.process_output = ne2000_process_output;
 	ne->netif.mtu = 1500;
-	ne->netif.outq = &ne->outq;
 
-	memcpy(&(ne->netif.ethernet_addr.addr), &(ne->nsaddr), 6);
+	memcpy(&(ne->netif.hwaddr), &(ne->nsaddr), 6);
 
-	ethernet_add(&ne->netif);
+	ethernet_attach(&ne->netif);
 
     return 0;
 }
@@ -339,10 +304,11 @@ int ne2000_intr(struct regs *r, int unit)
 {
     UNUSED(r);
 
-    KDEBUG("ne2000_intr:\n");
+    //printk("ne2000_intr[%d]:\n", this_core->cpuid);
 
     if(unit != 0)
     {
+        printk("ne2000_intr[%d]: unit %d\n", this_core->cpuid, unit);
         return 0;
     }
 
@@ -351,57 +317,48 @@ int ne2000_intr(struct regs *r, int unit)
 
     if(!ne->iobase)
     {
+        printk("ne2000_intr[%d]: base 0x%lx\n", this_core->cpuid, ne->iobase);
         return 0;
     }
 
     i = INB(ne->iobase + REG_INTERRUPT_STATUS);
 
-    KDEBUG("ne2000_intr: i 0x%x\n", i);
-
     if(i == 0)
     {
         // IRQ did not come from this device
+        printk("ne2000_intr[%d]: i 0x%x\n", this_core->cpuid, i);
         return 0;
     }
 
-    ne2000_do_intr(unit);
+    OUTB(ne->iobase + REG_INTERRUPTMASK, 0x00);
+    ne2000_do_intr(ne);
+    OUTB(ne->iobase + REG_INTERRUPTMASK, 0x1F);
 
     // acknowledge the interrupt
     //OUTB(ne->iobase + REG_INTERRUPT_STATUS, i);
-    
-    //unblock_task_no_preempt(ne2000_irq_task);
+
+    unblock_task_no_preempt(ne->task);
     pic_send_eoi(ne->dev->irq[0]);
 
     return 1;
 }
 
 
-void ne2000_do_intr(int unit)
+void ne2000_do_intr(struct ne2000_t *ne)
 {
-    KDEBUG("ne2000_do_intr:\n");
-	//__asm__ __volatile__("xchg %%bx, %%bx"::);
-
-    if(unit != 0)
-    {
-        return;
-    }
-
-    register struct ne2000_t *ne = &ne2000_dev[unit];
     volatile uint8_t i, j;
-    
+
     // loop until no more interrupts
     while(1)
     {
         i = INB(ne->iobase + REG_INTERRUPT_STATUS);
 
-        KDEBUG("ne2000_do_intr: i 0x%x\n", i);
-
         // packet received
         if(i & IR_RX)
         {
-            KDEBUG("ne2000_do_intr: RX\n");
 
 receive:
+
             if(INB(ne->iobase + REG_INTERRUPT_STATUS) & IR_ROVRN)
             {
                 volatile int counter;
@@ -453,8 +410,6 @@ receive:
         // packet transmitted
         else if(i & (IR_TX | IR_TXE) /* 0x0A */)
         {
-            KDEBUG("ne2000_do_intr: TX\n");
-
             // reset PTX and TXE bits in ISR
             OUTB(ne->iobase + REG_INTERRUPT_STATUS, IR_TX | IR_TXE);
             i = INB(ne->iobase + REG_TRANSMIT_STATUS);
@@ -465,20 +420,6 @@ receive:
                 // bad transmission
                 ne->netif.stats.tx_errors++;
             }
-
-#if 0
-            // transmit next packet, if any
-            if(ne->outq.head)
-            {
-                struct packet_t *p;
-
-                lock_scheduler();
-                IFQ_DEQUEUE(&ne->outq, p);
-                unlock_scheduler();
-                ne2000_transmit(&ne->netif, p);
-            }
-#endif
-
         }
         else
         {
@@ -488,12 +429,9 @@ receive:
                 OUTB(ne->iobase + REG_INTERRUPT_STATUS, IR_RDC);
             }
 
-            //KDEBUG("ne2000_do_intr: no int\n");
             break;
         }
     }
-    
-    KDEBUG("ne2000_do_intr: done\n");
 }
 
 
@@ -541,8 +479,6 @@ void read_mem(struct ne2000_t *ne, uint16_t src, void *dst, size_t orig_len)
 
 void ne2000_receive(struct ne2000_t *ne)
 {
-	//KDEBUG("ne2000_receive:\n");
-
     struct receive_ring_desc_t packet_hdr;
     size_t len;
     struct packet_t *p;
@@ -562,8 +498,7 @@ void ne2000_receive(struct ne2000_t *ne)
         OUTB(ne->iobase + REG_INTERRUPT_STATUS, IR_RDC);
         
         // read packet and send to upper layer
-        if((p = ne2000_alloc_packet(len, PACKET_LINK)))
-        //if((p = alloc_packet(len, PACKET_LINK)))
+        if((p = ne2000_alloc_packet(len)))
         {
             read_mem(ne, ((ne->next_packet << 8) |
                           sizeof(struct receive_ring_desc_t)),
@@ -623,10 +558,10 @@ void ne2000_receive(struct ne2000_t *ne)
 
 int ne2000_transmit(struct netif_t *ifp, struct packet_t *p)
 {
-	KDEBUG("ne2000_transmit:\n");
-
+    register struct ne2000_t *ne;
 	int unit;
 	volatile uint8_t i;
+    volatile int old_flags;
 	size_t j, len;
     uint8_t *dest = (uint8_t *)p->data;
 
@@ -635,19 +570,27 @@ int ne2000_transmit(struct netif_t *ifp, struct packet_t *p)
         return -EINVAL;
     }
 
-	KDEBUG("ne2000_transmit: unit %d\n", unit);
+    ne = &ne2000_dev[unit];
+    old_flags = __set_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
 
-    register struct ne2000_t *ne = &ne2000_dev[unit];
+    while(!__sync_bool_compare_and_swap(&ifp->sending, 0, 1))
+    {
+        ;
+    }
 
     cli();
 
     i = INB(ne->iobase + REG_COMMAND);
 
-	KDEBUG("ne2000_transmit: i 0x%x\n", i);
-
     if(i == (CR_NODMA | CR_TRANS | CR_START))
     {
-    	KDEBUG("ne2000_transmit: device busy\n");
+        __sync_bool_compare_and_swap(&ifp->sending, 1, 0);
+
+        if(!(old_flags & SMP_FLAG_SCHEDULER_BUSY))
+        {
+            __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+        }
+
         sti();
         return -EAGAIN;
     }
@@ -660,8 +603,6 @@ int ne2000_transmit(struct netif_t *ifp, struct packet_t *p)
         len++;
     }
 
-	KDEBUG("ne2000_transmit: len %d\n", len);
-    
     // Setup DMA byte count
     OUTB(ne->iobase + REG_REMOTE_BYTECOUNT0, (uint8_t) (len & 0xFF));
     OUTB(ne->iobase + REG_REMOTE_BYTECOUNT1, (uint8_t) (len >> 8));
@@ -676,7 +617,6 @@ int ne2000_transmit(struct netif_t *ifp, struct packet_t *p)
     // transfer data
     for(j = 0; j < len; j++)
     {
-    	//printk("ne2000_transmit: [%d/%d]\n", j+1, len);
         OUTB(ne->iobase + REG_NE_DATA, dest[j]);
     }
 
@@ -688,24 +628,29 @@ int ne2000_transmit(struct netif_t *ifp, struct packet_t *p)
     // transmit and wait
     OUTB(ne->iobase + REG_COMMAND, CR_NODMA | CR_TRANS | CR_START);
 
-	KDEBUG("ne2000_transmit: done\n");
+    __sync_bool_compare_and_swap(&ifp->sending, 1, 0);
+
+    if(!(old_flags & SMP_FLAG_SCHEDULER_BUSY))
+    {
+        __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+    }
 
     sti();
 
     ne->netif.stats.tx_packets++;
     ne->netif.stats.tx_bytes += len;
     
-    packet_free(p);
+    free_packet(p);
 
     return 0;
 }
 
 
-void ne2000_process_input(struct netif_t *ifp)
+int ne2000_process_input(struct netif_t *ifp)
 {
-    int i;
+    volatile int i;
 
-    //KDEBUG("ne2000_process_input: bitmap %x\n", ne2000_in_buffer_use_bitmap);
+    //printk("ne2000_process_input[%d]:\n", this_core->cpuid);
 
     while(ne2000_in_packet_bitmap)
     {
@@ -716,77 +661,41 @@ void ne2000_process_input(struct netif_t *ifp)
                 struct packet_t *p = (struct packet_t *)
                                          (ne2000_in_buffers + 
                                             (i * NE2000_IN_BUFFER_SIZE));
+                struct packet_t *p2;
 
-                //kernel_mutex_lock(&ethernet_inq.lock);
-
-            	if(IFQ_FULL(&ethernet_inq))
-            	{
-            	    KDEBUG("ne2000_process_input: eth queue full - retry later\n");
-                    //kernel_mutex_unlock(&ethernet_inq.lock);
-            	    return;
-            	}
-            	else
-            	{
-                    struct packet_t *p2;
-
-                    if(!(p2 = packet_duplicate(p)))
-                    {
-                	    KDEBUG("ne2000_process_input: no memory - retry later\n");
-                	    return;
-                    }
-
-            	    KDEBUG("ne2000_process_input: enqueuing to eth (i %d)\n", i);
-                    ne2000_in_packet_bitmap &= ~(1 << i);
-                    p2->ifp = ifp;
-                    IFQ_ENQUEUE(&ethernet_inq, p2);
-                    ne2000_in_buffer_use_bitmap &= ~(1 << i);
-                    //kernel_mutex_unlock(&ethernet_inq.lock);
+                if(!(p2 = dup_packet(p)))
+                {
+                    return 1;
                 }
+
+                ne2000_in_packet_bitmap &= ~(1 << i);
+                ne2000_in_buffer_use_bitmap &= ~(1 << i);
+                p2->ifp = ifp;
+                ethernet_receive(ifp, p2);
             }
         }
     }
 
-	//KDEBUG("ne2000_process_input: done\n");
+    return 0;
 }
 
 
-void ne2000_process_output(struct netif_t *ifp)
+static void ne2000_func(void *arg)
 {
-    struct packet_t *p;
-    struct ne2000_t *ne = &ne2000_dev[ifp->unit];
-    uint8_t i;
-
-    i = INB(ne->iobase + REG_COMMAND);
-
-	//KDEBUG("ne2000_process_output: i 0x%x\n", i);
-
-    if(i == (CR_NODMA | CR_TRANS | CR_START))
-    {
-        // device busy transmitting, try again later
-        return;
-    }
+    int unit = (int)(intptr_t)arg;
+    struct ne2000_t *ne = &ne2000_dev[unit];
 
     while(1)
     {
-        //kernel_mutex_lock(&ifp->outq->lock);
-        IFQ_DEQUEUE(ifp->outq, p);
-        //kernel_mutex_unlock(&ifp->outq->lock);
-        
-        if(!p)
-        {
-            break;
-        }
-        
-        if(ne2000_transmit(ifp, p) != 0)
-        {
-            // device busy transmitting, try again later
-            //kernel_mutex_lock(&ifp->outq->lock);
-            IFQ_ENQUEUE(ifp->outq, p);
-            //kernel_mutex_unlock(&ifp->outq->lock);
-            break;
-        }
-    }
+        //printk("ne2000_func[%d]:\n", this_core->cpuid);
+        //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
-	//KDEBUG("ne2000_process_output: done\n");
+	    if(ne->netif.flags & IFF_UP)
+	    {
+            ne2000_process_input(&ne->netif);
+        }
+
+        block_task(ne, 1);
+    }
 }
 
