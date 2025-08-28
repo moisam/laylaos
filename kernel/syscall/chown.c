@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: chown.c
  *    This file is part of LaylaOS.
@@ -51,16 +51,14 @@ static void clear_exec_bit(struct fs_node_t *node)
 }
 
 
-static int do_chown(struct fs_node_t *node, uid_t uid, gid_t gid)
+static long do_chown(struct fs_node_t *node, uid_t uid, gid_t gid)
 {
     struct mount_info_t *dinfo;
-    struct task_t *ct = cur_task;
 
 	if(!node)
 	{
 	    return -EBADF;
 	}
-
 
     // can't chown if the filesystem was mount readonly
     if((dinfo = get_mount_info(node->dev)) && (dinfo->mountflags & MS_RDONLY))
@@ -68,10 +66,9 @@ static int do_chown(struct fs_node_t *node, uid_t uid, gid_t gid)
         return -EROFS;
     }
 
-	
     if(uid != (uid_t)-1)
     {
-    	if(!suser(ct))
+    	if(!suser(this_core->cur_task))
     	{
     	    // regular user -- only root can chown a file
     		return -EPERM;
@@ -89,10 +86,10 @@ static int do_chown(struct fs_node_t *node, uid_t uid, gid_t gid)
 
    	// root can change the group to anything, while regular users can only
    	// change to a group they are a member of
-  	if(!suser(ct))
+  	if(!suser(this_core->cur_task))
    	{
         // not the file owner?
-        if(ct->euid != node->uid)
+        if(this_core->cur_task->euid != node->uid)
         {
             return -EPERM;
         }
@@ -114,7 +111,7 @@ static int do_chown(struct fs_node_t *node, uid_t uid, gid_t gid)
 /*
  * Handler for syscall chown().
  */
-int syscall_chown(char *filename, uid_t uid, gid_t gid)
+long syscall_chown(char *filename, uid_t uid, gid_t gid)
 {
     return syscall_fchownat(AT_FDCWD, filename, uid, gid, 0);
 }
@@ -123,7 +120,7 @@ int syscall_chown(char *filename, uid_t uid, gid_t gid)
 /*
  * Handler for syscall lchown().
  */
-int syscall_lchown(char *filename, uid_t uid, gid_t gid)
+long syscall_lchown(char *filename, uid_t uid, gid_t gid)
 {
     return syscall_fchownat(AT_FDCWD, filename, uid, gid, 
                                         AT_SYMLINK_NOFOLLOW);
@@ -133,13 +130,17 @@ int syscall_lchown(char *filename, uid_t uid, gid_t gid)
 /*
  * Handler for syscall fchown().
  */
-int syscall_fchown(int fd, uid_t uid, gid_t gid)
+long syscall_fchown(int fd, uid_t uid, gid_t gid)
 {
 	struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    struct task_t *ct = cur_task;
 
-    if(fdnode(fd, ct, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
+    {
+        return -EBADF;
+    }
+
+    if(f->flags & O_PATH)
     {
         return -EBADF;
     }
@@ -153,11 +154,11 @@ int syscall_fchown(int fd, uid_t uid, gid_t gid)
 /*
  * Handler for syscall fchownat().
  */
-int syscall_fchownat(int dirfd, char *filename, uid_t uid, gid_t gid, 
-                     int flags)
+long syscall_fchownat(int dirfd, char *filename, uid_t uid, gid_t gid, 
+                      int flags)
 {
     struct fs_node_t *node = NULL;
-	int res;
+	long res;
 	int followlink = !(flags & AT_SYMLINK_NOFOLLOW);
 	int open_flags = OPEN_USER_CALLER |
 	               (followlink ? OPEN_FOLLOW_SYMLINK : OPEN_NOFOLLOW_SYMLINK);

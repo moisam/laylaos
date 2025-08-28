@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: utime.c
  *    This file is part of LaylaOS.
@@ -34,14 +34,17 @@
 #include <kernel/clock.h>
 
 
-static int do_utime(int dirfd, char *filename, struct utimbuf *times)
+static long do_utime(int dirfd, char *filename, 
+                     struct timespec *times0, struct timespec *times1,
+                     int flags)
 {
     struct mount_info_t *dinfo;
 	struct fs_node_t *node;
-	int res;
+	long res;
 	long atime, mtime;
-	int open_flags = OPEN_USER_CALLER | OPEN_FOLLOW_SYMLINK;
-    struct task_t *ct = cur_task;
+	int follow_symlink = (flags & OPEN_FOLLOW_SYMLINK);
+	int open_flags = OPEN_USER_CALLER | follow_symlink;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(!filename)
     {
@@ -74,7 +77,7 @@ static int do_utime(int dirfd, char *filename, struct utimbuf *times)
             node = ct->fs->cwd;
         }
     
-        if(!(node = get_node(node->dev, node->inode, 1)))
+        if(!(node = get_node(node->dev, node->inode, GETNODE_FOLLOW_MPOINTS)))
         {
             return -EBADF;
         }
@@ -95,28 +98,26 @@ static int do_utime(int dirfd, char *filename, struct utimbuf *times)
         return -EROFS;
     }
 
-	if(times)
-	{
-	    // check permissions
-    	if(!suser(ct) && ct->euid != node->uid)
-    	{
-        	release_node(node);
-    		return -EPERM;
-        }
+    // check permissions
+   	if(!suser(ct) && ct->euid != node->uid)
+   	{
+       	release_node(node);
+   		return (!times0 && !times1) ? -EACCES : -EPERM;
+    }
 
-	    atime = times->actime;
-	    mtime = times->modtime;
+	if(times0 && times1)
+	{
+	    atime = times0->tv_sec;
+	    mtime = times1->tv_sec;
+	}
+	else if(!times0 && !times1)
+	{
+		atime = mtime = now();
 	}
 	else
 	{
-	    // check permissions
-    	if(!suser(ct) && ct->euid != node->uid)
-    	{
-        	release_node(node);
-    		return -EACCES;
-        }
-
-		atime = mtime = now();
+	    atime = times0 ? times0->tv_sec : node->atime;
+	    mtime = times1 ? times1->tv_sec : node->mtime;
 	}
 	
 	node->atime = atime;
@@ -131,30 +132,33 @@ static int do_utime(int dirfd, char *filename, struct utimbuf *times)
 /*
  * Handler for syscall utime().
  */
-int syscall_utime(char *filename, struct utimbuf *times)
+long syscall_utime(char *filename, struct utimbuf *__times)
 {
-    struct utimbuf tmp;
-    struct utimbuf *ptr;
+	time_t atime, mtime;
+	struct timespec times[2];
     
-    if(times)
+    if(__times)
     {
-    	COPY_FROM_USER(&tmp.actime, &times->actime, sizeof(time_t));
-    	COPY_FROM_USER(&tmp.modtime, &times->modtime, sizeof(time_t));
-    	ptr = &tmp;
+    	COPY_FROM_USER(&atime, &__times->actime, sizeof(time_t));
+    	COPY_FROM_USER(&mtime, &__times->modtime, sizeof(time_t));
+    	times[0].tv_sec = atime;
+    	times[1].tv_sec = mtime;
+    	times[0].tv_nsec = 0;
+    	times[1].tv_nsec = 0;
+
+        return do_utime(AT_FDCWD, filename, &times[0], &times[1], OPEN_FOLLOW_SYMLINK);
 	}
 	else
 	{
-	    ptr = NULL;
+        return do_utime(AT_FDCWD, filename, NULL, NULL, OPEN_FOLLOW_SYMLINK);
 	}
-
-    return do_utime(AT_FDCWD, filename, ptr);
 }
 
 
 /*
  * Handler for syscall utimes().
  */
-int syscall_utimes(char *filename, struct timeval *times)
+long syscall_utimes(char *filename, struct timeval *times)
 {
     return syscall_futimesat(AT_FDCWD, filename, times);
 }
@@ -168,25 +172,85 @@ int syscall_utimes(char *filename, struct timeval *times)
  * TODO: Fix this!
  */
 
-int syscall_futimesat(int dirfd, char *filename, struct timeval *times)
+long syscall_futimesat(int dirfd, char *filename, struct timeval *__times)
 {
 	long atime, mtime;
-	struct utimbuf tmp;
-    struct utimbuf *ptr;
+	struct timespec times[2];
 
-    if(times)
+    if(__times)
     {
-    	COPY_FROM_USER(&atime, &times[0].tv_sec, sizeof(long));
-    	COPY_FROM_USER(&mtime, &times[1].tv_sec, sizeof(long));
-    	tmp.actime = atime;
-    	tmp.modtime = mtime;
-    	ptr = &tmp;
+    	COPY_FROM_USER(&atime, &__times[0].tv_sec, sizeof(long));
+    	COPY_FROM_USER(&mtime, &__times[1].tv_sec, sizeof(long));
+    	times[0].tv_sec = atime;
+    	times[1].tv_sec = mtime;
+    	times[0].tv_nsec = 0;
+    	times[1].tv_nsec = 0;
+
+        return do_utime(dirfd, filename, &times[0], &times[1], OPEN_FOLLOW_SYMLINK);
 	}
 	else
 	{
-	    ptr = NULL;
+        return do_utime(dirfd, filename, NULL, NULL, OPEN_FOLLOW_SYMLINK);
 	}
+}
 
-    return do_utime(dirfd, filename, ptr);
+
+/*
+ * Handler for syscall futimesat().
+ *
+ * Lazily, we just convert the times to seconds and call utime().
+ *
+ * TODO: Fix this!
+ */
+
+long syscall_utimensat(int dirfd, char *filename, struct timespec *__times, int __flags)
+{
+	struct timespec times[2];
+    time_t i = now();
+    int flags = (__flags & AT_SYMLINK_NOFOLLOW) ?
+                    OPEN_NOFOLLOW_SYMLINK : OPEN_FOLLOW_SYMLINK;
+
+    if(__times)
+    {
+    	COPY_FROM_USER(&times, __times, sizeof(struct timespec) * 2);
+
+        if(times[0].tv_nsec == UTIME_OMIT && times[1].tv_nsec == UTIME_OMIT)
+        {
+            return 0;
+        }
+
+        if(times[0].tv_nsec == UTIME_NOW && times[1].tv_nsec == UTIME_NOW)
+        {
+            return do_utime(dirfd, filename, NULL, NULL, flags);
+        }
+
+        if(times[0].tv_nsec == UTIME_OMIT)
+        {
+        	if(times[1].tv_nsec == UTIME_NOW)
+        	{
+                times[1].tv_sec = i;
+                times[1].tv_nsec = 0;
+            }
+
+            return do_utime(dirfd, filename, NULL, &times[1], flags);
+        }
+
+        if(times[1].tv_nsec == UTIME_OMIT)
+        {
+        	if(times[0].tv_nsec == UTIME_NOW)
+        	{
+                times[0].tv_sec = i;
+                times[0].tv_nsec = 0;
+            }
+
+            return do_utime(dirfd, filename, &times[0], NULL, flags);
+        }
+
+        return do_utime(dirfd, filename, &times[0], &times[1], flags);
+	}
+	else
+	{
+        return do_utime(dirfd, filename, NULL, NULL, flags);
+	}
 }
 

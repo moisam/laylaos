@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: write.c
  *    This file is part of LaylaOS.
@@ -72,16 +72,16 @@ static inline void update_file_node(struct file_t *f)
 	f->node->mtime = now();
     f->node->flags |= FS_NODE_DIRTY;
 
-	if(!(f->flags & O_APPEND))
+	if((f->flags & O_APPEND) != O_APPEND)
 	{
 	    f->node->ctime = f->node->mtime;
 	}
 }
 
 
-static inline int write_internal(struct file_t *f, 
-                                 unsigned char *buf, size_t count, 
-                                 off_t *offset, ssize_t *copied)
+static inline long write_internal(struct file_t *f, 
+                                  unsigned char *buf, size_t count, 
+                                  off_t *offset, ssize_t *copied)
 {
     KDEBUG("syscall_write: fd %d, buf 0x%x, count %d\n", fd, buf, count);
     ssize_t res;
@@ -91,13 +91,15 @@ static inline int write_internal(struct file_t *f,
     if(!count)
     {
         res = 0;
-        goto fin;
+        //goto fin;
+        COPY_VAL_TO_USER(copied, &res);
+        return res;
     }
 
     /* this call shouldn't modify f->pos */
     res = f->node->write(f, &pos, buf, count, 0);
 
-fin:
+//fin:
     
     if(res >= 0)
     {
@@ -109,7 +111,7 @@ fin:
          * TODO: should we account for the actual bytes written, instead of 
          *       what the task asked for?
          */
-        cur_task->write_count += count;
+        this_core->cur_task->write_count += count;
 
         res = 0;
     }
@@ -121,13 +123,13 @@ fin:
 /*
  * Handler for syscall write().
  */
-int syscall_write(int fd, unsigned char *buf, size_t count, ssize_t *copied)
+long syscall_write(int fd, unsigned char *buf, size_t count, ssize_t *copied)
 {
     struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    int sync, res;
+    long sync, res;
 
-    if(fdnode(fd, cur_task, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -138,7 +140,7 @@ int syscall_write(int fd, unsigned char *buf, size_t count, ssize_t *copied)
     }
 
 	// seek to EOF if the file was opened with O_APPEND
-	if((f->flags & O_APPEND) && (node->dev != PROCFS_DEVID))
+	if((f->flags & O_APPEND) == O_APPEND && (node->dev != PROCFS_DEVID))
 	{
 	    f->pos = node->size;
 	}
@@ -147,7 +149,7 @@ int syscall_write(int fd, unsigned char *buf, size_t count, ssize_t *copied)
 
     update_file_node(f);
     sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
-    cur_task->write_calls++;
+    this_core->cur_task->write_calls++;
 
     if(sync)
 	{
@@ -161,15 +163,15 @@ int syscall_write(int fd, unsigned char *buf, size_t count, ssize_t *copied)
 /*
  * Handler for syscall pwrite().
  */
-int syscall_pwrite(int fd, void *buf, size_t count, off_t _offset, 
-                   ssize_t *copied)
+long syscall_pwrite(int fd, void *buf, size_t count, off_t _offset, 
+                    ssize_t *copied)
 {
     struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    int sync, res;
+    long sync, res;
     off_t offset = _offset;
 
-    if(fdnode(fd, cur_task, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -183,7 +185,7 @@ int syscall_pwrite(int fd, void *buf, size_t count, off_t _offset,
 
     update_file_node(f);
     sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
-    cur_task->write_calls++;
+    this_core->cur_task->write_calls++;
 
     if(sync)
 	{
@@ -197,10 +199,10 @@ int syscall_pwrite(int fd, void *buf, size_t count, off_t _offset,
 /*
  * Handler for syscall writev().
  */
-int syscall_writev(int fd, struct iovec *iov, int count, ssize_t *copied)
+long syscall_writev(int fd, struct iovec *iov, int count, ssize_t *copied)
 {
     int i;
-    int res;
+    long res;
     ssize_t total = 0;
     void *iov_base;
     size_t iov_len;
@@ -209,7 +211,7 @@ int syscall_writev(int fd, struct iovec *iov, int count, ssize_t *copied)
     struct fs_node_t *node = NULL;
     int sync;
 
-    if(fdnode(fd, cur_task, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -220,7 +222,7 @@ int syscall_writev(int fd, struct iovec *iov, int count, ssize_t *copied)
     }
 
 	// seek to EOF if the file was opened with O_APPEND
-	if((f->flags & O_APPEND) && (node->dev != PROCFS_DEVID))
+	if((f->flags & O_APPEND) == O_APPEND && (node->dev != PROCFS_DEVID))
 	{
 	    f->pos = node->size;
 	}
@@ -253,7 +255,7 @@ int syscall_writev(int fd, struct iovec *iov, int count, ssize_t *copied)
 
     update_file_node(f);
     sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
-    cur_task->write_calls++;
+    this_core->cur_task->write_calls++;
 
     if(sync)
 	{
@@ -267,11 +269,11 @@ int syscall_writev(int fd, struct iovec *iov, int count, ssize_t *copied)
 /*
  * Handler for syscall pwritev().
  */
-int syscall_pwritev(int fd, struct iovec *iov, int count,
-                    off_t _offset, ssize_t *copied)
+long syscall_pwritev(int fd, struct iovec *iov, int count,
+                     off_t _offset, ssize_t *copied)
 {
     int i;
-    int res;
+    long res;
     ssize_t total = 0;
     void *iov_base;
     size_t iov_len;
@@ -281,7 +283,7 @@ int syscall_pwritev(int fd, struct iovec *iov, int count,
     int sync;
     off_t offset = _offset;
 
-    if(fdnode(fd, cur_task, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -318,7 +320,7 @@ int syscall_pwritev(int fd, struct iovec *iov, int count,
 
     update_file_node(f);
     sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
-    cur_task->write_calls++;
+    this_core->cur_task->write_calls++;
 
     if(sync)
 	{

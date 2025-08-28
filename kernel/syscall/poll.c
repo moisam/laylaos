@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: poll.c
  *    This file is part of LaylaOS.
@@ -55,7 +55,7 @@ static int pollscan(struct pollfd *fds, nfds_t nfds)
             continue;
         }
         
-        f = cur_task->ofiles->ofile[fd];
+        f = this_core->cur_task->ofiles->ofile[fd];
 
         if(f == NULL || !f->node || !f->node->poll)
         {
@@ -84,7 +84,7 @@ static int poll_internal(struct pollfd *fds, nfds_t nfds,
     
     //printk("poll_internal: fds 0x%lx, nfds %d, tm 0x%lx, mask 0x%lx\n", fds, nfds, tmo_p, sigmask);
 
-    if(fds)
+    if(fds && nfds)
     {
         COPY_FROM_USER(fdcopy, fds, sizeof(struct pollfd) * nfds);
     }
@@ -165,7 +165,7 @@ done:
     {
         error = 0;
     }
-    else if(error >= 0 && fds)
+    else if(error >= 0 && fds && nfds)
     {
         COPY_TO_USER(fds, fdcopy, sizeof(struct pollfd) * nfds);
     }
@@ -223,15 +223,16 @@ int syscall_ppoll(struct pollfd *fds, nfds_t nfds,
     if(sigmask)
     {
         COPY_FROM_USER(&newsigmask, sigmask, sizeof(sigset_t));
-        syscall_sigprocmask_internal(cur_task, SIG_SETMASK, 
-                                     &newsigmask, &origmask, 1);
+        syscall_sigprocmask_internal((struct task_t *)this_core->cur_task, 
+                                     SIG_SETMASK, &newsigmask, &origmask, 1);
     }
 
     res = poll_internal(fds, nfds, ts);
 
     if(sigmask)
     {
-        syscall_sigprocmask_internal(cur_task, SIG_SETMASK, &origmask, NULL, 1);
+        syscall_sigprocmask_internal((struct task_t *)this_core->cur_task,
+                                     SIG_SETMASK, &origmask, NULL, 1);
     }
 
     return res;

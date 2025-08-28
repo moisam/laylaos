@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: rlimit.c
  *    This file is part of LaylaOS.
@@ -45,7 +45,7 @@ struct task_rlimit_t default_rlimits[] =
     { "Max cpu time", "seconds", { RLIM_INFINITY, RLIM_INFINITY, } },
     { "Max file size", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
     { "Max data size", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
-    { "Max stack size", "bytes", { 256 * 1024 /* 256K */, RLIM_INFINITY, } },
+    { "Max stack size", "bytes", { 1024 * 1024 /* 1024K */, RLIM_INFINITY, } },
     { "Max core file size", "bytes", { 0, RLIM_INFINITY, } },
     { "Max resident set", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
     { "Max processes", "processes", { NR_TASKS, NR_TASKS, } },
@@ -76,12 +76,12 @@ struct task_rlimit_t default_rlimits[] =
 /*
  * Handler for syscall getrusage().
  */
-int syscall_getrusage(int who, struct rusage *r_usage)
+long syscall_getrusage(int who, struct rusage *r_usage)
 {
     struct rusage res;
     struct timeval ut, st;
     register struct task_t *thread;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
     
     if(!r_usage)
     {
@@ -148,7 +148,7 @@ int syscall_getrusage(int who, struct rusage *r_usage)
 /*
  * Handler for syscall getrlimit().
  */
-int syscall_getrlimit(int resource, struct rlimit *rlim)
+long syscall_getrlimit(int resource, struct rlimit *rlim)
 {
     return syscall_prlimit(0, resource, NULL, rlim);
 }
@@ -157,7 +157,7 @@ int syscall_getrlimit(int resource, struct rlimit *rlim)
 /*
  * Handler for syscall setrlimit().
  */
-int syscall_setrlimit(int resource, struct rlimit *rlim)
+long syscall_setrlimit(int resource, struct rlimit *rlim)
 {
     return syscall_prlimit(0, resource, rlim, NULL);
 }
@@ -170,13 +170,13 @@ int syscall_setrlimit(int resource, struct rlimit *rlim)
 /*
  * Handler for syscall prlimit().
  */
-int syscall_prlimit(pid_t pid, int resource, struct rlimit *new_limit,
-                    struct rlimit *old_limit)
+long syscall_prlimit(pid_t pid, int resource, struct rlimit *new_limit,
+                     struct rlimit *old_limit)
 {
     struct rlimit *which_rlim, tmp;
-    struct task_t *task = pid ? get_task_by_id(pid) : cur_task;
-    struct task_t *ct = cur_task;
-    
+	volatile struct task_t *ct = this_core->cur_task;
+    volatile struct task_t *task = pid ? get_task_by_id(pid) : ct;
+
     if(!task)
     {
         return -ESRCH;
@@ -206,16 +206,16 @@ int syscall_prlimit(pid_t pid, int resource, struct rlimit *new_limit,
 
     if(old_limit)
     {
-        COPY_TO_USER(old_limit, which_rlim, sizeof(struct rlimit));
-        KDEBUG("syscall_prlimit: old cur %ld\n", which_rlim->rlim_cur);
-        KDEBUG("syscall_prlimit: old max %ld\n", which_rlim->rlim_max);
+        //COPY_TO_USER(old_limit, which_rlim, sizeof(struct rlimit));
+        COPY_VAL_TO_USER(&old_limit->rlim_cur, &which_rlim->rlim_cur);
+        COPY_VAL_TO_USER(&old_limit->rlim_max, &which_rlim->rlim_max);
     }
     
     if(new_limit)
     {
-        COPY_FROM_USER(&tmp, new_limit, sizeof(struct rlimit));
-        KDEBUG("syscall_prlimit: new cur %ld\n", new_limit->rlim_cur);
-        KDEBUG("syscall_prlimit: new max %ld\n", new_limit->rlim_max);
+        //COPY_FROM_USER(&tmp, new_limit, sizeof(struct rlimit));
+        COPY_VAL_FROM_USER(&tmp.rlim_cur, &new_limit->rlim_cur);
+        COPY_VAL_FROM_USER(&tmp.rlim_max, &new_limit->rlim_max);
 
         if(tmp.rlim_max != RLIM_INFINITY && tmp.rlim_cur > tmp.rlim_max)
         {
@@ -269,9 +269,9 @@ int syscall_prlimit(pid_t pid, int resource, struct rlimit *new_limit,
  *
  * See: https://man7.org/linux/man-pages/man3/ulimit.3.html
  */
-int syscall_ulimit(int cmd, long newlimit)
+long syscall_ulimit(int cmd, long newlimit)
 {
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     switch(cmd)
     {

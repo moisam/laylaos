@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: fcntl_internal.c
  *    This file is part of LaylaOS.
@@ -141,7 +141,6 @@ void get_start_end(struct file_t *fp, struct flock *lock,
 int can_acquire_lock(struct file_t *fp, struct flock *flock,
                      int wait, struct flock *oldflock)
 {
-    struct task_t *ct = cur_task;
     struct alock_t *alock;
     struct fs_node_t *node;
     off_t start , end ;
@@ -170,7 +169,7 @@ loop:
          * yes. is it exclusive (or the requested lock is) and the old lock
          * was placed by another process?
          */
-        if((alock->internal_lock.l_pid != ct->pid) &&
+        if((alock->internal_lock.l_pid != this_core->cur_task->pid) &&
            (flock->l_type == F_WRLCK ||
                 alock->internal_lock.l_type == F_WRLCK))
         {
@@ -180,7 +179,7 @@ loop:
                 kernel_mutex_unlock(&node->lock);
                 block_task(node->alocks, 1);
                 
-                if(ct->woke_by_signal)
+                if(this_core->cur_task->woke_by_signal)
                 {
                     return -ERESTARTSYS;
                     //return -EINTR;
@@ -190,7 +189,7 @@ loop:
             }
             
             A_memcpy(oldflock, &(alock->internal_lock),
-                            sizeof(struct alock_t));
+                            sizeof(struct flock));
             kernel_mutex_unlock(&node->lock);
 
             return -EAGAIN;
@@ -224,9 +223,8 @@ loop:
  * Create a new lock. If there is an overlap with a current lock that is
  * held by the calling process, merge the two locks.
  */
-int add_lock(struct file_t *fp, struct flock *flock)
+long add_lock(struct file_t *fp, struct flock *flock)
 {
-    struct task_t *ct = cur_task;
     struct alock_t *alock, *newlock, *newlock2;
     struct fs_node_t *node;
     off_t start , end ;
@@ -242,7 +240,7 @@ int add_lock(struct file_t *fp, struct flock *flock)
         get_start_end(fp, &(alock->internal_lock), &start2, &end2);
 
         /* not our lock? */
-        if(alock->internal_lock.l_pid != ct->pid)
+        if(alock->internal_lock.l_pid != this_core->cur_task->pid)
         {
             alock = alock->next;
             continue;
@@ -430,7 +428,7 @@ int add_lock(struct file_t *fp, struct flock *flock)
         newlock->internal_lock.l_len = end - start + 1;
     }
 
-    newlock->internal_lock.l_pid = ct->pid;
+    newlock->internal_lock.l_pid = this_core->cur_task->pid;
 
     /* add the new lock */
     newlock->prev = NULL;
@@ -440,11 +438,8 @@ int add_lock(struct file_t *fp, struct flock *flock)
     {
         node->alocks->prev = newlock;
     }
-    else
-    {
-        node->alocks = newlock;
-    }
 
+    node->alocks = newlock;
     kernel_mutex_unlock(&node->lock);
 
     return 0;
@@ -477,9 +472,8 @@ static void remove_lock_internal(struct fs_node_t *node, struct alock_t *alock)
  * one or two new locks, depending on the overlap between the requested and
  * current locks.
  */
-int remove_lock(struct file_t *fp, struct flock *flock)
+long remove_lock(struct file_t *fp, struct flock *flock)
 {
-    struct task_t *ct = cur_task;
     struct alock_t *alock, *newlock;
     struct fs_node_t *node;
     off_t start , end ;
@@ -495,7 +489,7 @@ int remove_lock(struct file_t *fp, struct flock *flock)
         get_start_end(fp, &(alock->internal_lock), &start2, &end2);
 
         /* not our lock? */
-        if(alock->internal_lock.l_pid != ct->pid)
+        if(alock->internal_lock.l_pid != this_core->cur_task->pid)
         {
             alock = alock->next;
             continue;

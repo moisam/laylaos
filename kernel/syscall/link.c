@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: link.c
  *    This file is part of LaylaOS.
@@ -32,18 +32,30 @@
 /*
  * Handler for syscall link().
  */
-int syscall_link(char *oldname, char *newname)
+long syscall_link(char *oldname, char *newname)
 {
-    return vfs_linkat(AT_FDCWD, oldname, AT_FDCWD, newname, 0);
+    return vfs_linkat(AT_FDCWD, oldname, AT_FDCWD, newname, OPEN_FOLLOW_SYMLINK /* AT_SYMLINK_FOLLOW */);
 }
 
 
 /*
  * Handler for syscall linkat().
  */
-int syscall_linkat(int olddirfd, char *oldname,
-                   int newdirfd, char *newname, int flags)
+long syscall_linkat(int olddirfd, char *oldname,
+                    int newdirfd, char *newname, int __flags)
 {
+    int flags;
+
+    /*
+     * NOTE: we only support this flag for now.
+     */
+    if(__flags & ~(AT_SYMLINK_FOLLOW))
+    {
+        return -EINVAL;
+    }
+
+    flags = (__flags & AT_SYMLINK_FOLLOW) ? OPEN_FOLLOW_SYMLINK : OPEN_NOFOLLOW_SYMLINK;
+
     return vfs_linkat(olddirfd, oldname, newdirfd, newname, flags);
 }
 
@@ -51,7 +63,7 @@ int syscall_linkat(int olddirfd, char *oldname,
 /*
  * Handler for syscall unlink().
  */
-int syscall_unlink(char *pathname)
+long syscall_unlink(char *pathname)
 {
     return vfs_unlinkat(AT_FDCWD, pathname, 0);
 }
@@ -60,7 +72,7 @@ int syscall_unlink(char *pathname)
 /*
  * Handler for syscall unlinkat().
  */
-int syscall_unlinkat(int dirfd, char *pathname, int flags)
+long syscall_unlinkat(int dirfd, char *pathname, int flags)
 {
     return vfs_unlinkat(dirfd, pathname, flags);
 }

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: syscall.c
  *    This file is part of LaylaOS.
@@ -44,6 +44,7 @@
 #include <sys/ptrace.h>
 #include <sys/sysinfo.h>
 #include <sys/random.h>
+#include <sys/syscall.h>
 #include <kernel/asm.h>
 #include <kernel/vfs.h>
 #include <kernel/task.h>
@@ -73,9 +74,7 @@
 
 #include "../kernel/task_funcs.c"
 
-static int syscall_nosys(void);
-
-typedef int (*syscall_func)();
+static long syscall_nosys(void);
 
 #define __SYSCALL_NOSYS             syscall_nosys
 
@@ -201,8 +200,8 @@ syscall_func syscalls[] =
     syscall_sysinfo,                // sysinfo.c
     syscall_ipc,                    // ipc.c
     syscall_fsync,                  // fsync.c
-    syscall_sigreturn,              // syscall_dispatcher.S
-    syscall_clone,                  // syscall_dispatcher.S
+    syscall_sigreturn,              // signal.c
+    syscall_clone,                  // kfork.c
     syscall_setdomainname,
     syscall_uname,
     __SYSCALL_NOSYS,                // modify_ldt - TODO
@@ -403,7 +402,7 @@ syscall_func syscalls[] =
     __SYSCALL_NOSYS,
     __SYSCALL_NOSYS,
     __SYSCALL_NOSYS,
-    __SYSCALL_NOSYS,                // utimensat - TODO
+    syscall_utimensat,              // utimensat - TODO
     __SYSCALL_NOSYS,                // signalfd - TODO
     __SYSCALL_NOSYS,                // timerfd_create - TODO
     __SYSCALL_NOSYS,                // eventfd - TODO
@@ -484,20 +483,22 @@ syscall_func syscalls[] =
     syscall_shmget,
 };
 
-#define NR_SYSCALLS     sizeof(syscalls)/sizeof(void *)
+#define __NR_SYSCALLS     sizeof(syscalls)/sizeof(void *)
+unsigned int NR_SYSCALLS = 0;
 
 struct
 {
     long hits;
     unsigned long long ticks;
-} syscall_profiles[NR_SYSCALLS] = { 0, };
+} syscall_profiles[__NR_SYSCALLS] = { 0, };
 
 
 /*
- * Initialise syscalls.
+ * Initialize syscalls.
  */
 void syscall_init(void)
 {
+    NR_SYSCALLS = __NR_SYSCALLS;
 
 #ifdef __x86_64__
 
@@ -515,7 +516,7 @@ void syscall_init(void)
 }
 
 
-static int syscall_nosys(void)
+static long syscall_nosys(void)
 {
     //printk("SYSCALL NOSYS:\n");
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
@@ -539,7 +540,7 @@ static inline void __set_syscall_flags(struct task_t *ct)
      * don't try to process signals as we will do that after coming back from
      * the syscall.
      */
-    ct->properties |= PROPERTY_IN_SYSCALL;
+    __sync_or_and_fetch(&ct->properties, PROPERTY_IN_SYSCALL);
 }
 
 
@@ -554,7 +555,7 @@ static inline void __unset_syscall_flags(struct task_t *ct)
      * don't try to process signals as we will do that after coming back from
      * the syscall.
      */
-    ct->properties &= ~PROPERTY_IN_SYSCALL;
+    __sync_and_and_fetch(&ct->properties, ~PROPERTY_IN_SYSCALL);
 }
 
 
@@ -594,9 +595,9 @@ void unset_syscall_flags(struct task_t *ct)
  */
 void syscall_dispatcher(struct regs *r)
 {
-    struct task_t *ct = cur_task;
+    struct task_t *ct = (struct task_t *)this_core->cur_task;
     syscall_func func;
-    int res;
+    long res;
     unsigned syscall_num = GET_SYSCALL_NUMBER(r);
     unsigned long long oticks = ticks;
     
@@ -617,14 +618,13 @@ void syscall_dispatcher(struct regs *r)
     
     syscall_profiles[syscall_num].hits++;
     __set_syscall_flags(ct);
+    //ct->syscall_regs = r;
 
     /* enable interrupts, so that if the syscall takes too long, we don't 
      * end up with a spurious interrupt because we missed something like the
      * timer interrupt.
      */
     sti();
-
-    ct->regs = r;
 
     /* notify the tracer (if any) */
     if(ct->properties & PROPERTY_TRACE_SYSEMU)
@@ -638,28 +638,51 @@ void syscall_dispatcher(struct regs *r)
         SIGNAL(PTRACE_EVENT_SYSCALL_ENTER);
         
         // the tracer injected a bogus syscall
-        if(GET_SYSCALL_NUMBER(ct->regs) == 0)
+        if(GET_SYSCALL_NUMBER(r) == 0)
         {
-            SET_SYSCALL_RESULT(ct->regs, -ENOSYS);
+            SET_SYSCALL_RESULT(r, -ENOSYS);
             goto skip;
         }
     }
     
     /* do the syscall */
     func = syscalls[syscall_num];
+    __atomic_store_n(&(this_core->cur_task->interrupted_syscall), 0, __ATOMIC_SEQ_CST);
 
-    res = func(GET_SYSCALL_ARG1(r), GET_SYSCALL_ARG2(r), GET_SYSCALL_ARG3(r),
-               GET_SYSCALL_ARG4(r), GET_SYSCALL_ARG5(r));
-    
-    if(res == -ERESTARTSYS)
+    if(syscall_num == __NR_sigreturn)
     {
-        ct->interrupted_syscall = syscall_num;
+        // Don't store the return value of sigreturn as the upper bytes of 
+        // rax will be chopped to an int, and this syscall doesn't return
+        // anyway to where it was called from.
+        func(r, GET_SYSCALL_ARG1(r));
     }
+    else
+    {
+        // These syscalls need the current registers to work properly. We used
+        // to store the current syscall registers in the task struct but this
+        // led to problems with nested syscalls/irqs.
+        // TODO: find a cleaner way to avoid this unnecessary if/else.
+        if(syscall_num == __NR_fork || syscall_num == __NR_vfork ||
+           syscall_num == __NR_clone || syscall_num == __NR_pause || 
+           syscall_num == __NR_sigsuspend)
+        {
+            res = func(r, GET_SYSCALL_ARG1(r));
+        }
+        else
+        {
+            res = func(GET_SYSCALL_ARG1(r), GET_SYSCALL_ARG2(r), GET_SYSCALL_ARG3(r),
+                       GET_SYSCALL_ARG4(r), GET_SYSCALL_ARG5(r));
+        }
+    
+        if(res == -ERESTARTSYS)
+        {
+            __atomic_store_n(&(this_core->cur_task->interrupted_syscall), syscall_num, __ATOMIC_SEQ_CST);
+            //ct->interrupted_syscall = syscall_num;
+            res = -EINTR;
+        }
 
-    //if(syscall_num == __NR_shmat) __asm__ __volatile__("xchg %%bx, %%bx"::);
-
-    SET_SYSCALL_RESULT(r, res);
-
+        SET_SYSCALL_RESULT(r, res);
+    }
 
 skip:
 
@@ -670,13 +693,15 @@ skip:
     }
 
     
-    ct->regs = NULL;
+    //ct->regs = NULL;
     syscall_profiles[syscall_num].ticks += ticks - oticks;
     
     /* check for signals */
     
     /* idle_task can't receive signals */
     //if(ct != idle_task)
+    if(syscall_num != __NR_sigreturn &&
+      !(ct->properties & PROPERTY_HANDLING_SIG))
     {
         /* TODO: don't check signals if code segment was supervisor */
 
@@ -684,6 +709,7 @@ skip:
         MAY_CHECK_SIGNALS(ct, r);
     }
 
+    cli();
     __unset_syscall_flags(ct);
 }
 
@@ -693,13 +719,12 @@ skip:
  * given file node. If user_ruid is set, the caller's REAL uid/gid are used
  * instead of their EFFECTIVE uid/gid.
  */
-int has_access(struct fs_node_t *node, int mode, int use_ruid)
+long has_access(struct fs_node_t *node, int mode, int use_ruid)
 {
     //printk("has_access: node->mode 0x%x, mode 0x%x\n", (node->mode & 0777), mode);
     
 	int res = node->mode & 0777;
-    struct task_t *ct = cur_task;
-	uid_t uid = use_ruid ? ct->uid : ct->euid;
+	uid_t uid = use_ruid ? this_core->cur_task->uid : this_core->cur_task->euid;
     struct mount_info_t *dinfo;
 
     if(!node /* || node->links == 0 */)    // deleted file - no access whatsoever
@@ -710,7 +735,7 @@ int has_access(struct fs_node_t *node, int mode, int use_ruid)
     /* if superuser, we may grant all permissions except for EXEC where at 
      * least one exec bit must be set
      */
-	if(suser(ct))
+	if(suser(this_core->cur_task))
 	{
 		if(res & 0111)
 		{
@@ -762,7 +787,7 @@ int has_access(struct fs_node_t *node, int mode, int use_ruid)
 /*
  * Handler for syscall exit().
  */
-int syscall_exit(int code)
+long syscall_exit(int code)
 {
     //printk("syscall_exit: code %d\n", code);
     terminate_task(__W_EXITCODE(code, 0));
@@ -773,7 +798,7 @@ int syscall_exit(int code)
 /*
  * Handler for syscall exit_group().
  */
-int syscall_exit_group(int code)
+long syscall_exit_group(int code)
 {
     //printk("syscall_exit_group: code %d\n", code);
     terminate_thread_group(__W_EXITCODE(code, 0));
@@ -784,22 +809,21 @@ int syscall_exit_group(int code)
 /*
  * Handler for syscall close().
  */
-int syscall_close(int fd)
+long syscall_close(int fd)
 {
 	struct file_t *f = NULL;
     struct fs_node_t *node;
-    struct task_t *t = cur_task;
 
-    if(fdnode(fd, t, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
 	
-	cloexec_clear(t, fd);
+	cloexec_clear(this_core->cur_task, fd);
 
-    remove_task_locks(t, f);
-	
-	t->ofiles->ofile[fd] = NULL;
+    remove_task_locks((struct task_t *)this_core->cur_task, f);
+
+	this_core->cur_task->ofiles->ofile[fd] = NULL;
 	
 	return closef(f);
 }
@@ -808,7 +832,7 @@ int syscall_close(int fd)
 /*
  * Handler for syscall creat().
  */
-int syscall_creat(char *pathname, mode_t mode)
+long syscall_creat(char *pathname, mode_t mode)
 {
 	return syscall_open(pathname, O_CREAT | O_WRONLY | O_TRUNC, mode);
 }
@@ -817,7 +841,7 @@ int syscall_creat(char *pathname, mode_t mode)
 /*
  * Handler for syscall time().
  */
-int syscall_time(time_t *tloc)
+long syscall_time(time_t *tloc)
 {
     time_t i = now();
 
@@ -839,12 +863,12 @@ int syscall_time(time_t *tloc)
  *
  * See: https://man7.org/linux/man-pages/man2/mknod.2.html
  */
-int syscall_mknodat(int dirfd, char *pathname, mode_t mode, dev_t dev)
+long syscall_mknodat(int dirfd, char *pathname, mode_t mode, dev_t dev)
 {
 #define open_flags      OPEN_USER_CALLER | OPEN_NOFOLLOW_SYMLINK
 
 	struct fs_node_t *node;
-	int res = 0;
+	long res = 0;
 
     if((res = vfs_mknod(pathname, mode, dev, dirfd, open_flags, &node)) == 0)
     {
@@ -861,7 +885,7 @@ int syscall_mknodat(int dirfd, char *pathname, mode_t mode, dev_t dev)
 /*
  * Handler for syscall mknod().
  */
-int syscall_mknod(char *pathname, mode_t mode, dev_t dev)
+long syscall_mknod(char *pathname, mode_t mode, dev_t dev)
 {
     return syscall_mknodat(AT_FDCWD, pathname, mode, dev);
 }
@@ -870,14 +894,13 @@ int syscall_mknod(char *pathname, mode_t mode, dev_t dev)
 /*
  * Handler for syscall lseek().
  */
-int syscall_lseek(int fd, off_t offset, int origin)
+long syscall_lseek(int fd, off_t offset, int origin)
 {
     struct file_t *f;
     struct fs_node_t *node;
-    int tmp;
-    struct task_t *t = cur_task;
+    long tmp;
 
-    if(fdnode(fd, t, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -935,14 +958,13 @@ int syscall_lseek(int fd, off_t offset, int origin)
 /*
  * Handler for syscall mount().
  */
-int syscall_mount(char *source, char *target, char *fstype, 
-                  int flags, char *options)
+long syscall_mount(char *source, char *target, char *fstype, 
+                   int flags, char *options)
 {
-    int res;
+    long res;
     dev_t dev = 0;
-    struct task_t *t = cur_task;
 
-    if(t->euid != 0)
+    if(this_core->cur_task->euid != 0)
     {
         return -EPERM;
     }
@@ -969,16 +991,15 @@ int syscall_mount(char *source, char *target, char *fstype,
  * TODO: Add support to umount2() flags.
  *       See: https://man7.org/linux/man-pages/man2/umount2.2.html
  */
-int syscall_umount2(char *target, int user_flags)
+long syscall_umount2(char *target, int user_flags)
 {
-    int res;
+    long res;
     struct fs_node_t *fnode = NULL;
     dev_t dev;
     int flags = O_RDONLY | ((user_flags & UMOUNT_NOFOLLOW) ? O_NOFOLLOW : 0);
 	int open_flags = OPEN_USER_CALLER | OPEN_NOFOLLOW_MPOINT;
-    struct task_t *t = cur_task;
 
-    if(!suser(t))
+    if(!suser(this_core->cur_task))
     {
         return -EPERM;
     }
@@ -1005,8 +1026,14 @@ int syscall_umount2(char *target, int user_flags)
     }
     
     // check if this is the target mount point or the source device node
-    if(fnode->flags & FS_NODE_MOUNTPOINT)
+    if(S_ISDIR(fnode->mode))
     {
+        if(!(fnode->flags & FS_NODE_MOUNTPOINT))
+        {
+            release_node(fnode);
+            return -EINVAL;
+        }
+
         dev = fnode->ptr->dev;
     }
     else
@@ -1035,7 +1062,7 @@ int syscall_umount2(char *target, int user_flags)
 /*
  * Handler for syscall umount().
  */
-int syscall_umount(char *target)
+long syscall_umount(char *target)
 {
     return syscall_umount2(target, 0);
 }
@@ -1044,7 +1071,7 @@ int syscall_umount(char *target)
 /*
  * Handler for syscall stime().
  */
-int syscall_stime(long *buf)
+long syscall_stime(long *buf)
 {
     /*
      * NOTE: This function is deprecated. See 'man stime'.
@@ -1063,11 +1090,11 @@ int syscall_stime(long *buf)
  *
  * Returns -EINTR if the task is not terminated by a signal.
  */
-int syscall_pause(void)
+long syscall_pause(struct regs *r)
 {
     while(1)
     {
-        struct task_t *ct = cur_task;
+    	struct task_t *ct = (struct task_t *)this_core->cur_task;
         volatile sigset_t ocaught, ncaught;
         int signum;
         
@@ -1076,7 +1103,7 @@ int syscall_pause(void)
         ksigemptyset((sigset_t *)&ocaught);
         ksigorset((sigset_t *)&ocaught, (sigset_t *)&ocaught, 
                                                     &ct->signal_caught);
-        check_pending_signals(ct->regs);
+        check_pending_signals(r);
         //ksigemptyset(&ncaught);
         ksignotset((sigset_t *)&ncaught, (sigset_t *)&ocaught);
         ksigandset((sigset_t *)&ncaught, (sigset_t *)&ncaught, 
@@ -1105,29 +1132,28 @@ int syscall_pause(void)
 /*
  * Handler for syscall rmdir().
  */
-int syscall_rmdir(char *pathname)
+long syscall_rmdir(char *pathname)
 {
-    return vfs_rmdir(AT_FDCWD, pathname);
+    return vfs_rmdir(AT_FDCWD, pathname, 0);
 }
 
 
 /*
  * Handler for syscall times().
  */
-int syscall_times(struct tms *buf)
+long syscall_times(struct tms *buf)
 {
     struct tms buf2;
-    struct task_t *t = cur_task;
     
     if(!buf)
     {
         return ticks;
     }
-    
-    buf2.tms_utime = t->user_time;
-    buf2.tms_stime = t->sys_time;
-    buf2.tms_cutime = t->children_user_time;
-    buf2.tms_cstime = t->children_sys_time;
+
+    buf2.tms_utime = this_core->cur_task->user_time;
+    buf2.tms_stime = this_core->cur_task->sys_time;
+    buf2.tms_cutime = this_core->cur_task->children_user_time;
+    buf2.tms_cstime = this_core->cur_task->children_sys_time;
     COPY_TO_USER(buf, &buf2, sizeof(struct tms));
 
     return ticks;
@@ -1137,10 +1163,8 @@ int syscall_times(struct tms *buf)
 /*
  * Handler for syscall setheap().
  */
-int syscall_setheap(void *data_end)
+long syscall_setheap(void *data_end)
 {
-    struct task_t *ct = cur_task;
-    
     if((uintptr_t)data_end < 0x100000 || (uintptr_t)data_end >= USER_MEM_END)
     {
         /*
@@ -1158,7 +1182,7 @@ int syscall_setheap(void *data_end)
      * and memregion_containing() will not find it as it looks for an address
      * range between the given address and the address + PAGE_SIZE.
      */
-    struct memregion_t *memregion = memregion_containing(ct,
+    struct memregion_t *memregion = memregion_containing(this_core->cur_task,
                                         (PAGE_ALIGNED((virtual_addr)data_end) ?
                                          ((virtual_addr)data_end - PAGE_SIZE) :
                                           (virtual_addr)data_end));
@@ -1172,8 +1196,8 @@ int syscall_setheap(void *data_end)
         */
         return -EFAULT;
     }
-    
-    ct->end_data = (uintptr_t)data_end;
+
+    this_core->cur_task->end_data = (uintptr_t)data_end;
 
     return 0;
 }
@@ -1182,9 +1206,9 @@ int syscall_setheap(void *data_end)
 /*
  * Handler for syscall brk().
  */
-int syscall_brk(unsigned long incr, uintptr_t *res)
+long syscall_brk(long incr, volatile uintptr_t *res)
 {
-    struct task_t *t = cur_task;
+	struct task_t *t = (struct task_t *)this_core->cur_task;
     uintptr_t old_end_data = t->end_data;
     uintptr_t end_data_seg = t->end_data + incr;
 
@@ -1200,10 +1224,6 @@ int syscall_brk(unsigned long incr, uintptr_t *res)
                                             (PAGE_ALIGNED(t->end_data) ?
                                              (t->end_data - PAGE_SIZE) :
                                               t->end_data));
-
-    uintptr_t private_flag = (memregion &&
-                                (memregion->flags & MEMREGION_FLAG_PRIVATE)) ?
-                                                I86_PTE_PRIVATE : 0;
     
     /*
      * If the caller asked for memory (i.e. incr != 0), we try to allocate
@@ -1212,17 +1232,24 @@ int syscall_brk(unsigned long incr, uintptr_t *res)
      * brk address.
      */
 
-    if(incr && /* end_data_seg >= task_get_code_end(t) && */
-        end_data_seg < t->end_stack)
+    if(incr > 0)
     {
-        uintptr_t end = end_data_seg;
-        
         // if the new size is not page-aligned, make it so
-        end = align_up(end);
+        uintptr_t end = align_up(end_data_seg);
+
+        uintptr_t private_flag = (memregion &&
+                                (memregion->flags & MEMREGION_FLAG_PRIVATE)) ?
+                                                I86_PTE_PRIVATE : 0;
+
+        if(end_data_seg >= t->end_stack)
+        {
+            kpanic("syscall_brk: ENOMEM (1)\n");
+            return -ENOMEM;
+        }
 
         if(exceeds_rlimit(t, RLIMIT_DATA, (end - task_get_data_start(t))))
         {
-            //printk("syscall_brk: ENOMEM\n");
+            kpanic("syscall_brk: ENOMEM (2)\n");
             return -ENOMEM;
         }
         
@@ -1231,10 +1258,11 @@ int syscall_brk(unsigned long incr, uintptr_t *res)
         // brk address.
         uintptr_t i;
         int err = 0;
+        pt_entry *pt;
         
         for(i = align_down(t->end_data); i < end; i += PAGE_SIZE)
         {
-            pt_entry *pt = get_page_entry((void *)i);
+            pt = get_page_entry((void *)i);
             
             if(!pt)
             {
@@ -1244,7 +1272,7 @@ int syscall_brk(unsigned long incr, uintptr_t *res)
             
             if(!PTE_PRESENT(*pt))
             {
-                pt = get_page_entry((void *)i);
+                //pt = get_page_entry((void *)i);
 
                 if(!vmmngr_alloc_page(pt, PTE_FLAGS_PWU | private_flag))
                 {
@@ -1276,17 +1304,32 @@ int syscall_brk(unsigned long incr, uintptr_t *res)
         else
         {
             t->end_data = end_data_seg;
-            
-            if(memregion && end > 
-                        (memregion->addr + (memregion->size * PAGE_SIZE)))
+
+            if(memregion)
             {
                 memregion->size = (end - memregion->addr) / PAGE_SIZE;
             }
         }
     }
-    else if(incr)
+    else if(incr < 0)
     {
-        return -ENOMEM;
+        if(end_data_seg < task_get_data_start(t))
+        {
+            kpanic("syscall_brk: ENOMEM (3)\n");
+            return -ENOMEM;
+        }
+
+        // if the new size is not page-aligned, make it so
+        uintptr_t start = align_up(end_data_seg);
+        uintptr_t end = align_up(t->end_data);
+
+        vmmngr_free_pages(start, end - start);
+        t->end_data = end_data_seg;
+
+        if(memregion)
+        {
+            memregion->size = (start - memregion->addr) / PAGE_SIZE;
+        }
     }
     
     COPY_VAL_TO_USER(res, &old_end_data);
@@ -1297,7 +1340,7 @@ int syscall_brk(unsigned long incr, uintptr_t *res)
 /*
  * Handler for syscall uname().
  */
-int syscall_uname(struct utsname *name)
+long syscall_uname(struct utsname *name)
 {
     if(!name)
     {
@@ -1313,17 +1356,15 @@ int syscall_uname(struct utsname *name)
 /*
  * Handler for syscall umask().
  */
-int syscall_umask(mode_t mask)
+long syscall_umask(mode_t mask)
 {
-    struct task_t *t = cur_task;
-
-    if(!t || !t->fs)
+    if(!this_core->cur_task || !this_core->cur_task->fs)
     {
         return 0;
     }
-    
-    mode_t old = t->fs->umask;
-    t->fs->umask = mask & 0777;
+
+    mode_t old = this_core->cur_task->fs->umask;
+    this_core->cur_task->fs->umask = mask & 0777;
 
     return old;
 }
@@ -1332,16 +1373,14 @@ int syscall_umask(mode_t mask)
 /*
  * Handler for syscall setdomainname().
  */
-int syscall_setdomainname(char *name, size_t len)
+long syscall_setdomainname(char *name, size_t len)
 {
-    struct task_t *ct = cur_task;
-
 	if(!name || !*name || len >= _UTSNAME_LENGTH)
 	{
 	    return -EINVAL;
 	}
 
-    if(!suser(ct))
+    if(!suser(this_core->cur_task))
     {
         return -EPERM;
     }
@@ -1356,16 +1395,14 @@ int syscall_setdomainname(char *name, size_t len)
 /*
  * Handler for syscall sethostname().
  */
-int syscall_sethostname(char *name, size_t len)
+long syscall_sethostname(char *name, size_t len)
 {
-    struct task_t *ct = cur_task;
-
 	if(!name || !*name || len >= _UTSNAME_LENGTH)
 	{
 	    return -EINVAL;
 	}
 
-    if(!suser(ct))
+    if(!suser(this_core->cur_task))
     {
         return -EPERM;
     }
@@ -1380,9 +1417,9 @@ int syscall_sethostname(char *name, size_t len)
 /*
  * Handler for syscall gettimeofday().
  */
-int syscall_gettimeofday(struct timeval *tv, struct timezone *tz)
+long syscall_gettimeofday(struct timeval *tv, struct timezone *tz)
 {
-    int res;
+    long res;
     struct timespec tstmp;
     struct timeval tvtmp;
 
@@ -1401,22 +1438,24 @@ int syscall_gettimeofday(struct timeval *tv, struct timezone *tz)
     {
         return res;
     }
-    
+
     tvtmp.tv_sec = tstmp.tv_sec;
     tvtmp.tv_usec = tstmp.tv_nsec / NSEC_PER_USEC;
 
-	return copy_to_user(tv, &tvtmp, sizeof(struct timeval));
+	//return copy_to_user(tv, &tvtmp, sizeof(struct timeval));
+    COPY_VAL_TO_USER(&tv->tv_sec, &tvtmp.tv_sec);
+    COPY_VAL_TO_USER(&tv->tv_usec, &tvtmp.tv_usec);
+    return 0;
 }
 
 
 /*
  * Handler for syscall settimeofday().
  */
-int syscall_settimeofday(struct timeval *tv, struct timezone *tz)
+long syscall_settimeofday(struct timeval *tv, struct timezone *tz)
 {
     struct timeval tmp;
     struct timespec tp;
-    struct task_t *ct = cur_task;
     
     if(!tv)
     {
@@ -1428,8 +1467,8 @@ int syscall_settimeofday(struct timeval *tv, struct timezone *tz)
         // don't support timezones for now
         return -EINVAL;
     }
-    
-    if(!suser(ct))
+
+    if(!suser(this_core->cur_task))
     {
         return -EPERM;
     }
@@ -1451,13 +1490,12 @@ int syscall_settimeofday(struct timeval *tv, struct timezone *tz)
 /*
  * Handler for syscall getdents().
  */
-int syscall_getdents(int fd, void *dp, int count)
+long syscall_getdents(int fd, void *dp, int count)
 {
 	struct file_t *f;
     struct fs_node_t *node;
-    struct task_t *t = cur_task;
 
-    if(fdnode(fd, t, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -1474,13 +1512,12 @@ int syscall_getdents(int fd, void *dp, int count)
 /*
  * Handler for syscall getcwd().
  */
-int syscall_getcwd(char *buf, size_t sz)
+long syscall_getcwd(char *buf, size_t sz)
 {
-    int res;
+    long res;
     size_t len;
     char *cwd;
     struct fs_node_t *node;
-    struct task_t *ct = cur_task;
 
     if(!buf)
     {
@@ -1492,12 +1529,14 @@ int syscall_getcwd(char *buf, size_t sz)
         return -EINVAL;
     }
 
-    if(!ct->fs || !ct->fs->cwd || ct->fs->cwd->refs == 0)
+    if(!this_core->cur_task->fs || 
+       !this_core->cur_task->fs->cwd ||
+       this_core->cur_task->fs->cwd->refs == 0)
     {
         return -ENOENT;
     }
 
-    node = ct->fs->cwd;
+    node = this_core->cur_task->fs->cwd;
 
     if((res = getpath(node, &cwd)) != 0)
     {
@@ -1525,8 +1564,8 @@ int syscall_getcwd(char *buf, size_t sz)
 /*
  * Handler for syscall getrandom().
  */
-int syscall_getrandom(void *buf, size_t buflen, unsigned int flags, 
-                      ssize_t *copied)
+long syscall_getrandom(void *buf, size_t buflen, unsigned int flags, 
+                       ssize_t *copied)
 {
     void *tmp;
     ssize_t res;
@@ -1537,8 +1576,10 @@ int syscall_getrandom(void *buf, size_t buflen, unsigned int flags,
         return -EFAULT;
     }
     
-    // We don't currently use this flag
-    if(flags & ~GRND_RANDOM)
+    // We currently support GRND_RANDOM only.
+    // We check for GRND_NONBLOCK although we don't actually block if no
+    // random numbers are available due to our current implementation.
+    if(flags & ~(GRND_RANDOM | GRND_NONBLOCK))
     {
         return -EINVAL;
     }

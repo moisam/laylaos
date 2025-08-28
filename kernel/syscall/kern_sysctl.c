@@ -1,4 +1,6 @@
 /*-
+ * Copyright (c) 2021, 2022, 2023, 2024, 2025
+ *    Mohammed Isam [mohammed_isam1984@yahoo.com]
  * Copyright (c) 1982, 1986, 1989, 1993
  *    The Regents of the University of California.  All rights reserved.
  *
@@ -43,9 +45,7 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/param.h>
-//#include <sys/systm.h>
 #include <sys/file.h>
-//#include <sys/unistd.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/sysctl.h>
@@ -57,9 +57,6 @@
 
 sysctlfn kern_sysctl;
 sysctlfn hw_sysctl;
-#ifdef DEBUG
-sysctlfn debug_sysctl;
-#endif
 
 /*
 extern sysctlfn vm_sysctl;
@@ -68,7 +65,7 @@ extern sysctlfn net_sysctl;
 extern sysctlfn cpu_sysctl;
 */
 
-struct kernel_mutex_t sysctl_lock = { 0, };
+volatile struct kernel_mutex_t sysctl_lock = { 0, };
 
 
 int syscall_sysctl(struct __sysctl_args *__args)
@@ -78,7 +75,6 @@ int syscall_sysctl(struct __sysctl_args *__args)
     sysctlfn *fn = NULL;
     int name[CTL_MAXNAME];
     struct __sysctl_args args;
-    struct task_t *ct = cur_task;
     
     if(!__args)
     {
@@ -90,7 +86,7 @@ int syscall_sysctl(struct __sysctl_args *__args)
         return -EINVAL;
     }
 
-    if(args.newval != NULL && !suser(ct))
+    if(args.newval != NULL && !suser(this_core->cur_task))
     {
         return -EPERM;
     }
@@ -136,12 +132,6 @@ int syscall_sysctl(struct __sysctl_args *__args)
             break;
         */
 
-#ifdef DEBUG
-        case CTL_DEBUG:
-            fn = debug_sysctl;
-            break;
-#endif
-
         default:
             return -EOPNOTSUPP;
     }
@@ -180,21 +170,13 @@ int syscall_sysctl(struct __sysctl_args *__args)
 
 
 /*
- * Attributes stored in the kernel.
- */
-long hostid;
-//int securelevel;
-
-/*
  * kernel related system variables.
  */
 int kern_sysctl(int *name, int namelen, void *oldp, size_t *oldlenp, 
                 void *newp, size_t newlen)
 {
-    int error, inthostid;
-    
     /* all sysctl names at this level are terminal */
-    if (namelen != 1 && !(name[0] == KERN_PROC || name[0] == KERN_PROF))
+    if(namelen != 1)
     {
         return -ENOTDIR;        /* overloaded */
     }
@@ -213,9 +195,6 @@ int kern_sysctl(int *name, int namelen, void *oldp, size_t *oldlenp,
         case KERN_VERSION:
             return (sysctl_rdstring(oldp, oldlenp, newp, version));
 
-        //case KERN_MAXVNODES:
-        //    return(sysctl_int(oldp, oldlenp, newp, newlen, &desiredvnodes));
-
         case KERN_MAXPROC:
             return (sysctl_rdint(oldp, oldlenp, newp, NR_TASKS));
 
@@ -225,29 +204,9 @@ int kern_sysctl(int *name, int namelen, void *oldp, size_t *oldlenp,
         case KERN_ARGMAX:
             return (sysctl_rdint(oldp, oldlenp, newp, ARG_MAX));
 
-        /*
-        case KERN_SECURELVL:
-            level = securelevel;
-            if ((error = sysctl_int(oldp, oldlenp, newp, newlen, &level)) ||
-                newp == NULL)
-                return (error);
-            if (level < securelevel && p->p_pid != 1)
-                return (EPERM);
-            securelevel = level;
-            return (0);
-        */
-
         case KERN_HOSTNAME:
-            error = sysctl_string(oldp, oldlenp, newp, newlen,
+            return sysctl_string(oldp, oldlenp, newp, newlen,
                 myname.nodename, _UTSNAME_LENGTH);
-        
-            return (error);
-
-        case KERN_HOSTID:
-            inthostid = hostid;  /* XXX assumes sizeof long <= sizeof int */
-            error =  sysctl_int(oldp, oldlenp, newp, newlen, &inthostid);
-            hostid = inthostid;
-            return (error);
 
         case KERN_BOOTTIME:
             {
@@ -260,33 +219,8 @@ int kern_sysctl(int *name, int namelen, void *oldp, size_t *oldlenp,
                                         sizeof(struct timeval)));
             }
 
-
-        /*
-        case KERN_CLOCKRATE:
-            return (sysctl_clockrate(oldp, oldlenp));
-
-        case KERN_BOOTTIME:
-            return (sysctl_rdstruct(oldp, oldlenp, newp, &boottime,
-                sizeof(struct timeval)));
-
-        case KERN_VNODE:
-            return (sysctl_vnode(oldp, oldlenp));
-
-        case KERN_PROC:
-            return (sysctl_doproc(name + 1, namelen - 1, oldp, oldlenp));
-
-        case KERN_FILE:
-            return (sysctl_file(oldp, oldlenp));
-
-#ifdef GPROF
-        case KERN_PROF:
-            return (sysctl_doprof(name + 1, namelen - 1, oldp, oldlenp,
-                newp, newlen));
-#endif
-
         case KERN_POSIX1:
             return (sysctl_rdint(oldp, oldlenp, newp, _POSIX_VERSION));
-    */
 
         case KERN_NGROUPS:
             return (sysctl_rdint(oldp, oldlenp, newp, NGROUPS_MAX));
@@ -344,11 +278,12 @@ int hw_sysctl(int *name, int namelen, void *oldp, size_t *oldlenp,
             return (sysctl_rdint(oldp, oldlenp, newp,
                                 (pmmngr_get_block_count() * PAGE_SIZE)));
 
-        /*
         case HW_USERMEM:
             return (sysctl_rdint(oldp, oldlenp, newp,
-                ctob(physmem - cnt.v_wire_count)));
-        */
+                         ((pmmngr_get_block_count() - 
+                            memregion_kernel_pagecount((struct task_t *)
+                                                        this_core->cur_task)) *
+                                        PAGE_SIZE)));
 
         case HW_PAGESIZE:
             return (sysctl_rdint(oldp, oldlenp, newp, PAGE_SIZE));
@@ -359,60 +294,6 @@ int hw_sysctl(int *name, int namelen, void *oldp, size_t *oldlenp,
 
     /* NOTREACHED */
 }
-
-
-#ifdef DEBUG
-
-/*
- * Debugging related system variables.
- */
-struct ctldebug debug0, debug1, debug2, debug3, debug4;
-struct ctldebug debug5, debug6, debug7, debug8, debug9;
-struct ctldebug debug10, debug11, debug12, debug13, debug14;
-struct ctldebug debug15, debug16, debug17, debug18, debug19;
-
-static struct ctldebug *debugvars[CTL_DEBUG_MAXID] =
-{
-    &debug0, &debug1, &debug2, &debug3, &debug4,
-    &debug5, &debug6, &debug7, &debug8, &debug9,
-    &debug10, &debug11, &debug12, &debug13, &debug14,
-    &debug15, &debug16, &debug17, &debug18, &debug19,
-};
-
-int debug_sysctl(int *name, int namelen, void *oldp, size_t *oldlenp, 
-                 void *newp, size_t newlen, struct proc *p)
-{
-    struct ctldebug *cdp;
-
-    /* all sysctl names at this level are name and field */
-    if(namelen != 2)
-    {
-        return -ENOTDIR;        /* overloaded */
-    }
-    
-    cdp = debugvars[name[0]];
-    
-    if(cdp->debugname == 0)
-    {
-        return -EOPNOTSUPP;
-    }
-    
-    switch(name[1])
-    {
-        case CTL_DEBUG_NAME:
-            return (sysctl_rdstring(oldp, oldlenp, newp, cdp->debugname));
-
-        case CTL_DEBUG_VALUE:
-            return (sysctl_int(oldp, oldlenp, newp, newlen, cdp->debugvar));
-
-        default:
-            return -EOPNOTSUPP;
-    }
-
-    /* NOTREACHED */
-}
-
-#endif /* DEBUG */
 
 
 /*
@@ -605,274 +486,5 @@ int sysctl_rdstruct(void *oldp, size_t *oldlenp, void *newp, void *sp, int len)
     }
     
     return error;
-}
-
-
-#if 0
-
-/*
- * Get file structures.
- */
-int sysctl_file(char *where, size_t *sizep)
-{
-    //UNUSED(where);
-    //UNUSED(sizep);
-    
-    int buflen, error;
-    struct file *fp;
-    char *start = where;
-
-    buflen = *sizep;
-    if (where == NULL) {
-        /*
-         * overestimate by 10 files
-         */
-        *sizep = sizeof(filehead) + (nfiles + 10) * sizeof(struct file);
-        return (0);
-    }
-
-    /*
-     * first copyout filehead
-     */
-    if (buflen < sizeof(filehead)) {
-        *sizep = 0;
-        return (0);
-    }
-    if (error = copy_to_user(where, &filehead, sizeof(filehead)))
-    //if (error = copyout((caddr_t)&filehead, where, sizeof(filehead)))
-        return (error);
-    buflen -= sizeof(filehead);
-    where += sizeof(filehead);
-
-    /*
-     * followed by an array of file structures
-     */
-    for (fp = filehead; fp != NULL; fp = fp->f_filef) {
-        if (buflen < sizeof(struct file)) {
-            *sizep = where - start;
-            return (ENOMEM);
-        }
-        if (error = copy_to_user(where, fp, sizeof (struct file)))
-        //if (error = copyout((caddr_t)fp, where, sizeof (struct file)))
-            return (error);
-        buflen -= sizeof(struct file);
-        where += sizeof(struct file);
-    }
-    *sizep = where - start;
-
-    return (0);
-}
-
-#endif
-
-
-/*
- * try over estimating by 5 procs
- */
-#define KERN_PROCSLOP    (5 * sizeof (struct kinfo_proc))
-
-int sysctl_doproc(int *name, u_int namelen, char *where, size_t *sizep)
-{
-    register struct kinfo_proc *dp = (struct kinfo_proc *)where;
-    register size_t needed = 0;
-    int buflen = where != NULL ? *sizep : 0;
-    struct eproc eproc;
-    int error = 0;
-
-    if(namelen != 2 && !(namelen == 1 && name[0] == KERN_PROC_ALL))
-    {
-        return -EINVAL;
-    }
-    
-    elevated_priority_lock(&task_table_lock);
-
-    for_each_taskptr(t)
-    {
-        volatile struct task_t tmpt;
-
-        /*
-         * Skip embryonic processes.
-         */
-        if((*t)->state == TASK_IDLE)
-        {
-            continue;
-        }
-        
-        /*
-         * TODO - make more efficient (see notes below).
-         * do by session.
-         */
-        switch (name[0])
-        {
-            case KERN_PROC_PID:
-                /* could do this with just a lookup */
-                if((*t)->pid != (pid_t)name[1])
-                {
-                    continue;
-                }
-                break;
-
-            case KERN_PROC_PGRP:
-                /* could do this by traversing pgrp */
-                if((*t)->pgid != (pid_t)name[1])
-                {
-                    continue;
-                }
-                break;
-
-            case KERN_PROC_TTY:
-                if((*t)->ctty <= 0 ||
-                   (*t)->ctty != (dev_t)name[1])
-                {
-                    continue;
-                }
-                break;
-
-            case KERN_PROC_UID:
-                if((*t)->euid != (uid_t)name[1])
-                {
-                    continue;
-                }
-                break;
-
-            case KERN_PROC_RUID:
-                if((*t)->uid != (uid_t)name[1])
-                {
-                    continue;
-                }
-                break;
-        }
-
-        /*
-         * Make a local copy so we can release the master task table's lock
-         * for someone else who might need to access the table. We also don't
-         * want to SIGFAULT while copying to userspace and die holding the
-         * table's lock.
-         */
-        memcpy((void *)&tmpt, *t, sizeof(struct task_t));
-        elevated_priority_unlock(&task_table_lock);
-
-        if(buflen >= (int)sizeof(struct kinfo_proc))
-        {
-            fill_eproc((struct task_t *)&tmpt, &eproc);
-
-            if((error = copy_to_user(&dp->kp_proc, (void *)&tmpt, 
-                                     sizeof(struct task_t))))
-            {
-                return error;
-            }
-
-            if((error = copy_to_user(&dp->kp_eproc, &eproc, sizeof(eproc))))
-            {
-                return error;
-            }
-            
-            dp++;
-            buflen -= sizeof(struct kinfo_proc);
-        }
-
-        needed += sizeof(struct kinfo_proc);
-
-        elevated_priority_relock(&task_table_lock);
-    }
-
-    elevated_priority_unlock(&task_table_lock);
-
-    if(where != NULL)
-    {
-        *sizep = (caddr_t)dp - where;
-
-        if(needed > *sizep)
-        {
-            return -ENOMEM;
-        }
-    }
-    else
-    {
-        needed += KERN_PROCSLOP;
-        *sizep = needed;
-    }
-
-    return 0;
-}
-
-/*
- * Fill in an eproc structure for the specified process.
- */
-void fill_eproc(struct task_t *p, struct eproc *ep)
-{
-    int i;
-
-    ep->e_paddr = p;
-    ep->e_sess = 0;
-
-    /*
-     * NOTE: this is not filled in properly. See sys/ucred.h.
-     *
-     * TODO: this!
-     */
-
-    ep->e_ucred.cr_ref = 1;
-    ep->e_ucred.cr_uid = p->uid;
-    ep->e_ucred.cr_ngroups = 0;
-    
-    for(i = 0; i < NGROUPS_MAX; i++)
-    {
-        ep->e_ucred.cr_groups[i] = p->extra_groups[i];
-        
-        if(p->extra_groups[i] != (gid_t)-1)
-        {
-            ep->e_ucred.cr_ngroups++;
-        }
-    }
-
-    ep->e_pcred.pc_ucred = 0;
-    ep->e_pcred.p_ruid = p->uid;
-    ep->e_pcred.p_svuid = p->ssuid;
-    ep->e_pcred.p_rgid = p->gid;
-    ep->e_pcred.p_svgid = p->ssgid;
-    ep->e_pcred.p_refcnt = 1;
-
-
-    ep->e_ppid = p->parent->pid;
-    ep->e_pgid = p->pgid;
-    if(group_leader(p))
-        ep->e_flag |= EPROC_SLEADER;
-
-
-#if 0
-    if (p->p_stat == SIDL || p->p_stat == SZOMB) {
-        ep->e_vm.vm_rssize = 0;
-        ep->e_vm.vm_tsize = 0;
-        ep->e_vm.vm_dsize = 0;
-        ep->e_vm.vm_ssize = 0;
-#ifndef sparc
-        /* ep->e_vm.vm_pmap = XXX; */
-#endif
-    } else {
-        register struct vmspace *vm = p->p_vmspace;
-
-        ep->e_vm.vm_rssize = vm->vm_rssize;
-        ep->e_vm.vm_tsize = vm->vm_tsize;
-        ep->e_vm.vm_dsize = vm->vm_dsize;
-        ep->e_vm.vm_ssize = vm->vm_ssize;
-#ifndef sparc
-        ep->e_vm.vm_pmap = vm->vm_pmap;
-#endif
-    }
-    ep->e_jobc = p->p_pgrp->pg_jobc;
-    if ((p->p_flag & P_CONTROLT) &&
-         (tp = ep->e_sess->s_ttyp)) {
-        ep->e_tdev = tp->t_dev;
-        ep->e_tpgid = tp->t_pgrp ? tp->t_pgrp->pg_id : NO_PID;
-        ep->e_tsess = tp->t_session;
-    } else
-        ep->e_tdev = NODEV;
-    ep->e_flag = ep->e_sess->s_ttyvp ? EPROC_CTTY : 0;
-    if (p->p_wmesg)
-        strncpy(ep->e_wmesg, p->p_wmesg, WMESGLEN);
-    ep->e_xsize = ep->e_xrssize = 0;
-    ep->e_xccount = ep->e_xswrss = 0;
-#endif
 }
 

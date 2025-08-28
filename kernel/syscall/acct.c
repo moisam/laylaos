@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: acct.c
  *    This file is part of LaylaOS.
@@ -37,7 +37,7 @@
 
 static struct fs_node_t *acctnode = NULL;
 static struct file_t acctfile;
-static struct kernel_mutex_t acctlock = { 0, };
+static volatile struct kernel_mutex_t acctlock = { 0, };
 
 /*
  * Handler for syscall acct().
@@ -50,14 +50,13 @@ static struct kernel_mutex_t acctlock = { 0, };
  *
  * See: https://man7.org/linux/man-pages/man2/acct.2.html
  */
-int syscall_acct(char *filename)
+long syscall_acct(char *filename)
 {
-    int res;
+    long res;
     static int flags = O_RDWR | O_APPEND;
-    struct task_t *ct = cur_task;
     struct fs_node_t *node;
-    
-    if(!suser(ct))
+
+    if(!suser(this_core->cur_task))
     {
         return -EPERM;
     }

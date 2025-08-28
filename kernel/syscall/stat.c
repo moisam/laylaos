@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: stat.c
  *    This file is part of LaylaOS.
@@ -44,7 +44,7 @@
 #include <fs/sockfs.h>
 
 
-static int copy_stat(struct fs_node_t *node, struct stat *statbuf)
+static long copy_stat(struct fs_node_t *node, struct stat *statbuf)
 {
     struct mount_info_t *dinfo;
 	struct stat tmp;
@@ -62,8 +62,11 @@ static int copy_stat(struct fs_node_t *node, struct stat *statbuf)
 	tmp.st_atim.tv_sec = node->atime;
 	tmp.st_mtim.tv_sec = node->mtime;
 	tmp.st_ctim.tv_sec = node->ctime;
+	tmp.st_atim.tv_nsec = 0;
+	tmp.st_mtim.tv_nsec = 0;
+	tmp.st_ctim.tv_nsec = 0;
 	tmp.st_blksize = 0;
-	
+
     if((dinfo = get_mount_info(node->dev)))
     {
     	tmp.st_blksize = dinfo->block_size;
@@ -85,11 +88,11 @@ static int copy_stat(struct fs_node_t *node, struct stat *statbuf)
 }
 
 
-static int do_stat(char *filename, int dirfd, struct stat *statbuf, 
-                   int followlink)
+static long do_stat(char *filename, int dirfd, struct stat *statbuf, 
+                    int followlink)
 {
     struct fs_node_t *node = NULL;
-	int res;
+	long res;
 	int open_flags = OPEN_USER_CALLER | 
 	                 (followlink ? OPEN_FOLLOW_SYMLINK : 
 	                               OPEN_NOFOLLOW_SYMLINK);
@@ -126,7 +129,7 @@ static int do_stat(char *filename, int dirfd, struct stat *statbuf,
 /*
  * Handler for syscall stat().
  */
-int syscall_stat(char *filename, struct stat *statbuf)
+long syscall_stat(char *filename, struct stat *statbuf)
 {
     KDEBUG("syscall_stat: filename %s\n", filename);
 
@@ -137,7 +140,7 @@ int syscall_stat(char *filename, struct stat *statbuf)
 /*
  * Handler for syscall lstat().
  */
-int syscall_lstat(char *filename, struct stat *statbuf)
+long syscall_lstat(char *filename, struct stat *statbuf)
 {
     KDEBUG("syscall_lstat: filename %s\n", filename);
 
@@ -152,7 +155,7 @@ int syscall_lstat(char *filename, struct stat *statbuf)
 /*
  * Handler for syscall fstatat().
  */
-int syscall_fstatat(int fd, char *filename, struct stat *statbuf, int flags)
+long syscall_fstatat(int fd, char *filename, struct stat *statbuf, int flags)
 {
     KDEBUG("syscall_fstatat: filename %s\n", filename);
 
@@ -169,21 +172,20 @@ int syscall_fstatat(int fd, char *filename, struct stat *statbuf, int flags)
 /*
  * Handler for syscall fstat().
  */
-int syscall_fstat(int fd, struct stat *statbuf)
+long syscall_fstat(int fd, struct stat *statbuf)
 {
     KDEBUG("syscall_fstat: fd %d\n", fd);
     
 	struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    int res;
-    struct task_t *ct = cur_task;
+    long res;
 
     if(!statbuf)
     {
         return -EFAULT;
     }
 
-    if(fdnode(fd, ct, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }

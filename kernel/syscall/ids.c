@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ids.c
  *    This file is part of LaylaOS.
@@ -41,16 +41,14 @@
 /*
  * Handler for syscall setgid().
  */
-int syscall_setgid(gid_t newgid)
+long syscall_setgid(gid_t newgid)
 {
-    struct task_t *ct = cur_task;
-
-    if(!suser(ct))
+    if(!suser(this_core->cur_task))
     {
         // normal user
-        if(gid_perm(newgid, 0) || ct->ssgid == newgid)
+        if(gid_perm(newgid, 0) || this_core->cur_task->ssgid == newgid)
         {
-            setid(ct, egid, newgid);
+            setid(this_core->cur_task, egid, newgid);
         }
         else
         {
@@ -60,7 +58,7 @@ int syscall_setgid(gid_t newgid)
     else
     {
         // root user
-        setrootid(ct, gid, newgid);
+        setrootid(this_core->cur_task, gid, newgid);
     }
     
     return 0;
@@ -70,36 +68,33 @@ int syscall_setgid(gid_t newgid)
 /*
  * Handler for syscall getgid().
  */
-int syscall_getgid(void)
+long syscall_getgid(void)
 {
-    struct task_t *ct = cur_task;
-    return (int)ct->gid;
+    return (long)this_core->cur_task->gid;
 }
 
 
 /*
  * Handler for syscall getegid().
  */
-int syscall_getegid(void)
+long syscall_getegid(void)
 {
-    struct task_t *ct = cur_task;
-    return (int)ct->egid;
+    return (long)this_core->cur_task->egid;
 }
 
 
 /*
  * Handler for syscall setuid().
  */
-int syscall_setuid(uid_t newuid)
+long syscall_setuid(uid_t newuid)
 {
-    struct task_t *ct = cur_task;
-
-    if(!suser(ct))
+    if(!suser(this_core->cur_task))
     {
         // regular user
-        if(newuid == ct->uid || ct->ssuid == ct->uid)
+        if(newuid == this_core->cur_task->uid || 
+           this_core->cur_task->ssuid == this_core->cur_task->uid)
         {
-            setid(ct, euid, newuid);
+            setid(this_core->cur_task, euid, newuid);
         }
         else
         {
@@ -109,7 +104,7 @@ int syscall_setuid(uid_t newuid)
     else
     {
         // root can do whatever
-        setrootid(ct, uid, newuid);
+        setrootid(this_core->cur_task, uid, newuid);
     }
 
     return 0;
@@ -119,29 +114,26 @@ int syscall_setuid(uid_t newuid)
 /*
  * Handler for syscall getuid().
  */
-int syscall_getuid(void)
+long syscall_getuid(void)
 {
-    struct task_t *ct = cur_task;
-    return (int)ct->uid;
+    return (long)this_core->cur_task->uid;
 }
 
 
 /*
  * Handler for syscall geteuid().
  */
-int syscall_geteuid(void)
+long syscall_geteuid(void)
 {
-    struct task_t *ct = cur_task;
-    return (int)ct->euid;
+    return (long)this_core->cur_task->euid;
 }
 
 
 /*
  * Handler for syscall setpgid().
  */
-int syscall_setpgid(pid_t pid, pid_t pgid)
+long syscall_setpgid(pid_t pid, pid_t pgid)
 {
-    struct task_t *ct = cur_task;
     int found = 0;
 
     if(pgid < 0)
@@ -151,7 +143,7 @@ int syscall_setpgid(pid_t pid, pid_t pgid)
 
     if(pid == 0)
     {
-        pid = ct->pid;
+        pid = this_core->cur_task->pid;
     }
     
     if(pgid == 0)
@@ -187,7 +179,7 @@ int syscall_setpgid(pid_t pid, pid_t pgid)
             
             //printk("syscall_setpgid: sid1 %d, sid2 %d\n", (*t)->sid, ct->sid);
             
-            if((*t)->sid != ct->sid)
+            if((*t)->sid != this_core->cur_task->sid)
             {
                 elevated_priority_unlock(&task_table_lock);
                 return -EPERM;
@@ -209,16 +201,17 @@ int syscall_setpgid(pid_t pid, pid_t pgid)
 /*
  * Handler for syscall getpgid().
  */
-int syscall_getpgid(pid_t pid)
+long syscall_getpgid(pid_t pid)
 {
-    struct task_t *task = pid ? get_task_by_id(pid) : cur_task;
-    
+    volatile struct task_t *task = pid ? get_task_by_id(pid) : 
+                                         this_core->cur_task;
+
     if(!task)
     {
         return -ESRCH;
     }
     
-    return (int)task->pgid;
+    return (long)task->pgid;
 }
 
 
@@ -233,40 +226,40 @@ int syscall_setpgrp(pid_t pid, pid_t pgid)
 /*
  * Handler for syscall getpgrp().
  */
-int syscall_getpgrp(void)
+long syscall_getpgrp(void)
 {
-    struct task_t *ct = cur_task;
-    return (int)ct->pgid;
+    return (long)this_core->cur_task->pgid;
 }
 
 
 /*
  * Handler for syscall getpid().
  */
-int syscall_getpid(void)
+long syscall_getpid(void)
 {
-    struct task_t *ct = cur_task;
-    return ct->threads ? ct->threads->tgid : ct->pid;
+    return this_core->cur_task->threads ? 
+                this_core->cur_task->threads->tgid :
+                this_core->cur_task->pid;
 }
 
 
 /*
  * Handler for syscall getppid().
  */
-int syscall_getppid(void)
+long syscall_getppid(void)
 {
-    struct task_t *ct = cur_task;
-    return ct->parent ? ct->parent->pid : 1;
+    return this_core->cur_task->parent ? this_core->cur_task->parent->pid : 1;
 }
 
 
 /*
  * Handler for syscall getsid().
  */
-int syscall_getsid(pid_t pid)
+long syscall_getsid(pid_t pid)
 {
-    struct task_t *task = pid ? get_task_by_id(pid) : cur_task;
-    
+    volatile struct task_t *task = pid ? get_task_by_id(pid) : 
+                                         this_core->cur_task;
+
     if(!task)
     {
         return -ESRCH;
@@ -279,9 +272,9 @@ int syscall_getsid(pid_t pid)
 /*
  * Handler for syscall setsid().
  */
-int syscall_setsid(void)
+long syscall_setsid(void)
 {
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
     elevated_priority_lock(&task_table_lock);
 
@@ -316,9 +309,9 @@ int syscall_setsid(void)
  *
  * See: https://man7.org/linux/man-pages/man2/setreuid.2.html
  */
-int syscall_setreuid(uid_t newruid, uid_t neweuid)
+long syscall_setreuid(uid_t newruid, uid_t neweuid)
 {
-    struct task_t *t = cur_task;
+	struct task_t *t = (struct task_t *)this_core->cur_task;
     uid_t olduid = t->uid;
     
     if(newruid != (uid_t)-1)
@@ -360,9 +353,9 @@ int syscall_setreuid(uid_t newruid, uid_t neweuid)
 }
 
 
-int syscall_setregid(gid_t newrgid, gid_t newegid)
+long syscall_setregid(gid_t newrgid, gid_t newegid)
 {
-    struct task_t *t = cur_task;
+	struct task_t *t = (struct task_t *)this_core->cur_task;
     gid_t oldgid = t->gid;
     
     if(newrgid != (gid_t)-1)
@@ -416,9 +409,9 @@ int syscall_setregid(gid_t newrgid, gid_t newegid)
  *
  * See: https://man7.org/linux/man-pages/man2/setresuid.2.html
  */
-int syscall_setresuid(uid_t newruid, uid_t neweuid, uid_t newsuid)
+long syscall_setresuid(uid_t newruid, uid_t neweuid, uid_t newsuid)
 {
-    struct task_t *t = cur_task;
+	struct task_t *t = (struct task_t *)this_core->cur_task;
     
     if(newruid != (uid_t)-1)
     {
@@ -442,9 +435,9 @@ int syscall_setresuid(uid_t newruid, uid_t neweuid, uid_t newsuid)
 }
 
 
-int syscall_setresgid(gid_t newrgid, gid_t newegid, gid_t newsgid)
+long syscall_setresgid(gid_t newrgid, gid_t newegid, gid_t newsgid)
 {
-    struct task_t *t = cur_task;
+	struct task_t *t = (struct task_t *)this_core->cur_task;
     
     if(newrgid != (gid_t)-1)
     {
@@ -474,9 +467,9 @@ int syscall_setresgid(gid_t newrgid, gid_t newegid, gid_t newsgid)
  *
  * See: https://man7.org/linux/man-pages/man2/getresuid.2.html
  */
-int syscall_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid)
+long syscall_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid)
 {
-    struct task_t *t = cur_task;
+	struct task_t *t = (struct task_t *)this_core->cur_task;
     
     if(ruid)
     {
@@ -497,10 +490,10 @@ int syscall_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid)
 }
 
 
-int syscall_getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid)
+long syscall_getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid)
 {
-    struct task_t *t = cur_task;
-    
+	struct task_t *t = (struct task_t *)this_core->cur_task;
+
     if(rgid)
     {
         COPY_TO_USER(rgid, &t->gid, sizeof(gid_t));

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: pipe.c
  *    This file is part of LaylaOS.
@@ -39,9 +39,8 @@
 /*
  * Handler for syscall pipe2().
  */
-int syscall_pipe2(int *fildes, int flags)
+long syscall_pipe2(int *fildes, int flags)
 {
-    struct task_t *t = cur_task;
     struct fs_node_t *node;
     struct file_t *f[2];
     int fd[2];
@@ -60,7 +59,8 @@ int syscall_pipe2(int *fildes, int flags)
         if(ftab[i].refs == 0)
         {
             f[j++] = &ftab[i];
-            ftab[i].refs++;
+            //ftab[i].refs++;
+            __sync_fetch_and_add(&(ftab[i].refs), 1);
         }
     	kernel_mutex_unlock(&ftab[i].lock);
     }
@@ -80,17 +80,17 @@ int syscall_pipe2(int *fildes, int flags)
     // try to find 2 fds in the task's file table
     for(i = 0, j = 0; j < 2 && i < NR_OPEN; i++)
     {
-        if(t->ofiles->ofile[i] == NULL)
+        if(this_core->cur_task->ofiles->ofile[i] == NULL)
         {
             fd[j] = i;
-            t->ofiles->ofile[i] = f[j++];
+            this_core->cur_task->ofiles->ofile[i] = f[j++];
         }
     }
     
     // found only 1 - cancel it
     if(j == 1)
     {
-        t->ofiles->ofile[fd[0]] = NULL;
+        this_core->cur_task->ofiles->ofile[fd[0]] = NULL;
     }
     
     // bail out
@@ -103,8 +103,8 @@ int syscall_pipe2(int *fildes, int flags)
     
     if(!(node = pipefs_get_node()))
     {
-        t->ofiles->ofile[fd[0]] = NULL;
-        t->ofiles->ofile[fd[1]] = NULL;
+        this_core->cur_task->ofiles->ofile[fd[0]] = NULL;
+        this_core->cur_task->ofiles->ofile[fd[1]] = NULL;
         f[0]->refs = 0;
         f[1]->refs = 0;
         return -ENFILE;
@@ -113,8 +113,8 @@ int syscall_pipe2(int *fildes, int flags)
     // set flags
     if(flags & O_CLOEXEC)
     {
-        cloexec_set(t, fd[0]);
-        cloexec_set(t, fd[1]);
+        cloexec_set(this_core->cur_task, fd[0]);
+        cloexec_set(this_core->cur_task, fd[1]);
     }
 
     f[0]->node = node;
@@ -131,8 +131,10 @@ int syscall_pipe2(int *fildes, int flags)
         f[0]->flags |= O_NONBLOCK;
         f[1]->flags |= O_NONBLOCK;
     }
-    
-    COPY_TO_USER(fildes, &fd, 2 * sizeof(int));
+
+    //COPY_TO_USER(fildes, &fd, 2 * sizeof(int));
+    COPY_VAL_TO_USER(&fildes[0], &fd[0]);
+    COPY_VAL_TO_USER(&fildes[1], &fd[1]);
 
     return 0;
 }
@@ -141,7 +143,7 @@ int syscall_pipe2(int *fildes, int flags)
 /*
  * Handler for syscall pipe().
  */
-int syscall_pipe(int *fildes)
+long syscall_pipe(int *fildes)
 {
     return syscall_pipe2(fildes, 0);
 }

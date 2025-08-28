@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: idle.c
  *    This file is part of LaylaOS.
@@ -34,7 +34,7 @@
 /*
  * Handler for syscall idle().
  *
- * Run the idle task. Only task #0 can call this function, which doesn't
+ * Run the idle task. Only idle tasks can call this function, which doesn't
  * return. Everyone else gets -EPERM.
  *
  * Returns:
@@ -42,9 +42,7 @@
  */
 int syscall_idle(void)
 {
-    struct task_t *ct = cur_task;
-    
-    if(ct->pid)
+    if(!(this_core->cur_task->properties & PROPERTY_IDLE))
     {
         return -EPERM;
     }

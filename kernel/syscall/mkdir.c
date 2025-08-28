@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mkdir.c
  *    This file is part of LaylaOS.
@@ -36,7 +36,7 @@
 /*
  * Handler for syscall mkdir().
  */
-int syscall_mkdir(char *pathname, mode_t mode)
+long syscall_mkdir(char *pathname, mode_t mode)
 {
     return syscall_mkdirat(AT_FDCWD, pathname, mode);
 }
@@ -45,9 +45,9 @@ int syscall_mkdir(char *pathname, mode_t mode)
 /*
  * Handler for syscall mkdirat().
  */
-int syscall_mkdirat(int dirfd, char *pathname, mode_t mode)
+long syscall_mkdirat(int dirfd, char *pathname, mode_t mode)
 {
-    int res;
+    long res;
 	char *filename = NULL;
     struct fs_node_t *dnode = NULL, *fnode = NULL;
     struct dirent *entry = NULL;
@@ -55,7 +55,6 @@ int syscall_mkdirat(int dirfd, char *pathname, mode_t mode)
     //struct IO_buffer_s *dbuf = NULL;
     size_t dbuf_off;
     char *name2 = path_remove_trailing_slash(pathname, 0, NULL);
-    struct task_t *ct = cur_task;
     struct mount_info_t *dinfo;
     
     if(!name2)
@@ -84,6 +83,13 @@ int syscall_mkdirat(int dirfd, char *pathname, mode_t mode)
         goto error;
 	}
 
+    // ensure we don't exceed the maximum link count
+    if(dnode->links >= LINK_MAX)
+    {
+        res = -EMLINK;
+        goto error;
+    }
+
     // can't mkdir if the filesystem was mount readonly
     if((dinfo = get_mount_info(dnode->dev)) && (dinfo->mountflags & MS_RDONLY))
     {
@@ -104,7 +110,7 @@ int syscall_mkdirat(int dirfd, char *pathname, mode_t mode)
     // create a new file node
     if(!(fnode = new_node(dnode->dev)))
     {
-        res = -ENOSPC;
+        res = -ENOMEM;
         goto error;
     }
     
@@ -119,7 +125,7 @@ int syscall_mkdirat(int dirfd, char *pathname, mode_t mode)
     //fnode->atime = t;
     fnode->mtime = t;
     fnode->ctime = t;
-	fnode->mode = S_IFDIR | (mode & 0777 & ~ct->fs->umask);
+	fnode->mode = S_IFDIR | (mode & 0777 & ~this_core->cur_task->fs->umask);
     fnode->flags |= FS_NODE_DIRTY;
     update_atime(fnode);
 
@@ -132,15 +138,17 @@ int syscall_mkdirat(int dirfd, char *pathname, mode_t mode)
         fnode->mode |= S_ISGID;
     }
 
-    if((res = dnode->ops->mkdir(fnode, dnode->inode)) < 0)
+    if((res = dnode->ops->mkdir(fnode, dnode)) < 0)
     {
         goto error2;
     }
     
     // add the new directory to the parent directory
-    if((res = vfs_addir(dnode, filename, fnode->inode)) < 0)
+    if((res = vfs_addir(dnode, fnode, filename)) < 0)
     {
+        MARK_NODE_STALE(fnode);
         truncate_node(fnode, 0);
+        UNMARK_NODE_STALE(fnode);
         goto error2;
     }
     

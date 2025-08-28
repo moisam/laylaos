@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: nice.c
  *    This file is part of LaylaOS.
@@ -48,7 +48,7 @@
  */
 
 
-static int adjust_nice(struct task_t *ct, int nice)
+static int adjust_nice(volatile struct task_t *ct, int nice)
 {
     if(nice < 1)
     {
@@ -71,20 +71,19 @@ static int adjust_nice(struct task_t *ct, int nice)
 /*
  * Handler for syscall nice().
  */
-int syscall_nice(int increment)
+long syscall_nice(int increment)
 {
-    struct task_t *ct = cur_task;
-    int nice = ct->nice + increment;
+    int nice = this_core->cur_task->nice + increment;
 
-    nice = adjust_nice(ct, nice);
+    nice = adjust_nice(this_core->cur_task, nice);
 
     // only root can reduce nice values
-    if(ct->nice < nice && !suser(ct))
+    if(this_core->cur_task->nice < nice && !suser(this_core->cur_task))
     {
         return -EPERM;
     }
-    
-    ct->nice = nice;
+
+    this_core->cur_task->nice = nice;
 
     return 0;
 }
@@ -93,10 +92,10 @@ int syscall_nice(int increment)
 /*
  * Handler for syscall getpriority().
  */
-int syscall_getpriority(int which, id_t who, int *__nice)
+long syscall_getpriority(int which, id_t who, int *__nice)
 {
     int nice = 40, found = 0;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(!__nice)
     {
@@ -105,7 +104,7 @@ int syscall_getpriority(int which, id_t who, int *__nice)
     
     if(which == PRIO_PROCESS)
     {
-        struct task_t *task = who ? get_task_by_id((pid_t)who) : ct;
+        volatile struct task_t *task = who ? get_task_by_id((pid_t)who) : ct;
 
         if(!task)
         {
@@ -177,15 +176,15 @@ int syscall_getpriority(int which, id_t who, int *__nice)
 /*
  * Handler for syscall setpriority().
  */
-int syscall_setpriority(int which, id_t who, int value)
+long syscall_setpriority(int which, id_t who, int value)
 {
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     value = adjust_nice(ct, value);
     
     if(which == PRIO_PROCESS)
     {
-        struct task_t *task = who ? get_task_by_id((pid_t)who) : ct;
+        volatile struct task_t *task = who ? get_task_by_id((pid_t)who) : ct;
 
         if(!task)
         {

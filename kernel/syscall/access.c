@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: access.c
  *    This file is part of LaylaOS.
@@ -35,7 +35,7 @@
 /*
  * Handler for syscall access().
  */
-int syscall_access(char *filename, int mode)
+long syscall_access(char *filename, int mode)
 {
     return syscall_faccessat(AT_FDCWD, filename, mode, 0);
 }
@@ -49,10 +49,11 @@ int syscall_access(char *filename, int mode)
  * See:
  *    https://man7.org/linux/man-pages/man2/access.2.html
  */
-int syscall_faccessat(int dirfd, char *filename, int mode, int flags)
+long syscall_faccessat(int dirfd, char *filename, int mode, int flags)
 {
 	struct fs_node_t *node = NULL;
-	int res, perm = 0;
+	long res;
+	int perm = 0;
 	int followlink = !(flags & AT_SYMLINK_NOFOLLOW);
 	int use_ruid = !(flags & AT_EACCESS);
 	int open_flags = OPEN_USER_CALLER |

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: open.c
  *    This file is part of LaylaOS.
@@ -35,6 +35,8 @@
 #include <kernel/laylaos.h>
 #include <kernel/syscall.h>
 #include <kernel/tty.h>
+#include <kernel/loop.h>
+#include <kernel/loop_internal.h>
 #include <fs/procfs.h>
 #include <fs/devpts.h>
 
@@ -42,7 +44,8 @@
 
 
 #define MAY_SET_CTTY()                                              \
-	if(group_leader(ct) && ct->ctty <= 0 && !(flags & O_NOCTTY))    \
+	if(group_leader(this_core->cur_task) &&                         \
+	   this_core->cur_task->ctty <= 0 && !(flags & O_NOCTTY))       \
 	{                                                               \
         if((res = set_controlling_tty(node->blocks[0],              \
                          get_struct_tty(node->blocks[0]), 1)) < 0)  \
@@ -55,7 +58,7 @@
 /*
  * Handler for syscall open().
  */
-int syscall_open(char *filename, int flags, mode_t mode)
+long syscall_open(char *filename, int flags, mode_t mode)
 {
     //KDEBUG("syscall_open: filename = %s\n", filename);
     return syscall_openat(AT_FDCWD, filename, flags, mode);
@@ -65,12 +68,12 @@ int syscall_open(char *filename, int flags, mode_t mode)
 /*
  * Handler for syscall openat().
  */
-int syscall_openat(int dirfd, char *filename, int flags, mode_t mode)
+long syscall_openat(int dirfd, char *filename, int flags, mode_t mode)
 {
 	struct fs_node_t *node = NULL, *pty_master = NULL;
 	struct file_t *f = NULL;
-	int i, fd = 0, res = 0;
-    struct task_t *ct = cur_task;
+	int fd = 0;
+	long i, res = 0;
 
     // add write access if truncate is requested without write/rw access
     if((flags & O_TRUNC) && !(flags & (O_WRONLY | O_RDWR)))
@@ -78,12 +81,19 @@ int syscall_openat(int dirfd, char *filename, int flags, mode_t mode)
         flags |= O_WRONLY;
     }
 
-    if(!filename || !ct || !ct->fs || !ct->ofiles)
+    // if O_PATH is specified, flags can only contain the following
+    if(flags & O_PATH)
+    {
+        flags &= (O_PATH | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
+    }
+
+    if(!filename || !this_core->cur_task ||
+       !this_core->cur_task->fs || !this_core->cur_task->ofiles)
     {
         return -EINVAL;
     }
 
-	mode &= (0777 & ~ct->fs->umask);
+	mode &= (0777 & ~this_core->cur_task->fs->umask);
 	
 	if((res = falloc(&fd, &f)) != 0)
 	{
@@ -95,7 +105,7 @@ int syscall_openat(int dirfd, char *filename, int flags, mode_t mode)
                      OPEN_USER_CALLER | OPEN_CREATE_DENTRY)) != 0)
     {
         KDEBUG("syscall_openat: 4 - i %d\n", i);
-    	ct->ofiles->ofile[fd] = NULL;
+    	this_core->cur_task->ofiles->ofile[fd] = NULL;
     	f->refs = 0;
 		return i;
 	}
@@ -128,7 +138,7 @@ int syscall_openat(int dirfd, char *filename, int flags, mode_t mode)
 		}
 		else if(major == 5)
 		{
-			if(ct->ctty <= 0)              // cur_task tty device
+			if(this_core->cur_task->ctty <= 0)    // cur_task tty device
 			{
 			    // current task has no controlling terminal
 			    res = -EPERM;
@@ -146,15 +156,27 @@ int syscall_openat(int dirfd, char *filename, int flags, mode_t mode)
 		    MAY_SET_CTTY();
 		}
 	}
+	else if(S_ISBLK(node->mode))
+	{
+	    int major = MAJOR(node->blocks[0]);
+
+		if(major == LODEV_MAJ)
+		{
+		    if((res = lodev_open(node->blocks[0])) < 0)
+	        {
+	            goto error;
+		    }
+		}
+	}
 
     // set the close-on-exec flag
     if(flags & O_CLOEXEC)
     {
-        cloexec_set(ct, fd);
+        cloexec_set(this_core->cur_task, fd);
     }
     
     // ignore O_NOATIME if file is not ours
-    if((flags & O_NOATIME) && (ct->euid != node->uid))
+    if((flags & O_NOATIME) && (this_core->cur_task->euid != node->uid))
     {
         flags &= ~O_NOATIME;
     }
@@ -173,7 +195,7 @@ int syscall_openat(int dirfd, char *filename, int flags, mode_t mode)
     
 error:
 	release_node(node);
-	ct->ofiles->ofile[fd] = NULL;
+	this_core->cur_task->ofiles->ofile[fd] = NULL;
 	f->refs = 0;
 	return res;
 }
@@ -182,6 +204,7 @@ error:
 /*
  * Open a temporary file descriptor.
  */
+/*
 int open_tmp_fd(struct fs_node_t *node)
 {
 	struct file_t *f;
@@ -207,4 +230,5 @@ int open_tmp_fd(struct fs_node_t *node)
     
     return fd;
 }
+*/
 

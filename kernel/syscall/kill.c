@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: kill.c
  *    This file is part of LaylaOS.
@@ -29,6 +29,7 @@
 #include <kernel/task.h>
 #include <kernel/syscall.h>
 #include <kernel/ksignal.h>
+#include <kernel/user.h>
 
 
 /*
@@ -50,7 +51,7 @@
     }
 
 
-int kill_init(int signum, int force)
+long kill_init(int signum, int force)
 {
     register struct task_t *init = get_init_task();
     struct sigaction *action;
@@ -74,23 +75,22 @@ int kill_init(int signum, int force)
 /*
  * Handler for syscall kill().
  */
-int syscall_kill(pid_t pid, int signum)
+long syscall_kill(pid_t pid, int signum)
 {
-    struct task_t *ct = cur_task;
-    int force = suser(ct);
-    int sent = 0;
-    int err = 0;
-    
+    int force = suser(this_core->cur_task);
+    long sent = 0;
+    long err = 0;
+
     KDEBUG("syscall_kill: pid 0x%x (src 0x%x), signum 0x%x\n", pid, ct->pid, signum);
     //__asm__("xchg %%bx, %%bx"::);
-    
+
     elevated_priority_lock(&task_table_lock);
 
     if(pid == 0)
     {
         for_each_taskptr(t)
         {
-            if(*t && (*t)->pgid == ct->pgid)
+            if(*t && (*t)->pgid == this_core->cur_task->pgid)
             {
                 SEND_SIGNAL(*t, signum, force);
             }
@@ -111,7 +111,7 @@ int syscall_kill(pid_t pid, int signum)
     {
         for_each_taskptr(t)
         {
-            if(*t && *t != ct)
+            if(*t && *t != this_core->cur_task)
             {
                 SEND_SIGNAL(*t, signum, force);
             }

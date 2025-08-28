@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: statfs.c
  *    This file is part of LaylaOS.
@@ -37,11 +37,11 @@
 #include <kernel/fio.h>
 
 
-static int do_statfs(struct fs_node_t *node, struct statfs *statbuf)
+static long do_statfs(struct fs_node_t *node, struct statfs *statbuf)
 {
 	struct statfs tmp;
     struct mount_info_t *d;
-    int res;
+    long res;
 
     // get the device's mount info
     if((d = get_mount_info(node->dev)) == NULL ||
@@ -62,10 +62,10 @@ static int do_statfs(struct fs_node_t *node, struct statfs *statbuf)
 /*
  * Handler for syscall statfs().
  */
-int syscall_statfs(char *path, struct statfs *statbuf)
+long syscall_statfs(char *path, struct statfs *statbuf)
 {
     struct fs_node_t *node = NULL;
-	int res;
+	long res;
 	int open_flags = OPEN_USER_CALLER | OPEN_FOLLOW_SYMLINK;
 
     if(!path || !statbuf)
@@ -88,18 +88,17 @@ int syscall_statfs(char *path, struct statfs *statbuf)
 /*
  * Handler for syscall fstatfs().
  */
-int syscall_fstatfs(int fd, struct statfs *statbuf)
+long syscall_fstatfs(int fd, struct statfs *statbuf)
 {
 	struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    struct task_t *ct = cur_task;
 
     if(!statbuf)
     {
         return -EFAULT;
     }
 
-    if(fdnode(fd, ct, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -113,12 +112,12 @@ int syscall_fstatfs(int fd, struct statfs *statbuf)
  *
  * See: https://man7.org/linux/man-pages/man2/ustat.2.html
  */
-int syscall_ustat(dev_t dev, struct ustat *ubuf)
+long syscall_ustat(dev_t dev, struct ustat *ubuf)
 {
     struct mount_info_t *d;
     struct ustat tmp;
-    int res;
-    
+    long res;
+
     if(!ubuf)
     {
         return -EFAULT;

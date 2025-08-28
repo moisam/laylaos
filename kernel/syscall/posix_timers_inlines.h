@@ -1,8 +1,8 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
- *    file: posix_timers_inlines.c
+ *    file: posix_timers_inlines.h
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,7 +20,7 @@
  */    
 
 /**
- *  \file posix_timers_inlines.c
+ *  \file posix_timers_inlines.h
  *
  *  Inlined functions used by POSIX timers.
  */
@@ -51,11 +51,16 @@ INLINE void timer_reset(pid_t tgid, struct posix_timer_t *timer)
  */
 INLINE void timer_notify_expired(pid_t tgid, struct posix_timer_t *timer)
 {
-    struct task_t *task = get_task_by_tgid(tgid);
+    volatile struct task_t *task = get_task_by_tgid(tgid);
 
     if(task && timer)
     {
-        if(timer->sigev.sigev_notify == SIGEV_SIGNAL)
+        if(timer->timerid == ITIMER_REAL_ID || timer->timerid == ITIMER_PROF_ID)
+        {
+            siginfo_t itimer_siginfo = { .si_code = SI_TIMER };
+            add_task_signal((struct task_t *)task, timer->sigev.sigev_signo, &itimer_siginfo, 1);
+        }
+        else if(timer->sigev.sigev_notify == SIGEV_SIGNAL)
         {
             if(++timer->cur_overruns >= DELAYTIMER_MAX)
             {
@@ -64,6 +69,18 @@ INLINE void timer_notify_expired(pid_t tgid, struct posix_timer_t *timer)
 
             add_task_timer_signal(task, timer->sigev.sigev_signo, timer->timerid);
         }
+    }
+}
+
+
+INLINE void timer_unwait(volatile struct clock_waiter_t *head,
+                         pid_t tgid, ktimer_t timerid)
+{
+    struct clock_waiter_t *w;
+    
+    if((w = get_waiter(head, tgid, timerid, NULL, 1)))
+    {
+        waiter_free(w);
     }
 }
 

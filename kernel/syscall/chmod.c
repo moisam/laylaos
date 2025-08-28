@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: chmod.c
  *    This file is part of LaylaOS.
@@ -33,10 +33,9 @@
 #include <kernel/fio.h>
 
 
-static int do_chmod(struct fs_node_t *node, mode_t mode)
+static long do_chmod(struct fs_node_t *node, mode_t mode)
 {
     struct mount_info_t *dinfo;
-    struct task_t *ct = cur_task;
 
 	if(!node)
 	{
@@ -50,11 +49,11 @@ static int do_chmod(struct fs_node_t *node, mode_t mode)
         return -EROFS;
     }
 
-	
-	if(!suser(ct))
+	if(!suser(this_core->cur_task))
 	{
 	    // regular user -- check permissions
-		if(ct->uid != node->uid && ct->euid != node->uid)
+		if(this_core->cur_task->uid != node->uid && 
+		   this_core->cur_task->euid != node->uid)
 		{
 		    // not your file, can't mess with it!
 			return -EPERM;
@@ -93,7 +92,7 @@ static int do_chmod(struct fs_node_t *node, mode_t mode)
 /*
  * Handler for syscall chmod().
  */
-int syscall_chmod(char *filename, mode_t mode)
+long syscall_chmod(char *filename, mode_t mode)
 {
     return syscall_fchmodat(AT_FDCWD, filename, mode, 0);
 }
@@ -102,13 +101,17 @@ int syscall_chmod(char *filename, mode_t mode)
 /*
  * Handler for syscall fchmod().
  */
-int syscall_fchmod(int fd, mode_t mode)
+long syscall_fchmod(int fd, mode_t mode)
 {
 	struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    struct task_t *ct = cur_task;
 
-    if(fdnode(fd, ct, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
+    {
+        return -EBADF;
+    }
+
+    if(f->flags & O_PATH)
     {
         return -EBADF;
     }
@@ -122,10 +125,10 @@ int syscall_fchmod(int fd, mode_t mode)
 /*
  * Handler for syscall fchmodat().
  */
-int syscall_fchmodat(int dirfd, char *filename, mode_t mode, int flags)
+long syscall_fchmodat(int dirfd, char *filename, mode_t mode, int flags)
 {
     struct fs_node_t *node = NULL;
-	int res;
+	long res;
 	int followlink = !(flags & AT_SYMLINK_NOFOLLOW);
 	int open_flags = OPEN_USER_CALLER |
 	               (followlink ? OPEN_FOLLOW_SYMLINK : OPEN_NOFOLLOW_SYMLINK);

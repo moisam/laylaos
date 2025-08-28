@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: dup.c
  *    This file is part of LaylaOS.
@@ -34,15 +34,12 @@
 #include <fs/procfs.h>
 
 
-int do_dup(int fd, int arg)
+/*
+ * This function assumes the caller has checked fd is a valid descriptor.
+ * It is called from functions here and in fcntl.c.
+ */
+long do_dup(int fd, int arg)
 {
-    struct task_t *ct = cur_task;
-
-	if(!validfd(fd, ct))
-	{
-		return -EBADF;
-	}
-	
 	if(arg < 0 || arg >= NR_OPEN)
 	{
 		return -EINVAL;
@@ -50,7 +47,7 @@ int do_dup(int fd, int arg)
 	
 	while(arg < NR_OPEN)
 	{
-		if(ct->ofiles->ofile[arg])    // fd in use
+		if(this_core->cur_task->ofiles->ofile[arg])    // fd in use
 		{
 			arg++;
 		}
@@ -64,14 +61,15 @@ int do_dup(int fd, int arg)
 	{
 		return -EMFILE;
 	}
-	
+
 	// clear the close-on-exec flag
-	cloexec_clear(ct, arg);
+	cloexec_clear(this_core->cur_task, arg);
 
     // duplicate fd
-	ct->ofiles->ofile[arg] = ct->ofiles->ofile[fd];
-	ct->ofiles->ofile[arg]->refs++;
-	
+	this_core->cur_task->ofiles->ofile[arg] = this_core->cur_task->ofiles->ofile[fd];
+	//ct->ofiles->ofile[arg]->refs++;
+    __sync_fetch_and_add(&(this_core->cur_task->ofiles->ofile[arg]->refs), 1);
+
 	return arg;
 }
 
@@ -79,12 +77,11 @@ int do_dup(int fd, int arg)
 /*
  * Handler for syscall dup3().
  */
-int syscall_dup3(int oldfd, int newfd, int flags)
+long syscall_dup3(int oldfd, int newfd, int flags)
 {
-    struct task_t *ct = cur_task;
-    int res;
+    long res;
 
-	if(!validfd(oldfd, ct))
+	if(!validfd(oldfd, this_core->cur_task))
 	{
 		return -EBADF;
 	}
@@ -107,7 +104,7 @@ int syscall_dup3(int oldfd, int newfd, int flags)
 	    if(flags & O_CLOEXEC)
 	    {
 	        // set the close-on-exec flag
-	        cloexec_set(ct, res);
+	        cloexec_set(this_core->cur_task, res);
         }
 	}
 	
@@ -118,11 +115,9 @@ int syscall_dup3(int oldfd, int newfd, int flags)
 /*
  * Handler for syscall dup2().
  */
-int syscall_dup2(int oldfd, int newfd)
+long syscall_dup2(int oldfd, int newfd)
 {
-    struct task_t *ct = cur_task;
-
-	if(!validfd(oldfd, ct))
+	if(!validfd(oldfd, this_core->cur_task))
 	{
 		return -EBADF;
 	}
@@ -146,8 +141,13 @@ int syscall_dup2(int oldfd, int newfd)
  *
  *       fcntl(fildes, F_DUPFD, 0);
  */
-int syscall_dup(int fildes)
+long syscall_dup(int fildes)
 {
+	if(!validfd(fildes, this_core->cur_task))
+	{
+		return -EBADF;
+	}
+
 	return do_dup(fildes, 0);
 }
 

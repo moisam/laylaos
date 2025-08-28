@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: groups.c
  *    This file is part of LaylaOS.
@@ -39,8 +39,7 @@
  */
 int gid_perm(gid_t gid, int use_rgid)
 {
-    struct task_t *ct = cur_task;
-    gid_t mygid = use_rgid ? ct->gid : ct->egid;
+    gid_t mygid = use_rgid ? this_core->cur_task->gid : this_core->cur_task->egid;
     
     // check for invalid gid
     if(gid == (gid_t)-1)
@@ -58,7 +57,7 @@ int gid_perm(gid_t gid, int use_rgid)
 
     for(i = 0; i < NGROUPS_MAX; i++)
     {
-        if(ct->extra_groups[i] == gid)
+        if(this_core->cur_task->extra_groups[i] == gid)
         {
             return 1;
         }
@@ -80,14 +79,13 @@ int gid_perm(gid_t gid, int use_rgid)
 /*
  * Handler for syscall getgroups().
  */
-int syscall_getgroups(int gidsetsize, gid_t grouplist[])
+long syscall_getgroups(int gidsetsize, gid_t grouplist[])
 {
-    int count = 0, i;
-    struct task_t *ct = cur_task;
+    long count = 0, i;
 
     for(i = 0; i < NGROUPS_MAX; i++)
     {
-        if(ct->extra_groups[i] != (gid_t)-1)
+        if(this_core->cur_task->extra_groups[i] != (gid_t)-1)
         {
             count++;
         }
@@ -108,9 +106,9 @@ int syscall_getgroups(int gidsetsize, gid_t grouplist[])
 
     for(i = 0; i < NGROUPS_MAX; i++)
     {
-        if(ct->extra_groups[i] != (gid_t)-1)
+        if(this_core->cur_task->extra_groups[i] != (gid_t)-1)
         {
-            list[count++] = ct->extra_groups[i];
+            list[count++] = this_core->cur_task->extra_groups[i];
         }
     }
     
@@ -131,17 +129,17 @@ int syscall_getgroups(int gidsetsize, gid_t grouplist[])
 /*
  * Handler for syscall setgroups().
  */
-int syscall_setgroups(int ngroups, gid_t grouplist[])
+long syscall_setgroups(int ngroups, gid_t grouplist[])
 {
     int i;
-    register struct task_t *thread, *ct = cur_task;
+    register struct task_t *thread;
 
     if(ngroups < 0 || ngroups > NGROUPS_MAX)
     {
         return -EINVAL;
     }
     
-    if(!suser(ct))
+    if(!suser(this_core->cur_task))
     {
         return -EPERM;
     }
@@ -149,9 +147,9 @@ int syscall_setgroups(int ngroups, gid_t grouplist[])
     gid_t list[ngroups];
     COPY_FROM_USER(list, grouplist, sizeof(gid_t) * ngroups);
     
-    kernel_mutex_lock(&(ct->threads->mutex));
+    kernel_mutex_lock(&(this_core->cur_task->threads->mutex));
 
-    for_each_thread(thread, ct)
+    for_each_thread(thread, this_core->cur_task)
     {
         /* wipe out current supplementary group information */
         for(i = 0; i < NGROUPS_MAX; i++)
@@ -175,7 +173,7 @@ int syscall_setgroups(int ngroups, gid_t grouplist[])
         }
     }
 
-    kernel_mutex_unlock(&(ct->threads->mutex));
+    kernel_mutex_unlock(&(this_core->cur_task->threads->mutex));
     
     return 0;
 }

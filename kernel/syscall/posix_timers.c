@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: posix_timers.c
  *    This file is part of LaylaOS.
@@ -46,26 +46,13 @@
 #include "posix_timers_inlines.h"
 
 
-static void timer_unwait(struct clock_waiter_t *head,
-                         pid_t tgid, ktimer_t timerid)
-{
-    struct clock_waiter_t *w;
-    
-    if((w = get_waiter(head, tgid, timerid, NULL, 1)))
-    {
-        waiter_free(w);
-    }
-}
-
-
 /*
  * Get POSIX timer.
  */
 struct posix_timer_t *get_posix_timer(pid_t tgid, ktimer_t timerid)
 {
     struct posix_timer_t *timer;
-    
-    struct task_t *task = get_task_by_tgid(tgid);
+    volatile struct task_t *task = get_task_by_tgid(tgid);
     
     if(!task || !task->common)
     {
@@ -94,15 +81,15 @@ struct posix_timer_t *get_posix_timer(pid_t tgid, ktimer_t timerid)
 /*
  * Handler for syscall timer_settime().
  */
-int syscall_timer_settime(ktimer_t timerid, int flags,
-                          struct itimerspec *new_value,
-                          struct itimerspec *old_value)
+long syscall_timer_settime(ktimer_t timerid, int flags,
+                           struct itimerspec *new_value,
+                           struct itimerspec *old_value)
 {
-    int res;
+    long res;
     struct itimerspec newval;
     struct posix_timer_t *timer;
     struct clock_waiter_t *head;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(!timerid)
     {
@@ -176,16 +163,13 @@ int syscall_timer_settime(ktimer_t timerid, int flags,
 }
 
 
-/*
- * Handler for syscall timer_gettime().
- */
-int syscall_timer_gettime(ktimer_t timerid, struct itimerspec *curr_value)
+long timer_gettime_internal(ktimer_t timerid, struct itimerspec *curr_value, int kernel)
 {
     struct itimerspec oldval;
     struct posix_timer_t *timer;
     struct clock_waiter_t *head;
     int64_t remaining_ticks;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(!timerid)
     {
@@ -195,7 +179,6 @@ int syscall_timer_gettime(ktimer_t timerid, struct itimerspec *curr_value)
     kernel_mutex_lock(&ct->common->mutex);
 
     if(!(timer = get_posix_timer(tgid(ct), timerid)))
-    //if(!(timer = get_posix_timer(ct, timerid)))
     {
         kernel_mutex_unlock(&ct->common->mutex);
         return -EINVAL;
@@ -205,7 +188,6 @@ int syscall_timer_gettime(ktimer_t timerid, struct itimerspec *curr_value)
     head = &waiter_head[(timer->clockid == CLOCK_REALTIME) ? 1 : 0];
 
     if(get_waiter(head, tgid(ct), timerid, &remaining_ticks, 0))
-    //if(get_waiter(head, ct, timerid, &remaining_ticks, 0))
     {
         ticks_to_timespec(remaining_ticks, &oldval.it_value);
     }
@@ -215,19 +197,36 @@ int syscall_timer_gettime(ktimer_t timerid, struct itimerspec *curr_value)
 
     kernel_mutex_unlock(&ct->common->mutex);
 
-    return copy_to_user(curr_value, &oldval, sizeof(struct itimerspec));
+    if(kernel)
+    {
+        A_memcpy(curr_value, &oldval, sizeof(struct itimerspec));
+        return 0;
+    }
+    else
+    {
+        return copy_to_user(curr_value, &oldval, sizeof(struct itimerspec));
+    }
+}
+
+
+/*
+ * Handler for syscall timer_gettime().
+ */
+long syscall_timer_gettime(ktimer_t timerid, struct itimerspec *curr_value)
+{
+    return timer_gettime_internal(timerid, curr_value, 0);
 }
 
 
 /*
  * Handler for syscall timer_create().
  */
-int syscall_timer_create(clockid_t clockid, struct sigevent *sevp,
-                         ktimer_t *timerid)
+long syscall_timer_create(clockid_t clockid, struct sigevent *sevp,
+                          ktimer_t *timerid)
 {
     struct sigevent ev;
     struct posix_timer_t *timer;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     /* NOTE: for now, we only support those two */
     if(clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC)
@@ -280,14 +279,25 @@ int syscall_timer_create(clockid_t clockid, struct sigevent *sevp,
 }
 
 
+static void free_timer(volatile struct posix_timer_t *timer)
+{
+    if(timer->timerid != ITIMER_REAL_ID &&
+       timer->timerid != ITIMER_PROF_ID &&
+       timer->timerid != ITIMER_VIRT_ID)
+    {
+        kfree((void *)timer);
+    }
+}
+
+
 /*
  * Handler for syscall timer_delete().
  */
-int syscall_timer_delete(ktimer_t timerid)
+long syscall_timer_delete(ktimer_t timerid)
 {
-    struct posix_timer_t *timer;
+    struct posix_timer_t *timer, *tmp;
     struct clock_waiter_t *head;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(!timerid)
     {
@@ -297,7 +307,6 @@ int syscall_timer_delete(ktimer_t timerid)
     kernel_mutex_lock(&ct->common->mutex);
 
     if(!(timer = get_posix_timer(tgid(ct), timerid)))
-    //if(!(timer = get_posix_timer(ct, timerid)))
     {
         kernel_mutex_unlock(&ct->common->mutex);
         return -EINVAL;
@@ -306,9 +315,24 @@ int syscall_timer_delete(ktimer_t timerid)
     // remove timer if it is armed
     head = &waiter_head[(timer->clockid == CLOCK_REALTIME) ? 1 : 0];
     timer_unwait(head, tgid(ct), timerid);
-    //timer_unwait(head, ct, timerid);
-    ct->posix_timers = timer->next;
 
+    if(timer == ct->posix_timers)
+    {
+        ct->posix_timers = timer->next;
+    }
+    else
+    {
+        for(tmp = ct->posix_timers; tmp->next != NULL; tmp = tmp->next)
+        {
+            if(tmp->next == timer)
+            {
+                tmp->next = timer->next;
+                break;
+            }
+        }
+    }
+
+    free_timer(timer);
     kernel_mutex_unlock(&ct->common->mutex);
 
     return 0;
@@ -318,11 +342,11 @@ int syscall_timer_delete(ktimer_t timerid)
 /*
  * Handler for syscall timer_getoverrun().
  */
-int syscall_timer_getoverrun(ktimer_t timerid)
+long syscall_timer_getoverrun(ktimer_t timerid)
 {
     struct posix_timer_t *timer;
-    int res;
-    struct task_t *ct = cur_task;
+    long res;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(!timerid)
     {
@@ -356,8 +380,7 @@ void disarm_timers(pid_t tgid)
 {
     volatile struct posix_timer_t *timer, *next;
     volatile struct clock_waiter_t *head;
-
-    struct task_t *task = get_task_by_tgid(tgid);
+    volatile struct task_t *task = get_task_by_tgid(tgid);
 
     if(!task || !task->common)
     {
@@ -372,14 +395,13 @@ void disarm_timers(pid_t tgid)
     {
         next = timer->next;
         head = &waiter_head[(timer->clockid == CLOCK_REALTIME) ? 1 : 0];
-        timer_unwait((struct clock_waiter_t *)head, tgid, timer->timerid);
-        //timer_unwait((struct clock_waiter_t *)head, task, timer->timerid);
-        kfree((void *)timer);
+        timer_unwait(head, tgid, timer->timerid);
+        free_timer(timer);
         timer = next;
     }
 
     task->posix_timers = NULL;
-    task->last_timerid = 0;
+    task->last_timerid = 3;
 
     kernel_mutex_unlock(&task->common->mutex);
 }

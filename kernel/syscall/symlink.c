@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: symlink.c
  *    This file is part of LaylaOS.
@@ -40,13 +40,59 @@
 #include <kernel/clock.h>
 #include <kernel/user.h>
 #include <fs/procfs.h>
+#include <fs/dentry.h>
 #include <mm/kheap.h>
+
+
+long write_symlink(struct fs_node_t *node, char *path, int kernel)
+{
+    long res;
+    size_t len = 0, i;
+    char *kpath = NULL;
+
+    // check the filesystem supports symlink creation
+    if(!node->ops || !node->ops->write_symlink)
+    {
+        return -EPERM;      // TODO: is this the right errno here?
+    }
+
+    if(kernel)
+    {
+        kpath = path;
+        len = strlen(path);
+    }
+    else
+    {
+        if((res = copy_str_from_user(path, &kpath, &len)) < 0)
+        {
+            return res;
+        }
+    }
+
+    // Pass the symlink (non-NULL-terminated) to the filesystem driver.
+    // If we count the NULL-terminator, fsck complains about invalid symlinks.
+    //len++;
+    i = node->ops->write_symlink(node, kpath, len, 1);
+
+    if(kpath != path)
+    {
+        kfree(kpath);
+    }
+
+    time_t t = now();
+	node->mtime = t;
+	//node->atime = t;
+	node->flags |= FS_NODE_DIRTY;
+	update_atime(node);
+
+	return (i == len) ? 0 : -EIO;
+}
 
 
 /*
  * Handler for syscall symlink().
  */
-int syscall_symlink(char *target, char *linkpath)
+long syscall_symlink(char *target, char *linkpath)
 {
     return syscall_symlinkat(target, AT_FDCWD, linkpath);
 }
@@ -55,56 +101,47 @@ int syscall_symlink(char *target, char *linkpath)
 /*
  * Handler for syscall symlinkat().
  */
-int syscall_symlinkat(char *target, int newdirfd, char *linkpath)
+long syscall_symlinkat(char *target, int newdirfd, char *linkpath)
 {
-    int res;
+    long res;
 	struct fs_node_t *node = NULL;
-    size_t len, i;
-	int open_flags = OPEN_USER_CALLER | OPEN_NOFOLLOW_SYMLINK;
+    size_t i;
 
     if(!target || !*target || !linkpath || !*linkpath)
     {
 		return -EFAULT;
     }
-    
+
+#define OPEN_FLAGS          (OPEN_USER_CALLER | OPEN_NOFOLLOW_SYMLINK)
+
 	// check if it already exists
-	if((res = vfs_open_internal(linkpath, newdirfd, &node, open_flags)) == 0)
+	if((res = vfs_open_internal(linkpath, newdirfd, &node, OPEN_FLAGS)) == 0)
 	{
 		release_node(node);
 		return -EEXIST;
 	}
 
+#undef OPEN_FLAGS
+
     // create the node
-    if((res = vfs_open(linkpath, O_RDWR|O_CREAT, 0777, newdirfd,
+    if((res = vfs_open(linkpath, O_RDWR|O_CREAT, 0777|S_IFLNK, newdirfd,
                         &node, OPEN_USER_CALLER)) < 0)
     {
         return res;
     }
 
-    // check the filesystem supports symlink creation
-    if(!node->ops || !node->ops->write_symlink)
+    i = write_symlink(node, target, 0);
+
+    if(i == 0)
     {
-        release_node(node);
-        return -EPERM;
+        // ensure the file mode reflects it is a symlink
+        node->mode &= ~S_IFMT;
+        node->mode |= S_IFLNK;
     }
-
-    // vfs_open() creates regular files by default, let's fix this now
-    node->mode &= ~S_IFREG;
-    node->mode |= S_IFLNK;
-    
-    len = strlen(target) + 1;
-
-    i = node->ops->write_symlink(node, target, len, 0);
-
-    time_t t = now();
-	node->mtime = t;
-	//node->atime = t;
-	node->flags |= FS_NODE_DIRTY;
-	update_atime(node);
 
     release_node(node);
 
-	return (i == len) ? 0 : -EIO;
+	return i;
 }
 
 
@@ -113,8 +150,8 @@ int syscall_symlinkat(char *target, int newdirfd, char *linkpath)
  *
  * Arguments and return value are as described in readlinkat below.
  */
-int syscall_readlink(char *pathname, char *buf,
-                     size_t bufsize, ssize_t *__copied)
+long syscall_readlink(char *pathname, char *buf,
+                      size_t bufsize, ssize_t *__copied)
 {
     return syscall_readlinkat(AT_FDCWD, pathname, buf, bufsize, __copied);
 }
@@ -136,25 +173,28 @@ int syscall_readlink(char *pathname, char *buf,
  * Returns:
  *    0 on success, -errno on failure
  */
-int syscall_readlinkat(int dirfd, char *pathname, char *buf,
-                       size_t bufsize, ssize_t *__copied)
+long syscall_readlinkat(int dirfd, char *pathname, char *buf,
+                        size_t bufsize, ssize_t *__copied)
 {
-    int res;
+    long res;
     ssize_t copied;
 	struct fs_node_t *node = NULL;
-	int open_flags = OPEN_USER_CALLER | OPEN_NOFOLLOW_SYMLINK;
 
-    if(!pathname || !*pathname || !buf || !bufsize)
+    if(!pathname /* || !*pathname */ || !buf || !bufsize)
     {
 		return -EINVAL;
     }
-    
+
+#define OPEN_FLAGS          (OPEN_USER_CALLER | OPEN_NOFOLLOW_SYMLINK)
+
 	// open the link - don't follow symlink
-	if((res = vfs_open_internal(pathname, dirfd, &node, open_flags)) < 0)
+	if((res = vfs_open_internal(pathname, dirfd, &node, OPEN_FLAGS)) < 0)
 	{
 		release_node(node);
 		return res;
 	}
+
+#undef OPEN_FLAGS
 	
 	if(!node)
 	{
@@ -168,7 +208,8 @@ int syscall_readlinkat(int dirfd, char *pathname, char *buf,
     if(res >= 0)
     {
         copied = res;
-        COPY_TO_USER(__copied, &copied, sizeof(ssize_t));
+        //COPY_TO_USER(__copied, &copied, sizeof(ssize_t));
+        COPY_VAL_TO_USER(__copied, &copied);
         res = 0;
     }
     
@@ -190,8 +231,8 @@ int syscall_readlinkat(int dirfd, char *pathname, char *buf,
  * Returns:
  *    0 on success, -errno on failure
  */
-int follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
-                   int flags, struct fs_node_t **target)
+long follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
+                    int flags, struct fs_node_t **target)
 {
     if(!link || !target)
     {
@@ -199,13 +240,13 @@ int follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
     }
 
     *target = NULL;
-    
-    int res;
+
+    long res;
     // procfs links have a filesize of 0 by default
     size_t bufsz = (link->dev == PROCFS_DEVID) ? PROCFS_LINK_SIZE :
                    (link->size > PATH_MAX) ? PATH_MAX : link->size;
     char *buf = (char *)kmalloc(bufsz + 1);
-    int dirfd = AT_FDCWD;
+    //int dirfd = AT_FDCWD;
 
     KDEBUG("follow_symlink: bufsz %d\n", bufsz);
     
@@ -234,24 +275,70 @@ int follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
     // instead of the task's cwd.
     if(buf[0] != '/')
     {
+        struct dentry_t *dent = NULL;
+        size_t len = 0, plen = 0;
+        char *buf2;
+
+        if(get_dentry(parent, &dent) < 0)
+        {
+            kfree(buf);
+            return -EINVAL;
+        }
+
+        if(dent->path == NULL)
+        {
+            kfree(buf);
+            release_dentry(dent);
+            return -EINVAL;
+        }
+
+        plen = strlen(dent->path);
+        len = res;
+        bufsz = plen + len + 2;
+
+        if(!(buf2 = kmalloc(bufsz)))
+        {
+            kfree(buf);
+            release_dentry(dent);
+            return -ENOMEM;
+        }
+
+        if(dent->path[plen - 1] == '/')
+        {
+            ksprintf(buf2, bufsz, "%s%s", dent->path, buf);
+        }
+        else
+        {
+            ksprintf(buf2, bufsz, "%s/%s", dent->path, buf);
+        }
+
+        kfree(buf);
+        release_dentry(dent);
+        buf = buf2;
+
+        /*
         if((dirfd = open_tmp_fd(parent)) < 0)
         {
             kfree(buf);
             return -EMFILE;
         }
+        */
     }
     
     KDEBUG("follow_symlink: fd %d\n", dirfd);
     
     // now try to read the symlink's target
-    res = vfs_open(buf, flags, 0777, dirfd, target, OPEN_KERNEL_CALLER);
+    res = vfs_open(buf, flags, 0777, AT_FDCWD /* dirfd */, target, OPEN_KERNEL_CALLER);
 
     KDEBUG("follow_symlink: done -- fd %d, res %d\n", dirfd, res);
     
-    if(dirfd != AT_FDCWD)
+    /*
+    if(buf[0] != '/')
+    //if(dirfd != AT_FDCWD)
     {
         syscall_close(dirfd);
     }
+    */
     
     kfree(buf);
     return res;
@@ -277,16 +364,16 @@ int follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
  * Returns:
  *    number of bytes read on success, -errno on failure
  */
-int read_symlink(struct fs_node_t *link, char *buf, size_t bufsz, int kernel)
+long read_symlink(struct fs_node_t *link, char *buf, size_t bufsz, int kernel)
 {
-    int res = -ENOSYS;
+    long res = -ENOSYS;
 
     if(!link || !buf)
     {
         return -EINVAL;
     }
     
-    // not a directory
+    // not a link
     if(!S_ISLNK(link->mode))
     {
         return -EINVAL;

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: read.c
  *    This file is part of LaylaOS.
@@ -46,9 +46,9 @@
 	    update_atime(node);
 
 
-static inline int read_internal(struct file_t *f, 
-                                unsigned char *buf, size_t count, 
-                                off_t *offset, ssize_t *copied)
+static inline long read_internal(struct file_t *f, 
+                                 unsigned char *buf, size_t count, 
+                                 off_t *offset, ssize_t *copied)
 {
     ssize_t res;
     off_t pos = *offset;
@@ -57,13 +57,15 @@ static inline int read_internal(struct file_t *f,
     if(!count)
     {
         res = 0;
-        goto fin;
+        //goto fin;
+        COPY_VAL_TO_USER(copied, &res);
+        return res;
     }
 
     /* this call shouldn't modify f->pos */
     res = f->node->read(f, &pos, buf, count, 0);
 
-fin:
+//fin:
     
     if(res >= 0)
     {
@@ -75,7 +77,7 @@ fin:
          * TODO: should we account for the actual bytes read, instead of what
          *       the task asked for?
          */
-        cur_task->read_count += count;
+        this_core->cur_task->read_count += count;
 
         res = 0;
     }
@@ -87,15 +89,15 @@ fin:
 /*
  * Handler for syscall read().
  */
-int syscall_read(int fd, unsigned char *buf, size_t count, ssize_t *copied)
+long syscall_read(int fd, unsigned char *buf, size_t count, ssize_t *copied)
 {
     struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    int sync, res;
+    long sync, res;
 
     //printk("syscall_read: buf 0x%lx, count %u\n", buf, count);
 
-    if(fdnode(fd, cur_task, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -108,7 +110,7 @@ int syscall_read(int fd, unsigned char *buf, size_t count, ssize_t *copied)
     res = read_internal(f, buf, count, &(f->pos), copied);
 
     sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
-    cur_task->read_calls++;
+    this_core->cur_task->read_calls++;
 
     if(sync)
     {
@@ -122,15 +124,15 @@ int syscall_read(int fd, unsigned char *buf, size_t count, ssize_t *copied)
 /*
  * Handler for syscall pread().
  */
-int syscall_pread(int fd, void *buf, size_t count, off_t _offset, 
-                  ssize_t *copied)
+long syscall_pread(int fd, void *buf, size_t count, off_t _offset, 
+                   ssize_t *copied)
 {
     struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    int sync, res;
+    long sync, res;
     off_t offset = _offset;
 
-    if(fdnode(fd, cur_task, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -143,7 +145,7 @@ int syscall_pread(int fd, void *buf, size_t count, off_t _offset,
     res = read_internal(f, (unsigned char *)buf, count, &offset, copied);
 
     sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
-    cur_task->read_calls++;
+    this_core->cur_task->read_calls++;
 
     if(sync)
     {
@@ -157,10 +159,10 @@ int syscall_pread(int fd, void *buf, size_t count, off_t _offset,
 /*
  * Handler for syscall readv().
  */
-int syscall_readv(int fd, struct iovec *iov, int count, ssize_t *copied)
+long syscall_readv(int fd, struct iovec *iov, int count, ssize_t *copied)
 {
     int i;
-    int res;
+    long res;
     ssize_t total = 0;
     void *iov_base;
     size_t iov_len;
@@ -169,7 +171,7 @@ int syscall_readv(int fd, struct iovec *iov, int count, ssize_t *copied)
     struct fs_node_t *node = NULL;
     int sync;
 
-    if(fdnode(fd, cur_task, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -207,7 +209,7 @@ int syscall_readv(int fd, struct iovec *iov, int count, ssize_t *copied)
     COPY_VAL_TO_USER(copied, &total);
 
     sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
-    cur_task->read_calls++;
+    this_core->cur_task->read_calls++;
 
     if(sync)
     {
@@ -221,11 +223,11 @@ int syscall_readv(int fd, struct iovec *iov, int count, ssize_t *copied)
 /*
  * Handler for syscall preadv().
  */
-int syscall_preadv(int fd, struct iovec *iov, int count,
-                   off_t _offset, ssize_t *copied)
+long syscall_preadv(int fd, struct iovec *iov, int count,
+                    off_t _offset, ssize_t *copied)
 {
     int i;
-    int res;
+    long res;
     ssize_t total = 0;
     void *iov_base;
     size_t iov_len;
@@ -235,7 +237,7 @@ int syscall_preadv(int fd, struct iovec *iov, int count,
     struct fs_node_t *node = NULL;
     int sync;
 
-    if(fdnode(fd, cur_task, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -271,7 +273,7 @@ int syscall_preadv(int fd, struct iovec *iov, int count,
     COPY_VAL_TO_USER(copied, &total);
 
     sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
-    cur_task->read_calls++;
+    this_core->cur_task->read_calls++;
 
     if(sync)
     {

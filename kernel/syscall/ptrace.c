@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ptrace.c
  *    This file is part of LaylaOS.
@@ -52,9 +52,9 @@
 /*
  * Helper function to get tracee's general-purpose registers.
  */
-static void get_regs(struct task_t *tracee, struct user_regs_struct *rdest)
+static void get_regs(volatile struct task_t *tracee, struct user_regs_struct *rdest)
 {
-    struct regs *rsrc = tracee->regs;
+    volatile struct regs *rsrc = &tracee->saved_context;
 
     // NOTE: this shouldn't happen
     if(!rsrc)
@@ -118,7 +118,7 @@ static void get_regs(struct task_t *tracee, struct user_regs_struct *rdest)
 /*
  * Helper function to get tracee's floating-point registers.
  */
-static void get_fpregs(struct task_t *tracee, struct user_fpregs_struct *r)
+static void get_fpregs(volatile struct task_t *tracee, struct user_fpregs_struct *r)
 {
 
 #ifdef __x86_64__
@@ -127,7 +127,7 @@ static void get_fpregs(struct task_t *tracee, struct user_fpregs_struct *r)
 
     // http://www.jaist.ac.jp/iscenter-new/mpc/altix/altixdata/opt/intel/vtune/doc/users_guide/mergedProjects/analyzer_ec/mergedProjects/reference_olh/mergedProjects/instructions/instruct32_hh/vc129.htm
 
-    A_memcpy(r, &tracee->fpregs, 512);
+    A_memcpy(r, (void *)&tracee->fpregs, 512);
 
 #else
 
@@ -150,9 +150,9 @@ static void get_fpregs(struct task_t *tracee, struct user_fpregs_struct *r)
  * Helper function to set tracee's general-purpose registers.
  * Some registers are not set to ensure we keep the kernel sane.
  */
-static void set_regs(struct task_t *tracee, struct user_regs_struct *rsrc)
+static void set_regs(volatile struct task_t *tracee, struct user_regs_struct *rsrc)
 {
-    struct regs *rdest = tracee->regs;
+    volatile struct regs *rdest = &tracee->saved_context;
 
     // NOTE: this shouldn't happen
     if(!rdest)
@@ -196,7 +196,7 @@ static void set_regs(struct task_t *tracee, struct user_regs_struct *rsrc)
 /*
  * Helper function to set tracee's floating-point registers.
  */
-static void set_fpregs(struct task_t *tracee, struct user_fpregs_struct *r)
+static void set_fpregs(volatile struct task_t *tracee, struct user_fpregs_struct *r)
 {
 
 #ifdef __x86_64__
@@ -204,7 +204,7 @@ static void set_fpregs(struct task_t *tracee, struct user_fpregs_struct *r)
     /*
      * TODO: validate input before copying it blindly.
      */
-    A_memcpy(&tracee->fpregs, r, 512);
+    A_memcpy((void *)&tracee->fpregs, r, 512);
 
 #else
 
@@ -263,7 +263,7 @@ void ptrace_kill_tracees(struct task_t *tracer)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_set_tracer(struct task_t *tracee, struct task_t *tracer)
+static long ptrace_set_tracer(volatile struct task_t *tracee, volatile struct task_t *tracer)
 {
     if(!tracee || !tracer)
     {
@@ -278,7 +278,7 @@ static int ptrace_set_tracer(struct task_t *tracee, struct task_t *tracer)
     }
     
     // mark the tracee as being traced
-    tracee->properties |= (PROPERTY_TRACE_SYSCALLS | PROPERTY_TRACE_SIGNALS);
+    __sync_or_and_fetch(&tracee->properties, (PROPERTY_TRACE_SYSCALLS | PROPERTY_TRACE_SIGNALS));
     
     // and add it to the tracer's list
     kernel_mutex_lock(&tracer->task_mutex);
@@ -286,14 +286,14 @@ static int ptrace_set_tracer(struct task_t *tracee, struct task_t *tracer)
     if(!tracer->tracees && !(tracer->tracees = list_create()))
     {
         kernel_mutex_unlock(&tracer->task_mutex);
-        tracee->properties &= ~(PROPERTY_TRACE_SYSCALLS | 
-                                PROPERTY_TRACE_SIGNALS);
+        __sync_and_and_fetch(&tracee->properties, 
+                        ~(PROPERTY_TRACE_SYSCALLS | PROPERTY_TRACE_SIGNALS));
         return -EBUSY;
     }
     
-    if(!list_lookup(tracer->tracees, tracee))
+    if(!list_lookup(tracer->tracees, (void *)tracee))
     {
-        list_add(tracer->tracees, tracee);
+        list_add(tracer->tracees, (void *)tracee);
     }
     
     kernel_mutex_unlock(&tracer->task_mutex);
@@ -306,18 +306,18 @@ static int ptrace_set_tracer(struct task_t *tracee, struct task_t *tracer)
 /*
  * Clear ptrace state.
  */
-void ptrace_clear_state(struct task_t *tracee)
+void ptrace_clear_state(volatile struct task_t *tracee)
 {
-    struct task_t *tracer;
+    volatile struct task_t *tracer;
 
     if(tracee->tracer_pid && (tracer = get_task_by_tid(tracee->tracer_pid)))
     {
         kernel_mutex_lock(&tracer->task_mutex);
-        list_remove(tracer->tracees, tracee);
+        list_remove(tracer->tracees, (struct task_t *)tracee);
         kernel_mutex_unlock(&tracer->task_mutex);
     }
 
-    tracee->properties &= ~(PROPERTY_TRACE_SYSCALLS | PROPERTY_TRACE_SIGNALS);
+    __sync_and_and_fetch(&tracee->properties, ~(PROPERTY_TRACE_SYSCALLS | PROPERTY_TRACE_SIGNALS));
     tracee->tracer_pid = 0;
     tracee->ptrace_options = 0;
     tracee->ptrace_eventmsg = 0;
@@ -341,10 +341,10 @@ void ptrace_copy_state(struct task_t *tracee2, struct task_t *tracee)
 /*
  * Signal tracer.
  */
-int ptrace_signal(int signum, int reason)
+long ptrace_signal(int signum, int reason)
 {
-    struct task_t *tracee = cur_task;
-    struct task_t *tracer;
+    volatile struct task_t *tracee = this_core->cur_task;
+    volatile struct task_t *tracer;
 
     tracer = get_task_by_tid(tracee->tracer_pid);
     
@@ -354,7 +354,7 @@ int ptrace_signal(int signum, int reason)
     }
 
     tracee->exit_status = __W_STOPCODE(signum) | (reason << 16);
-    tracee->properties |= PROPERTY_TRACE_SUSPENDED;
+    __sync_or_and_fetch(&tracee->properties, PROPERTY_TRACE_SUSPENDED);
 
 
     if(signum == SIGTRAP || signum == (SIGTRAP | 0x80))
@@ -374,32 +374,7 @@ int ptrace_signal(int signum, int reason)
         }
     }
 
-
-    // Ensure we don't get scheduled as we need the tracer to be scheduled
-    // to run before we go to sleep, waiting for it. This is why we do this
-    // manually, instead of calling block_task() and unblock_task().
-    lock_scheduler();
-
-    // unblock the tracer
-    if(tracer->state != TASK_READY && tracer->state != TASK_RUNNING)
-    {
-        tracer->state = TASK_READY;
-        tracer->wait_channel = NULL;
-
-        KDEBUG("%s: pid %d\n", __func__, tracer->pid);
-        remove_from_queue(tracer);
-        append_to_ready_queue(tracer);
-    }
-
-    // block the tracee
-    tracee->state = TASK_WAITING;
-
-    KDEBUG("%s: pid %d\n", __func__, tracee->pid);
-    remove_from_ready_queue(tracee);
-    append_to_queue(tracee, &blocked_queue);
-    scheduler();
-
-    unlock_scheduler();
+    schedule_and_block(tracer, tracee);
 
     signum = WSTOPSIG(tracee->exit_status);
     tracee->exit_status = __W_CONTINUED;
@@ -414,11 +389,11 @@ int ptrace_signal(int signum, int reason)
  * Returns:
  *    always 0.
  */
-static int signal_and_continue(struct task_t *tracee, int signum)
+static long signal_and_continue(volatile struct task_t *tracee, int signum)
 {
     int sigpending;
 
-    tracee->properties &= ~PROPERTY_TRACE_SUSPENDED;
+    __sync_and_and_fetch(&tracee->properties, ~PROPERTY_TRACE_SUSPENDED);
     sigpending = WSTOPSIG(tracee->exit_status);
     
     // check if the tracees has a pending signal
@@ -447,11 +422,11 @@ static int signal_and_continue(struct task_t *tracee, int signum)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_traceme(void)
+static long ptrace_traceme(void)
 {
-    struct task_t *tracee = cur_task;
-    struct task_t *tracer = tracee->tracer_pid ?
-                                get_task_by_tid(tracee->tracer_pid) : NULL;
+    volatile struct task_t *tracee = this_core->cur_task;
+    volatile struct task_t *tracer = tracee->tracer_pid ?
+                                     get_task_by_tid(tracee->tracer_pid) : NULL;
 
     // already being traced
     if(tracer)
@@ -477,11 +452,11 @@ static int ptrace_traceme(void)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_attach(pid_t pid)
+static long ptrace_attach(pid_t pid)
 {
-    struct task_t *tracee;
-    struct task_t *tracer = cur_task;
-    int res;
+    volatile struct task_t *tracee;
+    volatile struct task_t *tracer = this_core->cur_task;
+    long res;
 
     if(!(tracee = get_task_by_tid(pid)) ||
         (tracee->tracer_pid && tracee->tracer_pid != tracer->pid) ||
@@ -505,8 +480,8 @@ static int ptrace_attach(pid_t pid)
  * Common prologue to all the upcoming functions.
  */
 #define GET_TRACER_AND_TRACEE(tracer, tracee)           \
-    struct task_t *tracee;                              \
-    struct task_t *tracer = cur_task;                   \
+    volatile struct task_t *tracee;                     \
+    volatile struct task_t *tracer = this_core->cur_task;\
     if(!(tracee = get_task_by_tid(pid)) ||              \
         (tracee->tracer_pid != tracer->pid) ||          \
        !(tracee->properties & PROPERTY_TRACE_SUSPENDED))\
@@ -541,7 +516,7 @@ static int ptrace_attach(pid_t pid)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_peek_data(pid_t pid, void *addr, void *data)
+static long ptrace_peek_data(pid_t pid, void *addr, void *data)
 {
     virtual_addr memstart, memend;
     size_t sz = sizeof(void *);
@@ -555,7 +530,8 @@ static int ptrace_peek_data(pid_t pid, void *addr, void *data)
     memstart = (virtual_addr)addr;
     memend = memstart + sz;
 
-    if(read_other_taskmem(tracee, 0, memstart, memend, (char *)&buf, sz) != sz)
+    if(read_other_taskmem((struct task_t *)tracee, 0, 
+                            memstart, memend, (char *)&buf, sz) != sz)
     {
         //KDEBUG("ptrace_peek_data: res %d\n", res);
         return -EFAULT;
@@ -581,7 +557,7 @@ static int ptrace_peek_data(pid_t pid, void *addr, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_poke_data(pid_t pid, void *addr, void *data)
+static long ptrace_poke_data(pid_t pid, void *addr, void *data)
 {
     virtual_addr memstart, memend;
     size_t sz = sizeof(void *);
@@ -596,8 +572,8 @@ static int ptrace_poke_data(pid_t pid, void *addr, void *data)
     memstart = (virtual_addr)addr;
     memend = memstart + sz;
 
-    if(write_other_taskmem(tracee, 0, memstart, memend, 
-                                        (char *)&buf, sz) != sz)
+    if(write_other_taskmem((struct task_t *)tracee, 0, memstart, memend, 
+                                                    (char *)&buf, sz) != sz)
     {
         return -EFAULT;
     }
@@ -630,7 +606,7 @@ static int ptrace_poke_data(pid_t pid, void *addr, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_peek_user(pid_t pid, void *__addr, void *data)
+static long ptrace_peek_user(pid_t pid, void *__addr, void *data)
 {
     size_t sz = sizeof(int);
     size_t addr = (size_t)__addr;
@@ -688,7 +664,7 @@ static int ptrace_peek_user(pid_t pid, void *__addr, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_poke_user(pid_t pid, void *__addr, void *data)
+static long ptrace_poke_user(pid_t pid, void *__addr, void *data)
 {
     /*
      * TODO: implement this.
@@ -720,7 +696,7 @@ static int ptrace_poke_user(pid_t pid, void *__addr, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_get_regs(pid_t pid, void *data)
+static long ptrace_get_regs(pid_t pid, void *data)
 {
     struct user_regs_struct u;
 
@@ -750,7 +726,7 @@ static int ptrace_get_regs(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_get_fpregs(pid_t pid, void *data)
+static long ptrace_get_fpregs(pid_t pid, void *data)
 {
     struct user_fpregs_struct u;
 
@@ -780,7 +756,7 @@ static int ptrace_get_fpregs(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_set_regs(pid_t pid, void *data)
+static long ptrace_set_regs(pid_t pid, void *data)
 {
     struct user_regs_struct u;
 
@@ -816,7 +792,7 @@ static int ptrace_set_regs(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_set_fpregs(pid_t pid, void *data)
+static long ptrace_set_fpregs(pid_t pid, void *data)
 {
     struct user_fpregs_struct u;
 
@@ -850,7 +826,7 @@ static int ptrace_set_fpregs(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_get_siginfo(pid_t pid, void *data)
+static long ptrace_get_siginfo(pid_t pid, void *data)
 {
     int signum;
 
@@ -868,8 +844,8 @@ static int ptrace_get_siginfo(pid_t pid, void *data)
 
         if(signum > 0 && signum < NSIG)
         {
-            return copy_to_user(data, &tracee->siginfo[signum],
-                                    sizeof(siginfo_t));
+            return copy_to_user(data, (void *)&tracee->siginfo[signum],
+                                                        sizeof(siginfo_t));
         }
     }
     
@@ -893,7 +869,7 @@ static int ptrace_get_siginfo(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_set_siginfo(pid_t pid, void *data)
+static long ptrace_set_siginfo(pid_t pid, void *data)
 {
     int signum;
     siginfo_t siginfo;
@@ -910,7 +886,7 @@ static int ptrace_set_siginfo(pid_t pid, void *data)
     
     if(signum > 0 && signum < NSIG)
     {
-        A_memcpy(&tracee->siginfo[signum], &siginfo, sizeof(siginfo_t));
+        A_memcpy((void *)&tracee->siginfo[signum], &siginfo, sizeof(siginfo_t));
         return 0;
     }
 
@@ -936,7 +912,7 @@ static int ptrace_set_siginfo(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_get_sigmask(pid_t pid, void *addr, void *data)
+static long ptrace_get_sigmask(pid_t pid, void *addr, void *data)
 {
     sigset_t *sigset = (sigset_t *)data;
     size_t sz = (size_t)addr;
@@ -949,7 +925,7 @@ static int ptrace_get_sigmask(pid_t pid, void *addr, void *data)
         return -EFAULT;
     }
     
-    return syscall_sigprocmask_internal(tracee, 0, NULL, sigset, 0);
+    return syscall_sigprocmask_internal((struct task_t *)tracee, 0, NULL, sigset, 0);
 }
 
 
@@ -971,7 +947,7 @@ static int ptrace_get_sigmask(pid_t pid, void *addr, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_set_sigmask(pid_t pid, void *addr, void *data)
+static long ptrace_set_sigmask(pid_t pid, void *addr, void *data)
 {
     sigset_t *sigset = (sigset_t *)data;
     size_t sz = (size_t)addr;
@@ -984,7 +960,7 @@ static int ptrace_set_sigmask(pid_t pid, void *addr, void *data)
         return -EFAULT;
     }
 
-    return syscall_sigprocmask_internal(tracee, SIG_SETMASK, sigset, NULL, 0);
+    return syscall_sigprocmask_internal((struct task_t *)tracee, SIG_SETMASK, sigset, NULL, 0);
 }
 
 
@@ -1004,7 +980,7 @@ static int ptrace_set_sigmask(pid_t pid, void *addr, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_set_options(pid_t pid, void *data)
+static long ptrace_set_options(pid_t pid, void *data)
 {
     int ptrace_options;
 
@@ -1041,7 +1017,7 @@ static int ptrace_set_options(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_get_eventmsg(pid_t pid, void *data)
+static long ptrace_get_eventmsg(pid_t pid, void *data)
 {
     unsigned long msg;
 
@@ -1070,7 +1046,7 @@ static int ptrace_get_eventmsg(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_continue(pid_t pid, void *data)
+static long ptrace_continue(pid_t pid, void *data)
 {
     int signum = 0;
     GET_TRACER_AND_TRACEE(tracer, tracee);
@@ -1103,7 +1079,7 @@ static int ptrace_continue(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-int ptrace_syscall(pid_t pid, void *data)
+long ptrace_syscall(pid_t pid, void *data)
 {
     int signum = 0;
     GET_TRACER_AND_TRACEE(tracer, tracee);
@@ -1113,8 +1089,8 @@ int ptrace_syscall(pid_t pid, void *data)
         return -EFAULT;
     }
 
-    tracee->properties |= PROPERTY_TRACE_SYSCALLS;
-    tracee->properties &= ~PROPERTY_TRACE_SYSEMU;
+    __sync_or_and_fetch(&tracee->properties, PROPERTY_TRACE_SYSCALLS);
+    __sync_and_and_fetch(&tracee->properties, ~PROPERTY_TRACE_SYSEMU);
 
     return signal_and_continue(tracee, signum);
 }
@@ -1136,7 +1112,7 @@ int ptrace_syscall(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_sysemu(pid_t pid, void *data)
+static long ptrace_sysemu(pid_t pid, void *data)
 {
     int signum = 0;
     GET_TRACER_AND_TRACEE(tracer, tracee);
@@ -1146,8 +1122,8 @@ static int ptrace_sysemu(pid_t pid, void *data)
         return -EFAULT;
     }
 
-    tracee->properties |= PROPERTY_TRACE_SYSEMU;
-    tracee->properties &= ~PROPERTY_TRACE_SYSCALLS;
+    __sync_or_and_fetch(&tracee->properties, PROPERTY_TRACE_SYSEMU);
+    __sync_and_and_fetch(&tracee->properties, ~PROPERTY_TRACE_SYSCALLS);
 
     return signal_and_continue(tracee, signum);
 }
@@ -1170,7 +1146,7 @@ static int ptrace_sysemu(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_singlestep(pid_t pid, void *data)
+static long ptrace_singlestep(pid_t pid, void *data)
 {
     int signum = 0;
     GET_TRACER_AND_TRACEE(tracer, tracee);
@@ -1180,17 +1156,13 @@ static int ptrace_singlestep(pid_t pid, void *data)
         return -EFAULT;
     }
 
-    // NOTE: this shouldn't happen
-    if(!tracee->regs)
-    {
-        kpanic("Invalid regs pointer in task struct (in ptrace_singlestep)");
-    }
-    
+    volatile struct regs *rdest = &tracee->saved_context;
+
 #ifdef __x86_64__
-    tracee->regs->rflags |= 0x100;
+    rdest->rflags |= 0x100;
 #else
     //tracee->properties |= PROPERTY_TRACE_SINGLESTEP;
-    tracee->regs->eflags |= 0x100;
+    rdest->eflags |= 0x100;
 #endif
 
     return signal_and_continue(tracee, signum);
@@ -1214,7 +1186,7 @@ static int ptrace_singlestep(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_sysemu_singlestep(pid_t pid, void *data)
+static long ptrace_sysemu_singlestep(pid_t pid, void *data)
 {
     int signum = 0;
     GET_TRACER_AND_TRACEE(tracer, tracee);
@@ -1224,20 +1196,15 @@ static int ptrace_sysemu_singlestep(pid_t pid, void *data)
         return -EFAULT;
     }
 
-    // NOTE: this shouldn't happen
-    if(!tracee->regs)
-    {
-        kpanic("Invalid regs pointer in task struct "
-               "(in ptrace_sysemu_singlestep)");
-    }
-    
-    tracee->properties |= PROPERTY_TRACE_SYSEMU;
-    tracee->properties &= ~PROPERTY_TRACE_SYSCALLS;
+    volatile struct regs *rdest = &tracee->saved_context;
+
+    __sync_or_and_fetch(&tracee->properties, PROPERTY_TRACE_SYSEMU);
+    __sync_and_and_fetch(&tracee->properties, ~PROPERTY_TRACE_SYSCALLS);
 
 #ifdef __x86_64__
-    tracee->regs->rflags |= 0x100;
+    rdest->rflags |= 0x100;
 #else
-    tracee->regs->eflags |= 0x100;
+    rdest->eflags |= 0x100;
 #endif
 
     return signal_and_continue(tracee, signum);
@@ -1260,7 +1227,7 @@ static int ptrace_sysemu_singlestep(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_set_syscall(pid_t pid, void *data)
+static long ptrace_set_syscall(pid_t pid, void *data)
 {
     int sysnum = 0;
     GET_TRACER_AND_TRACEE(tracer, tracee);
@@ -1277,11 +1244,7 @@ static int ptrace_set_syscall(pid_t pid, void *data)
     }
     */
 
-    // NOTE: this shouldn't happen
-    if(!tracee->regs)
-    {
-        kpanic("Invalid regs pointer in task struct (in ptrace_set_syscall)");
-    }
+    volatile struct regs *rdest = &tracee->saved_context;
 
     if(tracee->user_in_kernel_mode &&
        (tracee->properties & PROPERTY_IN_SYSCALL))
@@ -1289,12 +1252,12 @@ static int ptrace_set_syscall(pid_t pid, void *data)
         if(tracee->exit_status ==
                 (__W_STOPCODE(SIGTRAP) | (PTRACE_EVENT_SYSCALL_ENTER << 16)))
         {
-            SET_SYSCALL_NUMBER(tracee->regs, sysnum);
+            SET_SYSCALL_NUMBER(rdest, sysnum);
         }
         else if(tracee->exit_status ==
                 (__W_STOPCODE(SIGTRAP) | (PTRACE_EVENT_SYSCALL_EXIT << 16)))
         {
-            SET_SYSCALL_RESULT(tracee->regs, sysnum);
+            SET_SYSCALL_RESULT(rdest, sysnum);
         }
     }
     
@@ -1323,9 +1286,8 @@ static int ptrace_set_syscall(pid_t pid, void *data)
  *    the size specified by the 'addr' argument, the output data is truncated.
  *    -errno is returned on failure.
  */
-static int ptrace_get_syscall_info(pid_t pid, void *addr, void *data)
+static long ptrace_get_syscall_info(pid_t pid, void *addr, void *data)
 {
-    struct regs *r;
     struct ptrace_syscall_info info;
     size_t sz;
     
@@ -1338,12 +1300,7 @@ static int ptrace_get_syscall_info(pid_t pid, void *addr, void *data)
         return -EFAULT;
     }
 
-    // NOTE: this shouldn't happen
-    if(!tracee->regs)
-    {
-        kpanic("Invalid regs pointer in task struct "
-               "(in ptrace_get_syscall_info)");
-    }
+    volatile struct regs *rdest = &tracee->saved_context;
 
     if(!tracee->user_in_kernel_mode ||
        !(tracee->properties & PROPERTY_IN_SYSCALL))
@@ -1357,17 +1314,16 @@ static int ptrace_get_syscall_info(pid_t pid, void *addr, void *data)
     }
     
     A_memset(&info, 0, sizeof(struct ptrace_syscall_info));
-    r = tracee->regs;
     
     // TODO: use appropriate values when we implement seccomp and audit.h
     info.arch = 0;
 
 #ifdef __x86_64__
-    info.instruction_pointer = r->rip;
-    info.stack_pointer = r->rsp;
+    info.instruction_pointer = rdest->rip;
+    info.stack_pointer = rdest->rsp;
 #else
-    info.instruction_pointer = r->eip;
-    info.stack_pointer = r->esp;
+    info.instruction_pointer = rdest->eip;
+    info.stack_pointer = rdest->esp;
 #endif
 
     
@@ -1376,19 +1332,19 @@ static int ptrace_get_syscall_info(pid_t pid, void *addr, void *data)
     if(tracee->exit_status == STATUS(PTRACE_EVENT_SYSCALL_ENTER))
     {
         info.op = PTRACE_SYSCALL_INFO_ENTRY;
-        info.entry.nr = GET_SYSCALL_NUMBER(r);
-        info.entry.args[0] = GET_SYSCALL_ARG1(r);
-        info.entry.args[1] = GET_SYSCALL_ARG2(r);
-        info.entry.args[2] = GET_SYSCALL_ARG3(r);
-        info.entry.args[3] = GET_SYSCALL_ARG4(r);
-        info.entry.args[4] = GET_SYSCALL_ARG5(r);
+        info.entry.nr = GET_SYSCALL_NUMBER(rdest);
+        info.entry.args[0] = GET_SYSCALL_ARG1(rdest);
+        info.entry.args[1] = GET_SYSCALL_ARG2(rdest);
+        info.entry.args[2] = GET_SYSCALL_ARG3(rdest);
+        info.entry.args[3] = GET_SYSCALL_ARG4(rdest);
+        info.entry.args[4] = GET_SYSCALL_ARG5(rdest);
         info.entry.args[5] = 0;
     }
     else if(tracee->exit_status == STATUS(PTRACE_EVENT_SYSCALL_EXIT))
     {
         info.op = PTRACE_SYSCALL_INFO_EXIT;
-        info.exit.rval = GET_SYSCALL_RESULT(r);
-        info.exit.is_error = ((int)GET_SYSCALL_RESULT(r) < 0) ? 1 : 0;
+        info.exit.rval = GET_SYSCALL_RESULT(rdest);
+        info.exit.is_error = ((int)GET_SYSCALL_RESULT(rdest) < 0) ? 1 : 0;
     }
     else
     {
@@ -1418,7 +1374,7 @@ static int ptrace_get_syscall_info(pid_t pid, void *addr, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_kill(pid_t pid)
+static long ptrace_kill(pid_t pid)
 {
     GET_TRACER_AND_TRACEE(tracer, tracee);
 
@@ -1443,7 +1399,7 @@ static int ptrace_kill(pid_t pid)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_detach(pid_t pid, void *data)
+static long ptrace_detach(pid_t pid, void *data)
 {
     int signum = 0;
     GET_TRACER_AND_TRACEE(tracer, tracee);
@@ -1454,7 +1410,7 @@ static int ptrace_detach(pid_t pid, void *data)
     }
     
     ptrace_clear_state(tracee);
-    list_remove(tracer->tracees, tracee);
+    list_remove(tracer->tracees, (void *)tracee);
 
     return signal_and_continue(tracee, signum);
 }
@@ -1469,7 +1425,7 @@ static int ptrace_detach(pid_t pid, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_get_thread_area(pid_t pid, void *addr, void *data)
+static long ptrace_get_thread_area(pid_t pid, void *addr, void *data)
 {
     struct user_desc tmp;
     struct user_desc *dp = (struct user_desc *)data;
@@ -1512,7 +1468,7 @@ static int ptrace_get_thread_area(pid_t pid, void *addr, void *data)
  * Returns:
  *    0 on success, -errno on failure.
  */
-static int ptrace_set_thread_area(pid_t pid, void *addr, void *data)
+static long ptrace_set_thread_area(pid_t pid, void *addr, void *data)
 {
     struct user_desc tmp;
     struct user_desc *dp = (struct user_desc *)data;
@@ -1549,7 +1505,7 @@ static int ptrace_set_thread_area(pid_t pid, void *addr, void *data)
  *
  * See: https://man7.org/linux/man-pages/man2/ptrace.2.html
  */
-int syscall_ptrace(int request, pid_t pid, void *addr, void *data)
+long syscall_ptrace(int request, pid_t pid, void *addr, void *data)
 {
     KDEBUG("syscall_ptrace: req %d, pid %d, addr 0x%x, data 0x%x\n", request, pid, addr, data);
 

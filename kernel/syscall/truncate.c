@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: truncate.c
  *    This file is part of LaylaOS.
@@ -34,6 +34,7 @@
 #include <kernel/task.h>
 #include <kernel/ksignal.h>
 #include <kernel/fio.h>
+#include <kernel/user.h>
 
 
 /*
@@ -43,9 +44,9 @@
  *       For details, see:
  *           https://man7.org/linux/man-pages/man2/truncate.2.html
  */
-static int do_truncate(struct fs_node_t *node, off_t length)
+static long do_truncate(struct fs_node_t *node, off_t length)
 {
-    struct task_t *ct = cur_task;
+    long res;
 
     if(!node)
     {
@@ -67,22 +68,26 @@ static int do_truncate(struct fs_node_t *node, off_t length)
         return -EPERM;
     }
 
-    if(exceeds_rlimit(ct, RLIMIT_FSIZE, length))
+    if(exceeds_rlimit(this_core->cur_task, RLIMIT_FSIZE, length))
     {
-        user_add_task_signal(ct, SIGXFSZ, 1);
+        user_add_task_signal(this_core->cur_task, SIGXFSZ, 1);
         return -EFBIG;
     }
 
-    return truncate_node(node, length);
+    MARK_NODE_STALE(node);
+    res = truncate_node(node, length);
+    UNMARK_NODE_STALE(node);
+
+    return res;
 }
 
 
 /*
  * Handler for syscall truncate().
  */
-int syscall_truncate(char *pathname, off_t length)
+long syscall_truncate(char *pathname, off_t length)
 {
-	int res;
+	long res;
     struct fs_node_t *node = NULL;
 	int open_flags = OPEN_USER_CALLER | OPEN_FOLLOW_SYMLINK;
 
@@ -111,18 +116,17 @@ int syscall_truncate(char *pathname, off_t length)
 /*
  * Handler for syscall ftruncate().
  */
-int syscall_ftruncate(int fd, off_t length)
+long syscall_ftruncate(int fd, off_t length)
 {
 	struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    struct task_t *ct = cur_task;
 
 	if(length < 0)
 	{
 	    return -EBADF;
 	}
 	
-    if(fdnode(fd, ct, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
 	{
 		return -ENOENT;
 	}

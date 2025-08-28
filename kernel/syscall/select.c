@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: select.c
  *    This file is part of LaylaOS.
@@ -30,11 +30,14 @@
 //#define __DEBUG
 
 #define __USE_XOPEN_EXTENDED
+#define CALC_HASH_FUNC          inlined_calc_hash_for_ptr
+#define KEY_COMPARE_FUNC        inlined_ptr_compare
 #include <errno.h>
 #include <string.h>
 #include <fcntl.h>
 #include <sys/param.h>
-#include <sys/hash.h>
+#include <sys/hash_inline.h>
+#include <sys/hash_inline_ptr.h>
 #include <kernel/laylaos.h>
 #include <kernel/syscall.h>
 #include <kernel/net.h>
@@ -59,7 +62,7 @@ struct seltab_entry_t
 #define INIT_WAITERS_SIZE       32
     int waiters_size;           // # of items alloc'd to the waiters array
 
-    struct kernel_mutex_t lock; // to synchronize access
+    volatile struct kernel_mutex_t lock; // to synchronize access
     struct seltab_entry_t *next;// link to next struct seltab_entry_t
     struct task_t **waiters;    // array of waiters on the above channel
 };
@@ -67,9 +70,9 @@ struct seltab_entry_t
 
 #define INIT_HASHSZ             256
 struct hashtab_t *seltab = NULL;
-struct kernel_mutex_t seltab_lock = { 0, };
+volatile struct kernel_mutex_t seltab_lock = { 0, };
 
-static int selscan(fd_set *, fd_set *, int);
+static long selscan(fd_set *, fd_set *, int);
 
 
 /*
@@ -90,7 +93,7 @@ void init_seltab(void)
  * If no entry is present, a new entry is created and added to the table.
  * In case of error, NULL is returned.
  */
-static inline struct seltab_entry_t *get_seltab_entry(void *channel)
+STATIC_INLINE struct seltab_entry_t *get_seltab_entry(void *channel)
 {
     struct hashtab_item_t *hitem;
     struct seltab_entry_t *se = NULL;
@@ -98,7 +101,7 @@ static inline struct seltab_entry_t *get_seltab_entry(void *channel)
     // lock the array so no one adds/removes anything while we search
     elevated_priority_lock(&seltab_lock);
 
-    if((hitem = hashtab_lookup(seltab, channel)))
+    if((hitem = hashtab_fast_lookup(seltab, channel)))
     {
         se = hitem->val;
     }
@@ -217,11 +220,11 @@ static inline int validate_fds(fd_set *ibits, int nfd)
 }
 */
 
-static int select_internal(u_int nd, fd_set *in, fd_set *ou, fd_set *ex,
-                           struct timespec *ts)
+static long select_internal(u_int nd, fd_set *in, fd_set *ou, fd_set *ex,
+                            struct timespec *ts)
 {
     fd_set ibits[3], obits[3];
-    int error = 0;
+    long error = 0;
     unsigned long timo;
     unsigned long long oticks;
 
@@ -392,8 +395,8 @@ done:
 /*
  * Handler for syscall select().
  */
-int syscall_select(u_int nd, fd_set *in, fd_set *ou,
-                   fd_set *ex, struct timeval *tv)
+long syscall_select(u_int nd, fd_set *in, fd_set *ou,
+                    fd_set *ex, struct timeval *tv)
 {
     struct timeval atv;
     struct timespec tmp, *ts = NULL;
@@ -418,10 +421,10 @@ int syscall_select(u_int nd, fd_set *in, fd_set *ou,
 /*
  * Handler for syscall pselect().
  */
-int syscall_pselect(struct syscall_args *__args)
+long syscall_pselect(struct syscall_args *__args)
 {
     struct syscall_args a;
-    int res;
+    long res;
 
     // syscall args
     int nd;
@@ -444,8 +447,8 @@ int syscall_pselect(struct syscall_args *__args)
     if(sigmask)
     {
         COPY_FROM_USER(&newsigmask, sigmask, sizeof(sigset_t));
-        syscall_sigprocmask_internal(cur_task, SIG_SETMASK, &newsigmask, 
-                                         &origmask, 1);
+        syscall_sigprocmask_internal((struct task_t *)this_core->cur_task, 
+                                     SIG_SETMASK, &newsigmask, &origmask, 1);
     }
 
     if(user_ts)
@@ -459,7 +462,8 @@ int syscall_pselect(struct syscall_args *__args)
 
     if(sigmask)
     {
-        syscall_sigprocmask_internal(cur_task, SIG_SETMASK, &origmask, NULL, 1);
+        syscall_sigprocmask_internal((struct task_t *)this_core->cur_task, 
+                                     SIG_SETMASK, &origmask, NULL, 1);
     }
 
     return res;
@@ -469,13 +473,13 @@ int syscall_pselect(struct syscall_args *__args)
 /*
  * Scan for select events.
  */
-static int selscan(fd_set *ibits, fd_set *obits, int nfd)
+static long selscan(fd_set *ibits, fd_set *obits, int nfd)
 {
     KDEBUG("selscan:\n");
 
     struct file_t *f;
     static int flag[3] = { FREAD, FWRITE, 0 };
-    int n = 0;
+    long n = 0;
     int i, j, fd, msk, stop;
     unsigned long *bits, k;
 
@@ -510,7 +514,7 @@ static int selscan(fd_set *ibits, fd_set *obits, int nfd)
                         break;
                     }
 
-                    f = cur_task->ofiles->ofile[fd];
+                    f = this_core->cur_task->ofiles->ofile[fd];
 
                     if(f == NULL)
                     {
@@ -602,7 +606,7 @@ void selrecord(struct selinfo *sip)
     struct seltab_entry_t *se;
     struct task_t **w, **lw, **tmpw;
     size_t half;
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
     
     if(!sip)
     {
@@ -622,7 +626,7 @@ void selrecord(struct selinfo *sip)
         //A_memset(se, 0, sizeof(struct seltab_entry_t));
         se->nwaiters = 0;
         se->lock.lock = 0;
-        se->lock.wanted = 0;
+        se->lock.recursive_count = 0;
 
         se->channel = sip;
         se->waiters_size = INIT_WAITERS_SIZE;
@@ -640,7 +644,7 @@ void selrecord(struct selinfo *sip)
             se->waiters[z] = 0;
         }
 
-        if(!(hitem = alloc_hitem(sip, se)))
+        if(!(hitem = hashtab_fast_alloc_hitem(sip, se)))
         {
             kfree(se);
             KDEBUG("Failed to alloc hash item: insufficient memory\n");
@@ -648,7 +652,7 @@ void selrecord(struct selinfo *sip)
         }
 
         elevated_priority_lock(&seltab_lock);
-        hashtab_add_hitem(seltab, sip, hitem);
+        hashtab_fast_add_hitem(seltab, sip, hitem);
         elevated_priority_unlock(&seltab_lock);
     }
 
@@ -742,13 +746,7 @@ void selwakeup(struct selinfo *sip)
             t->state = TASK_READY;
             t->wait_channel = NULL;
 
-            //KDEBUG("%s: pid %d\n", __func__, t->pid);
-
-            lock_scheduler();
-            remove_from_queue(t);
-            //remove_from_queue(t, &blocked_queue /*, TASK_NEXT_BLOCKED */);
-            append_to_ready_queue(t);
-            unlock_scheduler();
+            append_to_ready_queue_locked(t, 1);
         }
     }
 

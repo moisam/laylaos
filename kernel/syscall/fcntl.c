@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: fcntl.c
  *    This file is part of LaylaOS.
@@ -45,11 +45,11 @@
 
 
 // defined in dup.c
-extern int do_dup(int fd, int arg);
+extern long do_dup(int fd, int arg);
 
 // defined in fcntl_internal.c
-extern int add_lock(struct file_t *fp, struct flock *flock);
-extern int remove_lock(struct file_t *fp, struct flock *flock);
+extern long add_lock(struct file_t *fp, struct flock *flock);
+extern long remove_lock(struct file_t *fp, struct flock *flock);
 
 
 #define CHECK_LOCK_TYPE(lock)                               \
@@ -66,9 +66,9 @@ extern int remove_lock(struct file_t *fp, struct flock *flock);
 /*
  * Helper function to acquire a lock.
  */
-int fcntl_setlock(struct file_t *fp, int cmd, struct flock *lock)
+long fcntl_setlock(struct file_t *fp, int cmd, struct flock *lock)
 {
-    int res;
+    long res;
     struct flock olock;
 
     /* can't go before start of file */
@@ -111,23 +111,24 @@ int fcntl_setlock(struct file_t *fp, int cmd, struct flock *lock)
 /*
  * Handler for syscall fcntl().
  */
-int syscall_fcntl(int fd, int cmd, void *arg)
+long syscall_fcntl(int fd, int cmd, void *arg)
 {	
 	struct file_t *fp = NULL;
     struct fs_node_t *node = NULL;
-	int res, tmp /* , otmp */;
+    long res;
+	int tmp /* , otmp */;
 	pid_t pid;
 	mode_t mode;
     struct flock lock, olock;
-    struct task_t *ct = cur_task;
-    
+	volatile struct task_t *ct = this_core->cur_task;
+
     //KDEBUG("syscall_fcntl: fd %d, cmd %d, arg " _XPTR_ "\n", fd, cmd, arg);
 
     if(fdnode(fd, ct, &fp, &node) != 0)
 	{
 		return -EBADF;
 	}
-	
+
 	switch(cmd)
 	{
         /*********************************
@@ -135,9 +136,19 @@ int syscall_fcntl(int fd, int cmd, void *arg)
          *********************************/
 
 		case F_DUPFD:
+        	if(!validfd(fd, ct))
+        	{
+        		return -EBADF;
+        	}
+
 			return do_dup(fd, (int)(uintptr_t)arg);
 
 		case F_DUPFD_CLOEXEC:
+        	if(!validfd(fd, ct))
+        	{
+        		return -EBADF;
+        	}
+
 			if((res = do_dup(fd, (int)(uintptr_t)arg)) < 0)   // error result
 			{
 			    return res;
@@ -374,13 +385,13 @@ int syscall_fcntl(int fd, int cmd, void *arg)
 			}
 			else                // pid
 			{
-			    struct task_t *t = get_task_by_id(pid);
-			    
+			    volatile struct task_t *t = get_task_by_id(pid);
+
 			    if(!t)
 			    {
 			        return -ESRCH;
 			    }
-			    
+
 			    pid = t->pgid;
 			}
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: chdir.c
  *    This file is part of LaylaOS.
@@ -36,9 +36,9 @@
 #include <kernel/fio.h>
 
 
-static int do_chdir(struct fs_node_t *node)
+static long do_chdir(struct fs_node_t *node)
 {
-	int res;
+	long res;
 
 	if(!node)
 	{
@@ -57,8 +57,7 @@ static int do_chdir(struct fs_node_t *node)
 
     if((res = has_access(node, EXECUTE, 0)) == 0)
     {
-        struct task_t *ct = cur_task;
-    	volatile struct task_fs_t *fs = ct->fs;
+    	volatile struct task_fs_t *fs = this_core->cur_task->fs;
     	volatile struct fs_node_t *tmp = fs->cwd;
     	release_node((struct fs_node_t *)tmp);
     	tmp = node;
@@ -76,13 +75,13 @@ static int do_chdir(struct fs_node_t *node)
 /*
  * Handler for syscall chdir().
  */
-int syscall_chdir(char *f)
+long syscall_chdir(char *f)
 {
     volatile char *filename = f;
 	struct fs_node_t *node = NULL;
-	int res;
+	long res;
 	int open_flags = OPEN_USER_CALLER | OPEN_FOLLOW_SYMLINK;
-	
+
 	if((res = vfs_open_internal((char *)filename, AT_FDCWD, 
 	                                    &node, open_flags)) < 0)
 	{
@@ -99,13 +98,12 @@ int syscall_chdir(char *f)
 /*
  * Handler for syscall fchdir().
  */
-int syscall_fchdir(int fd)
+long syscall_fchdir(int fd)
 {
 	struct file_t *f;
     struct fs_node_t *node;
-    struct task_t *t = cur_task;
 
-    if(fdnode(fd, t, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -121,19 +119,18 @@ int syscall_fchdir(int fd)
 /*
  * Handler for syscall chroot().
  */
-int syscall_chroot(char *filename)
+long syscall_chroot(char *filename)
 {
 	struct fs_node_t *node = NULL;
-	int res;
+	long res;
 	int open_flags = OPEN_USER_CALLER | OPEN_FOLLOW_SYMLINK;
-    struct task_t *t = cur_task;
 
-    if(!t || !t->fs)
+    if(!this_core->cur_task || !this_core->cur_task->fs)
     {
         return 0;
     }
     
-    if(!suser(t))
+    if(!suser(this_core->cur_task))
     {
         return -EPERM;
     }
@@ -158,8 +155,8 @@ int syscall_chroot(char *filename)
 
     if((res = has_access(node, EXECUTE, 0)) == 0)
     {
-    	release_node(t->fs->root);
-    	t->fs->root = node;
+    	release_node(this_core->cur_task->fs->root);
+    	this_core->cur_task->fs->root = node;
     }
     else
     {

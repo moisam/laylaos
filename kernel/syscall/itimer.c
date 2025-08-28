@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: itimer.c
  *    This file is part of LaylaOS.
@@ -47,10 +47,13 @@
  * 
  *****************************************************************************/
 
+#if 0
+
 struct itimer_t itimer_queue_head = { 0, };
 siginfo_t itimer_siginfo = { .si_code = SI_TIMER };
-
 struct task_t *softitimer_task = NULL;
+volatile struct kernel_mutex_t itimer_mutex = { 0, };
+volatile int itimer_list_busy = 0;
 
 void softitimer_task_func(void *unused);
 
@@ -63,13 +66,54 @@ void init_itimers(void)
                             &softitimer_task, 0);
 }
 
+#endif
 
-static void insert_real_itimer(struct itimer_t *itimer)
+
+static void arm_itimer(struct posix_timer_t *timer, struct itimerval *val, ktimer_t timerid, int signo)
 {
-    struct itimer_t *prev, *next;
+    timer->sigev.sigev_notify = SIGEV_SIGNAL;
+    timer->sigev.sigev_signo = signo;
+    timer->sigev.sigev_value.sival_int = 0;
+    timer->clockid = (timerid == ITIMER_REAL_ID) ? CLOCK_REALTIME : CLOCK_MONOTONIC;
+    timer->timerid = timerid;
+    timer->flags = 0;
+
+    timer->val.it_value.tv_sec = val->it_value.tv_sec;
+    timer->val.it_value.tv_nsec = val->it_value.tv_usec * 1000;
+    timer->val.it_interval.tv_sec = val->it_interval.tv_sec;
+    timer->val.it_interval.tv_nsec = val->it_interval.tv_usec * 1000;
+    timer->cur_overruns = 0;
+    timer->saved_overruns = 0;
+
+    timer->next = this_core->cur_task->posix_timers;
+    this_core->cur_task->posix_timers = timer;
+}
+
+
+static void activate_itimer(struct posix_timer_t *timer)
+{
+    int res;
+
+    if(timer->val.it_value.tv_sec || timer->val.it_value.tv_nsec)
+    {
+        res = do_clock_nanosleep(tgid(this_core->cur_task), timer->clockid, 0,
+                                     &timer->val.it_value, NULL, timer->timerid);
+
+        // time has already passed (otherwise we should get -EINTR)
+        if(res == 0 || res == -EINVAL)
+        {
+            A_memset(&timer->val, 0, sizeof(struct itimerspec));
+        }
+    }
+}
+
+
+#if 0
+
+static void insert_real_itimer(volatile struct itimer_t *itimer)
+{
+    volatile struct itimer_t *prev, *next;
     unsigned long ticks = itimer->rel_ticks;
-    
-	lock_scheduler();
 
     /*
      * Store waiting tasks in a delta queue, where every task's delta is the 
@@ -102,16 +146,12 @@ static void insert_real_itimer(struct itimer_t *itimer)
     /* Fix the pointers */
 	prev->next_real = itimer;
 	itimer->next_real = next;
-
-	unlock_scheduler();
 }
 
 
 static void remove_real_itimer(struct itimer_t *itimer)
 {
-    struct itimer_t *prev, *next;
-
-	lock_scheduler();
+    volatile struct itimer_t *prev, *next;
 
 	for(prev = &itimer_queue_head;
 	    (next = prev->next_real) != NULL;
@@ -129,12 +169,10 @@ static void remove_real_itimer(struct itimer_t *itimer)
 			break;
 		}
 	}
-	
-	unlock_scheduler();
 }
 
 
-static inline void reset_itimer(struct itimer_t *itimer)
+static inline void reset_itimer(volatile struct itimer_t *itimer)
 {
     itimer->rel_ticks = itimer->interval;
 }
@@ -144,24 +182,21 @@ static inline void reset_itimer(struct itimer_t *itimer)
  * Interval timers soft interrupt function.
  */
 void softitimer_task_func(void *unused)
-//void softitimer(int unused)
 {
 	UNUSED(unused);
-    struct itimer_t *itimer;
+    volatile struct itimer_t *itimer;
 
     for(;;)
     {
-    	lock_scheduler();
-	
+        elevated_priority_lock(&itimer_mutex);
+        itimer_list_busy = 1;
+
     	while((itimer = itimer_queue_head.next_real) != NULL &&
     	                    itimer->rel_ticks == 0)
     	{
             //printk("softitimer: waking up task %d\n", itimer->task->pid);
             itimer_queue_head.next_real = itimer->next_real;
             itimer->next_real = NULL;
-
-    		unlock_scheduler();
-
             add_task_signal(itimer->task, SIGALRM, &itimer_siginfo, 1);
 
             /* reset timer and return to the queue if needed */
@@ -171,11 +206,10 @@ void softitimer_task_func(void *unused)
             {
                 insert_real_itimer(itimer);
             }
-
-    		lock_scheduler();
     	}
 
-    	unlock_scheduler();
+        itimer_list_busy = 0;
+        elevated_priority_unlock(&itimer_mutex);
 
         block_task(&itimer_queue_head, 0);
 	}
@@ -187,8 +221,13 @@ void softitimer_task_func(void *unused)
  */
 void dec_itimers(void)
 {
-    struct itimer_t *itimer;
+    volatile struct itimer_t *itimer;
     int needsoft = 0;
+
+    if(itimer_list_busy)
+    {
+        return;
+    }
 
     /* decrement system-wide real timers */
 	for(itimer = itimer_queue_head.next_real;
@@ -251,9 +290,47 @@ void dec_itimers(void)
     }
 }
 
+#endif
+
 
 static int __getitimer(int which, struct itimerval *value)
 {
+    struct itimerspec oldval;
+
+    oldval.it_value.tv_sec = 0;
+    oldval.it_value.tv_nsec = 0;
+    oldval.it_interval.tv_sec = 0;
+    oldval.it_interval.tv_nsec = 0;
+
+    if(which == ITIMER_VIRTUAL)
+    {
+        kernel_mutex_lock(&this_core->cur_task->common->mutex);
+        ticks_to_timeval(this_core->cur_task->itimer_virt.rel_ticks, &value->it_value);
+        ticks_to_timeval(this_core->cur_task->itimer_virt.interval, &value->it_interval);
+        kernel_mutex_unlock(&this_core->cur_task->common->mutex);
+        return 1;
+    }
+    else if(which == ITIMER_REAL)
+    {
+        timer_gettime_internal(ITIMER_REAL_ID, &oldval, 1);
+    }
+    else if(which == ITIMER_PROF)
+    {
+        timer_gettime_internal(ITIMER_PROF_ID, &oldval, 1);
+    }
+    else
+    {
+        return 0;
+    }
+
+    value->it_value.tv_sec = oldval.it_value.tv_sec;
+    value->it_value.tv_usec = oldval.it_value.tv_nsec / 1000;
+    value->it_interval.tv_sec = oldval.it_interval.tv_sec;
+    value->it_interval.tv_usec = oldval.it_interval.tv_nsec / 1000;
+
+    return 1;
+
+#if 0
     unsigned long rel_ticks, base_ticks = 0;
     unsigned long interval;
     struct itimer_t *itimer;
@@ -263,9 +340,10 @@ static int __getitimer(int which, struct itimerval *value)
     {
         itimer = &(ct->itimer_real);
 
-        struct itimer_t *prev, *next;
+        volatile struct itimer_t *prev, *next;
 
-    	lock_scheduler();
+        elevated_priority_lock(&itimer_mutex);
+        itimer_list_busy = 1;
 
     	for(prev = &itimer_queue_head;
     	    (next = prev->next_real) != NULL && (next != itimer);
@@ -274,7 +352,8 @@ static int __getitimer(int which, struct itimerval *value)
     	    base_ticks += prev->rel_ticks;
     	}
 	
-    	unlock_scheduler();
+        itimer_list_busy = 0;
+        elevated_priority_unlock(&itimer_mutex);
     }
     else if(which == ITIMER_VIRTUAL)
     {
@@ -297,13 +376,15 @@ static int __getitimer(int which, struct itimerval *value)
     ticks_to_timeval(interval, &value->it_interval);
 
     return 1;
+#endif
+
 }
 
 
 /*
  * Handler for syscall getitimer().
  */
-int syscall_getitimer(int which, struct itimerval *value)
+long syscall_getitimer(int which, struct itimerval *value)
 {
     struct itimerval val;
     
@@ -324,9 +405,62 @@ int syscall_getitimer(int which, struct itimerval *value)
 /*
  * Handler for syscall setitimer().
  */
-int syscall_setitimer(int which, struct itimerval *value,
-                      struct itimerval *ovalue)
+long syscall_setitimer(int which, struct itimerval *value,
+                       struct itimerval *ovalue)
 {
+    struct itimerval val, oldval;
+
+    if(!__getitimer(which, &oldval))
+    {
+        return -EINVAL;
+    }
+
+    if(value)
+    {
+        COPY_FROM_USER(&val, value, sizeof(struct itimerval));
+
+        if(val.it_value.tv_usec < 0 || val.it_value.tv_usec > 999999)
+        {
+            return -EINVAL;
+        }
+
+        if(which == ITIMER_VIRTUAL)
+        {
+            kernel_mutex_lock(&this_core->cur_task->common->mutex);
+            this_core->cur_task->itimer_virt.interval = timeval_to_ticks(&val.it_interval);
+            this_core->cur_task->itimer_virt.rel_ticks = timeval_to_ticks(&val.it_value);
+            kernel_mutex_unlock(&this_core->cur_task->common->mutex);
+        }
+        else if(which == ITIMER_REAL)
+        {
+            syscall_timer_delete(ITIMER_REAL_ID);
+            kernel_mutex_lock(&this_core->cur_task->common->mutex);
+            arm_itimer(&this_core->cur_task->itimer_real, &val, ITIMER_REAL_ID, SIGALRM);
+            activate_itimer(&this_core->cur_task->itimer_real);
+            kernel_mutex_unlock(&this_core->cur_task->common->mutex);
+        }
+        else if(which == ITIMER_PROF)
+        {
+            syscall_timer_delete(ITIMER_PROF_ID);
+            kernel_mutex_lock(&this_core->cur_task->common->mutex);
+            arm_itimer(&this_core->cur_task->itimer_prof, &val, ITIMER_PROF_ID, SIGPROF);
+            activate_itimer(&this_core->cur_task->itimer_prof);
+            kernel_mutex_unlock(&this_core->cur_task->common->mutex);
+        }
+        else
+        {
+            return -EINVAL;
+        }
+    }
+
+    if(ovalue)
+    {
+        COPY_TO_USER(ovalue, &oldval, sizeof(struct itimerval));
+    }
+
+    return 0;
+
+#if 0
     struct itimerval val, oldval;
     int noset = 0;
     struct task_t *ct = cur_task;
@@ -363,6 +497,9 @@ int syscall_setitimer(int which, struct itimerval *value,
 
     if(which == ITIMER_REAL)
     {
+        elevated_priority_lock(&itimer_mutex);
+        itimer_list_busy = 1;
+
         /*
          * remove the old timer, set the new value, then add the timer to
          * the queue if it is not disarmed (because our queue is a delta
@@ -373,11 +510,15 @@ int syscall_setitimer(int which, struct itimerval *value,
         ct->itimer_real.rel_ticks = rel_ticks;
         ct->itimer_real.interval = interval;
         ct->itimer_real.task = TGLEAD(ct);
+        ct->itimer_real.next_real = NULL;
 
         if(ct->itimer_real.rel_ticks != 0)
         {
             insert_real_itimer(&(ct->itimer_real));
         }
+
+        itimer_list_busy = 0;
+        elevated_priority_unlock(&itimer_mutex);
     }
     else if(which == ITIMER_VIRTUAL)
     {
@@ -401,6 +542,8 @@ fin:
     }
 
     return 0;
+#endif
+
 }
 
 
@@ -411,11 +554,32 @@ fin:
  *    alarm() and setitimer(2) share the same timer; calls to one will 
  *    interfere with use of the other.
  */
-int syscall_alarm(unsigned int seconds)
+long syscall_alarm(unsigned int seconds)
 {
+    unsigned int oldsecs = this_core->cur_task->itimer_real.val.it_value.tv_sec / PIT_FREQUENCY;
+    struct itimerval val;
+
+    val.it_value.tv_sec = seconds;
+    val.it_value.tv_usec = 0;
+    val.it_interval.tv_sec = 0;
+    val.it_interval.tv_usec = 0;
+
+    syscall_timer_delete(ITIMER_REAL_ID);
+
+    // arm the new timer if needed
+    kernel_mutex_lock(&this_core->cur_task->common->mutex);
+    arm_itimer(&this_core->cur_task->itimer_real, &val, ITIMER_REAL_ID, SIGALRM);
+    activate_itimer(&this_core->cur_task->itimer_real);
+    kernel_mutex_unlock(&this_core->cur_task->common->mutex);
+
+
+#if 0
     struct task_t *ct = cur_task;
     unsigned long rel_ticks = seconds * PIT_FREQUENCY;
     unsigned int oldsecs = ct->itimer_real.rel_ticks / PIT_FREQUENCY;
+
+    elevated_priority_lock(&itimer_mutex);
+    itimer_list_busy = 1;
 
     /*
      * remove the old timer, set the new value, then add the timer to
@@ -427,11 +591,16 @@ int syscall_alarm(unsigned int seconds)
     ct->itimer_real.rel_ticks = rel_ticks;
     ct->itimer_real.interval = 0;
     ct->itimer_real.task = TGLEAD(ct);
+    ct->itimer_real.next_real = NULL;
 
     if(ct->itimer_real.rel_ticks != 0)
     {
         insert_real_itimer(&(ct->itimer_real));
     }
+
+    itimer_list_busy = 0;
+    elevated_priority_unlock(&itimer_mutex);
+#endif
 
     return oldsecs;
 }

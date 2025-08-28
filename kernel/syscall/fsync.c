@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: fsync.c
  *    This file is part of LaylaOS.
@@ -35,17 +35,13 @@
 /*
  * Handler for syscall fdatasync().
  */
-int syscall_fdatasync(int fd)
+long syscall_fdatasync(int fd)
 {
     struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    struct cached_page_t *buf;
-    size_t i, j;
-    int res = 0;
-    struct task_t *ct = cur_task;
     
     // sanity checks
-    if(fdnode(fd, ct, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
@@ -55,62 +51,34 @@ int syscall_fdatasync(int fd)
         return -EINVAL;
     }
 
-    j = node->size;
-    i = 0;
-
-    // try to bmap each block from the file, check to see if the block has
-    // already been read by someone (i.e. the block should be available in
-    // the block cache), then write the block out to disk
-    while(i < j)
-    {
-        if((buf = get_cached_page(node, i, PCACHE_PEEK_ONLY)))
-        {
-            if(sync_cached_page(buf) < 0)
-            {
-                res = -EIO;
-            }
-
-            release_cached_page(buf);
-        }
-
-        i += PAGE_SIZE;
-    }
-    
-    return res;
+    return vfs_fdatasync(node);
 }
 
 
 /*
  * Handler for syscall fsync().
  */
-int syscall_fsync(int fd)
+long syscall_fsync(int fd)
 {
     struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    int res, res2;
-    struct task_t *ct = cur_task;
 
     // sanity checks
-    if(fdnode(fd, ct, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
 
-    // sync data
-    res = syscall_fdatasync(fd);
-    
-    // then metadata
-    res2 = write_node(node);
-    
-    return res ? res : res2;
+    return vfs_fsync(node);
 }
 
 
 /*
  * Handler for syscall sync().
  */
-int syscall_sync(void)
+long syscall_sync(void)
 {
+    remove_unreferenced_cached_pages(NULL);
     // defined in fs/update.c
     update(NODEV);
 	return 0;
@@ -120,17 +88,17 @@ int syscall_sync(void)
 /*
  * Handler for syscall syncfs().
  */
-int syscall_syncfs(int fd)
+long syscall_syncfs(int fd)
 {
 	struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
-    struct task_t *ct = cur_task;
 
-    if(fdnode(fd, ct, &f, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &f, &node) != 0)
     {
         return -EBADF;
     }
 
+    remove_unreferenced_cached_pages(NULL);
     // defined in fs/update.c
     update(node->dev);
 	return 0;

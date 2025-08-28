@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: flock.c
  *    This file is part of LaylaOS.
@@ -40,10 +40,9 @@ int syscall_flock(int fd, int operation)
 	struct file_t *fp = NULL;
     struct fs_node_t *node = NULL;
     struct flock lock;
-    struct task_t *ct = cur_task;
     int noblock = (operation & LOCK_NB);
 
-    if(fdnode(fd, ct, &fp, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &fp, &node) != 0)
     {
         return -EBADF;
     }
