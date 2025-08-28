@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: getpath.c
  *    This file is part of LaylaOS.
@@ -38,7 +38,7 @@
 #define bcopy(a,b,c)    memmove (b,a,c)
 
 
-int get_dot_dot(struct fs_node_t **dir, struct fs_node_t **dotdot)
+long get_dot_dot(struct fs_node_t **dir, struct fs_node_t **dotdot)
 {
     KDEBUG("get_dot_dot:\n");
     struct dirent *entry;
@@ -46,8 +46,7 @@ int get_dot_dot(struct fs_node_t **dir, struct fs_node_t **dotdot)
     //struct IO_buffer_s *dbuf;
     struct fs_node_t *tmp;
     size_t dbuf_off;
-    
-    int i;
+    long i;
     ino_t ino;
     
     *dotdot = NULL;
@@ -99,7 +98,7 @@ int get_dot_dot(struct fs_node_t **dir, struct fs_node_t **dotdot)
 }
 
 
-int getpath(struct fs_node_t *dir, char **__path)
+long getpath(struct fs_node_t *dir, char **__path)
 {
     KDEBUG("getpath:\n");
     struct dirent *dp;
@@ -115,8 +114,8 @@ int getpath(struct fs_node_t *dir, char **__path)
     struct cached_page_t *dbuf;
     //struct IO_buffer_s *dbuf;
     size_t dbuf_off;
-    int res;
-    
+    long res;
+
     if(!__path)
     {
         return -EINVAL;
@@ -136,7 +135,8 @@ int getpath(struct fs_node_t *dir, char **__path)
     /* Save root values, so know when to stop. */
 
     if(!system_root_node ||
-       !(parent = get_node(system_root_node->dev, system_root_node->inode, 1)))
+       !(parent = get_node(system_root_node->dev, 
+                            system_root_node->inode, GETNODE_FOLLOW_MPOINTS)))
     {
         printk("dentry: failed to get root node\n");
         //__asm__ __volatile__("xchg %%bx, %%bx"::);
@@ -148,8 +148,28 @@ int getpath(struct fs_node_t *dir, char **__path)
     root_ino = parent->inode;
     release_node(parent);
 
-    node = dir;
+    // if the requested node refers to sysroot, return '/' instead of 
+    // going into the loop as this will end in a mounted path, something
+    // like '/initrd/rootfs', which is not what the caller expects
+    if((dir->dev == root_dev && dir->inode == root_ino) ||
+       (dir->dev == system_root_node->dev && dir->inode == system_root_node->inode))
+    {
+        char *tmp;
 
+        if((tmp = kmalloc(4)))
+        {
+            kfree(pt);
+            pt = tmp;
+            __asm__ __volatile__("":::"memory");
+        }
+
+        pt[0] = '/';
+        pt[1] = '\0';
+        *__path = pt;
+        return 0;
+    }
+
+    node = dir;
     INC_NODE_REFS(node);
 
     for(first = 1;; first = 0)
@@ -171,7 +191,22 @@ int getpath(struct fs_node_t *dir, char **__path)
              * path to the beginning of the buffer, but it's always
              * been that way and stuff would probably break.
              */
-            (void) bcopy (bpt, pt, ept - bpt);
+            (void) bcopy(bpt, pt, ept - bpt);
+
+            // alloc a smaller buffer if the path is small to avoid wasting
+            // heap space with unused bytes
+            if(ept - bpt <= 256)
+            {
+                char *tmp;
+
+                if((tmp = kmalloc(ept - bpt)))
+                {
+                    A_memcpy(tmp, pt, ept - bpt);
+                    kfree(pt);
+                    pt = tmp;
+                    __asm__ __volatile__("":::"memory");
+                }
+            }
 
             KDEBUG("getpath: pt = '%s'\n", pt);
 
@@ -205,17 +240,19 @@ int getpath(struct fs_node_t *dir, char **__path)
 
         if((size_t)(bpt - pt) <= strlen(dp->d_name) + (first ? 1 : 2))
         {
+            char *tmp;
             size_t len, off;
 
             off = bpt - pt;
             len = ept - bpt;
       
-            if(!(pt = (char *)krealloc(pt, ptsize *= 2)))
+            if(!(tmp = (char *)krealloc(pt, ptsize *= 2)))
             {
                 kfree(dp);
                 goto err2;
             }
 
+            pt = tmp;
             bpt = pt + off;
             ept = pt + ptsize;
             (void) bcopy(bpt, ept - len, len);

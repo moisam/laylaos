@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: dentry.c
  *    This file is part of LaylaOS.
@@ -90,6 +90,7 @@ struct dentry_t *alloc_dentry(struct fs_node_t *node, char *path)
         ent->dev = node->dev;
         ent->inode = node->inode;
         ent->refs = 1;
+        ent->last_accessed = ticks;
     }
     
     return ent;
@@ -131,7 +132,7 @@ int get_dentry(struct fs_node_t *dir, struct dentry_t **dent)
 {
     int maj, min, res;
     char *path;
-    struct dentry_t *ent;
+    struct dentry_t *ent, *newent;
     struct dentry_list_t *list;
     
     if(!dir || !dent)
@@ -147,53 +148,64 @@ int get_dentry(struct fs_node_t *dir, struct dentry_t **dent)
     {
         return -EINVAL;
     }
-    
-
 
     if(!bdev_tab[maj].dentry_list)
     {
         return -EINVAL;
     }
 
-
     // search for the dentry in the device's dentries list
     //list = &bdev_tab[maj].dentry_list;
     list = &(bdev_tab[maj].dentry_list[min]);
-    kernel_mutex_lock(&list->lock);
-    
+    elevated_priority_lock(&list->lock);
+
     for(ent = list->first_dentry; ent != NULL; ent = ent->dev_next)
     {
         if(ent->inode == dir->inode)
         {
-            //kernel_mutex_lock(&ent->lock);
             ent->refs++;
-            //kernel_mutex_unlock(&ent->lock);
-            kernel_mutex_unlock(&list->lock);
+            ent->last_accessed = ticks;
+            elevated_priority_unlock(&list->lock);
             *dent = ent;
             return 0;
         }
     }
+
+    elevated_priority_unlock(&list->lock);
     
     // dentry not found, so we try to create it now
     if((res = getpath(dir, &path)) < 0)
     {
-        kernel_mutex_unlock(&list->lock);
         return -ENOENT;
     }
     
-    if(!(ent = alloc_dentry(dir, path)))
+    if(!(newent = alloc_dentry(dir, path)))
     {
-        kernel_mutex_unlock(&list->lock);
         kfree(path);
         return -ENOMEM;
     }
-    
+
+    // make sure no one has added this entry while we looped
+    elevated_priority_relock(&list->lock);
+
+    for(ent = list->first_dentry; ent != NULL; ent = ent->dev_next)
+    {
+        if(ent->inode == dir->inode)
+        {
+            ent->refs++;
+            ent->last_accessed = ticks;
+            elevated_priority_unlock(&list->lock);
+            *dent = ent;
+            free_dentry(newent);
+            return 0;
+        }
+    }
+
     // now add it to the device's dentries list
-    add_to_list(list, ent);
-    
-    //kernel_mutex_lock(&ent->lock);
-    kernel_mutex_unlock(&list->lock);
-    *dent = ent;
+    add_to_list(list, newent);
+
+    elevated_priority_unlock(&list->lock);
+    *dent = newent;
     return 0;
 }
 
@@ -234,17 +246,15 @@ int create_file_dentry(struct fs_node_t *dir, struct fs_node_t *file,
         return 0;
     }
 
-
     if(!bdev_tab[majf].dentry_list)
     {
         return 0;
     }
 
-
     // first, check if the dentry already exists
     list = &(bdev_tab[majf].dentry_list[minf]);
     //list = &bdev_tab[majf].dentry_list;
-    kernel_mutex_lock(&list->lock);
+    elevated_priority_lock(&list->lock);
 
     for(dent = list->first_dentry; dent != NULL; dent = dent->dev_next)
     {
@@ -252,16 +262,15 @@ int create_file_dentry(struct fs_node_t *dir, struct fs_node_t *file,
         if(dent->inode == file->inode)
         {
             // it does - no need to do anything else
-            kernel_mutex_unlock(&list->lock);
+            dent->last_accessed = ticks;
+            elevated_priority_unlock(&list->lock);
             return 0;
         }
     }
 
     // get_dentry() needs to lock the list itself
-    kernel_mutex_unlock(&list->lock);
+    elevated_priority_unlock(&list->lock);
 
-    //if(dir->dev == TO_DEVID(240, 3) || file->dev == TO_DEVID(240, 3)) __asm__ __volatile__("xchg %%bx, %%bx"::);
-    
     if((res = get_dentry(dir, &dent)) < 0)
     {
         return res;
@@ -284,12 +293,6 @@ int create_file_dentry(struct fs_node_t *dir, struct fs_node_t *file,
     {
         ksprintf(path, (filelen + dentlen + 2), "%s/%s", dent->path, filename);
     }
-    
-    /*
-    printk("create_file_dentry: path '%s'\n", path);
-    screen_refresh(NULL);
-    __asm__ __volatile__("xchg %%bx, %%bx"::);
-    */
 
     release_dentry(dent);
     
@@ -302,9 +305,9 @@ int create_file_dentry(struct fs_node_t *dir, struct fs_node_t *file,
     // now add it to the device's dentries list
     list = &(bdev_tab[majf].dentry_list[minf]);
     //list = &bdev_tab[majf].dentry_list;
-    kernel_mutex_lock(&list->lock);
+    elevated_priority_relock(&list->lock);
     add_to_list(list, dent);
-    kernel_mutex_unlock(&list->lock);
+    elevated_priority_unlock(&list->lock);
     release_dentry(dent);
 
     return 0;
@@ -317,12 +320,10 @@ void release_dentry(struct dentry_t *ent)
     {
         return;
     }
-    
-    kernel_mutex_lock(&ent->list->lock);
-    //kernel_mutex_lock(&ent->lock);
+
+    elevated_priority_lock(&ent->list->lock);
     ent->refs--;
-    //kernel_mutex_unlock(&ent->lock);
-    kernel_mutex_unlock(&ent->list->lock);
+    elevated_priority_unlock(&ent->list->lock);
 }
 
 
@@ -333,6 +334,7 @@ void release_dentry(struct dentry_t *ent)
  */
 void invalidate_dentry(struct fs_node_t *dir)
 {
+    volatile int refs;
     int maj, min;
     struct dentry_t *ent, *prev = NULL;
     struct dentry_list_t *list;
@@ -351,17 +353,15 @@ void invalidate_dentry(struct fs_node_t *dir)
         return;
     }
 
-
     if(!bdev_tab[maj].dentry_list)
     {
         return;
     }
 
-
     // search for the dentry in the device's dentries list
     list = &(bdev_tab[maj].dentry_list[min]);
     //list = &bdev_tab[maj].dentry_list;
-    kernel_mutex_lock(&list->lock);
+    elevated_priority_lock(&list->lock);
     
     for(ent = list->first_dentry; ent != NULL; ent = ent->dev_next)
     {
@@ -376,15 +376,14 @@ void invalidate_dentry(struct fs_node_t *dir)
         
         KDEBUG("invalidate_dentry: ent->refs = %d\n", ent->refs);
         //__asm__ __volatile__("xchg %%bx, %%bx"::);
-        
-        while(ent->refs)
+        refs = ent->refs;
+
+        while(refs)
         {
-            kernel_mutex_unlock(&list->lock);
-            lock_scheduler();
-            //preempt(&ct->r);
+            elevated_priority_unlock(&list->lock);
             scheduler();
-            unlock_scheduler();
-            kernel_mutex_lock(&list->lock);
+            elevated_priority_relock(&list->lock);
+            refs = ent->refs;
         }
         
         if(prev)
@@ -402,12 +401,13 @@ void invalidate_dentry(struct fs_node_t *dir)
         break;
     }
 
-    kernel_mutex_unlock(&list->lock);
+    elevated_priority_unlock(&list->lock);
 }
 
 
 void invalidate_dev_dentries(dev_t dev)
 {
+    volatile int refs;
     int maj, min;
     struct dentry_t *ent, *ent2;
     struct dentry_list_t *list;
@@ -421,27 +421,25 @@ void invalidate_dev_dentries(dev_t dev)
         return;
     }
 
-
     if(!bdev_tab[maj].dentry_list)
     {
         return;
     }
 
-
     list = &(bdev_tab[maj].dentry_list[min]);
     //list = &bdev_tab[maj].dentry_list;
-    kernel_mutex_lock(&list->lock);
+    elevated_priority_lock(&list->lock);
     
     for(ent = list->first_dentry; ent != NULL; )
     {
-        while(ent->refs)
+        refs = ent->refs;
+
+        while(refs)
         {
-            kernel_mutex_unlock(&list->lock);
-            lock_scheduler();
-            //preempt(&ct->r);
+            elevated_priority_unlock(&list->lock);
             scheduler();
-            unlock_scheduler();
-            kernel_mutex_lock(&list->lock);
+            elevated_priority_relock(&list->lock);
+            refs = ent->refs;
         }
         
         ent2 = ent->dev_next;
@@ -454,6 +452,64 @@ void invalidate_dev_dentries(dev_t dev)
     }
 
     list->first_dentry = NULL;
-    kernel_mutex_unlock(&list->lock);
+    elevated_priority_unlock(&list->lock);
+}
+
+
+void remove_old_dentries(unsigned long long older_than_ticks)
+{
+    struct bdev_ops_t *dev, *ldev = &bdev_tab[NR_DEV];
+    struct dentry_list_t *list, *llist;
+    struct dentry_t *ent, *ent2, *prev;
+    unsigned long long older_than = ticks - older_than_ticks;
+
+    // check that the given time have passed since booting
+    if(ticks <= older_than_ticks)
+    {
+        return;
+    }
+    
+    for(dev = bdev_tab; dev < ldev; dev++)
+    {
+        if(!dev->dentry_list)
+        {
+            continue;
+        }
+
+        for(list = dev->dentry_list, llist = &dev->dentry_list[NR_DEV];
+            list < llist;
+            list++)
+        {
+            elevated_priority_lock(&list->lock);
+
+            for(prev = NULL, ent = list->first_dentry; ent != NULL; )
+            {
+                if(ent->refs || ent->last_accessed >= older_than)
+                {
+                    prev = ent;
+                    ent = ent->dev_next;
+                    continue;
+                }
+
+                if(prev)
+                {
+                    prev->dev_next = ent->dev_next;
+                }
+        
+                ent2 = ent->dev_next;
+                free_dentry(ent);
+        
+                if(ent == list->first_dentry)
+                {
+                    list->first_dentry = ent2;
+                    prev = NULL;
+                }
+
+                ent = ent2;
+            }
+
+            elevated_priority_unlock(&list->lock);
+        }
+    }
 }
 
