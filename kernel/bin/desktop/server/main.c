@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: main.c
  *    This file is part of LaylaOS.
@@ -644,6 +644,12 @@ struct server_window_t *server_window_create(int16_t x, int16_t y,
         }
 
         y -= h2 / 2;
+
+        // make sure it doesn't fall off screen
+        if(y < desktop_bounds.top)
+        {
+            y = desktop_bounds.top;
+        }
     }
 
     if((gravity & WINDOW_ALIGN_LEFT))
@@ -672,6 +678,12 @@ struct server_window_t *server_window_create(int16_t x, int16_t y,
         else
         {
             x -= w / 2;
+        }
+
+        // make sure it doesn't fall off screen
+        if(x < 0)
+        {
+            x = 0;
         }
     }
 
@@ -2616,8 +2628,7 @@ int main(int argc, char **argv)
     
             draw_mouse_cursor(0);
 
-            invalidate_screen_rect(desktop_bounds.top, desktop_bounds.left, 
-                                   desktop_bounds.bottom, desktop_bounds.right);
+            invalidate_screen_rect(0, 0, GLOB.screen.h - 1, GLOB.screen.w - 1);
         }
 
         mouse_packet.type = 0;
