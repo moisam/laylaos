@@ -7,13 +7,13 @@ tty:x:5:syslog
 disk:x:6:
 lp:x:7:
 mail:x:8:
-man:x:9:
+man:x:9:man
 kmem:x:10:
 cdrom:x:11:
 floppy:x:12:
 tape:x:13:
 sudo:x:14:
-audio:x:15:
+audio:x:15:audio
 src:x:16:
 users:x:17:
 nogroup:x:65534:
