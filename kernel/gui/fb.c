@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: fb.c
  *    This file is part of LaylaOS.
@@ -49,8 +49,8 @@
 #include <gui/fb.h>
 
 #include "../kernel/tty_inlines.h"
-
 #include "../bin/desktop/include/rect-struct.h"
+#include "memops.h"
 
 // get the standard terminal RGB color definitions
 #include "rgb_colors.h"
@@ -77,7 +77,7 @@ static uint8_t *font_data = FONT_DATA;
 
 unsigned int line_words;
 
-struct task_t *screen_task = NULL;
+volatile struct task_t *screen_task = NULL;
 
 //virtual_addr framebuf_mem = 0;
 uint8_t *fb_backbuf_text, *fb_backbuf_gui, *fb_cur_backbuf;
@@ -279,17 +279,17 @@ void fb_init(void)
     ttytab[1].window.ws_col = vgaw;
     ttytab[1].scroll_bottom = vgah;
 
-    if((ttytab[1].buf = kmalloc(VGA_MEMORY_SIZE(&ttytab[1]))))
+    if((ttytab[1].buf[0] = kmalloc(VGA_MEMORY_SIZE(&ttytab[1]))))
     {
-        A_memset(ttytab[1].buf, 0, VGA_MEMORY_SIZE(&ttytab[1]));
+        A_memset(ttytab[1].buf[0], 0, VGA_MEMORY_SIZE(&ttytab[1]));
     }
 
-    if(!(ttytab[1].cellattribs = kmalloc(vgaw * vgah)))
+    if(!(ttytab[1].cellattribs[0] = kmalloc(vgaw * vgah)))
     {
         kpanic("fb: failed to alloc internal buffer\n");
     }
 
-    A_memset(ttytab[1].cellattribs, 0, vgaw * vgah);
+    A_memset(ttytab[1].cellattribs[0], 0, vgaw * vgah);
 
     for(i = 1; i < NTTYS; i++)
     {
@@ -409,10 +409,11 @@ static inline void blank_line(uint8_t *dest, uint32_t width, uint32_t bgcolor)
     else
     {
         uint32_t bgcol = to_rgb32(bgcolor);
-        uint32_t *buf, *lbuf;
+        //uint32_t *buf, *lbuf;
         
         for(j = 0; j < char_height; j++)
         {
+            /*
             buf = (uint32_t *)dest;
             lbuf = (uint32_t *)(&buf[width]);
 
@@ -420,6 +421,8 @@ static inline void blank_line(uint8_t *dest, uint32_t width, uint32_t bgcolor)
             {
                 *buf++ = bgcol;
             }
+            */
+            memset32(dest, bgcol, width);
             
             dest += vbe_framebuffer.pitch;
         }
@@ -1360,8 +1363,8 @@ static inline void __ega_tputchar(struct tty_t *tty, char c,
 {
     int i = tty->row * tty->vga_width + tty->col;
 
-    tty->buf[i] = vga_entry(c, color);
-    tty->cellattribs[i] = flags;
+    ACTIVE_BUF(tty)[i] = vga_entry(c, color);
+    ACTIVE_CELLATTRIBS(tty)[i] = flags;
 }
 
 
@@ -1522,20 +1525,36 @@ static inline uint32_t ega_to_vga(struct tty_t *tty, uint8_t color)
 }
 
 
+static void force_screen_refresh(void)
+{
+    volatile int save_repaint_screen = repaint_screen;
+
+    // force screen update
+    repaint_screen = 1;
+    screen_refresh(NULL);
+    repaint_screen = save_repaint_screen;
+}
+
+
 void vga_restore_screen(struct tty_t *tty)
 {
     if(!(tty->flags & TTY_FLAG_NO_TEXT))
     {
         fb_cur_backbuf = fb_backbuf_text;
 
-        if(!tty->buf)
+        if(!ACTIVE_BUF(tty))
         {
             return;
         }
 
-        uint16_t *egabuf = tty->buf;
-        uint8_t *attribbuf = tty->cellattribs;
+        uint16_t *egabuf = ACTIVE_BUF(tty);
+        uint8_t *attribbuf = ACTIVE_CELLATTRIBS(tty);
         uint32_t save_row = tty->row, save_col = tty->col;
+        int was_stopped = (tty->flags & TTY_FLAG_STOPPED);
+
+        // stop the tty so no one can write to it and mess with us while we
+        // restore the screen
+        tty->flags |= TTY_FLAG_STOPPED;
 
         ega_restore_screen(tty);
 
@@ -1577,7 +1596,16 @@ void vga_restore_screen(struct tty_t *tty)
         tty->row = save_row;
         tty->col = save_col;
         move_cur(tty);
-        screen_refresh(NULL);
+
+        // if the tty was not stopped, restart it and awake anyone who might
+        // have slept while we were restoring the screen
+        if(!was_stopped)
+        {
+            tty->flags &= ~TTY_FLAG_STOPPED;
+            unblock_tasks(tty);
+        }
+
+        force_screen_refresh();
     }
     else
     {
@@ -1585,7 +1613,7 @@ void vga_restore_screen(struct tty_t *tty)
 
         erase_display(tty, tty->vga_width, tty->vga_height, 2);
         move_cur(tty);
-        screen_refresh(NULL);
+        force_screen_refresh();
         tty_send_signal(tty->pgid, SIGWINCH);
     }
 }
@@ -1663,7 +1691,7 @@ void fb_change_charset(struct tty_t *tty, int which, char c)
 /*
  * General block device control function.
  */
-int fb_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
+long fb_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
 {
     UNUSED(dev);
     /*
