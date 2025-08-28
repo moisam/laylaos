@@ -1,0 +1,47 @@
+#!/bin/bash
+
+#
+# Script to download and build meson
+#
+
+DOWNLOAD_NAME="meson"
+DOWNLOAD_VERSION="1.6.0"
+DOWNLOAD_URL="https://github.com/mesonbuild/meson/releases/download/${DOWNLOAD_VERSION}/"
+DOWNLOAD_PREFIX="meson-"
+DOWNLOAD_SUFFIX=".tar.gz"
+DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
+CWD=`pwd`
+
+# where the downloaded and extracted source will end up
+DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
+
+# get common funcs
+source ../common.sh
+
+# check for an existing compile
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/meson
+
+# download source
+echo " ==> Downloading ${DOWNLOAD_NAME}"
+echo " ==> Download will be saved in ${DOWNLOAD_PORTS_PATH}"
+check_target
+check_paths
+download_and_extract
+
+# patch and copy our extra files
+echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
+
+# build
+cd ${DOWNLOAD_SRCDIR}
+
+python setup.py install --root=/ --prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \
+    || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
+
+# cleanup
+cd ${CWD}
+rm -rf ${DOWNLOAD_SRCDIR}
+
+echo " ==>"
+echo " ==> Finished building ${DOWNLOAD_NAME}"
+echo " ==>"
+

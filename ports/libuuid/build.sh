@@ -1,14 +1,14 @@
 #!/bin/bash
 
 #
-# Script to download and build links
+# Script to download and build libuuid (part of util-linux)
 #
 
-DOWNLOAD_NAME="links"
-DOWNLOAD_VERSION="2.29"
-DOWNLOAD_URL="http://links.twibright.com/download/"
-DOWNLOAD_PREFIX="links-"
-DOWNLOAD_SUFFIX=".tar.gz"
+DOWNLOAD_NAME="util-linux"
+DOWNLOAD_VERSION="2.41"
+DOWNLOAD_URL="https://www.kernel.org/pub/linux/utils/util-linux/v${DOWNLOAD_VERSION}/"
+DOWNLOAD_PREFIX="util-linux-"
+DOWNLOAD_SUFFIX=".tar.xz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 CWD=`pwd`
 
@@ -19,7 +19,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/links
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libuuid.so
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -32,23 +32,25 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
-cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+mv ${DOWNLOAD_SRCDIR}/config/config.sub ${DOWNLOAD_SRCDIR}/config/config.sub.OLD
+cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config/config.sub
 
-mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
-cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+mv ${DOWNLOAD_SRCDIR}/config/config.guess ${DOWNLOAD_SRCDIR}/config/config.guess.OLD
+cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config/config.guess
+
+mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
+cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
+
+cd ${DOWNLOAD_SRCDIR} && autoreconf
 
 # build
 mkdir ${DOWNLOAD_SRCDIR}/build2
 cd ${DOWNLOAD_SRCDIR}/build2
 
 ../configure \
-    --host=${BUILD_TARGET} --prefix=/usr \
-    --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \
-    --without-ipv6 --without-libevent --without-gpm \
-    --without-brotli --without-x \
-    --without-directfb --without-pmshell --without-window \
-    --without-atheos --without-haiku --without-grx \
+    --host=${BUILD_TARGET} \
+    --disable-all-programs --disable-nls --disable-static \
+    --enable-libuuid --enable-shared --prefix=/usr --libdir=/usr/lib \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"

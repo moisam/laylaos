@@ -1,15 +1,16 @@
 #!/bin/bash
 
 #
-# Script to download and build links
+# Script to download and build nasm
 #
 
-DOWNLOAD_NAME="links"
-DOWNLOAD_VERSION="2.29"
-DOWNLOAD_URL="http://links.twibright.com/download/"
-DOWNLOAD_PREFIX="links-"
+DOWNLOAD_NAME="nasm"
+DOWNLOAD_VERSION="2.16.03"
+DOWNLOAD_URL="https://www.nasm.us/pub/nasm/releasebuilds/${DOWNLOAD_VERSION}/"
+DOWNLOAD_PREFIX="nasm-"
 DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
+PATCH_FILE=${DOWNLOAD_NAME}.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -19,7 +20,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/links
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/nasm
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -32,30 +33,27 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
-cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+mv ${DOWNLOAD_SRCDIR}/autoconf/helpers/config.sub ${DOWNLOAD_SRCDIR}/autoconf/helpers/config.sub.OLD
+cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/autoconf/helpers/config.sub
 
-mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
-cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+mv ${DOWNLOAD_SRCDIR}/autoconf/helpers/config.guess ${DOWNLOAD_SRCDIR}/autoconf/helpers/config.guess.OLD
+cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/autoconf/helpers/config.guess
+
+cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 
 # build
-mkdir ${DOWNLOAD_SRCDIR}/build2
-cd ${DOWNLOAD_SRCDIR}/build2
+mkdir ${DOWNLOAD_SRCDIR}/build
+cd ${DOWNLOAD_SRCDIR}/build
 
 ../configure \
     --host=${BUILD_TARGET} --prefix=/usr \
-    --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \
-    --without-ipv6 --without-libevent --without-gpm \
-    --without-brotli --without-x \
-    --without-directfb --without-pmshell --without-window \
-    --without-atheos --without-haiku --without-grx \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
-# Clean up
+# cleanup
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 

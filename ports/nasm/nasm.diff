@@ -1,0 +1,12 @@
+diff -rub ./nasm-2.16.03/nasmlib/path.c ./nasm-2.16.03/nasmlib/path.c
+--- ./nasm-2.16.03/nasmlib/path.c	2024-04-17 18:04:08.000000000 +0100
++++ ./nasm-2.16.03/nasmlib/path.c	2024-12-14 08:19:35.657824410 +0000
+@@ -53,7 +53,7 @@
+ # define curdir "."
+ #elif defined(unix) || defined(__unix) || defined(__unix__) ||   \
+     defined(__UNIX__) || defined(__Unix__) || \
+-    defined(__MACH__) || defined(__BEOS__)
++    defined(__MACH__) || defined(__BEOS__) || defined(__laylaos__)
+ /* Unix and Unix-like operating systems and others using
+  * the equivalent syntax (slashes as only separators, no concept of volume)
+  *

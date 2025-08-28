@@ -24,8 +24,12 @@ check_target
 check_paths
 
 cd ${DOWNLOAD_PORTS_PATH}
-git clone git://git.savannah.gnu.org/nano.git
+git clone https://https.git.savannah.gnu.org/git/nano.git
+
 cd nano || exit_failure "$0: failed to download ${DOWNLOAD_NAME}"
+
+# git protocol is not supported in LaylaOS yet, so fix the URL used in autogen.sh
+sed -i "s~gnulib_url=.*~gnulib_url=\"https://git.savannah.gnu.org/git/gnulib.git\"~" ./autogen.sh
 ./autogen.sh
 
 # patch and copy our extra files
@@ -34,6 +38,15 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 mv config.sub config.sub.OLD
 cp ${CWD}/../config.sub.laylaos config.sub
+
+mv config.guess config.guess.OLD
+cp ${CWD}/../config.guess.laylaos config.guess
+
+mv gnulib/build-aux/config.sub gnulib/build-aux/config.sub.OLD
+cp ${CWD}/../config.sub.laylaos gnulib/build-aux/config.sub
+
+mv gnulib/build-aux/config.guess gnulib/build-aux/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos gnulib/build-aux/config.guess
 
 # build
 enable_utf8=no CURSES_LIB_NAME=ncurses \

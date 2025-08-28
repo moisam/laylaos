@@ -1,16 +1,15 @@
 #!/bin/bash
 
 #
-# Script to download and build mpfr
+# Script to download and build mtools
 #
 
-DOWNLOAD_NAME="mpfr"
-DOWNLOAD_URL="https://gcc.gnu.org/pub/gcc/infrastructure/"
-DOWNLOAD_VERSION="4.1.0"
-DOWNLOAD_PREFIX="mpfr-"
-DOWNLOAD_SUFFIX=".tar.bz2"
+DOWNLOAD_NAME="mtools"
+DOWNLOAD_VERSION="4.0.49"
+DOWNLOAD_URL="http://ftp.gnu.org/gnu/mtools/"
+DOWNLOAD_PREFIX="mtools-"
+DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
-PATCH_FILE=${DOWNLOAD_NAME}.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -20,7 +19,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libmpfr.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/mtools
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -33,35 +32,24 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
-
-mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
+rm ${DOWNLOAD_SRCDIR}/config.sub
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
 
-mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+rm ${DOWNLOAD_SRCDIR}/config.guess
 cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
 
-mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
-cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
-
-cd ${DOWNLOAD_SRCDIR} && autoreconf
-
 # build
-mkdir -p ${DOWNLOAD_SRCDIR}/build
-cd ${DOWNLOAD_SRCDIR}/build
+mkdir ${DOWNLOAD_SRCDIR}/build2
+cd ${DOWNLOAD_SRCDIR}/build2
 
-${DOWNLOAD_SRCDIR}/configure --host=${BUILD_TARGET} \
-    --enable-shared \
+../configure --host=${BUILD_TARGET} --prefix=/usr \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
-make  # yes -- do it twice! the first one is fucked up by autoconf
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
-# Fix libfreetype.la for the future generations
-sed -i "s/dependency_libs=.*/dependency_libs='-lgmp'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libmpfr.la
-
+# Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 
