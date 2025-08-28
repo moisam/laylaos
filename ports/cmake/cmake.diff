@@ -1,0 +1,521 @@
+diff -rub ./cmake-3.31.0/bootstrap ./cmake-3.31.0/bootstrap
+--- ./cmake-3.31.0/bootstrap	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/bootstrap	2024-11-25 20:11:21.826926894 +0000
+@@ -165,6 +165,13 @@
+   cmake_system_aix=false
+ fi
+ 
++# Determine whether this is LaylaOS
++if echo "${cmake_system}" | grep LaylaOS >/dev/null 2>&1; then
++  cmake_system_laylaos=true
++else
++  cmake_system_laylaos=false
++fi
++
+ # Determine whether this is Linux
+ if echo "${cmake_system}" | grep Linux >/dev/null 2>&1; then
+   cmake_system_linux=true
+@@ -1177,6 +1184,7 @@
+   *CYGWIN*) cmake_toolchains='GNU' ;;
+   *MSYS*) cmake_toolchains='GNU' ;;
+   *Darwin*) cmake_toolchains='Clang GNU' ;;
++  *LaylaOS*) cmake_toolchains='GNU' ;;
+   *Linux*) cmake_toolchains='GNU Clang XL PGI PathScale' ;;
+   *MINGW*) cmake_toolchains='GNU' ;;
+ esac
+diff -rub ./cmake-3.31.0/Help/variable/CMAKE_SYSTEM_NAME.rst ./cmake-3.31.0/Help/variable/CMAKE_SYSTEM_NAME.rst
+--- ./cmake-3.31.0/Help/variable/CMAKE_SYSTEM_NAME.rst	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Help/variable/CMAKE_SYSTEM_NAME.rst	2024-11-25 20:05:26.454373183 +0000
+@@ -62,6 +62,7 @@
+ ``HP-UX``                 Hewlett Packard Unix
+ ``iOS``                   Apple mobile phone operating system
+ ``kFreeBSD``              FreeBSD kernel with a GNU userland
++``LaylaOS``               LaylaOS operating system
+ ``Linux``                 All Linux-based distributions
+ ``Midipix``               POSIX-compatible layer for Windows
+ ``MirBSD``                MirOS BSD operating system
+diff -rub ./cmake-3.31.0/Modules/CMakeFortranCompilerId.F.in ./cmake-3.31.0/Modules/CMakeFortranCompilerId.F.in
+--- ./cmake-3.31.0/Modules/CMakeFortranCompilerId.F.in	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Modules/CMakeFortranCompilerId.F.in	2024-11-24 22:24:28.344779374 +0000
+@@ -218,6 +218,8 @@
+         PRINT *, 'INFO:platform[HP-UX]'
+ #elif defined(__HAIKU__)
+         PRINT *, 'INFO:platform[Haiku]'
++#elif defined(__laylaos__)
++        PRINT *, 'INFO:platform[LaylaOS]'
+ #elif defined(__BeOS) || defined(__BEOS__) || defined(_BEOS)
+         PRINT *, 'INFO:platform[BeOS]'
+ #elif defined(__QNX__) || defined(__QNXNTO__)
+diff -rub ./cmake-3.31.0/Modules/CMakeISPCCompilerId.ispc.in ./cmake-3.31.0/Modules/CMakeISPCCompilerId.ispc.in
+--- ./cmake-3.31.0/Modules/CMakeISPCCompilerId.ispc.in	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Modules/CMakeISPCCompilerId.ispc.in	2024-11-24 22:25:26.621363080 +0000
+@@ -31,6 +31,8 @@
+   print("INFO:platform[HP-UX]");
+ #elif defined(__HAIKU__)
+   print("INFO:platform[Haiku]");
++#elif defined(__laylaos__)
++  print("INFO:platform[LaylaOS]");
+ #elif defined(__BeOS) || defined(__BEOS__) || defined(_BEOS)
+   print("INFO:platform[BeOS]");
+ #elif defined(__QNX__) || defined(__QNXNTO__)
+diff -rub ./cmake-3.31.0/Modules/CMakePlatformId.h.in ./cmake-3.31.0/Modules/CMakePlatformId.h.in
+--- ./cmake-3.31.0/Modules/CMakePlatformId.h.in	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Modules/CMakePlatformId.h.in	2024-11-24 22:26:24.361941716 +0000
+@@ -41,6 +41,9 @@
+ #elif defined(__HAIKU__)
+ # define PLATFORM_ID "Haiku"
+ 
++#elif defined(__laylaos__)
++# define PLATFORM_ID "LaylaOS"
++
+ #elif defined(__BeOS) || defined(__BEOS__) || defined(_BEOS)
+ # define PLATFORM_ID "BeOS"
+ 
+diff -rub ./cmake-3.31.0/Source/CPack/cmCPackGeneratorFactory.cxx ./cmake-3.31.0/Source/CPack/cmCPackGeneratorFactory.cxx
+--- ./cmake-3.31.0/Source/CPack/cmCPackGeneratorFactory.cxx	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Source/CPack/cmCPackGeneratorFactory.cxx	2024-11-26 21:47:47.204360412 +0000
+@@ -31,7 +31,7 @@
+ #endif
+ 
+ #if !defined(_WIN32) && !defined(__QNXNTO__) && !defined(__BEOS__) &&         \
+-  !defined(__HAIKU__)
++  !defined(__HAIKU__) && !defined(__laylaos__)
+ #  include "cmCPackRPMGenerator.h"
+ #endif
+ 
+@@ -118,7 +118,7 @@
+   }
+ #endif
+ #if !defined(_WIN32) && !defined(__QNXNTO__) && !defined(__BEOS__) &&         \
+-  !defined(__HAIKU__)
++  !defined(__HAIKU__) && !defined(__laylaos__)
+   if (cmCPackRPMGenerator::CanGenerate()) {
+     this->RegisterGenerator("RPM", "RPM packages",
+                             cmCPackRPMGenerator::CreateGenerator);
+diff -rub ./cmake-3.31.0/Source/kwsys/CMakeLists.txt ./cmake-3.31.0/Source/kwsys/CMakeLists.txt
+--- ./cmake-3.31.0/Source/kwsys/CMakeLists.txt	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Source/kwsys/CMakeLists.txt	2024-11-26 20:12:14.770017710 +0000
+@@ -100,6 +100,10 @@
+     CACHE INTERNAL "remember the last deployment target to trigger configure rechecks")
+ endif ()
+ 
++if (LAYLAOS)
++  set(UNIX 1)
++endif ()
++
+ #-----------------------------------------------------------------------------
+ # If a namespace is not specified, use "kwsys" and enable testing.
+ # This should be the case only when kwsys is not included inside
+diff -rub ./cmake-3.31.0/Source/kwsys/SystemInformation.cxx ./cmake-3.31.0/Source/kwsys/SystemInformation.cxx
+--- ./cmake-3.31.0/Source/kwsys/SystemInformation.cxx	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Source/kwsys/SystemInformation.cxx	2024-11-25 20:59:33.144547504 +0000
+@@ -116,7 +116,7 @@
+ #endif
+ 
+ #if defined(__linux) || defined(__sun) || defined(_SCO_DS) ||                 \
+-  defined(__GLIBC__) || defined(__GNU__)
++  defined(__GLIBC__) || defined(__GNU__) || defined(__laylaos__)
+ #  include <netdb.h>
+ #  include <netinet/in.h>
+ #  include <sys/socket.h>
+@@ -822,7 +822,7 @@
+ // Hide implementation details in an anonymous namespace.
+ namespace {
+ // *****************************************************************************
+-#if defined(__linux) || defined(__APPLE__) || defined(__CYGWIN__)
++#if defined(__linux) || defined(__APPLE__) || defined(__CYGWIN__) || defined(__laylaos__)
+ int LoadLines(FILE* file, std::vector<std::string>& lines)
+ {
+   // Load each line in the given file into a the vector.
+@@ -852,7 +852,7 @@
+   return nRead;
+ }
+ 
+-#  if defined(__linux) || defined(__CYGWIN__)
++#  if defined(__linux) || defined(__CYGWIN__) || defined(__laylaos__)
+ // *****************************************************************************
+ int LoadLines(const char* fileName, std::vector<std::string>& lines)
+ {
+@@ -885,7 +885,7 @@
+ }
+ #endif
+ 
+-#if defined(__linux) || defined(__CYGWIN__)
++#if defined(__linux) || defined(__CYGWIN__) || defined(__laylaos__)
+ // ****************************************************************************
+ template <typename T>
+ int GetFieldsFromFile(const char* fileName, const char** fieldNames, T* values)
+@@ -953,7 +953,7 @@
+ void StacktraceSignalHandler(int sigNo, siginfo_t* sigInfo,
+                              void* /*sigContext*/)
+ {
+-#  if defined(__linux) || defined(__APPLE__)
++#  if defined(__linux) || defined(__APPLE__) || defined(__laylaos__)
+   std::ostringstream oss;
+   oss << std::endl
+       << "========================================================="
+@@ -1292,7 +1292,7 @@
+ std::string SymbolProperties::GetBinary() const
+ {
+ // only linux has proc fs
+-#  if defined(__linux__)
++#  if defined(__linux__) || defined(__laylaos__)
+   if (this->Binary == "/proc/self/exe") {
+     std::string binary;
+     char buf[1024] = { '\0' };
+@@ -1476,7 +1476,7 @@
+   this->QueryBSDProcessor();
+ #elif defined(__hpux)
+   this->QueryHPUXProcessor();
+-#elif defined(__linux) || defined(__CYGWIN__)
++#elif defined(__linux) || defined(__CYGWIN__) || defined(__laylaos__)
+   this->RetrieveInformationFromCpuInfoFile();
+ #else
+   this->QueryProcessor();
+@@ -1507,7 +1507,7 @@
+   this->QueryWindowsMemory();
+ #elif defined(__hpux)
+   this->QueryHPUXMemory();
+-#elif defined(__linux)
++#elif defined(__linux) || defined(__laylaos__)
+   this->QueryLinuxMemory();
+ #elif defined(_AIX)
+   this->QueryAIXMemory();
+@@ -3424,7 +3424,7 @@
+     pos = buffer.find("processor\t", pos + 1);
+   }
+ 
+-#if defined(__linux) || defined(__CYGWIN__)
++#if defined(__linux) || defined(__CYGWIN__) || defined(__laylaos__)
+   // Count sockets.
+   std::set<int> PhysicalIDs;
+   std::string idc = this->ExtractValueFromCpuInfoFile(buffer, "physical id");
+@@ -3645,7 +3645,7 @@
+   GlobalMemoryStatusEx(&statex);
+   return statex.ullTotalPhys / 1024;
+ #  endif
+-#elif defined(__linux) || defined(__CYGWIN__)
++#elif defined(__linux) || defined(__CYGWIN__) || defined(__laylaos__)
+   long long memTotal = 0;
+   int ierr = GetFieldFromFile("/proc/meminfo", "MemTotal:", memTotal);
+   if (ierr) {
+@@ -3714,7 +3714,7 @@
+     }
+   }
+ 
+-#if defined(__linux)
++#if defined(__linux) || defined(__laylaos__)
+   int ierr;
+   ResourceLimitType rlim;
+   ierr = GetResourceLimit(RLIMIT_DATA, &rlim);
+@@ -3770,7 +3770,7 @@
+   long long& memTotal = values[0];
+   long long& memFree = values[1];
+   return memTotal - memFree;
+-#elif defined(__linux)
++#elif defined(__linux) || defined(__laylaos__)
+   // First try to use MemAvailable, but it only works on newer kernels
+   const char* names2[3] = { "MemTotal:", "MemAvailable:", nullptr };
+   long long values2[2] = { 0 };
+@@ -3831,7 +3831,7 @@
+     return -2;
+   }
+   return pmc.WorkingSetSize / 1024;
+-#elif defined(__linux) || defined(__CYGWIN__)
++#elif defined(__linux) || defined(__CYGWIN__) || defined(__laylaos__)
+   long long memUsed = 0;
+   int ierr = GetFieldFromFile("/proc/self/status", "VmRSS:", memUsed);
+   if (ierr) {
+@@ -3908,7 +3908,7 @@
+   return GetCurrentProcessId();
+ #elif defined(__linux) || defined(__APPLE__) || defined(__OpenBSD__) ||       \
+   defined(__FreeBSD__) || defined(__NetBSD__) || defined(__DragonFly__) ||    \
+-  defined(__CYGWIN__)
++  defined(__CYGWIN__) || defined(__laylaos__)
+   return getpid();
+ #else
+   return -1;
+@@ -4104,7 +4104,7 @@
+ 
+ bool SystemInformationImplementation::QueryLinuxMemory()
+ {
+-#if defined(__linux)
++#if defined(__linux) || defined(__laylaos__)
+   unsigned long tv = 0;
+   unsigned long tp = 0;
+   unsigned long av = 0;
+@@ -4112,6 +4112,7 @@
+ 
+   char buffer[1024]; // for reading lines
+ 
++#if !defined(__laylaos__)
+   int linuxMajor = 0;
+   int linuxMinor = 0;
+ 
+@@ -4136,6 +4137,7 @@
+       linuxMinor = minorChar - '0';
+     }
+   }
++#endif
+ 
+   FILE* fd = fopen("/proc/meminfo", "r");
+   if (!fd) {
+@@ -4143,7 +4145,11 @@
+     return false;
+   }
+ 
++#if defined(__laylaos__)
++  if (1) {
++#else
+   if (linuxMajor >= 3 || ((linuxMajor >= 2) && (linuxMinor >= 6))) {
++#endif
+     // new /proc/meminfo format since kernel 2.6.x
+     // Rigorously, this test should check from the developing version 2.5.x
+     // that introduced the new format...
+diff -rub ./cmake-3.31.0/Source/kwsys/testDynamicLoader.cxx ./cmake-3.31.0/Source/kwsys/testDynamicLoader.cxx
+--- ./cmake-3.31.0/Source/kwsys/testDynamicLoader.cxx	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Source/kwsys/testDynamicLoader.cxx	2024-11-25 21:05:44.531987340 +0000
+@@ -9,7 +9,7 @@
+ #endif
+ 
+ // Needed for __GLIBC__ test macro.
+-#ifdef __linux__
++#if defined(__linux__) || defined(__laylaos__)
+ #  include <features.h>
+ 
+ // Will define LIBDL_SO macro on systems with glibc.
+@@ -126,7 +126,7 @@
+                            "wp", 0, 0, 0);
+ #endif
+ 
+-#ifdef __linux__
++#if defined(__linux__) || defined(__laylaos__)
+   // This one is actually fun to test, since dlopen is by default
+   // loaded...wonder why :)
+   res += TestDynamicLoader("foobar.lib", "dlopen", 0, 1, 0);
+diff -rub ./cmake-3.31.0/Utilities/cmlibuv/CMakeLists.txt ./cmake-3.31.0/Utilities/cmlibuv/CMakeLists.txt
+--- ./cmake-3.31.0/Utilities/cmlibuv/CMakeLists.txt	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Utilities/cmlibuv/CMakeLists.txt	2024-11-26 21:44:27.541532932 +0000
+@@ -343,6 +343,23 @@
+     )
+ endif()
+ 
++if(CMAKE_SYSTEM_NAME STREQUAL "LaylaOS")
++  list(APPEND uv_headers
++    include/uv/posix.h
++    )
++  list(APPEND uv_defines
++    _GNU_SOURCE
++    )
++  list(APPEND uv_sources
++    src/unix/posix-hrtime.c
++    src/unix/posix-poll.c
++    src/unix/procfs-exepath.c
++    src/unix/linux-core.c
++    src/unix/no-fsevents.c
++    src/unix/no-proctitle.c
++    )
++endif()
++
+ include_directories(
+   ${uv_includes}
+   ${KWSYS_HEADER_ROOT}
+diff -rub ./cmake-3.31.0/Utilities/cmlibuv/include/uv/unix.h ./cmake-3.31.0/Utilities/cmlibuv/include/uv/unix.h
+--- ./cmake-3.31.0/Utilities/cmlibuv/include/uv/unix.h	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Utilities/cmlibuv/include/uv/unix.h	2024-11-25 19:57:15.704864673 +0000
+@@ -74,7 +74,8 @@
+       defined(__MSYS__)   || \
+       defined(__HAIKU__)  || \
+       defined(__QNX__)    || \
+-      defined(__GNU__)
++      defined(__GNU__)    || \
++      defined(__laylaos__)
+ # include "posix.h"
+ #endif
+ 
+diff -rub ./cmake-3.31.0/Utilities/cmlibuv/src/unix/bsd-ifaddrs.c ./cmake-3.31.0/Utilities/cmlibuv/src/unix/bsd-ifaddrs.c
+--- ./cmake-3.31.0/Utilities/cmlibuv/src/unix/bsd-ifaddrs.c	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Utilities/cmlibuv/src/unix/bsd-ifaddrs.c	2024-11-26 21:02:45.512414920 +0000
+@@ -27,7 +27,7 @@
+ 
+ #include <ifaddrs.h>
+ #include <net/if.h>
+-#if !defined(__CYGWIN__) && !defined(__MSYS__) && !defined(__GNU__)
++#if !defined(__CYGWIN__) && !defined(__MSYS__) && !defined(__GNU__) && !defined(__laylaos__)
+ #include <net/if_dl.h>
+ #endif
+ 
+@@ -40,7 +40,7 @@
+     return 1;
+   if (ent->ifa_addr == NULL)
+     return 1;
+-#if !defined(__CYGWIN__) && !defined(__MSYS__) && !defined(__GNU__)
++#if !defined(__CYGWIN__) && !defined(__MSYS__) && !defined(__GNU__) && !defined(__laylaos__)
+   /*
+    * If `exclude_type` is `UV__EXCLUDE_IFPHYS`, return whether `sa_family`
+    * equals `AF_LINK`. Otherwise, the result depends on the operating
+@@ -57,7 +57,7 @@
+    */
+   if (ent->ifa_addr->sa_family == AF_LINK)
+     return 1;
+-#elif defined(__NetBSD__) || defined(__OpenBSD__)
++#elif defined(__NetBSD__) || defined(__OpenBSD__) || defined(__laylaos__)
+   if (ent->ifa_addr->sa_family != PF_INET &&
+       ent->ifa_addr->sa_family != PF_INET6)
+     return 1;
+diff -rub ./cmake-3.31.0/Utilities/cmlibuv/src/unix/core.c ./cmake-3.31.0/Utilities/cmlibuv/src/unix/core.c
+--- ./cmake-3.31.0/Utilities/cmlibuv/src/unix/core.c	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Utilities/cmlibuv/src/unix/core.c	2024-11-25 19:49:14.707969850 +0000
+@@ -69,7 +69,8 @@
+     defined(__FreeBSD__)        || \
+     defined(__FreeBSD_kernel__) || \
+     defined(__NetBSD__)         || \
+-    defined(__OpenBSD__)
++    defined(__OpenBSD__)        || \
++    defined(__laylaos__)
+ # include <sys/sysctl.h>
+ # include <sys/filio.h>
+ # include <sys/wait.h>
+@@ -685,7 +686,8 @@
+     defined(__FreeBSD__)   || \
+     defined(__NetBSD__)    || \
+     defined(__OpenBSD__)   || \
+-    defined(__linux__)
++    defined(__linux__)     || \
++    defined(__laylaos__)
+   ssize_t rc;
+   rc = recvmsg(fd, msg, flags | MSG_CMSG_CLOEXEC);
+   if (rc == -1)
+@@ -1057,7 +1059,7 @@
+ 
+ 
+ int uv__dup2_cloexec(int oldfd, int newfd) {
+-#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__linux__)
++#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__linux__) || defined(__laylaos__)
+   int r;
+ 
+   r = dup3(oldfd, newfd, O_CLOEXEC);
+diff -rub ./cmake-3.31.0/Utilities/cmlibuv/src/unix/fs.c ./cmake-3.31.0/Utilities/cmlibuv/src/unix/fs.c
+--- ./cmake-3.31.0/Utilities/cmlibuv/src/unix/fs.c	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Utilities/cmlibuv/src/unix/fs.c	2024-11-25 19:29:57.805773905 +0000
+@@ -50,7 +50,8 @@
+     defined(__FreeBSD__)          ||                                      \
+     defined(__FreeBSD_kernel__)   ||                                      \
+     defined(__OpenBSD__)          ||                                      \
+-    defined(__NetBSD__)
++    defined(__NetBSD__)           ||                                      \
++    defined(__laylaos__)
+ # define HAVE_PREADV 1
+ #else
+ # define HAVE_PREADV 0
+@@ -203,7 +204,7 @@
+ 
+ 
+ static ssize_t uv__fs_fdatasync(uv_fs_t* req) {
+-#if defined(__linux__) || defined(__sun) || defined(__NetBSD__)
++#if defined(__linux__) || defined(__sun) || defined(__NetBSD__) || defined(__laylaos__)
+   return fdatasync(req->file);
+ #elif defined(__APPLE__)
+   /* See the comment in uv__fs_fsync. */
+@@ -263,7 +264,7 @@
+   struct timeval tv[2];
+   tv[0] = uv__fs_to_timeval(req->atime);
+   tv[1] = uv__fs_to_timeval(req->mtime);
+-# if defined(__sun)
++# if defined(__sun) || defined(__laylaos__)
+   return futimesat(req->file, NULL, tv);
+ # else
+   return futimes(req->file, tv);
+@@ -1161,7 +1162,8 @@
+     || defined(__FreeBSD__)                                                   \
+     || defined(__FreeBSD_kernel__)                                            \
+     || defined(__NetBSD__)                                                    \
+-    || defined(__OpenBSD__)
++    || defined(__OpenBSD__)                                                   \
++    || defined(__laylaos__)
+   struct timeval tv[2];
+   tv[0] = uv__fs_to_timeval(req->atime);
+   tv[1] = uv__fs_to_timeval(req->mtime);
+@@ -1484,7 +1486,8 @@
+     defined(_BSD_SOURCE)     || \
+     defined(_SVID_SOURCE)    || \
+     defined(_XOPEN_SOURCE)   || \
+-    defined(_DEFAULT_SOURCE))
++    defined(_DEFAULT_SOURCE) || \
++    defined(__laylaos__))
+   dst->st_atim.tv_sec = src->st_atim.tv_sec;
+   dst->st_atim.tv_nsec = src->st_atim.tv_nsec;
+   dst->st_mtim.tv_sec = src->st_mtim.tv_sec;
+diff -rub ./cmake-3.31.0/Utilities/cmlibuv/src/unix/linux-core.c ./cmake-3.31.0/Utilities/cmlibuv/src/unix/linux-core.c
+--- ./cmake-3.31.0/Utilities/cmlibuv/src/unix/linux-core.c	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Utilities/cmlibuv/src/unix/linux-core.c	2024-11-26 21:44:14.289332452 +0000
+@@ -82,6 +82,8 @@
+ static void read_speeds(unsigned int numcpus, uv_cpu_info_t* ci);
+ static uint64_t read_cpufreq(unsigned int cpunum);
+ 
++#ifndef __laylaos__
++
+ int uv__platform_loop_init(uv_loop_t* loop) {
+   
+   loop->inotify_fd = -1;
+@@ -116,6 +118,7 @@
+   loop->inotify_fd = -1;
+ }
+ 
++#endif      /* __laylaos__ */
+ 
+ 
+ uint64_t uv__hrtime(uv_clocktype_t type) {
+@@ -732,12 +735,16 @@
+ }
+ 
+ 
++#ifndef __laylaos__
++
+ void uv__set_process_title(const char* title) {
+ #if defined(PR_SET_NAME)
+   prctl(PR_SET_NAME, title);  /* Only copies first 16 characters. */
+ #endif
+ }
+ 
++#endif      /* __laylaos__ */
++
+ 
+ static uint64_t uv__read_proc_meminfo(const char* what) {
+   uint64_t rc;
+@@ -793,6 +800,8 @@
+ }
+ 
+ 
++#ifndef __laylaos__
++
+ static uint64_t uv__read_cgroups_uint64(const char* cgroup, const char* param) {
+   char filename[256];
+   char buf[32];  /* Large enough to hold an encoded uint64_t. */
+@@ -816,6 +825,14 @@
+   return uv__read_cgroups_uint64("memory", "memory.limit_in_bytes");
+ }
+ 
++#else
++
++uint64_t uv_get_constrained_memory(void) {
++  return 0;  /* Memory constraints are unknown. */
++}
++
++#endif      /* __laylaos__ */
++
+ 
+ void uv_loadavg(double avg[3]) {
+   struct sysinfo info;
+diff -rub ./cmake-3.31.0/Utilities/cmlibuv/src/unix/process.c ./cmake-3.31.0/Utilities/cmlibuv/src/unix/process.c
+--- ./cmake-3.31.0/Utilities/cmlibuv/src/unix/process.c	2024-11-06 13:41:37.000000000 +0000
++++ ./cmake-3.31.0/Utilities/cmlibuv/src/unix/process.c	2024-11-25 19:50:30.864111591 +0000
+@@ -60,7 +60,7 @@
+ extern char **environ;
+ #endif
+ 
+-#if defined(__linux__) || defined(__GLIBC__)
++#if defined(__linux__) || defined(__GLIBC__) || defined(__laylaos__)
+ # include <grp.h>
+ #endif
+ 

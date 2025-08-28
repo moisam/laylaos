@@ -1,17 +1,15 @@
 #!/bin/bash
 
 #
-# Script to download and build coreutils
+# Script to download and build autoconf-2.69
 #
 
-DOWNLOAD_NAME="coreutils"
-DOWNLOAD_VERSION="8.32"
-DOWNLOAD_URL="https://ftp.gnu.org/gnu/coreutils/"
-DOWNLOAD_PREFIX="coreutils-"
-DOWNLOAD_SUFFIX=".tar.xz"
+DOWNLOAD_NAME="autoconf"
+DOWNLOAD_VERSION="2.69"
+DOWNLOAD_URL="https://ftp.gnu.org/gnu/autoconf/"
+DOWNLOAD_PREFIX="autoconf-"
+DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
-PATCH_FILE=${DOWNLOAD_NAME}.diff
-PATCH_FILE2=${DOWNLOAD_NAME}2.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -21,7 +19,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/share/info/coreutils.info
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/ifnames-2.69
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -40,33 +38,26 @@ cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.sub
 mv ${DOWNLOAD_SRCDIR}/build-aux/config.guess ${DOWNLOAD_SRCDIR}/build-aux/config.guess.OLD
 cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.guess
 
-cd ${DOWNLOAD_PORTS_PATH}
-patch -i ${CWD}/${PATCH_FILE} -p0
-patch -i ${CWD}/${PATCH_FILE2} -p0
-cd ${CWD}
-
-# run autoreconf if we are compiling on LaylaOS as automake complains of the 
-# wrong version if we don't
-cd ${DOWNLOAD_SRCDIR}/
-myname=`uname -s`
-if [ "$myname" == "LaylaOS" ]; then
-    autoreconf
-fi
-
 # build
-mkdir ${DOWNLOAD_SRCDIR}/build2
-cd ${DOWNLOAD_SRCDIR}/build2
+mkdir ${DOWNLOAD_SRCDIR}/build
+cd ${DOWNLOAD_SRCDIR}/build
 
-../configure FORCE_UNSAFE_CONFIGURE=1 \
-    --host=${BUILD_TARGET} --prefix=/usr \
-    CPPFLAGS="${CPPFLAGS} -D_POSIX_TIMERS -DHAVE_LSTAT -DHAVE_MKNOD -DHAVE_OPENDIR -DHAVE_READDIR -DHAVE_REWINDDIR -DHAVE_CLOSEDIR -DHAVE_SCANDIR -DHAVE_OPENAT_SUPPORT -D__USE_MISC -D_POSIX_PRIORITY_SCHEDULING" \
-    CFLAGS="--sysroot=${CROSSCOMPILE_SYSROOT_PATH}/ -isystem=/usr/include" \
-    --enable-install-program=arch \
+PERL=${HOST_PERL_FOR_CROSSCOMPILE} \
+    ../configure  \
+    --host=${BUILD_TARGET} --prefix=/usr --program-suffix=-2.69 \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
+
+# patch these suckers
+sed -i "s~$HOST_PERL_FOR_CROSSCOMPILE~/usr/bin/perl~g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/ifnames-2.69
+sed -i "s~$HOST_PERL_FOR_CROSSCOMPILE~/usr/bin/perl~g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/autoheader-2.69
+sed -i "s~$HOST_PERL_FOR_CROSSCOMPILE~/usr/bin/perl~g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/autoreconf-2.69
+sed -i "s~$HOST_PERL_FOR_CROSSCOMPILE~/usr/bin/perl~g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/autom4te-2.69
+sed -i "s~$HOST_PERL_FOR_CROSSCOMPILE~/usr/bin/perl~g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/autoscan-2.69
+sed -i "s~$HOST_PERL_FOR_CROSSCOMPILE~/usr/bin/perl~g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/autoupdate-2.69
 
 # Clean up
 cd ${CWD}

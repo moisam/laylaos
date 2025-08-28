@@ -1,14 +1,14 @@
 #!/bin/bash
 
 #
-# Script to download and build cups
+# Script to download and build bison
 #
 
-DOWNLOAD_NAME="cups"
-DOWNLOAD_VERSION="2.4.6"
-DOWNLOAD_URL="https://github.com/OpenPrinting/cups/releases/download/v${DOWNLOAD_VERSION}/"
-DOWNLOAD_PREFIX="cups-"
-DOWNLOAD_SUFFIX="-source.tar.gz"
+DOWNLOAD_NAME="bison"
+DOWNLOAD_VERSION="3.8"
+DOWNLOAD_URL="https://ftp.gnu.org/gnu/bison/"
+DOWNLOAD_PREFIX="bison-"
+DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 CWD=`pwd`
 
@@ -19,7 +19,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libcups.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/bison
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -32,25 +32,25 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
-cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+mv ${DOWNLOAD_SRCDIR}/build-aux/config.sub ${DOWNLOAD_SRCDIR}/build-aux/config.sub.OLD
+cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.sub
 
-mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
-cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
-
-# build
-cd ${DOWNLOAD_SRCDIR}
+mv ${DOWNLOAD_SRCDIR}/build-aux/config.guess ${DOWNLOAD_SRCDIR}/build-aux/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.guess
 
 myname=`uname -s`
 if [ "$myname" == "LaylaOS" ]; then
-    CC=gcc CXX=g++ CFLAGS="${CFLAGS} -D__XSI_VISIBLE -D__USE_MISC" \
-        ./configure --host=${BUILD_TARGET} \
-        || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
-else
-    CFLAGS="${CFLAGS} -D__XSI_VISIBLE -D__USE_MISC" \
-        ./configure --host=${BUILD_TARGET} \
-        || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
+    cd ${DOWNLOAD_SRCDIR}
+    autoreconf
 fi
+
+# build
+mkdir ${DOWNLOAD_SRCDIR}/build
+cd ${DOWNLOAD_SRCDIR}/build
+
+../configure  \
+    --host=${BUILD_TARGET} --prefix=/usr --disable-nls --enable-relocatable \
+    || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 

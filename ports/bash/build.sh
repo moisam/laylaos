@@ -36,6 +36,9 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 mv ${DOWNLOAD_SRCDIR}/support/config.sub ${DOWNLOAD_SRCDIR}/support/config.sub.OLD
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/support/config.sub
 
+mv ${DOWNLOAD_SRCDIR}/support/config.guess ${DOWNLOAD_SRCDIR}/support/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/support/config.guess
+
 cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 
 # build

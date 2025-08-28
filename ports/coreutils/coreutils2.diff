@@ -1,0 +1,12 @@
+diff -rub ./coreutils-8.32/lib/config.hin ./coreutils-8.32/lib/config.hin
+--- ./coreutils-8.32/lib/config.hin	2025-05-27 21:09:17.098614000 +0100
++++ ./coreutils-8.32/lib/config.hin	2025-05-27 21:09:49.194992198 +0100
+@@ -3188,7 +3188,7 @@
+ #undef STDC_HEADERS
+ 
+ /* Define to 1 if strerror_r returns char *. */
+-#define STRERROR_R_CHAR_P   1
++#undef STRERROR_R_CHAR_P
+ 
+ /* Define to 1 if strtold does not set errno upon underflow. */
+ #undef STRTOLD_HAS_UNDERFLOW_BUG
