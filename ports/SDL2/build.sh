@@ -42,6 +42,10 @@ cp -r ./extra/video/laylaos ${DOWNLOAD_SRCDIR}/src/video/
 
 mv ${DOWNLOAD_SRCDIR}/build-scripts/config.sub ${DOWNLOAD_SRCDIR}/build-scripts/config.sub.OLD
 cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/build-scripts/config.sub
+
+mv ${DOWNLOAD_SRCDIR}/build-scripts/config.guess ${DOWNLOAD_SRCDIR}/build-scripts/config.guess.OLD
+cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/build-scripts/config.guess
+
 mv ${DOWNLOAD_SRCDIR}/acinclude/libtool.m4 ${DOWNLOAD_SRCDIR}/acinclude/libtool.m4.OLD
 cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/acinclude/libtool.m4
 
@@ -86,7 +90,7 @@ mkdir tests && cd tests
 ../../test/configure \
     CFLAGS="${CFLAGS} `${PKG_CONFIG} --cflags freetype2`" \
     CPPFLAGS="${CPPFLAGS} -D_POSIX_PRIORITY_SCHEDULING -D_POSIX_TIMERS -I." \
-    LDFLAGS="-L${HOME}/laylaos-x86_64/usr/local/lib -ldl -lgui -lfreetype" \
+    LDFLAGS="-L${CROSSCOMPILE_SYSROOT_PATH}/usr/lib -ldl -lgui -lfreetype" \
     --host=${BUILD_TARGET} --prefix=/usr \
     --with-sdl-prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \
     --with-sdl-exec-prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \

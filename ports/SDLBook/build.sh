@@ -31,7 +31,13 @@ git clone https://github.com/rofl0r/SDLBook.git
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0
+# NOTE: The repo was updated, making our patch obsolete.
+#       As the changes are small, it is easier to make them by hand and
+#       avoid re-creating the patch and keeping track of the repo's updates.
+
+#cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0
+sed -i 's~SDL_WINDOW_OPENGL|~/* SDL_WINDOW_OPENGL| */ ~' ${DOWNLOAD_SRCDIR}/ezsdl.h
+sed -i 's~SDL_RENDERER_ACCELERATED|~/* SDL_RENDERER_ACCELERATED| */ ~' ${DOWNLOAD_SRCDIR}/ezsdl.h
 
 # build
 cd ${DOWNLOAD_SRCDIR}
