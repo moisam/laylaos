@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: widget_apps.c
  *    This file is part of LaylaOS.
@@ -32,11 +32,14 @@
 // define a custom flag for us to use
 #define APPLICATION_FLAG_SELECTED       0x0100
 
+#define MAX_CATEGORIES                  64
+
 struct widget_t *apps_widget;
 static char **app_categories;
 static int app_category_count;
-static struct app_entry_t *first_entry;
-static int category_selected[32] = { 0, };
+static struct app_entry_t *category_first_entry[MAX_CATEGORIES];
+static struct app_entry_t *category_last_entry[MAX_CATEGORIES];
+static int category_selected = 0;
 static int mouse_down = 0;
 
 
@@ -84,7 +87,7 @@ static inline void draw_app_category(struct window_t *frame, int i, int y,
                                      uint32_t textcolor, uint32_t bgcolor,
                                      uint32_t hicolor)
 {
-    if(category_selected[i])
+    if(category_selected == i)
     {
         // draw a border with 4 pixels of padding around the text,
         // assuming the longest category name to be < 16 chars
@@ -139,13 +142,8 @@ static void paint_category_apps(struct window_t *frame,
     widget_menu_fill_rect(frame, RIGHT_COLUMN_X, y, 
                                  RIGHT_COLUMN_W, frame->h - y, bgcolor);
 
-    for(entry = first_entry; entry != NULL; entry = entry->next)
+    for(entry = category_first_entry[i]; entry != NULL; entry = entry->next)
     {
-        if(entry->category != i)
-        {
-            continue;
-        }
-
         draw_app_entry(frame, entry, y, charh,
                               textcolor, bgcolor, hicolor);
         y += RIGHT_COLUMN_H;
@@ -172,7 +170,7 @@ static void widget_menu_repaint_applist(struct window_t *frame, int unused)
         draw_app_category(frame, i, y, charh, textcolor, bgcolor, hicolor);
 
         // draw app names on the right column
-        if(category_selected[i])
+        if(category_selected == i)
         {
             paint_category_apps(frame, i, charh, textcolor, bgcolor, hicolor);
         }
@@ -205,10 +203,10 @@ static void applist_mouseover(struct window_t *frame,
             // de-select any previous selection
             for(k = j, i = 0; i < app_category_count; i++)
             {
-                if(category_selected[i] && i != j)
+                if(category_selected == i && i != j)
                 {
                     k = i;
-                    category_selected[i] = 0;
+                    category_selected = -1;
                     draw_app_category(frame, i, y, charh, 
                                       textcolor, bgcolor, hicolor);
                 }
@@ -218,7 +216,7 @@ static void applist_mouseover(struct window_t *frame,
 
             // select the new category if it is valid
             y = TOP_FRAME_PADDING + (j * LEFT_COLUMN_H);
-            category_selected[j] = 1;
+            category_selected = j;
             draw_app_category(frame, j, y, charh, textcolor, bgcolor, hicolor);
 
             // and redraw the right side if we changed category
@@ -234,56 +232,48 @@ static void applist_mouseover(struct window_t *frame,
     	struct app_entry_t *entry, *old_sel = NULL;
 
         // find the selected category from the left column
-        for(k = 0, i = 0; i < app_category_count; i++)
-        {
-            if(category_selected[i])
-            {
-                break;
-            }
-        }
+        i = category_selected;
 
         // find the index of the menu item under the mouse
         j = (mstate->y - (TOP_FRAME_PADDING - TOP_ITEM_PADDING)) / RIGHT_COLUMN_H;
+        k = 0;
 
-        for(entry = first_entry; entry != NULL; entry = entry->next)
+        // find the old selection
+        for(entry = category_first_entry[i]; entry != NULL; entry = entry->next)
         {
-            if(entry->category != i)
+            if(entry->flags & APPLICATION_FLAG_SELECTED)
             {
-                continue;
+                old_sel = entry;
+                break;
             }
 
+            k++;
+        }
+
+        // find the new selection
+        for(entry = category_first_entry[i]; entry != NULL; entry = entry->next)
+        {
             if(j == 0)
             {
                 // this is the one - select it
                 entry->flags |= APPLICATION_FLAG_SELECTED;
                 draw_app_entry(frame, entry, y, charh,
                                textcolor, bgcolor, hicolor);
-            }
-            else
-            {
-                // we are still not there
-                if(entry->flags & APPLICATION_FLAG_SELECTED)
+
+                // deselect the old selection, if any
+                if(old_sel && old_sel != entry)
                 {
-                    k = j;
-                    old_sel = entry;
-                    entry->flags &= ~APPLICATION_FLAG_SELECTED;
-                    draw_app_entry(frame, entry, y, charh,
+                    y = TOP_FRAME_PADDING + (k * RIGHT_COLUMN_H);
+                    old_sel->flags &= ~APPLICATION_FLAG_SELECTED;
+                    draw_app_entry(frame, old_sel, y, charh,
                                    textcolor, bgcolor, hicolor);
                 }
+
+                break;
             }
 
             j--;
             y += RIGHT_COLUMN_H;
-        }
-
-        // we finished running through the list but haven't found an entry -
-        // we need to re-select the previous selection (if any)
-        if(j > 0 && old_sel)
-        {
-            y = TOP_FRAME_PADDING + (k * RIGHT_COLUMN_H);
-            old_sel->flags |= APPLICATION_FLAG_SELECTED;
-            draw_app_entry(frame, old_sel, y, charh,
-                           textcolor, bgcolor, hicolor);
         }
     }
 
@@ -318,24 +308,13 @@ static void applist_mouseup(struct window_t *frame,
     }
 
     // find the selected category from the left column
-    for(i = 0; i < app_category_count; i++)
-    {
-        if(category_selected[i])
-        {
-            break;
-        }
-    }
+    i = category_selected;
 
     // find the index of the menu item under the mouse
     j = (mstate->y - (TOP_FRAME_PADDING - TOP_ITEM_PADDING)) / RIGHT_COLUMN_H;
 
-    for(entry = first_entry; entry != NULL; entry = entry->next)
+    for(entry = category_first_entry[i]; entry != NULL; entry = entry->next)
     {
-        if(entry->category != i)
-        {
-            continue;
-        }
-
         if(j == 0)
         {
             // this is the one - run the application
@@ -350,11 +329,12 @@ static void applist_mouseup(struct window_t *frame,
     }
 
     mouse_down = 0;
-    widget_menu_hide(apps_widget);
-    widget_unfocus((struct window_t *)apps_widget);
 
+    // only hide the menu if we have a selection
     if(sel)
     {
+        widget_menu_hide(apps_widget);
+        widget_unfocus((struct window_t *)apps_widget);
         widget_run_command(sel->command);
     }
 }
@@ -385,17 +365,10 @@ static void widget_mouseup_apps(struct widget_t *widget,
         int charh = widget_char_height();
         int w = (60 * 8 /* charw */);
         int h = (20 * charh);
-        int i;
         
         if((menu = widget_menu_create(w, h)))
         {
-            // de-select all items and re-select the first category
-            for(i = 1; i < app_category_count; i++)
-            {
-                category_selected[i] = 0;
-            }
-
-            category_selected[0] = 1;
+            category_selected = 0;
             menu->repaint = widget_menu_repaint_applist;
             menu->mouseover = applist_mouseover;
             menu->mousedown = applist_mousedown;
@@ -411,11 +384,15 @@ static void widget_mouseup_apps(struct widget_t *widget,
 
 int widget_init_apps(void)
 {
+	struct app_entry_t *entry, *next;
+    struct app_entry_t *global_first_entry = NULL;
+    int i;
+
     if(!(apps_widget = widget_create()))
     {
         return 0;
     }
-    
+
     apps_widget->win.w = 160;
     apps_widget->win.repaint = widget_repaint_apps;
     apps_widget->win.title = "Applications";
@@ -423,8 +400,56 @@ int widget_init_apps(void)
     apps_widget->flags |= (WIDGET_FLAG_INITIALIZED | WIDGET_FLAG_FLOAT_LEFT);
 
     widget_get_app_categories(&app_categories, &app_category_count);
-    widget_get_app_entries(&first_entry);
-    
+    widget_get_app_entries(&global_first_entry);
+
+    // sort entries into their different categories
+    for(i = 0; i < app_category_count; i++)
+    {
+        for(entry = global_first_entry; entry != NULL; entry = next)
+        {
+            next = entry->next;
+
+            if(entry->category != i)
+            {
+                continue;
+            }
+
+            if(entry == global_first_entry)
+            {
+                global_first_entry = next;
+
+                if(next)
+                {
+                    next->prev = NULL;
+                }
+            }
+            else
+            {
+                entry->prev->next = next;
+
+                if(next)
+                {
+                    next->prev = entry->prev;
+                }
+            }
+
+            entry->prev = NULL;
+            entry->next = NULL;
+
+            if(category_first_entry[i] == NULL)
+            {
+                category_first_entry[i] = entry;
+                category_last_entry[i] = entry;
+            }
+            else
+            {
+                category_last_entry[i]->next = entry;
+                entry->prev = category_last_entry[i];
+                category_last_entry[i] = entry;
+            }
+        }
+    }
+
     return 1;
 }
 

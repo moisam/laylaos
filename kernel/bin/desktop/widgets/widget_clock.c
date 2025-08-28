@@ -218,9 +218,9 @@ void widget_menu_repaint_calendar(struct window_t *frame, int unused)
 		        // highlight the current day
 		        if(j == tm->tm_mday)
 		        {
-                    widget_menu_fill_rect(frame, x + 8 /* charw */, 
+                    widget_menu_fill_rect(frame, x + 4 /* charw */, 
                                           y - (charh >> 1), 
-                                          3 * 8 /* charw */, 
+                                          4 * 8 /* charw */, 
                                           charh * 2, hicolor);
 		        }
 		        
@@ -282,7 +282,7 @@ void widget_mouseup_clock(struct widget_t *widget, int mouse_x, int mouse_y)
         struct window_t *menu;
         int charh = widget_char_height();
         int w = (4 * 7 * 8 /* charw */) + (8 /* charw */ * 4);
-        int h = (16 * charh);
+        int h = (17 * charh);
         
         if((menu = widget_menu_create(w, h)))
         {
