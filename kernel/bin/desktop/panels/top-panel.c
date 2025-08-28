@@ -35,6 +35,7 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <kernel/clock.h>
 #include "../include/client/window.h"
 #include "../include/client/paths.h"
@@ -68,13 +69,39 @@ void repaint_toppanel(struct window_t *window, int is_active_child)
 }
 
 
+void sigchld_handler(int signum __attribute__((unused)))
+{
+    int        pid, st;
+    int        saved_errno = errno;
+
+    while((pid = waitpid(-1, &st, WNOHANG)) != 0)
+    {
+        if(errno == ECHILD)
+        {
+            break;
+        }
+    }
+
+    errno = saved_errno;
+}
+
+
 int main(int argc, char **argv)
 {
     struct event_t *ev;
     struct window_attribs_t attribs;
+    struct sigaction act;
     time_t last_sec = 0;
 
     gui_init(argc, argv);
+
+    // if we launch an application (e.g. when the user selects an application
+    // from the top menu), we need to be ready to reap the zombie task when it
+    // exits
+    memset(&act, 0, sizeof(struct sigaction));
+    act.sa_handler = sigchld_handler;
+    act.sa_flags = SA_RESTART;
+    (void)sigaction(SIGCHLD, &act, NULL);
 
     attribs.gravity = WINDOW_ALIGN_ABSOLUTE;
     attribs.x = 0;
