@@ -72,6 +72,8 @@ struct xucred {
 	pid_t	cr_pid;					/* process id */
 };
 
+#define XUCRED_VERSION      0
+
 
 /*
  * Shareable process credentials (always resident).  This includes a reference
