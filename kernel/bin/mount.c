@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mount.c
  *    This file is part of LaylaOS.
@@ -32,6 +32,7 @@
 #include <getopt.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
+#include "mount.h"
 
 #define MS_DEFAULTS         (0)
 
@@ -69,7 +70,7 @@ void print_mounts(char *myname)
 
 static void print_short_usage(char *myname)
 {
-        fprintf(stderr, "Usage: %s [options] -t fstype dev mpoint\n\n"
+        fprintf(stderr, "Usage: %s [options] [-t fstype] dev mpoint\n\n"
                         "See %s --help for details\n",
                         myname, myname);
 }
@@ -145,7 +146,7 @@ int main(int argc, char **argv)
 
             case 'h':
                 printf("mount utility for LaylaOS, Version %s\n\n", ver);
-                printf("Usage: %s [options] -t fstype dev mpoint\n\n"
+                printf("Usage: %s [options] [-t fstype] dev mpoint\n\n"
                        "Options:\n"
                        "  -h, --help            Show this help and exit\n"
                        "  -o, --options opt     Specify mount options as opt, a comma-\n"
@@ -173,11 +174,13 @@ int main(int argc, char **argv)
         }
     }
 
+    /*
     if(!fstype)
     {
         exit_missing_arg(argv[0], "fstype");
     }
-    
+    */
+
     argc2 = argc - optind;
     
     if(dev)
@@ -228,7 +231,7 @@ int main(int argc, char **argv)
         print_short_usage(argv[0]);
         exit(1);
     }
-    
+
     if(stat(mpoint, &st) < 0)
     {
         fprintf(stderr, "%s: failed to stat %s: %s\n",
@@ -334,6 +337,12 @@ int main(int argc, char **argv)
     }
 
     //printf("mount: optstring '%s'\n", optstring);
+
+    if(!fstype)
+    {
+        fstype = guess_fstype(argv[0], dev);
+        printf("mount: filesystem type: %s\n", fstype);
+    }
 
     if(mount(dev, mpoint, fstype, fsopts, optstring) < 0)
     {

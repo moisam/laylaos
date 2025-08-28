@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: umount.c
  *    This file is part of LaylaOS.
@@ -39,7 +39,7 @@ int flags = 0;
 
 static void print_short_usage(char *myname)
 {
-        fprintf(stderr, "Usage: %s [options] mpoint...\n\n"
+        fprintf(stderr, "Usage: %s [options] {device|mpoint}...\n\n"
                         "See %s --help for details\n",
                         myname, myname);
 }
@@ -118,14 +118,14 @@ int main(int argc, char **argv)
 
         if(stat(mpoint, &st) < 0)
         {
-            fprintf(stderr, "%s: failed to stat %s: %s\n",
+            fprintf(stderr, "%s: cannot stat %s: %s\n",
                             argv[0], mpoint, strerror(errno));
             exit(1);
         }
 
-        if(!S_ISDIR(st.st_mode))
+        if(!S_ISDIR(st.st_mode) && !S_ISBLK(st.st_mode))
         {
-            fprintf(stderr, "%s: failed to umount %s: not a directory\n",
+            fprintf(stderr, "%s: cannot umount %s: not a directory or a block device\n",
                             argv[0], mpoint);
             exit(1);
         }

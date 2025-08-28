@@ -52,11 +52,15 @@
 #include <sys/syscall.h>
 //#include <sys/syscall_macros.h>
 
+#include "daemon.h"
+#include "daemon-funcs.c"
+
 
 #define INIT_VER                    "1.0"
 
 #define TARGET_SINGLE_USER          1
 #define TARGET_MULTI_USER           2
+#define TARGET_RESCUE_MODE          3
 #define TARGET_DEFAULT              TARGET_MULTI_USER
 
 int target = TARGET_DEFAULT;
@@ -302,7 +306,7 @@ next:
 }
 
 
-int mountall(void)
+long mountall(void)
 {
     int res;
     char *buf = (char *)malloc(MNTALL_BUFSZ);
@@ -545,11 +549,13 @@ void init_help(void)
     printf("  -D, --default         Init default target (multi-user)\n");
     printf("  -M, --multi-user      Init multi-user target\n");
     printf("  -S, --single-user     Init single-user target\n");
+    printf("  -R, --rescue-mode     Init rescue-mode target (useful to fix boot issues)\n"
+           "      --emergency-shell                  \n");
     printf("  -h, --help            Show help (this page) and exit\n");
     printf("  -v, --version         Show version and exit\n");
-    printf("  --target=TARGET       Init the passed TARGET, which can be one of"
+    printf("  --target=TARGET       Init the passed TARGET, which can be one of\n"
            "                        'default', 'multi-user', or 'signle-user'\n");
-    printf("  --target TARGET       Same as above, except TARGET is passed in a"
+    printf("  --target TARGET       Same as above, except TARGET is passed in a\n"
            "                        separate argument\n");
     printf("\nTargets can also be passed with no leading '--'.\n");
     printf("Unknown options and/or arguments are ignored\n\n");
@@ -583,6 +589,12 @@ int maybe_target_name(char *arg)
     if(strcmp(arg, "default") == 0)
     {
         target = TARGET_DEFAULT;
+        return 1;
+    }
+
+    if(strcmp(arg, "rescue-mode") == 0 || strcmp(arg, "emergency-shell") == 0)
+    {
+        target = TARGET_RESCUE_MODE;
         return 1;
     }
     
@@ -686,6 +698,10 @@ void parse_args(int argc, char **argv)
         {
             switch(*p)
             {
+                case 'R':
+                    target = TARGET_RESCUE_MODE;
+                    break;
+
                 case 'S':
                     target = TARGET_SINGLE_USER;
                     break;
@@ -723,9 +739,65 @@ void parse_args(int argc, char **argv)
 }
 
 
+/*
+ * Read daemon files under /etc and spawn the daemon servers.
+ *
+ * Unfortunately, we do not keep track of daemon pids as they typically
+ * fork and the parent exits while the server continues running in the child
+ * process. We should implement a more robust system for tracking and
+ * restarting daemons as needed. Possibly something like systemd (but less
+ * complex and ugly).
+ *
+ * As for now, the user can query the status of daemons and start/stop/restart
+ * them using the 'daemon' utility.
+ */
+static void spawn_daemons(void)
+{
+    DIR *procdir;
+    struct dirent *dent;
+    struct daemon_t d;
+
+    if(!(procdir = opendir(DAEMON_DATADIR)))
+    {
+        INIT_WARN("failed to read /proc: %s", strerror(errno));
+        return;
+    }
+
+    while((dent = readdir(procdir)) != NULL)
+    {
+        if(dent->d_name[0] == '.')        // skip '.' and hidden files
+        {
+            continue;
+        }
+
+        d.name = NULL;
+        d.desc = NULL;
+        d.cmd = NULL;
+        d.cmdargs = NULL;
+        d.envpath = NULL;
+
+        if(!read_daemon_file("init", &d, dent->d_name))
+        {
+            continue;
+        }
+
+        fork_daemon_task(&d);
+
+        if(d.name) free(d.name);
+        if(d.desc) free(d.desc);
+        if(d.cmd) free(d.cmd);
+        if(d.cmdargs) free(d.cmdargs);
+        if(d.envpath) free(d.envpath);
+    }
+
+    closedir(procdir);
+}
+
+
 int init(void)
 {
     int i;
+    static int done_daemons = 0;
     
     INIT_MSG("mounting filesystems");
 
@@ -773,6 +845,13 @@ spawn:
     sigaddset(&nmask, SIGCHLD);
     sigprocmask(SIG_BLOCK, &nmask, &omask);
 
+    if(!done_daemons && (target != TARGET_RESCUE_MODE))
+    {
+        // This name sounds really ominous
+        spawn_daemons();
+        done_daemons = 1;
+    }
+
     if((child.pid = fork()) < 0)
     {
         INIT_EXIT_ERR("failed to fork: %s", strerror(errno));
@@ -780,12 +859,26 @@ spawn:
     else if(child.pid == 0)
     {
         pid_t pid = getpid();
-        char *exe = "/bin/dispman";
-        char *argv[] = { exe,
-                         "--nogui",
-                         "--target",
-                         target == TARGET_SINGLE_USER ? 
-                            "single-user" : "multi-user", NULL };
+        char *exe;
+        char *argv[5];
+
+        if(target == TARGET_RESCUE_MODE)
+        {
+            // In rescue mode, we only spawn the emergency shell
+            exe = "/bin/bash";
+            argv[0] = exe;
+            argv[1] = NULL;
+        }
+        else
+        {
+            exe = "/bin/dispman";
+            argv[0] = exe;
+            argv[1] = "--nogui";
+            argv[2] = "--target";
+            argv[3] = target == TARGET_SINGLE_USER ? 
+                                "single-user" : "multi-user";
+            argv[4] = NULL;
+        }
 
         sigprocmask(SIG_SETMASK, &omask, NULL);
 

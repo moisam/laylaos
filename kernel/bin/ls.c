@@ -67,7 +67,7 @@ char datestring[128];
 
 void set_screen_colors(int FG, int BG) 
 {
-  fprintf(stdout, "\e[%d;%dm", FG, BG);    //control sequence to set screen color
+    fprintf(stdout, "\e[%d;%dm", FG, BG);    //control sequence to set screen color
 }
 
 
@@ -291,22 +291,6 @@ void print_item(char *path)
     }
 
     printf(" %s\n", path);
-
-
-      /*
-      DIR *ditem = (DIR *)item;
-      time_t t = (time_t)ditem->mtime;
-      struct tm *time = gmtime(&t);
-      printf("\t");
-      printf("%u", time->tm_mday);
-      if(time->tm_mday < (unsigned)10) printf(" ");
-      printf(" %s %u %u:%u:%u  ",     month_str[time->tm_mon],
-                     time->tm_year+1900,
-                     time->tm_hour,
-                     time->tm_min,
-                     time->tm_sec);
-      printf("\n");
-      */
 }
 
 
@@ -346,11 +330,11 @@ int ls(char *path)
         return -1;
     }
 
-    printf("***\n");
-    
+    //printf("***\n");
+
     while((dp = readdir(dir)) != NULL)
     {
-        printf("*** '%s'\n", dp->d_name);
+        //printf("*** '%s'\n", dp->d_name);
         if(dp->d_name[0] == '.' && !LIST_ALL) //ignore those starting with "."
         {
             continue;
@@ -406,3 +390,4 @@ int main(int argc, char **argv)
     set_screen_colors(DEFAULT_FOREGROUND, DEFAULT_BACKGROUND);
     return exit_res;
 }
+

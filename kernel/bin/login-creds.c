@@ -42,7 +42,7 @@
 #define DEFAULT_TELEPHONE           DEFAULT_LANG
 #define DEFAULT_MEASUREMENT         DEFAULT_LANG
 #define DEFAULT_IDENTIFICATION      DEFAULT_LANG
-#define DEFAULT_ALL                 ""
+//#define DEFAULT_ALL                 ""
 
 
 static inline void set_groups(char *name, gid_t gid)
@@ -76,7 +76,7 @@ static inline void set_locale(void)
     setenv("LC_TELEPHONE", DEFAULT_TELEPHONE, 1);
     setenv("LC_MEASUREMENT", DEFAULT_MEASUREMENT, 1);
     setenv("LC_IDENTIFICATION", DEFAULT_IDENTIFICATION, 1);
-    setenv("LC_ALL", DEFAULT_ALL, 1);
+    //setenv("LC_ALL", DEFAULT_ALL, 1);
 }
 
 
@@ -91,7 +91,8 @@ void set_creds(struct passwd *pwd)
        setenv("SHELL", exe, 1) < 0 ||
        setenv("TERMINFO_DIRS", "/usr/local/share/terminfo:/usr/share/terminfo", 1) < 0 ||
        setenv("TERMINFO", "/usr/share/terminfo", 1) < 0 ||
-       setenv("PATH", DEFAULT_PATH, 1) < 0)
+       setenv("PATH", DEFAULT_PATH, 1) < 0 ||
+       setenv("PAGER", "less", 1) < 0 || setenv("MANPAGER", "less", 1) < 0)
     {
         fprintf(stderr, "Failed to setenv: %s", strerror(errno));
     }

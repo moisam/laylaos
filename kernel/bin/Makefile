@@ -18,8 +18,8 @@ LIBCPATH:=$(SYSROOT)/usr/local/lib/libc.a
 CPPFLAGS?=
 
 PROGS=dispman getty login chvt \
-      cal more mount reboot ps umount free \
-      init
+      cal more reboot ps umount free \
+      daemon init losetup
 
 # these should be installed from coreutils:
 # echo cat ls
@@ -208,7 +208,7 @@ GUI_PROGS:=$(GUI_DIR)/server/guiserver \
            $(GUI_DIR)/png_test
 
 
-all: check-config $(PROGS) lspci strace $(LIBGUI) $(LIBGUISO) $(GUI_PROGS) widgets epilogue install
+all: check-config $(PROGS) lspci strace mount $(LIBGUI) $(LIBGUISO) $(GUI_PROGS) widgets epilogue install
 
 check-config:
 	if [ "$(HOST)" != "x86_64" ]; then  \
@@ -249,6 +249,10 @@ lspci: pcilib.o lspci.o
 strace: strace-arg-print.o strace-eoptions.o strace.o
 	echo "    Linking   " $@
 	$(CC) -o $@ strace-arg-print.o strace-eoptions.o strace.o $(CFLAGS) $(CPPFLAGS)
+
+mount: mount.o mount-fstype.o
+	echo "    Linking   " $@
+	$(CC) -o $@ mount.o mount-fstype.o $(CFLAGS) $(CPPFLAGS)
 
 $(LIBGUI): $(LIBGUI_OBJS)
 	echo "    Creating static lib " $@
@@ -364,7 +368,7 @@ $(GUI_DIR)/png_test: $(PNGTEST_OBJS)
 clean:
 	echo "    Removing *.o and executables"
 	rm -f *.o
-	rm -f $(PROGS) lspci strace $(GUI_PROGS)
+	rm -f $(PROGS) lspci strace mount $(GUI_PROGS)
 	echo "    Removing " `find . -name '*.o'`
 	rm -f `find . -name '*.o'`
 	echo "    Removing guiserver desktop"
