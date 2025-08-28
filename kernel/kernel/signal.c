@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: signal.c
  *    This file is part of LaylaOS.
@@ -32,6 +32,7 @@
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/syscall.h>
 #include <kernel/ksignal.h>
 #include <kernel/pic.h>
 #include <kernel/user.h>
@@ -42,8 +43,6 @@
 #include <kernel/fpu.h>
 #include <kernel/asm.h>
 #include <signal.h>
-
-#include "signal_funcs.c"
 
 
 sigset_t unblockable_signals;
@@ -109,24 +108,25 @@ void init_signals(void)
 
 static void restart_syscall(struct task_t *ct, struct regs *r)
 {
-    //printk("restart_syscall: syscall %d, n %d (%d)\n", ct->interrupted_syscall, GET_SYSCALL_NUMBER(r), -ERESTARTSYS);
-
-    if(ct->interrupted_syscall &&
-       GET_SYSCALL_NUMBER(r) == (uintptr_t)-ERESTARTSYS)
+    if(valid_syscall_number(ct->interrupted_syscall) /* &&
+       GET_SYSCALL_RESULT(r) == (uintptr_t)-ERESTARTSYS */)
     {
         SET_SYSCALL_NUMBER(r, ct->interrupted_syscall);
-        ct->interrupted_syscall = 0;
+        __atomic_store_n(&(ct->interrupted_syscall), 0, __ATOMIC_SEQ_CST);
+        //ct->interrupted_syscall = 0;
         syscall_dispatcher(r);
     }
     else
     {
-        ct->interrupted_syscall = 0;
+        __atomic_store_n(&(ct->interrupted_syscall), 0, __ATOMIC_SEQ_CST);
+        //ct->interrupted_syscall = 0;
     }
 }
 
 
 static int handle_signal(struct task_t *ct, struct regs *r, int signum)
 {
+    struct regs rtmp;
     struct sigaction *action = &ct->sig->signal_actions[signum];
 
     if(ct->state == TASK_ZOMBIE)
@@ -134,8 +134,8 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
         return 1;
     }
     
-    ct->properties |= PROPERTY_HANDLING_SIG;
-    ct->regs = r;
+    __sync_or_and_fetch(&ct->properties, PROPERTY_HANDLING_SIG);
+    //ct->regs = r;
 
     //printk("handle_signal: pid %d, signum %d\n", ct->pid, signum);
 
@@ -152,7 +152,7 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
         signum = ptrace_signal(signum, 0);
     }
 
-
+    /*
     if((action->sa_handler != SIG_DFL) && !(action->sa_flags & SA_RESTART))
     {
         //ct->interrupted_syscall = 0;
@@ -162,7 +162,7 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
             SET_SYSCALL_RESULT(r, (uintptr_t)-EINTR);
         }
     }
-
+    */
     
     if(signum <= 0 || signum >= NSIG)
     {
@@ -200,8 +200,8 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
 
                 //KDEBUG("Task %d (%d) waking up\n", ct->pid, ct->pgid);
 
-                ct->properties &= ~PROPERTY_HANDLING_SIG;
-                ct->regs = NULL;
+                __sync_and_and_fetch(&ct->properties, ~PROPERTY_HANDLING_SIG);
+                //ct->regs = NULL;
 
                 return 0;
 
@@ -247,12 +247,14 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     /* we need to call user space signal handler */
     void (*handler)() = action->sa_sigaction;
     volatile uintptr_t stack;
-    ucontext_t *context;
-    
+    volatile ucontext_t *context;
+
+    //if(ct->pid == 778 || ct->pid == 779) __asm__ __volatile__("xchg %%bx, %%bx":::);
+
     if((action->sa_flags & SA_ONSTACK) && ct->signal_stack.ss_sp)
     {
         // execute handler on alternate signal stack provided by signalstack()
-        stack = (uintptr_t)ct->signal_stack.ss_sp;
+        stack = (uintptr_t)ct->signal_stack.ss_sp + ct->signal_stack.ss_size;
         ct->signal_stack.ss_flags |= SS_ONSTACK;
     }
     else
@@ -264,6 +266,8 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
         stack = (uintptr_t)r->useresp;
 #endif
     }
+
+    stack &= (uintptr_t)~0x0f;
 
      /*
       * the stack should look like (for x86):
@@ -315,7 +319,6 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     context->uc_mcontext.gregs[REG_R13] = r->r13;
     context->uc_mcontext.gregs[REG_R14] = r->r14;
     context->uc_mcontext.gregs[REG_R15] = r->r15;
-    context->uc_mcontext.gregs[REG_RSP] = r->userrsp;
     context->uc_mcontext.gregs[REG_RBP] = r->rbp;
     context->uc_mcontext.gregs[REG_RDI] = r->rdi;
     context->uc_mcontext.gregs[REG_RSI] = r->rsi;
@@ -326,8 +329,10 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     context->uc_mcontext.gregs[REG_RIP] = r->rip;
     context->uc_mcontext.fpregs = (void *)(stack + sizeof(ucontext_t));
 #ifdef __x86_64__
+    context->uc_mcontext.gregs[REG_RSP] = r->userrsp;
     context->uc_mcontext.gregs[REG_EFL] = r->rflags;
 #else
+    context->uc_mcontext.gregs[REG_ESP] = r->useresp;
     context->uc_mcontext.gregs[REG_EFL] = r->eflags;
 #endif
 
@@ -384,17 +389,11 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
 
     stack = info;
 
-
     // ensure the stack is 16-byte aligned, in case the user signal handler
     // decided to use SSE instructions
-    /*
-    __asm__ __volatile__("xchg %%bx, %%bx"::);
-    if((stack - (4 * sizeof(uintptr_t))) & 127)
-    {
-        stack = (stack & ~127) + (4 * sizeof(uintptr_t));
-    }
-    */
-
+    stack -= (5 * sizeof(uintptr_t));
+    stack &= ~0x7f;
+    stack += (5 * sizeof(uintptr_t));
 
     PUSH(context);       // void *context
     //PUSH(0);       // void *context
@@ -454,7 +453,7 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
         if(copy_to_user(ptr, &timerid, sizeof(ktimer_t)) != 0)
         {
             ksigdelset(&ct->signal_timer, signum);
-            add_task_segv_signal(ct, SIGSEGV, SEGV_MAPERR, ptr);
+            add_task_segv_signal(ct, SEGV_MAPERR, ptr);
             goto ignore;
         }
 
@@ -462,9 +461,10 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     }
 
     A_memcpy((void *)info, &ct->siginfo[signum], sizeof(siginfo_t));
+    __asm__ __volatile__("":::"memory");
 
     cli();
-    ct->regs = NULL;
+    //ct->regs = NULL;
 
     // NOTE: This shouldn't return, instead it will syscall __NR_sigreturn.
     //       The PROPERTY_HANDLING_SIG flag is cleared by syscall_sigreturn().
@@ -474,8 +474,13 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
 
 
 ignore:
-    ct->properties &= ~PROPERTY_HANDLING_SIG;
-    restart_syscall(ct, r);
+
+    cli();
+    A_memcpy(&rtmp, r, sizeof(struct regs));
+    sti();
+    restart_syscall(ct, &rtmp);
+    SET_SYSCALL_RESULT(r, GET_SYSCALL_RESULT(&rtmp));
+    __sync_and_and_fetch(&ct->properties, ~PROPERTY_HANDLING_SIG);
     return 0;
 }
 
@@ -486,7 +491,7 @@ ignore:
 void check_pending_signals(struct regs *r)
 {
     int signum;
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
     sigset_t permitted_signals;
     sigset_t deliverable_signals;
 
@@ -528,7 +533,7 @@ void check_pending_signals(struct regs *r)
 /*
  * Handler for syscall sigreturn().
  */
-int syscall_sigreturn(uintptr_t __user_stack)
+long syscall_sigreturn(struct regs *r, uintptr_t __user_stack)
 {
     /*
      * To get the saved registers, we need to pop the stuff we pushed on the
@@ -545,22 +550,20 @@ int syscall_sigreturn(uintptr_t __user_stack)
      * change this number in the code below!
      */
 
-    struct task_t *ct = cur_task;
-    //struct regs *rsaved;
-    unsigned int interrupted_syscall;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
+    struct regs rtmp;
     volatile uintptr_t user_stack = __user_stack;
-    ucontext_t *context;
+    volatile ucontext_t *context;
+    volatile unsigned interrupted_syscall;
 
     restore_sigmask();
+    cli();
 
-    user_stack += sizeof(uintptr_t) * 3;
-    /*
-    user_stack += sizeof(uintptr_t);        // int signo
-    user_stack = (*(uintptr_t *)user_stack);
-    */
+    //user_stack += sizeof(uintptr_t) * 3;
+    //user_stack += sizeof(siginfo_t);
+    user_stack += sizeof(uintptr_t);
+    user_stack = *(volatile uintptr_t *)user_stack + sizeof(siginfo_t);
 
-    user_stack += sizeof(siginfo_t);
-    
     /*
      * NOTE: The user task might have changed the stack and modified, in
      *       particular, CS, SS and EFLAGS (e.g. disabling interrupts).
@@ -568,85 +571,72 @@ int syscall_sigreturn(uintptr_t __user_stack)
      */
 
     context = (ucontext_t *)user_stack;
-    ct->regs->r8 = context->uc_mcontext.gregs[REG_R8];
-    ct->regs->r9 = context->uc_mcontext.gregs[REG_R9];
-    ct->regs->r10 = context->uc_mcontext.gregs[REG_R10];
-    ct->regs->r11 = context->uc_mcontext.gregs[REG_R11];
-    ct->regs->r12 = context->uc_mcontext.gregs[REG_R12];
-    ct->regs->r13 = context->uc_mcontext.gregs[REG_R13];
-    ct->regs->r14 = context->uc_mcontext.gregs[REG_R14];
-    ct->regs->r15 = context->uc_mcontext.gregs[REG_R15];
-    ct->regs->userrsp = context->uc_mcontext.gregs[REG_RSP];
-    ct->regs->rbp = context->uc_mcontext.gregs[REG_RBP];
-    ct->regs->rdi = context->uc_mcontext.gregs[REG_RDI];
-    ct->regs->rsi = context->uc_mcontext.gregs[REG_RSI];
-    ct->regs->rdx = context->uc_mcontext.gregs[REG_RDX];
-    ct->regs->rcx = context->uc_mcontext.gregs[REG_RCX];
-    ct->regs->rbx = context->uc_mcontext.gregs[REG_RBX];
-    ct->regs->rax = context->uc_mcontext.gregs[REG_RAX];
-    ct->regs->rip = context->uc_mcontext.gregs[REG_RIP];
+    r->r8 = context->uc_mcontext.gregs[REG_R8];
+    r->r9 = context->uc_mcontext.gregs[REG_R9];
+    r->r10 = context->uc_mcontext.gregs[REG_R10];
+    r->r11 = context->uc_mcontext.gregs[REG_R11];
+    r->r12 = context->uc_mcontext.gregs[REG_R12];
+    r->r13 = context->uc_mcontext.gregs[REG_R13];
+    r->r14 = context->uc_mcontext.gregs[REG_R14];
+    r->r15 = context->uc_mcontext.gregs[REG_R15];
+    r->userrsp = context->uc_mcontext.gregs[REG_RSP];
+    r->rbp = context->uc_mcontext.gregs[REG_RBP];
+    r->rdi = context->uc_mcontext.gregs[REG_RDI];
+    r->rsi = context->uc_mcontext.gregs[REG_RSI];
+    r->rdx = context->uc_mcontext.gregs[REG_RDX];
+    r->rcx = context->uc_mcontext.gregs[REG_RCX];
+    r->rbx = context->uc_mcontext.gregs[REG_RBX];
+    r->rax = context->uc_mcontext.gregs[REG_RAX];
+    r->rip = context->uc_mcontext.gregs[REG_RIP];
 
 #ifdef __x86_64__
-    ct->regs->rflags = context->uc_mcontext.gregs[REG_EFL];
+    r->rflags = context->uc_mcontext.gregs[REG_EFL];
+    // enable interrupts
+    r->rflags |= 0x200;
 #else
-    ct->regs->eflags = context->uc_mcontext.gregs[REG_EFL];
-#endif
+    r->eflags = context->uc_mcontext.gregs[REG_EFL];
+    // enable interrupts
+    r->eflags |= 0x200;
 
-#if 0
-    // get the saved regs
-    rsaved = (struct regs *)user_stack;
-    COPY_FROM_USER(ct->regs, rsaved, sizeof(struct regs));
+    r->ds = 0x23;
+    r->es = 0x23;
+    r->fs = 0x33;
+    r->gs = 0x33;
 #endif
 
     // user mode data selector is 0x20 + RPL 3
-    ct->regs->ss = 0x23;
+    r->ss = 0x23;
 
     // CS user mode code selector is 0x18 + RPL 3
-    ct->regs->cs = 0x1B;
-
-#ifdef __x86_64__
-    // enable interrupts
-    ct->regs->rflags |= 0x200;
-#else
-    ct->regs->ds = 0x23;
-    ct->regs->es = 0x23;
-    ct->regs->fs = 0x33;
-    ct->regs->gs = 0x33;
-
-    // enable interrupts
-    ct->regs->eflags |= 0x200;
-#endif
-
+    r->cs = 0x1B;
 
     user_stack += sizeof(ucontext_t);
-#if 0
-    user_stack += sizeof(struct regs);
-#endif
-    ct->interrupted_syscall = *(volatile uintptr_t *)user_stack;
-    interrupted_syscall = ct->interrupted_syscall;
+    interrupted_syscall = *(volatile uintptr_t *)user_stack;
+    __atomic_store_n(&(this_core->cur_task->interrupted_syscall), 
+                                interrupted_syscall, __ATOMIC_SEQ_CST);
+    //ct->interrupted_syscall = *(volatile uintptr_t *)user_stack;
 
-    
 #ifdef __x86_64__
     user_stack += sizeof(uintptr_t);
     A_memcpy(ct->fpregs, (void *)user_stack, sizeof(uintptr_t) * 64);
-    /*
-    for(int i = 0; i < 64; i++)
-    {
-        user_stack += sizeof(uintptr_t);
-        ct->fpregs[63 - i] = *(volatile uintptr_t *)user_stack;
-    }
-    */
-    
     fpu_state_restore(ct);
 #endif
 
-    ct->properties &= ~PROPERTY_HANDLING_SIG;
-    ct->signal_stack.ss_flags &= ~SS_ONSTACK;
-    restart_syscall(ct, ct->regs);
+    __asm__ __volatile__("":::"memory");
 
-    //printk("syscall_sigreturn: intsys %d, res %d\n", interrupted_syscall, interrupted_syscall ? GET_SYSCALL_NUMBER(ct->regs) : 0);
-    return interrupted_syscall ? GET_SYSCALL_NUMBER(ct->regs) : 0;
-    //return 0;
+    A_memcpy(&rtmp, r, sizeof(struct regs));
+    sti();
+    restart_syscall(ct, &rtmp);
+
+    if(valid_syscall_number(interrupted_syscall))
+    {
+        SET_SYSCALL_RESULT(r, GET_SYSCALL_RESULT(&rtmp));
+    }
+
+    __sync_and_and_fetch(&ct->properties, ~PROPERTY_HANDLING_SIG);
+    ct->signal_stack.ss_flags &= ~SS_ONSTACK;
+
+    return GET_SYSCALL_RESULT(r);
 }
 
 
@@ -655,28 +645,30 @@ extern volatile int nested_irqs;
 
 void check_signals_after_irq(struct regs *r)
 {
-    struct task_t *ct = cur_task;
-    struct task_t *idle = idle_task;
-    
     // don't process signals if we are serving an IRQ that occurred while we 
     // were serving another IRQ (i.e. nested IRQs)
-    if(nested_irqs > 1)
+    if(nested_irqs)
     {
         return;
     }
     
     // don't process signals while in a syscall, as we will do this after we
     // finish the syscall
-    if(!ct ||
-       ct->properties & PROPERTY_IN_SYSCALL ||
-       ct->properties & PROPERTY_HANDLING_SIG)
+    if(!this_core->cur_task ||
+       (this_core->cur_task->properties & (PROPERTY_IN_SYSCALL | PROPERTY_HANDLING_SIG)))
     {
         return;
     }
 
-    if(ct != idle)
+    // process signals after an IRQ if this is a timer IRQ and we come from
+    // user space
+    if(r->int_no == 32 && USERSP(r) < USER_MEM_END)
     {
+        __atomic_store_n(&(this_core->cur_task->interrupted_syscall), 0, __ATOMIC_SEQ_CST);
+        //cur_task->interrupted_syscall = 0;
+        //cur_task->irq_regs = r;
         check_pending_signals(r);
+        //cur_task->irq_regs = NULL;
     }
 }
 
@@ -686,7 +678,7 @@ void check_signals_after_irq(struct regs *r)
  */
 void save_sigmask(void)
 {
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
     ksigemptyset(&ct->saved_signal_mask);
     ksigorset(&ct->saved_signal_mask,
@@ -700,7 +692,7 @@ void save_sigmask(void)
  */
 void restore_sigmask(void)
 {
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
     kernel_mutex_lock(&ct->task_mutex);
     ksigemptyset(&ct->signal_mask);
@@ -713,10 +705,10 @@ void restore_sigmask(void)
 /*
  * Handler for syscall sigaction().
  */
-int syscall_sigaction(int signum,
-                      struct sigaction *newact, struct sigaction *oldact)
+long syscall_sigaction(int signum,
+                       struct sigaction *newact, struct sigaction *oldact)
 {
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
     if(signum <= 0 || signum >= NSIG || !ct || !ct->sig)
     {
@@ -778,7 +770,7 @@ int syscall_sigaction(int signum,
 /*
  * Handler for syscall signal() - not implemented.
  */
-int syscall_signal(int signum, void *handler, void *sa_restorer)
+long syscall_signal(int signum, void *handler, void *sa_restorer)
 {
     UNUSED(signum);
     UNUSED(handler);
@@ -788,9 +780,9 @@ int syscall_signal(int signum, void *handler, void *sa_restorer)
 }
 
 
-int syscall_sigpending_internal(sigset_t* set, int kernel)
+long syscall_sigpending_internal(sigset_t* set, int kernel)
 {
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
     if(!set || !ct)
     {
@@ -817,7 +809,7 @@ int syscall_sigpending_internal(sigset_t* set, int kernel)
 /*
  * Handler for syscall sigpending().
  */
-int syscall_sigpending(sigset_t* set)
+long syscall_sigpending(sigset_t* set)
 {
     return syscall_sigpending_internal(set, 0);
 }
@@ -826,14 +818,14 @@ int syscall_sigpending(sigset_t* set)
 /*
  * Handler for syscall sigtimedwait().
  */
-int syscall_sigtimedwait(sigset_t *set, siginfo_t *info,
-                         struct timespec *ts)
+long syscall_sigtimedwait(sigset_t *set, siginfo_t *info,
+                          struct timespec *ts)
 {
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
     struct timespec ats;
     sigset_t pending, wanted, blocked;
     int signum;
-    int error = 0;
+    long error = 0;
     unsigned long timo;
     unsigned long long oticks;
 
@@ -949,9 +941,9 @@ done:
 }
 
 
-int syscall_sigprocmask_internal(struct task_t *ct, int how,
-                                 sigset_t* userset,
-                                 sigset_t* oldset, int kernel)
+long syscall_sigprocmask_internal(struct task_t *ct, int how,
+                                  sigset_t* userset,
+                                  sigset_t* oldset, int kernel)
 {
     /* save the old signal mask */
     if(oldset)
@@ -1029,19 +1021,20 @@ int syscall_sigprocmask_internal(struct task_t *ct, int how,
 /*
  * Handler for syscall sigprocmask().
  */
-int syscall_sigprocmask(int how, sigset_t *userset, sigset_t *oldset)
+long syscall_sigprocmask(int how, sigset_t *userset, sigset_t *oldset)
 {
-    return syscall_sigprocmask_internal(cur_task, how, userset, oldset, 0);
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
+    return syscall_sigprocmask_internal(ct, how, userset, oldset, 0);
 }
 
 
 /*
  * Handler for syscall sigsuspend().
  */
-int syscall_sigsuspend(sigset_t *set)
+long syscall_sigsuspend(struct regs *r, sigset_t *set)
 {
     sigset_t old_mask;
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
     kernel_mutex_lock(&ct->task_mutex);
   
     if(set)
@@ -1063,9 +1056,9 @@ int syscall_sigsuspend(sigset_t *set)
     }
   
     kernel_mutex_unlock(&ct->task_mutex);
-  
+
     /* wait for a signal to wake up.... */
-    syscall_pause();
+    syscall_pause(r);
     //block_task(ct, 1);
 
     kernel_mutex_lock(&ct->task_mutex);
@@ -1102,11 +1095,11 @@ void dump_core(void)
 /*
  * Handler for syscall signalstack().
  */
-int syscall_signaltstack(stack_t *ss, stack_t *old_ss)
+long syscall_signaltstack(stack_t *ss, stack_t *old_ss)
 {
     stack_t newss;
     struct memregion_t *memregion = NULL;
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
     if(old_ss)
     {
@@ -1141,7 +1134,7 @@ int syscall_signaltstack(stack_t *ss, stack_t *old_ss)
             newss.ss_flags = 0;
         
             // check the new stack size is >= minimum allowed
-            if(newss.ss_size < MINSIGSTKSZ)
+            if(newss.ss_size < PAGE_SIZE /*MINSIGSTKSZ */)
             {
                 kernel_mutex_unlock(&ct->task_mutex);
                 return -ENOMEM;
@@ -1162,9 +1155,14 @@ int syscall_signaltstack(stack_t *ss, stack_t *old_ss)
                 kernel_mutex_unlock(&ct->task_mutex);
                 SYSCALL_EFAULT(newss.ss_sp);
             }
+
+            A_memcpy(&ct->signal_stack, &newss, sizeof(stack_t));
+        }
+        else    // SS_DISABLE
+        {
+            A_memset(&ct->signal_stack, 0, sizeof(stack_t));
         }
 
-        A_memcpy(&ct->signal_stack, &newss, sizeof(stack_t));
         kernel_mutex_unlock(&ct->task_mutex);
     }
 
@@ -1175,10 +1173,10 @@ int syscall_signaltstack(stack_t *ss, stack_t *old_ss)
 /*
  * Add a signal to a task.
  */
-int add_task_signal(struct task_t *task, int signum, 
-                    siginfo_t *siginfo, int force)
+long add_task_signal(struct task_t *task, int signum, 
+                     siginfo_t *siginfo, int force)
 {
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
     
     if(!task)
     {
@@ -1263,97 +1261,5 @@ out:
     }
 
     return 0;
-}
-
-
-/*
- * Handy way of sending a signal from a user task.
- */
-int user_add_task_signal(struct task_t *t, int signum, int force)
-{
-    struct task_t *ct = cur_task;
-    siginfo_t siginfo = {
-                         .si_code = SI_USER,
-                         .si_pid = ct->pid,
-                         .si_uid = ct->uid,
-                        };
-
-    return add_task_signal(t, signum, &siginfo, force);
-}
-
-
-/*
- * Send SIGCHLD to the task's parent, filling the appropriate fields in
- * the siginfo_t structure. Field 'status' contains the task's exit status
- * (and code should be CLD_EXITED), or the signal number that caused the
- * task to change state.
- */
-int add_task_child_signal(struct task_t *t, int code, int status)
-{
-    if(!t->parent)
-    {
-        return 0;
-    }
-
-    KDEBUG("add_task_child_signal: t->parent->properties 0x%x\n", t->parent->properties);
-
-    // parent might want to block SIGCHLD and wait for us to change
-    // status by calling one of the wait() functions, in which case it
-    // will be blocked and we need to wake it up
-    if(t->parent->properties & PROPERTY_IN_WAIT)
-    {
-        unblock_task_no_preempt(t->parent);
-        return 0;
-    }
-
-    // check if parent cares about us changing status
-    if(t->parent->sig)
-    {
-        struct sigaction *act = &t->parent->sig->signal_actions[SIGCHLD];
-
-        if((act->sa_handler != SIG_IGN) && !(act->sa_flags & SA_NOCLDSTOP))
-        {
-            siginfo_t siginfo = {
-                         .si_code = code,
-                         .si_pid = t->pid,
-                         .si_uid = t->uid,
-                         .si_status = status,
-                         .si_utime = t->user_time,
-                         .si_stime = t->sys_time,
-                        };
-
-            return add_task_signal(t->parent, SIGCHLD, &siginfo, 1);
-        }
-    }
-    
-    return 0;
-}
-
-
-int add_task_timer_signal(struct task_t *t, int signum, ktimer_t timerid)
-{
-    siginfo_t siginfo = {
-                         .si_code = SI_TIMER,
-                         .si_value.sival_int = timerid,
-                         //.si_value.sival_ptr = ptr,
-                        };
-
-    KDEBUG("add_task_timer_signal: signum %d, timerid %d\n", signum, timerid);
-
-    //COPY_TO_USER(ptr, &timerid, sizeof(ktimer_t));
-    ksigaddset(&t->signal_timer, signum);
-
-    return add_task_signal(t, signum, &siginfo, 1);
-}
-
-
-int add_task_segv_signal(struct task_t *t, int signum, int code, void *addr)
-{
-    siginfo_t siginfo = {
-                         .si_code = code,
-                         .si_addr = addr,
-                        };
-
-    return add_task_signal(t, signum, &siginfo, 1);
 }
 

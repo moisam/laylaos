@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: vdso.c
  *    This file is part of LaylaOS.
@@ -103,7 +103,7 @@ int map_vdso(virtual_addr *resaddr)
 {
     virtual_addr src, dest, mapaddr;
     virtual_addr mapsz = VDSO_STATIC_CODE_SIZE;
-    pdirectory *pml4_dest = (pdirectory *)cur_task->pd_virt;
+    pdirectory *pml4_dest = (pdirectory *)this_core->cur_task->pd_virt;
     pdirectory *pml4_src = (pdirectory *)get_idle_task()->pd_virt;
     volatile pt_entry *esrc, *edest;
     int res;
@@ -117,17 +117,18 @@ int map_vdso(virtual_addr *resaddr)
     }
 
     // ensure no one changes the task memory map while we're fiddling with it
-    kernel_mutex_lock(&(cur_task->mem->mutex));
+    kernel_mutex_lock(&(this_core->cur_task->mem->mutex));
     
     // choose an address to map vdso code (add an extra page for shared data)
     if((mapaddr = get_user_addr(mapsz + PAGE_SIZE, 
                                 USER_SHM_START, USER_SHM_END)) == 0)
     {
-        kernel_mutex_unlock(&(cur_task->mem->mutex));
+        kernel_mutex_unlock(&(this_core->cur_task->mem->mutex));
         return -ENOMEM;
     }
 
-    if((res = memregion_alloc_and_attach(cur_task, NULL, 0, 0,
+    if((res = memregion_alloc_and_attach((struct task_t *)this_core->cur_task, 
+                                         NULL, 0, 0,
                                          mapaddr, mapaddr + mapsz + PAGE_SIZE,
                                          PROT_READ | PROT_WRITE,
                                          MEMREGION_TYPE_DATA,
@@ -135,11 +136,11 @@ int map_vdso(virtual_addr *resaddr)
                                                        MEMREGION_FLAG_VDSO,
                                          0)) != 0)
     {
-        kernel_mutex_unlock(&(cur_task->mem->mutex));
+        kernel_mutex_unlock(&(this_core->cur_task->mem->mutex));
         return res;
     }
 
-    kernel_mutex_unlock(&(cur_task->mem->mutex));
+    kernel_mutex_unlock(&(this_core->cur_task->mem->mutex));
     
     // map code
     for(dest = mapaddr, src = vdso_code_start;
@@ -162,7 +163,7 @@ int map_vdso(virtual_addr *resaddr)
     }
 
     *resaddr = mapaddr;
-    cur_task->mem->vdso_code_start = mapaddr;
+    this_core->cur_task->mem->vdso_code_start = mapaddr;
 
     dest = mapaddr + VDSO_STATIC_CODE_SIZE;
 

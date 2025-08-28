@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: console.c
  *    This file is part of LaylaOS.
@@ -44,6 +44,7 @@
 #include <mm/kheap.h>
 
 #include "tty_inlines.h"
+#include "../gui/memops.h"
 
 // NOTE: uncomment to use the hardware (instead of software) cursor
 //#define USE_HARDWARE_CURSOR
@@ -112,10 +113,10 @@ void console_init(void)
 
     tty_set_defaults(&ttytab[1]);
 
-    ttytab[1].buf = (uint16_t *)VGA_MEMORY_VIRTUAL;
+    ttytab[1].buf[0] = (uint16_t *)VGA_MEMORY_VIRTUAL;
     ttytab[1].flags = TTY_FLAG_ACTIVE | TTY_FLAG_AUTOWRAP;
 
-    ttytab[1].cellattribs = tty1_cellattribs;
+    ttytab[1].cellattribs[0] = tty1_cellattribs;
     //A_memset(ttytab[1].cellattribs, 0, ttytab[1].vga_width * ttytab[1].vga_height);
     
     // set our functions
@@ -202,7 +203,7 @@ void tremove_last_char(struct tty_t *tty)
 #define NEED_BLIT(tty)                          \
     ((tty->flags & TTY_FLAG_ACTIVE) &&          \
      !(tty->flags & TTY_FLAG_FRAMEBUFFER) &&    \
-     (tty->buf != (uint16_t *)VGA_MEMORY_VIRTUAL))
+     (ACTIVE_BUF(tty) != (uint16_t *)VGA_MEMORY_VIRTUAL))
 
 static inline void may_blit_buffer(struct tty_t *tty)
 {
@@ -210,7 +211,7 @@ static inline void may_blit_buffer(struct tty_t *tty)
     // copy our internal buffer to the screen
     if(NEED_BLIT(tty))
     {
-        A_memcpy((void *)VGA_MEMORY_VIRTUAL, tty->buf, VGA_MEMORY_SIZE(tty));
+        A_memcpy((void *)VGA_MEMORY_VIRTUAL, ACTIVE_BUF(tty), VGA_MEMORY_SIZE(tty));
     }
 }
 
@@ -223,9 +224,9 @@ void ega_scroll_up(struct tty_t *tty, uint32_t width,
                                       uint32_t height, uint32_t row)
 {
     // Scroll the text cells
-    uint16_t *dest = tty->buf + (row * width);
-    uint16_t *src = tty->buf + ((row + 1) * width);
-    uint16_t *end = tty->buf + ((height - 1) * width);
+    uint16_t *dest = ACTIVE_BUF(tty) + (row * width);
+    uint16_t *src = ACTIVE_BUF(tty) + ((row + 1) * width);
+    uint16_t *end = ACTIVE_BUF(tty) + ((height - 1) * width);
     uint32_t count = (width * 2);
     
     for( ; dest < end; src += width, dest += width)
@@ -234,12 +235,13 @@ void ega_scroll_up(struct tty_t *tty, uint32_t width,
     }
     
     // Reset last line to spaces
-    memsetw(dest, vga_entry(' ', tty->color), width);
+    //memsetw(dest, vga_entry(' ', tty->color), width);
+    memset16(dest, vga_entry(' ', tty->color), width);
 
     // Now scroll their attributes
-    uint8_t *adest = tty->cellattribs + (row * width);
-    uint8_t *asrc = tty->cellattribs + ((row + 1) * width);
-    uint8_t *aend = tty->cellattribs + ((height - 1) * width);
+    uint8_t *adest = ACTIVE_CELLATTRIBS(tty) + (row * width);
+    uint8_t *asrc = ACTIVE_CELLATTRIBS(tty) + ((row + 1) * width);
+    uint8_t *aend = ACTIVE_CELLATTRIBS(tty) + ((height - 1) * width);
     
     for( ; adest < aend; asrc += width, adest += width)
     {
@@ -260,9 +262,9 @@ void ega_scroll_up(struct tty_t *tty, uint32_t width,
 void ega_scroll_down(struct tty_t *tty, uint32_t width, uint32_t height)
 {
     // Scroll the text cells
-    uint16_t *dest = tty->buf + ((height - 1) * width);
-    uint16_t *src = tty->buf + ((height - 2) * width);
-    uint16_t *end = tty->buf + (tty->row * width);
+    uint16_t *dest = ACTIVE_BUF(tty) + ((height - 1) * width);
+    uint16_t *src = ACTIVE_BUF(tty) + ((height - 2) * width);
+    uint16_t *end = ACTIVE_BUF(tty) + (tty->row * width);
     uint32_t count = (width * 2);
     
     for( ; dest > end; src -= width, dest -= width)
@@ -271,12 +273,13 @@ void ega_scroll_down(struct tty_t *tty, uint32_t width, uint32_t height)
     }
     
     // Reset last line to spaces
-    memsetw(dest, vga_entry(' ', tty->color), width);
+    //memsetw(dest, vga_entry(' ', tty->color), width);
+    memset16(dest, vga_entry(' ', tty->color), width);
 
     // Now scroll their attributes
-    uint8_t *adest = tty->cellattribs + ((height - 1) * width);
-    uint8_t *asrc = tty->cellattribs + ((height - 2) * width);
-    uint8_t *aend = tty->cellattribs + (tty->row * width);
+    uint8_t *adest = ACTIVE_CELLATTRIBS(tty) + ((height - 1) * width);
+    uint8_t *asrc = ACTIVE_CELLATTRIBS(tty) + ((height - 2) * width);
+    uint8_t *aend = ACTIVE_CELLATTRIBS(tty) + (tty->row * width);
 
     for( ; adest > aend; asrc -= width, adest -= width)
     {
@@ -329,7 +332,7 @@ static void ega_enable_cursor(struct tty_t *tty, uint8_t cursor_start,
 #define invert(tty)                                                    \
 {                                                                      \
     size_t location = (tty->row * tty->vga_width) + tty->col;          \
-    INVERT_COLOR_AT_POS(tty->buf, location);                           \
+    INVERT_COLOR_AT_POS(ACTIVE_BUF(tty), location);                    \
     if(NEED_BLIT(tty))                                                 \
         INVERT_COLOR_AT_POS((uint16_t *)VGA_MEMORY_VIRTUAL, location); \
 }
@@ -398,8 +401,8 @@ void ega_erase_display(struct tty_t *tty,
     }
 
     count = end - start;
-    memsetw(tty->buf + start, vga_entry(' ', tty->color), count);
-    memset(tty->cellattribs + start, 0, count);
+    memset16(ACTIVE_BUF(tty) + start, vga_entry(' ', tty->color), count);
+    memset(ACTIVE_CELLATTRIBS(tty) + start, 0, count);
 
     may_blit_buffer(tty);
 }
@@ -439,8 +442,8 @@ void ega_erase_line(struct tty_t *tty, unsigned long cmd)
     }
 
     count = end - start;
-    memsetw(tty->buf + start, vga_entry(' ', tty->color), count);
-    A_memset(tty->cellattribs + start, 0, count);
+    memset16(ACTIVE_BUF(tty) + start, vga_entry(' ', tty->color), count);
+    A_memset(ACTIVE_CELLATTRIBS(tty) + start, 0, count);
 
     may_blit_buffer(tty);
 }
@@ -517,11 +520,11 @@ void ega_delete_chars(struct tty_t *tty, unsigned long count)
     
     while(count--)
     {
-        uint16_t *dest = tty->buf + location;
+        uint16_t *dest = ACTIVE_BUF(tty) + location;
         uint16_t *src = dest + 1;
-        uint16_t *end = tty->buf + last;
-        uint8_t *attrdest = tty->cellattribs + location;
-        
+        uint16_t *end = ACTIVE_BUF(tty) + last;
+        uint8_t *attrdest = ACTIVE_CELLATTRIBS(tty) + location;
+
         for( ; dest < end; src++, dest++, attrdest++)
         {
             *dest = *src;
@@ -563,15 +566,15 @@ void ega_insert_chars(struct tty_t *tty, unsigned long count)
     
     while(count--)
     {
-        uint16_t *src = tty->buf + last;
-        uint16_t *dest = src - 1;
-        uint16_t *end = tty->buf + location;
-        uint8_t *attrdest = tty->cellattribs + last - 1;
+        uint16_t *dest = ACTIVE_BUF(tty) + location;
+        uint16_t *src = dest - 1;
+        uint16_t *end = ACTIVE_BUF(tty) + last;
+        uint8_t *attrdest = ACTIVE_CELLATTRIBS(tty) + location;
 
         for( ; dest > end; src--, dest--, attrdest--)
         {
             *dest = *src;
-            *attrdest = attrdest[1];
+            *attrdest = attrdest[-1];
         }
         
         *dest = vga_entry(' ', tty->color);
@@ -732,56 +735,38 @@ void ega_set_attribs(struct tty_t *tty, unsigned long npar,
 }
 
 
+#define TOGGLE_FLAG(tty, flag, set) \
+    if(set) tty->flags |= flag;     \
+    else    tty->flags &= ~flag;
+
+
 static void handle_dec_sequence(struct tty_t *tty, unsigned long cmd, int set)
 {
     switch(cmd)
     {
         case 1:
+            TOGGLE_FLAG(tty, TTY_FLAG_APP_CURSORKEYS_MODE, set);
             break;
-        
+
+        case 4:
+            TOGGLE_FLAG(tty, TTY_FLAG_INSERT_MODE, set);
+            break;
+
         case 5:
-            if(set)
-            {
-                tty->flags |= TTY_FLAG_REVERSE_VIDEO;
-            }
-            else
-            {
-                tty->flags &= ~TTY_FLAG_REVERSE_VIDEO;
-            }
+            TOGGLE_FLAG(tty, TTY_FLAG_REVERSE_VIDEO, set);
             break;
 
         case 6:
-            if(set)
-            {
-                tty->flags |= TTY_FLAG_CURSOR_RELATIVE;
-            }
-            else
-            {
-                tty->flags &= ~TTY_FLAG_CURSOR_RELATIVE;
-            }
+            TOGGLE_FLAG(tty, TTY_FLAG_CURSOR_RELATIVE, set);
             break;
         
         case 7:
             // NOTE: we wrap anyway regardless of the flag
-            if(set)
-            {
-                tty->flags |= TTY_FLAG_AUTOWRAP;
-            }
-            else
-            {
-                tty->flags &= ~TTY_FLAG_AUTOWRAP;
-            }
+            TOGGLE_FLAG(tty, TTY_FLAG_AUTOWRAP, set);
             break;
 
         case 20:
-            if(set)
-            {
-                tty->flags |= TTY_FLAG_LFNL;
-            }
-            else
-            {
-                tty->flags &= ~TTY_FLAG_LFNL;
-            }
+            TOGGLE_FLAG(tty, TTY_FLAG_LFNL, set);
             break;
 
         case 25:
@@ -804,9 +789,27 @@ static void handle_dec_sequence(struct tty_t *tty, unsigned long cmd, int set)
             }
             break;
 
+        case 47:
+            if(set)
+            {
+                if(tty_alloc_buffer(tty, 1) != 0)
+                {
+                    return;
+                }
+
+                tty->active_buf = 1;
+            }
+            else
+            {
+                tty->active_buf = 0;
+            }
+
+            restore_screen(tty);
+            break;
+
         default:
-            //printk("%s: Unknown cmd '%d', %d    ", __func__, cmd, set);
-            //__asm__ __volatile__("xchg %%bx, %%bx"::);
+            __asm__ __volatile__("xchg %%bx, %%bx"::);
+            printk("%s: Unknown cmd '%d', %d    ", __func__, cmd, set);
             break;
     }
 }
@@ -845,8 +848,8 @@ static inline void __ega_tputchar(struct tty_t *tty, char c,
     int i = tty->row * tty->vga_width + tty->col;
     uint16_t col = vga_entry(c, color);
 
-    tty->buf[i] = col;
-    tty->cellattribs[i] = flags;
+    ACTIVE_BUF(tty)[i] = col;
+    ACTIVE_CELLATTRIBS(tty)[i] = flags;
 
     if(NEED_BLIT(tty))
     {
@@ -998,7 +1001,7 @@ static void status_report(struct tty_t *tty, unsigned long cmd)
 
 /*
  * Write output to the system console.
- * Read characters from the given tyy's output buffer and write them to
+ * Read characters from the given tty's output buffer and write them to
  * screen, while also processing control sequences, updating cursor
  * position, and scrolling the screen as appropriate.
  *
@@ -1008,16 +1011,6 @@ void console_write(struct tty_t *tty)
 {
     char c;
     int csi_ignore = 0;
-    
-    if(!tty->buf)
-    {
-        if(!(tty->buf = kmalloc(VGA_MEMORY_SIZE(tty))))
-        {
-            return;
-        }
-        
-        A_memset(tty->buf, 0, VGA_MEMORY_SIZE(tty));
-    }
     
     if(tty->flags & TTY_FLAG_ACTIVE)
     {
@@ -1035,7 +1028,17 @@ void console_write(struct tty_t *tty)
             continue;
         }
 
-#define PUTCH(c)    tputchar(tty, c)
+        /*
+        if(cur_task && cur_task->pid > 42)
+        {
+            __asm__ __volatile__("xchg %%bx, %%bx":::);
+            printk("%d,", c);
+        }
+        */
+
+#define PUTCH(c)    \
+    if(tty->flags & TTY_FLAG_INSERT_MODE) insert_chars(tty, 1); \
+    tputchar(tty, c)
 
         switch(tty->state)
         {
@@ -1145,11 +1148,11 @@ void console_write(struct tty_t *tty)
                         break;
 
                     case '>':       // set numeric keypad mode
-                        tty->flags &= ~TTY_FLAG_APP_KEYMODE;
+                        tty->flags &= ~TTY_FLAG_APP_KEYPAD_MODE;
                         break;
 
                     case '=':       // set application keypad mode
-                        tty->flags |= TTY_FLAG_APP_KEYMODE;
+                        tty->flags |= TTY_FLAG_APP_KEYPAD_MODE;
                         break;
 
                     case ']':       // set/reset palette
@@ -1358,6 +1361,12 @@ void console_write(struct tty_t *tty)
 
                     // Delete the indicated # of chars in the current line
                     case 'P':
+                        if(!tty->par[0])
+                        {
+                            // delete at least one char
+                            tty->par[0]++;
+                        }
+
                         delete_chars(tty, tty->par[0]);
                         break;
                         
@@ -1469,6 +1478,15 @@ void console_write(struct tty_t *tty)
                     // xterm escape sequences -- see case 9 below
                     tty->state = 9;
                 }
+                else if(c == '7')
+                {
+                    // Could not find much online about this escape sequence,
+                    // but it seems it is non-standard and has something to do
+                    // with setting/reporting the remote host and cwd:
+                    //   https://iterm2.com/documentation-escape-codes.html
+                    // We ignore this for now.
+                    tty->state = 9;
+                }
                 else
                 {
                     tty->state = 0;
@@ -1503,8 +1521,15 @@ void console_write(struct tty_t *tty)
              * See: https://tldp.org/HOWTO/Xterm-Title-3.html
              */
             case 9:
-                if(c == '\a')
+                // The string can be terminated with either a bell '\a' or a
+                // string terminator: ESC \\.
+                if(c == '\033')
                 {
+                    tty->npar = 1;
+                }
+                else if(((c == '\\') && tty->npar) || (c == '\a'))
+                {
+                    tty->npar = 0;
                     tty->state = 0;
                 }
                 break;
@@ -1524,7 +1549,7 @@ void console_write(struct tty_t *tty)
 
 void ega_restore_screen(struct tty_t *tty)
 {
-    if(tty->buf == NULL)
+    if(ACTIVE_BUF(tty) == NULL)
     {
         return;
     }

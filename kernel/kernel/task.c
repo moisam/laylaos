@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: task.c
  *    This file is part of LaylaOS.
@@ -52,6 +52,7 @@
 #include <kernel/fpu.h>
 #include <kernel/msr.h>
 #include <kernel/reboot.h>
+#include <kernel/user.h>
 #include <mm/kheap.h>
 #include <mm/kstack.h>
 #include <mm/mmap.h>
@@ -60,18 +61,17 @@
 #include <sys/list.h>
 
 #include "task_funcs.c"
-
 #include "tty_inlines.h"
 
 static struct task_t *task_alloc_internal(int alloc_vm_struct);
-static inline struct task_t *get_next_runnable(void);
+STATIC_INLINE volatile struct task_t *get_next_runnable(void);
 
 /* next pid for creating new tasks */
 pid_t next_pid = 0;
 
 /* pointers to current, idle and init tasks */
-struct task_t *cur_task = 0;
-struct task_t *idle_task = 0;
+//struct task_t *cur_task = 0;
+//struct task_t *idle_task = 0;
 struct task_t *init_task = 0;
 
 /* task run queues and master task table */
@@ -81,9 +81,9 @@ struct task_queue_t ready_queue[NR_QUEUE];
 struct task_queue_t blocked_queue;
 struct task_queue_t zombie_queue;
 
-struct kernel_mutex_t task_table_lock;
-struct task_t *task_table[NR_TASKS];
-static struct task_t task_free_cache;
+volatile struct kernel_mutex_t task_table_lock;
+volatile struct kernel_mutex_t scheduler_lock;
+volatile struct task_t *task_table[NR_TASKS];
 int total_tasks = 0;
 
 struct task_t placeholder_task;
@@ -92,47 +92,56 @@ int user_has_ready_tasks = 0;
 int rr_has_ready_tasks = 0;
 int fifo_has_ready_tasks = 0;
 
+volatile int IRQ_disable_counter = 0;
 
-/*
- * Initialise tasking.
- */
-void tasking_init(void)
+
+struct task_t *get_cpu_idle_task(int cpuid)
 {
-    A_memset(&ready_queue, 0, sizeof(ready_queue));
-    A_memset(&blocked_queue, 0, sizeof(blocked_queue));
-    A_memset(&zombie_queue, 0, sizeof(zombie_queue));
-    A_memset((void *)task_table, 0, sizeof(struct task_t *) * NR_TASKS);
-    A_memset(&placeholder_task, 0, sizeof(struct task_t));
+    int i;
 
-    for(int i = 0; i < NR_QUEUE; i++)
+    for(i = 0; i < NR_TASKS; i++)
     {
-        ready_queue[i].head.next = &ready_queue[i].head;
-        ready_queue[i].head.prev = &ready_queue[i].head;
+        if(task_table[i] == NULL)
+        {
+            continue;
+        }
+
+        if(task_table[i]->pid == cpuid + 2)
+        {
+            return (struct task_t *)(task_table[i]);
+        }
     }
 
-    blocked_queue.head.next = &blocked_queue.head;
-    blocked_queue.head.prev = &blocked_queue.head;
-    zombie_queue.head.next = &zombie_queue.head;
-    zombie_queue.head.prev = &zombie_queue.head;
-  
-    cli();
-    
-    cur_task = task_alloc_internal(1);
+    kpanic("Could not find idle task!\n");
+    __builtin_unreachable();
+}
 
-    task_table[0] = cur_task;
-    idle_task = task_table[0];
-    total_tasks = 1;
 
-    prev_ticks = ticks;
+void create_idle_task(int taskid)
+{
+    //cli();
 
-    // switch our early timer to the proper tasking timer
-    switch_timer();
-    
-    sti();
+    struct task_t *cur_task = task_alloc_internal(1);
+    int i;
 
-    A_memset(&task_free_cache, 0, sizeof(struct task_t));
-    cur_task->pid = next_pid;
-    cur_task->pgid = cur_task->pid;
+    // we don't need to lock the task table here as we now we are the only
+    // code accessing it during boot time
+    for(i = 0; i < NR_TASKS; i++)
+    {
+        if(task_table[i] == NULL)
+        {
+            task_table[i] = cur_task;
+            break;
+        }
+    }
+
+    __atomic_fetch_add(&total_tasks, 1, __ATOMIC_SEQ_CST);
+
+    //sti();
+
+    //cur_task->pid = next_pid;   // all idles have pid == 0
+    cur_task->pid = taskid;
+    cur_task->pgid = 0; // cur_task->pid;
     cur_task->pd_virt = (virtual_addr)vmmngr_get_directory_virt();
     cur_task->pd_phys = (physical_addr)vmmngr_get_directory_phys();
     //cur_task->sched_policy = SCHED_IDLE;
@@ -145,8 +154,7 @@ void tasking_init(void)
     cur_task->fs->cwd = system_root_node;
     cur_task->ctty = 0;
     set_task_comm(cur_task, "idle");
-
-    init_kernel_mutex(&task_table_lock);
+    __sync_or_and_fetch(&cur_task->properties, PROPERTY_IDLE);
 
     init_kernel_mutex(&cur_task->ofiles->mutex);
     init_kernel_mutex(&cur_task->fs->mutex);
@@ -156,7 +164,8 @@ void tasking_init(void)
     // init idle task's thread info
     cur_task->threads->thread_group_leader = cur_task;
     cur_task->threads->thread_count = 1;
-    cur_task->threads->tgid = next_pid;
+    //cur_task->threads->tgid = next_pid;
+    cur_task->threads->tgid = cur_task->pid;
     cur_task->thread_group_next = NULL;
 
     cur_task->ldt.base = 0;
@@ -176,54 +185,132 @@ void tasking_init(void)
 
     if(get_kstack(&cur_task->kstack_phys, &cur_task->kstack_virt) != 0)
     {
-        kpanic("Failed to get initial kstack!\n");
+        kpanic("Failed to get idle task kstack!\n");
     }
 
+    cur_task->cpuid = this_core->cpuid; // we will fix this later in ap_main()
     cur_task->state = TASK_RUNNING;
     
     set_task_rlimits(cur_task);
-
-    init_signals();
 }
 
-
-volatile int IRQ_disable_counter = 0;
-
-#ifndef __x86_64__
 
 /*
- * The following 2 functions are taken from:
- *    https://wiki.osdev.org/Brendan%27s_Multi-tasking_Tutorial
+ * Initialize tasking.
  */
-
-#pragma GCC push_options
-#pragma GCC optimize("O0")
- 
-void lock_scheduler(void)
+void tasking_init(void)
 {
-#ifndef SMP
-    //cli();
-    __asm__ __volatile__ ("cli");
-    IRQ_disable_counter++;
-#endif
+    int i;
+
+    A_memset(&ready_queue, 0, sizeof(ready_queue));
+    A_memset(&blocked_queue, 0, sizeof(blocked_queue));
+    A_memset(&zombie_queue, 0, sizeof(zombie_queue));
+    A_memset((void *)task_table, 0, sizeof(struct task_t *) * NR_TASKS);
+    A_memset(&placeholder_task, 0, sizeof(struct task_t));
+
+    for(i = 0; i < NR_QUEUE; i++)
+    {
+        ready_queue[i].head.next = &ready_queue[i].head;
+        ready_queue[i].head.prev = &ready_queue[i].head;
+    }
+
+    blocked_queue.head.next = &blocked_queue.head;
+    blocked_queue.head.prev = &blocked_queue.head;
+    zombie_queue.head.next = &zombie_queue.head;
+    zombie_queue.head.prev = &zombie_queue.head;
+  
+    init_kernel_mutex(&task_table_lock);
+    init_kernel_mutex(&scheduler_lock);
+
+    if(processor_count < 1)
+    {
+        processor_count = 1;
+    }
+
+    for(i = 0; i < processor_count; i++)
+    {
+        create_idle_task(i + 2);
+    }
+
+    this_core->idle_task = get_cpu_idle_task(0);
+    this_core->cur_task = this_core->idle_task;
+    prev_ticks = ticks;
+
+    init_signals();
+
+    // switch our early timer to the proper tasking timer
+    switch_timer();
 }
 
-void unlock_scheduler(void)
+
+/**
+ * @brief Lock the scheduler.
+ *
+ * Lock the scheduler.
+ *
+ * The following function is taken from:
+ *    https://wiki.osdev.org/Brendan%27s_Multi-tasking_Tutorial
+ *
+ * @return  nothing.
+ */
+static inline void __lock_scheduler(void)
 {
-#ifndef SMP
+    __set_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+    //this_core->flags |= SMP_FLAG_SCHEDULER_BUSY;
+
+    while(!__sync_bool_compare_and_swap(&scheduler_holding_cpu, -1, this_core->cpuid))
+    {
+        if(scheduler_holding_cpu == this_core->cpuid)
+        {
+            __asm__ __volatile__("xchg %%bx, %%bx":::);
+            break;
+        }
+    }
+}
+
+static inline uintptr_t lock_scheduler(void)
+{
+    uintptr_t s = int_off();
+    __lock_scheduler();
+    return s;
+
+    /*
+    __asm__ __volatile__ ("cli");
+    IRQ_disable_counter++;
+    */
+}
+
+/**
+ * @brief Unlock the scheduler.
+ *
+ * Unlock the scheduler.
+ *
+ * The following function is taken from:
+ *    https://wiki.osdev.org/Brendan%27s_Multi-tasking_Tutorial
+ *
+ * @return  nothing.
+ */
+static inline void __unlock_scheduler(void)
+{
+    __sync_bool_compare_and_swap(&scheduler_holding_cpu, this_core->cpuid, -1);
+    __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+    //this_core->flags &= ~SMP_FLAG_SCHEDULER_BUSY;
+}
+
+static inline void unlock_scheduler(uintptr_t s)
+{
+    __unlock_scheduler();
+    int_on(s);
+
+    /*
     IRQ_disable_counter--;
 
     if(IRQ_disable_counter == 0)
     {
-        //sti();
         __asm__ __volatile__ ("sti");
     }
-#endif
+    */
 }
-
-#pragma GCC pop_options
-
-#endif      /* __x86_64__ */
 
 
 /*
@@ -231,7 +318,10 @@ void unlock_scheduler(void)
  */
 void scheduler(void)
 {
-	register struct task_t *t = cur_task;
+    cli();
+    __lock_scheduler();
+
+    volatile struct task_t *t = this_core->cur_task;
 
     if(t->state == TASK_RUNNING)
     {
@@ -273,6 +363,8 @@ void scheduler(void)
             (t->properties & PROPERTY_FINISHING))
     {
         // task is dying, let it finish
+        __unlock_scheduler();
+        sti();
     	return;
     }
 
@@ -282,13 +374,24 @@ void scheduler(void)
         update_task_times(t);
     }
 
-    
-    /* volatile */ struct task_t *next = get_next_runnable();
+
+    volatile struct task_t *next = get_next_runnable();
+
+    // XXX: task selected too soon, wait for the other processor to release it
+    if(next->state != TASK_READY ||
+       (next->cpuid != -1 && next->cpuid != this_core->cpuid))
+    {
+        //next = this_core->idle_task;
+        printk("cpu[%d]: next->pid %d, next->state %d (%d), next->cpuid %d\n", this_core->cpuid, next->pid, next->state, TASK_RUNNING, next->cpuid);
+        kpanic("***\n");
+    }
 
     next->state = TASK_RUNNING;
-    
+    next->cpuid = this_core->cpuid;
+
     if(next != t)
     {
+        t->cpuid = -1;
         system_context_switches++;
 
 #ifdef __x86_64__
@@ -300,9 +403,11 @@ void scheduler(void)
     	{
 
 #ifdef __x86_64__
-            fpu_state_restore(cur_task);
+            fpu_state_restore(this_core->cur_task);
 #endif
 
+            __unlock_scheduler();
+            sti();
             return;
     	}
 
@@ -314,30 +419,32 @@ void scheduler(void)
                             next->ldt.base, next->ldt.limit, 0xF2);
 #endif
 
+        __asm__ __volatile__("":::"memory");
     	restore_context((struct task_t *)next);
     }
+
+    __unlock_scheduler();
+    sti();
 }
 
-
-struct task_t *get_cur_task(void)
-{
-    return cur_task;
-}
 
 struct task_t *get_init_task(void)
 {
     return init_task;
 }
 
-struct task_t *get_idle_task(void)
+
+volatile struct task_t *get_cur_task(void)
 {
-    return idle_task;
+    return this_core->cur_task;
 }
 
-void set_cur_task(struct task_t *task)
+
+volatile struct task_t *get_idle_task(void)
 {
-    cur_task = task;
+    return this_core->idle_task;
 }
+
 
 void set_init_task(struct task_t *task)
 {
@@ -371,7 +478,7 @@ void set_task_comm(struct task_t *task, char *command)
 }
 
 
-virtual_addr task_get_xxx_end(struct task_t *task, int type)
+virtual_addr task_get_xxx_end(volatile struct task_t *task, int type)
 {
     virtual_addr res = 0;
     struct memregion_t *tmp;
@@ -394,19 +501,19 @@ virtual_addr task_get_xxx_end(struct task_t *task, int type)
 }
 
 
-virtual_addr task_get_code_end(struct task_t *task)
+virtual_addr task_get_code_end(volatile struct task_t *task)
 {
     return task_get_xxx_end(task, MEMREGION_TYPE_TEXT);
 }
 
 
-virtual_addr task_get_data_end(struct task_t *task)
+virtual_addr task_get_data_end(volatile struct task_t *task)
 {
     return task_get_xxx_end(task, MEMREGION_TYPE_DATA);
 }
 
 
-virtual_addr task_get_xxx_start(struct task_t *task, int type)
+virtual_addr task_get_xxx_start(volatile struct task_t *task, int type)
 {
     virtual_addr res = -1;
     struct memregion_t *tmp;
@@ -429,13 +536,13 @@ virtual_addr task_get_xxx_start(struct task_t *task, int type)
 }
 
 
-virtual_addr task_get_code_start(struct task_t *task)
+virtual_addr task_get_code_start(volatile struct task_t *task)
 {
     return task_get_xxx_start(task, MEMREGION_TYPE_TEXT);
 }
 
 
-virtual_addr task_get_data_start(struct task_t *task)
+virtual_addr task_get_data_start(volatile struct task_t *task)
 {
     return task_get_xxx_start(task, MEMREGION_TYPE_DATA);
 }
@@ -486,7 +593,10 @@ static struct task_t *task_alloc_internal(int alloc_vm_struct)
     {
         A_memset(new_task->mem, 0, sizeof(struct task_vm_t));
     }
-    
+
+    new_task->last_timerid = 3;
+    new_task->cpuid = -1;
+
     return new_task;
 }
 
@@ -507,17 +617,18 @@ struct task_t *task_alloc(void)
     }
 
 retry:
-    next_pid++;
+
+    __sync_fetch_and_add(&next_pid, 1);
     
     /* account for pid roundup */
     if(next_pid < 0)
     {
-        next_pid = 1;
+        __atomic_store_n(&next_pid, 1, __ATOMIC_SEQ_CST);
     }
 
     /* find an empty slot in the task table */
-    int i;
-    
+    volatile int i;
+
     elevated_priority_lock(&task_table_lock);
 
     for(i = 0; i < NR_TASKS; i++)
@@ -551,42 +662,14 @@ retry:
     /* try to find a previously allocated task struct in the cache */
     struct task_t *new_task;
 
-    kernel_mutex_lock(&task_free_cache.task_mutex);
-
-    if(task_free_cache.next)
+    if(!(new_task = task_alloc_internal(0)))
     {
-        new_task = (struct task_t *)task_free_cache.next;
-        task_free_cache.next = new_task->next;
-        new_task->next = NULL;
-        kernel_mutex_unlock(&task_free_cache.task_mutex);
-
-        A_memset(new_task->ofiles, 0, sizeof(struct task_files_t));
-        A_memset(new_task->fs, 0, sizeof(struct task_fs_t));
-        A_memset(new_task->sig, 0, sizeof(struct task_sig_t));
-        A_memset(new_task->threads, 0, sizeof(struct task_threads_t));
-        A_memset(new_task->common, 0, sizeof(struct task_common_t));
-        
-        if(new_task->mem)
-        {
-            task_mem_free(new_task->mem);
-            new_task->mem = NULL;
-        }
-        
-        new_task->lock_held = NULL;
-    }
-    else
-    {
-        kernel_mutex_unlock(&task_free_cache.task_mutex);
-
-        if(!(new_task = task_alloc_internal(0)))
-        {
-            task_table[i] = NULL;
-            return NULL;
-        }
+        task_table[i] = NULL;
+        return NULL;
     }
 
     task_table[i] = new_task;
-    total_tasks++;
+    __atomic_fetch_add(&total_tasks, 1, __ATOMIC_SEQ_CST);
 
     new_task->pid = next_pid;
 
@@ -597,35 +680,55 @@ retry:
 /*
  * Free task struct.
  */
-void task_free(struct task_t *task, int add_to_cache)
+void task_free(volatile struct task_t *task)
 {
-    int i;
+    volatile int i;
 
     elevated_priority_lock(&task_table_lock);
-    
+
     for(i = 0; i < NR_TASKS; i++)
     {
         if(task_table[i] == task)
         {
             task_table[i] = NULL;
-            total_tasks--;
+            __atomic_fetch_sub(&total_tasks, 1, __ATOMIC_SEQ_CST);
             break;
         }
     }
 
     elevated_priority_unlock(&task_table_lock);
 
-    if(add_to_cache)
+    if(task->ofiles)
     {
-        kernel_mutex_lock(&task_free_cache.task_mutex);
-        task->next = task_free_cache.next;
-        task_free_cache.next = task;
-        kernel_mutex_unlock(&task_free_cache.task_mutex);
+        kfree(task->ofiles);
     }
-    else
+
+    if(task->fs)
     {
-        kfree(task);
+        kfree(task->fs);
     }
+
+    if(task->sig)
+    {
+        kfree(task->sig);
+    }
+
+    if(task->threads)
+    {
+        kfree(task->threads);
+    }
+
+    if(task->mem)
+    {
+        kfree(task->mem);
+    }
+
+    if(task->common)
+    {
+        kfree(task->common);
+    }
+
+    kfree((void *)task);
 }
 
 
@@ -634,7 +737,7 @@ void task_free(struct task_t *task, int add_to_cache)
  */
 int block_task2(void *wait_channel, int timeout_ticks)
 {
-	struct task_t *t = cur_task;
+    volatile struct task_t *t = this_core->cur_task;
     
     if(timeout_ticks)
     {
@@ -668,7 +771,7 @@ extern sigset_t unblockable_signals;    // signal.c
  *
  * @return  1 if task has one or more pending signals, 0 otherwise.
  */
-static inline int has_pending_signals(struct task_t *task)
+static inline int has_pending_signals(volatile struct task_t *task)
 {
     int signum;
     sigset_t permitted_signals;
@@ -678,7 +781,7 @@ static inline int has_pending_signals(struct task_t *task)
     {
         /* determine which signals are not blocked */
         ksigfillset(&permitted_signals);
-        ksignotset(&permitted_signals, &task->signal_mask);
+        ksignotset(&permitted_signals, (sigset_t *)&task->signal_mask);
         ksigorset(&permitted_signals, &permitted_signals,
                     &unblockable_signals);
 
@@ -704,11 +807,11 @@ static inline int has_pending_signals(struct task_t *task)
  */
 int block_task(void *wait_channel, int interruptible)
 {
-    lock_scheduler();
+    uintptr_t s = lock_scheduler();
 
-	struct task_t *t = cur_task;
+    volatile struct task_t *t = this_core->cur_task;
 
-    if(t->lock_held)
+    if(t->lock_held /* != &scheduler_lock */)
     {
         __asm__ __volatile__("xchg %%bx, %%bx"::);
         kpanic("task sleeping with a held lock!\n");
@@ -719,6 +822,7 @@ int block_task(void *wait_channel, int interruptible)
 
     remove_from_ready_queue(t);
     append_to_queue(t, &blocked_queue);
+    unlock_scheduler(s);
 
     if(interruptible)
     {
@@ -732,17 +836,36 @@ int block_task(void *wait_channel, int interruptible)
             unblock_task(t);
         }
 
-        unlock_scheduler();
-        
-        // if we came back, we either ignored or handled the signal
         return 1;
     }
     else
     {
         scheduler();
-        unlock_scheduler();
         return 0;
     }
+}
+
+
+STATIC_INLINE void unblock_task_unlocked(volatile struct task_t *task)
+{
+    if(task == NULL ||
+       task->state == TASK_READY || task->state == TASK_RUNNING ||
+       task->state == TASK_ZOMBIE)
+    {
+        // task is already unblocked or dead
+        return;
+    }
+
+    task->state = TASK_READY;
+    task->wait_channel = NULL;
+    remove_from_queue(task);
+
+    /*
+     * The sched (7) manpage says:
+     *    When a blocked SCHED_FIFO thread becomes runnable, it will be
+     *    inserted at the end of the list for its priority.
+     */
+    append_to_ready_queue(task);
 }
 
 
@@ -751,13 +874,11 @@ int block_task(void *wait_channel, int interruptible)
  */
 void unblock_tasks(void *wait_channel)
 {
-    lock_scheduler();
-    
-    KDEBUG("unblock_tasks: 1 - pid 0x%x, wait_channel 0x%x\n", cur_task->pid, wait_channel);
+    uintptr_t s = lock_scheduler();
 
-	struct task_t *ct = cur_task;
-    struct task_t *t = blocked_queue.head.next, *next;
-    int runrun = 0;
+    //volatile struct task_t *ct = this_core->cur_task;
+    volatile struct task_t *t = blocked_queue.head.next, *next;
+    //int runrun = 0;
 
     while(t != &blocked_queue.head)
     {
@@ -765,28 +886,21 @@ void unblock_tasks(void *wait_channel)
 
         if(t->wait_channel == wait_channel && t->state != TASK_ZOMBIE)
         {
-            t->state = TASK_READY;
-            t->wait_channel = NULL;
+            unblock_task_unlocked(t);
 
+            /*
             if(t->priority > ct->priority)
             {
                 runrun++;
             }
-
-            KDEBUG("%s: pid %d\n", __func__, t->pid);
-            remove_from_queue(t);
-
-            /*
-             * The sched (7) manpage says:
-             *    When a blocked SCHED_FIFO thread becomes runnable, it will be
-             *    inserted at the end of the list for its priority.
-             */
-            append_to_ready_queue(t);
+            */
         }
 
         t = next;
     }
-    
+
+    unlock_scheduler(s);
+
     /*
      * The sched (7) manpage says:
      *    A running SCHED_FIFO thread that has been preempted by another
@@ -794,77 +908,41 @@ void unblock_tasks(void *wait_channel)
      *    for its priority and will resume execution as soon as all
      *    threads of higher priority are blocked again.
      */
+    /*
     if(runrun)
     {
         scheduler();
     }
-    
-    unlock_scheduler();
+    */
 }
 
 
 /*
  * Unblock task but don't preempt.
  */
-void unblock_task_no_preempt(struct task_t *task)
+void unblock_task_no_preempt(volatile struct task_t *task)
 {
-    lock_scheduler();
-    
-    if(task == NULL ||
-       task->state == TASK_READY || task->state == TASK_RUNNING ||
-       task->state == TASK_ZOMBIE)
+    if(this_core->cpuid == scheduler_holding_cpu)
     {
-        // task is already unblocked or dead
-        unlock_scheduler();
-        return;
+        unblock_task_unlocked(task);
     }
-
-    KDEBUG("unblock_task_no_preempt: pid %d\n", task->pid);
-
-    task->state = TASK_READY;
-    task->wait_channel = NULL;
-    remove_from_queue(task);
-
-    /*
-     * The sched (7) manpage says:
-     *    When a blocked SCHED_FIFO thread becomes runnable, it will be
-     *    inserted at the end of the list for its priority.
-     */
-    append_to_ready_queue(task);
-
-    unlock_scheduler();
+    else
+    {
+        uintptr_t s = lock_scheduler();
+        unblock_task_unlocked(task);
+        unlock_scheduler(s);
+    }
 }
 
 
 /*
  * Unblock task.
  */
-void unblock_task(struct task_t *task)
+void unblock_task(volatile struct task_t *task)
 {
-    lock_scheduler();
-    
-    if(task->state == TASK_READY || task->state == TASK_RUNNING ||
-       task->state == TASK_ZOMBIE)
-    {
-        // task is already unblocked or dead
-        unlock_scheduler();
-        return;
-    }
-
-	register struct task_t *ct = cur_task;
-
-    KDEBUG("unblock_task: pid %d\n", task->pid);
-
-    task->state = TASK_READY;
-    task->wait_channel = NULL;
-    remove_from_queue(task);
-    
-    /*
-     * The sched (7) manpage says:
-     *    When a blocked SCHED_FIFO thread becomes runnable, it will be
-     *    inserted at the end of the list for its priority.
-     */
-    append_to_ready_queue(task);
+    uintptr_t s = lock_scheduler();
+    unblock_task_unlocked(task);
+    unlock_scheduler(s);
 
     /*
      * The sched (7) manpage says:
@@ -873,28 +951,172 @@ void unblock_task(struct task_t *task)
      *    for its priority and will resume execution as soon as all
      *    threads of higher priority are blocked again.
      */
-    if(task->priority > ct->priority)
+    if(task->priority > this_core->cur_task->priority)
     {
         scheduler();
     }
-
-    unlock_scheduler();
 }
 
 
-static inline struct task_t *get_next_runnable(void)
+void append_to_ready_queue_locked(volatile struct task_t *task, int move_queue)
+{
+    uintptr_t s = lock_scheduler();
+
+    if(move_queue)
+    {
+        remove_from_queue(task);
+    }
+
+    append_to_ready_queue(task);
+
+    unlock_scheduler(s);
+}
+
+
+void move_to_queue_end_locked(volatile struct task_t *task)
+{
+    uintptr_t s = lock_scheduler();
+    move_to_queue_end(task);
+    unlock_scheduler(s);
+}
+
+
+void task_change_priority(volatile struct task_t *t, int new_prio, int new_policy)
+{
+    int old_prio = t->priority;
+
+    uintptr_t s = lock_scheduler();
+
+    t->sched_policy = new_policy;
+    
+    /*
+     * The sched(7) manpage says:
+     *    If a call to sched_setscheduler(2), sched_setparam(2),
+     *    sched_setattr(2), pthread_setschedparam(3), or 
+     *    pthread_setschedprio(3) changes the priority of the running or
+     *    runnable SCHED_FIFO thread identified by pid the effect on the
+     *    thread's position in the list depends on the direction of the
+     *    change to threads priority:
+     *     •  If the thread's priority is raised, it is placed at the end
+     *        of the list for its new priority.  As a consequence, it may
+     *        preempt a currently running thread with the same priority.
+     *     •  If the thread's priority is unchanged, its position in the
+     *        run list is unchanged.
+     *     •  If the thread's priority is lowered, it is placed at the
+     *        front of the list for its new priority.
+     */
+
+    if(old_prio != new_prio &&
+       (new_policy == SCHED_FIFO || new_policy == SCHED_RR) &&
+       (t->state == TASK_READY || t->state == TASK_RUNNING))
+    {
+        KDEBUG("%s: pid %d\n", __func__, t->pid);
+        remove_from_ready_queue(t);
+        t->priority = new_prio;
+        
+        if(new_prio > old_prio)
+        {
+            append_to_ready_queue(t);
+        }
+        else //if(new_prio < old_prio)
+        {
+            prepend_to_ready_queue(t);
+        }
+    }
+    else
+    {
+        t->priority = new_prio;
+    }
+
+    unlock_scheduler(s);
+}
+
+
+void ktask_elevate_priority(void)
+{
+    uintptr_t s = lock_scheduler();
+    //uintptr_t s = int_off();
+
+    KDEBUG("%s: pid %d\n", __func__, this_core->cur_task->pid);
+
+    remove_from_ready_queue(this_core->cur_task);
+    this_core->cur_task->priority = MAX_FIFO_PRIO;
+    this_core->cur_task->sched_policy = SCHED_FIFO;
+    this_core->cur_task->user = 0;
+    this_core->cur_task->nice = 0;
+    append_to_ready_queue(this_core->cur_task);
+
+    //int_on(s);
+    unlock_scheduler(s);
+}
+
+
+void schedule_and_block(volatile struct task_t *tracer, volatile struct task_t *tracee)
+{
+    // Ensure we don't get scheduled as we need the tracer to be scheduled
+    // to run before we go to sleep, waiting for it. This is why we do this
+    // manually, instead of calling block_task() and unblock_task().
+    uintptr_t s = lock_scheduler();
+
+    // unblock the tracer
+    if(tracer->state != TASK_READY && tracer->state != TASK_RUNNING)
+    {
+        tracer->state = TASK_READY;
+        tracer->wait_channel = NULL;
+
+        KDEBUG("%s: pid %d\n", __func__, tracer->pid);
+        remove_from_queue(tracer);
+        append_to_ready_queue(tracer);
+    }
+
+    // block the tracee
+    tracee->state = TASK_WAITING;
+
+    KDEBUG("%s: pid %d\n", __func__, tracee->pid);
+    remove_from_ready_queue(tracee);
+    append_to_queue(tracee, &blocked_queue);
+    unlock_scheduler(s);
+
+    scheduler();
+}
+
+
+STATIC_INLINE volatile struct task_t *next_queue_runnable(struct task_queue_t *queue)
+{
+    volatile struct task_t *task, *cur = this_core->cur_task;
+
+    for(task = queue->head.next; task != &queue->head; task = task->next)
+    {
+        if(task != cur && task->state == TASK_READY && task->cpuid == -1)
+        {
+            return task;
+        }
+    }
+
+    return NULL;
+}
+
+
+STATIC_INLINE volatile struct task_t *get_next_runnable(void)
 {
     /* search queues, in turn, for a ready-to-run task */
     struct task_queue_t *queue;
+    volatile struct task_t *task;
 
     if(rr_has_ready_tasks)
     {
         for(queue = &ready_queue[MAX_RR_PRIO];
             queue >= &ready_queue[MIN_RR_PRIO]; queue--)
         {
+            /*
             if(queue->head.next != &queue->head)
             {
                 return queue->head.next;
+            }
+            */
+            if((task = next_queue_runnable(queue)) != NULL)
+            {
+                return task;
             }
         }
     }
@@ -904,26 +1126,39 @@ static inline struct task_t *get_next_runnable(void)
         for(queue = &ready_queue[MAX_FIFO_PRIO];
             queue >= &ready_queue[MIN_FIFO_PRIO]; queue--)
         {
+            /*
             if(queue->head.next != &queue->head)
             {
                 return queue->head.next;
             }
+            */
+            if((task = next_queue_runnable(queue)) != NULL)
+            {
+                return task;
+            }
         }
     }
 
+    /*
     if(ready_queue[0].head.next != &(ready_queue[0].head))
     {
         return ready_queue[0].head.next;
     }
+    */
+    if((task = next_queue_runnable(&ready_queue[0])) != NULL)
+    {
+        return task;
+    }
 
     /* current task is the only runnable task? */
-    if(cur_task->state == TASK_RUNNING || cur_task->state == TASK_READY)
+    if(this_core->cur_task->state == TASK_RUNNING ||
+       this_core->cur_task->state == TASK_READY)
     {
-        return cur_task;
+        return this_core->cur_task;
     }
 
     /* Running queues are empty? run idle task */
-    return idle_task;
+    return this_core->idle_task;
 }
 
 
@@ -966,27 +1201,26 @@ void task_add_child(struct task_t *parent, struct task_t *child)
 /*
  * Remove child task from parent.
  */
-void task_remove_child(struct task_t *parent, struct task_t *child)
+void task_remove_child(struct task_t *parent, volatile struct task_t *child)
 {
     if(!parent || !child)
     {
         return;
     }
-    
+
     kernel_mutex_lock(&parent->task_mutex);
     volatile struct task_t *sibling = child->first_sibling;
-
-    parent->children--;
 
     if(parent->first_child == child)
     {
         parent->first_child = sibling;
+        parent->children--;
     }
-    else
+    else if(parent->first_child)
     {
         volatile struct task_t *tmp = parent->first_child;
 
-        while(tmp->first_sibling != child)
+        while(tmp && tmp->first_sibling != child)
         {
             tmp = tmp->first_sibling;
         }
@@ -994,7 +1228,12 @@ void task_remove_child(struct task_t *parent, struct task_t *child)
         if(tmp)
         {
             tmp->first_sibling = sibling;
+            parent->children--;
         }
+    }
+    else if(parent->children != 0)
+    {
+        printk("kernel: possible corrupt child pointer for pid %d\n", parent->pid);
     }
 
     kernel_mutex_unlock(&parent->task_mutex);
@@ -1004,22 +1243,19 @@ void task_remove_child(struct task_t *parent, struct task_t *child)
 /*
  * Reap a zombie task.
  */
-void reap_zombie(struct task_t *task)
+void reap_zombie(volatile struct task_t *task)
 {
     task_remove_child(task->parent, task);
     ptrace_clear_state(task);
     
-    lock_scheduler();
-
-    KDEBUG("%s: pid %d\n", __func__, task->pid);
+    uintptr_t s = lock_scheduler();
     remove_from_queue(task);
-    
-    unlock_scheduler();
+    unlock_scheduler(s);
 
     /* free task kernel-stack memory */
     free_kstack(task->kstack_virt);
 
-    if(task->mem)
+    if(task->mem && !(task->properties & PROPERTY_VFORK))
     {
         /* free task page directory */
         free_pd(task->pd_virt);
@@ -1029,19 +1265,7 @@ void reap_zombie(struct task_t *task)
 
     KDEBUG("Done with Zombie task (%d)\n", task->pid);
 
-    // if this was a thread, just free it's struct memory, otherwise add
-    // the struct to our task struct cache
-    if(!task->ofiles || !task->fs || !task->sig || 
-       !task->threads || !task->common)
-    {
-        task_free(task, 0);
-    }
-    else
-    {
-        task_free(task, 1);
-    }
-    
-    KDEBUG("Zombie done\n");
+    task_free(task);
 }
 
 
@@ -1057,7 +1281,7 @@ static void notify_tracer(struct task_t *t)
      */
     if((t->properties & PROPERTY_TRACE_SIGNALS) && t->tracer_pid)
     {
-        struct task_t *tracer = get_task_by_tid(t->tracer_pid);
+        volatile struct task_t *tracer = get_task_by_tid(t->tracer_pid);
         
         if(tracer)
         {
@@ -1073,8 +1297,42 @@ static void notify_tracer(struct task_t *t)
                          .si_stime = t->sys_time,
                         };
 
-            add_task_signal(tracer, SIGCHLD, &siginfo, 1);
+            add_task_signal((struct task_t *)tracer, SIGCHLD, &siginfo, 1);
             //unblock_task_no_preempt(tracer);
+        }
+    }
+}
+
+
+static void notify_parent(struct task_t *t)
+{
+    if(t->parent)
+    {
+        /*
+         * unblock our parent if we vforked (the call to add_task_signal() will
+         * actually unblock the parent)
+         *
+         * we do this because after a vfork, the parent is blocked until 
+         * the child:
+         *   1. exits by calling _exit() or after receiving a signal
+         *   2. calls execve()
+         *
+         * for more details, see: 
+         *      https://man7.org/linux/man-pages/man2/vfork.2.html
+         */
+        if((t->properties & PROPERTY_VFORK) && 
+           (t->parent->state == TASK_WAITING))
+        {
+            t->parent->state = TASK_SLEEPING;
+        }
+
+        if(t->parent != get_task_by_tid(t->tracer_pid))
+        {
+        	KDEBUG("terminate_task: pid %d, notifying parent\n", t->pid);
+
+            int code = WCOREDUMP(t->exit_status) ? CLD_DUMPED :
+                       (WIFSIGNALED(t->exit_status) ? CLD_KILLED : CLD_EXITED);
+            add_task_child_signal(t, code, t->exit_status);
         }
     }
 }
@@ -1082,27 +1340,25 @@ static void notify_tracer(struct task_t *t)
 
 static void zombify(struct task_t *t)
 {
-    t->properties |= PROPERTY_FINISHING;
+    __sync_or_and_fetch(&t->properties, PROPERTY_FINISHING);
     t->state = TASK_ZOMBIE;
     t->time_left = 0;
 
-    lock_scheduler();
+    uintptr_t s = lock_scheduler();
     remove_from_ready_queue(t);
     append_to_queue(t, &zombie_queue);
-    unlock_scheduler();
+    unlock_scheduler(s);
 }
 
 
 static void zombie_loop(struct task_t *t)
 {
-    t->properties &= ~PROPERTY_FINISHING;
+    __sync_and_and_fetch(&t->properties, ~PROPERTY_FINISHING);
 
     for(;;)
     {
         KDEBUG("zombie_loop:\n");
-        lock_scheduler();
         scheduler();
-        unlock_scheduler();
     }
 }
 
@@ -1112,7 +1368,7 @@ static void zombie_loop(struct task_t *t)
  */
 void terminate_task(int code)
 {
-	struct task_t *t = cur_task;
+	struct task_t *t = (struct task_t *)this_core->cur_task;
 	
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
 	//printk("terminate_task: pid %d, code %d, comm %s\n", t->pid, code, t->command);
@@ -1125,7 +1381,10 @@ void terminate_task(int code)
     if(t->lock_held)
     {
         __asm__ __volatile__("xchg %%bx, %%bx"::);
-        kpanic("task terminated with a held lock!\n");
+        switch_tty(1);
+        printk("kernel: task %d (%s) terminated with a held lock (" _XPTR_ ")!\n", 
+                t->pid, t->command, t->lock_held);
+        kpanic("kernel: task dying with a held lock\n\n");
     }
 
     /*
@@ -1176,9 +1435,12 @@ void terminate_task(int code)
      */
     if(t->threads)
     {
+        /* if there are other threads, they should be zombies, so reap them */
+        //reap_dead_threads(t);
+
         kernel_mutex_lock(&(t->threads->mutex));
 
-        if(t->threads->thread_count > 1 && !other_threads_dead(t))
+        //if(t->threads->thread_count > 1 && !other_threads_dead(t))
         {
         	KDEBUG("terminate_task: pid %d, tgid %d, threads %d\n", t->pid, tgid(t), t->threads->thread_count);
 
@@ -1188,7 +1450,7 @@ void terminate_task(int code)
 
             if(t->threads->thread_group_leader == t)
             {
-                if(t->thread_group_next)
+                //if(t->thread_group_next)
                 {
                     t->threads->thread_group_leader = t->thread_group_next;
                 }
@@ -1207,43 +1469,42 @@ void terminate_task(int code)
                 }
             }
         
-            if(t->threads->thread_group_leader == NULL)
-            {
-                kpanic("NULL thread group leader struct\n");
-            }
-        
+            t->thread_group_next = NULL;
             t->threads->group_user_time += (t->user_time + t->children_user_time);
             t->threads->group_sys_time += (t->sys_time + t->children_sys_time);
 
-            if(t->threads->thread_count == 1)
+            if(t->threads->thread_group_leader)
             {
-                kpanic("Invalid thread count == 1\n");
+                if(t->threads->thread_count == 1)
+                {
+                    kpanic("Invalid thread count == 1\n");
+                }
+
+                t->threads->thread_count--;
+
+                kernel_mutex_unlock(&(t->threads->mutex));
+
+                // as we share some common structs with the other threads, remove
+                // our references to them so they don't get overwritten when our
+                // task struct is freed
+                t->ofiles = NULL;
+                t->fs = NULL;
+                t->sig = NULL;
+                t->threads = NULL;
+                t->common = NULL;
+                t->mem = NULL;
+
+                zombify(t);
+                notify_tracer(t);
+                notify_parent(t);
+                zombie_loop(t);
             }
 
-            t->threads->thread_count--;
-
-            kernel_mutex_unlock(&(t->threads->mutex));
-
-            // as we share some common structs with the other threads, remove
-            // our references to them so they don't get overwritten when our
-            // task struct is freed
-            t->ofiles = NULL;
-            t->fs = NULL;
-            t->sig = NULL;
-            t->threads = NULL;
-            t->common = NULL;
-            t->mem = NULL;
-
-            zombify(t);
-            notify_tracer(t);
-            zombie_loop(t);
+            t->threads->thread_group_leader = t;
         }
 
         kernel_mutex_unlock(&(t->threads->mutex));
     }
-
-    /* if there are other threads, they should be zombies, so reap them */
-    reap_dead_threads(t);
 
     /* set thread group's exit status */
     if(t->threads)
@@ -1273,9 +1534,32 @@ void terminate_task(int code)
      * our parent will free them when it reaps the zombie task.
      * don't free pages when calling memregion_detach_user(), as
      * free_user_pages() will do it below.
+     *
+     * NOTE: we don't free pages if cur_task was created by calling vfork,
+     *       as the parent and child process share the same memory space
+     *       but not the memory region structs.
+     *
+     * if this task died while handling a pagefault, its memory mutex might
+     * be locked and we will loop forever. try to lock first, and if this does
+     * not work, check whether the lock is held by us (and proceed), or wait
+     * for the lock to be released if it is held by someone else.
      */
+    if(kernel_mutex_trylock(&(t->mem->mutex)))
+    {
+        if(t->mem->mutex.holder != t)
+        {
+            kernel_mutex_lock(&(t->mem->mutex));
+        }
+    }
+
     memregion_detach_user(t, 0);
-    free_user_pages(t->pd_virt);
+
+    if(!(t->properties & PROPERTY_VFORK))
+    {
+        free_user_pages(t->pd_virt);
+    }
+
+    kernel_mutex_unlock(&(t->mem->mutex));
 
     /* orphanize our poor children :( */
     struct task_t *child = (struct task_t *)t->first_child;
@@ -1290,6 +1574,11 @@ void terminate_task(int code)
         }
         else
         {
+            if(child->properties & PROPERTY_VFORK)
+            {
+                kpanic("kernel: parent terminated with kforked child\n");
+            }
+
             task_add_child(init_task, child);
         }
         
@@ -1320,37 +1609,7 @@ void terminate_task(int code)
     
     zombify(t);
     notify_tracer(t);
-
-    if(t->parent)
-    {
-        /*
-         * unblock our parent if we vforked (the call to add_task_signal() will
-         * actually unblock the parent)
-         *
-         * we do this because after a vfork, the parent is blocked until 
-         * the child:
-         *   1. exits by calling _exit() or after receiving a signal
-         *   2. calls execve()
-         *
-         * for more details, see: 
-         *      https://man7.org/linux/man-pages/man2/vfork.2.html
-         */
-        if((t->properties & PROPERTY_VFORK) && 
-           (t->parent->state == TASK_WAITING))
-        {
-            t->parent->state = TASK_SLEEPING;
-        }
-
-        if(t->parent != get_task_by_tid(t->tracer_pid))
-        {
-        	KDEBUG("terminate_task: pid %d, notifying parent\n", t->pid);
-
-            int code = WCOREDUMP(t->exit_status) ? CLD_DUMPED :
-                       (WIFSIGNALED(t->exit_status) ? CLD_KILLED : CLD_EXITED);
-            add_task_child_signal(t, code, t->exit_status);
-        }
-    }
-    
+    notify_parent(t);
     zombie_loop(t);
 }
 

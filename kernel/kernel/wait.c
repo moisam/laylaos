@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: wait.c
  *    This file is part of LaylaOS.
@@ -45,7 +45,7 @@
  * group. Here we check if 'parent', or another thread in its thread
  * group, is the parent of 'child'.
  */
-static int is_parent_of(struct task_t *parent, struct task_t *child)
+static int is_parent_of(struct task_t *parent, volatile struct task_t *child)
 {
     struct task_t *thread;
 
@@ -70,11 +70,12 @@ static int is_parent_of(struct task_t *parent, struct task_t *child)
 }
 
 
-static int waitpid_internal(pid_t pid, int options, int *stat_addr,
-                            siginfo_t *siginfo_addr, struct rusage *rusage)
+static long waitpid_internal(pid_t pid, int options, int *stat_addr,
+                             siginfo_t *siginfo_addr, struct rusage *rusage)
 {
-    int flag = 0;
-    struct task_t *parent, *ct = cur_task;
+    long flag = 0;
+    struct task_t *parent;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
 repeat:
 
@@ -114,7 +115,7 @@ repeat:
                 
                 if(stat_addr)
                 {
-                    COPY_TO_USER(stat_addr, &(*t)->exit_status, 
+                    COPY_TO_USER(stat_addr, (void *)&(*t)->exit_status, 
                                                         sizeof(uint32_t));
                 }
                 
@@ -203,10 +204,10 @@ repeat:
 
     KDEBUG("waitpid_internal: pid %d going to sleep\n", ct->pid);
 
-    ct->properties |= PROPERTY_IN_WAIT;
+    __sync_or_and_fetch(&ct->properties, PROPERTY_IN_WAIT);
     //block_task(ct, 1);
-    block_task2(ct, 500);
-    ct->properties &= ~PROPERTY_IN_WAIT;
+    block_task2(ct, 200);
+    __sync_and_and_fetch(&ct->properties, ~PROPERTY_IN_WAIT);
 
     if(ct->woke_by_signal)
     {
@@ -221,7 +222,7 @@ repeat:
 /*
  * Handler for syscall waitpid().
  */
-int syscall_waitpid(pid_t pid, int *stat_addr, int options)
+long syscall_waitpid(pid_t pid, int *stat_addr, int options)
 {
     return waitpid_internal(pid, options | WEXITED | WSTOPPED, 
                                  stat_addr, NULL, NULL);
@@ -231,8 +232,8 @@ int syscall_waitpid(pid_t pid, int *stat_addr, int options)
 /*
  * Handler for syscall wait4().
  */
-int syscall_wait4(pid_t pid, int *stat_addr,
-                  int options, struct rusage *rusage)
+long syscall_wait4(pid_t pid, int *stat_addr,
+                   int options, struct rusage *rusage)
 {
     return waitpid_internal(pid, options | WEXITED | WSTOPPED, 
                                  stat_addr, NULL, rusage);
@@ -242,16 +243,16 @@ int syscall_wait4(pid_t pid, int *stat_addr,
 /*
  * Handler for syscall waitid().
  */
-int syscall_waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options)
+long syscall_waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options)
 {
     pid_t pid;
-    int res;
-    
+    long res;
+
     if(!infop)
     {
         return -EINVAL;
     }
-    
+
     if(idtype == P_PID)
     {
         if((pid = id) <= 0)

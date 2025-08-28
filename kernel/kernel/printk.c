@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: printk.c
  *    This file is part of LaylaOS.
@@ -27,6 +27,8 @@
 
 #include <kernel/asm.h>
 #include <kernel/tty.h>
+#include <kernel/apic.h>
+#include <mm/kheap.h>
 
 #define NANOPRINTF_IMPLEMENTATION
 #define NANOPRINTF_USE_FIELD_WIDTH_FORMAT_SPECIFIERS    1
@@ -38,7 +40,9 @@
 //#define NANOPRINTF_VISIBILITY_STATIC                    1
 #include "nanoprintf.h"
 
-static char buf[4096];
+char global_printk_buf[4096];
+
+static volatile int currently_printing_cpu = -1;
 
 // defined in console.c
 extern void twritestr(const char *data);
@@ -49,27 +53,69 @@ extern void twritestr(const char *data);
  */
 int vprintk(const char *fmt, va_list args)
 {
+	volatile int i, unlock = 1;
+	char *buf = NULL;
+
     // don't write to screen if this is not the system console
     if(cur_tty != 1)
     {
         return 0;
     }
 
-    uintptr_t s = int_off();
-	int i;
+    /*
+    if(this_core->cpuid != 0)
+    {
+        return 0;
+    }
+    */
 
-    buf[0] = '\0';
-	i = npf_vsnprintf(buf, sizeof(buf), fmt, args);
+    if(apic_running)
+    {
+        if(!(buf = kmalloc(2048)))
+        {
+            __asm__ __volatile__("xchg %%bx, %%bx"::);
+            return 0;
+        }
 
-	if(i > 0)
-	{
-	    //if(cur_tty == 1)
-	    {
+        buf[0] = '\0';
+    	i = npf_vsnprintf(buf, 2048, fmt, args);
+
+    	if(i > 0)
+    	{
+            uintptr_t s = int_off();
+
+            while(!__sync_bool_compare_and_swap(&currently_printing_cpu, -1, this_core->cpuid))
+            {
+                if(currently_printing_cpu == this_core->cpuid)
+                {
+                    unlock = 0;
+                    break;
+                }
+            }
+
+            twritestr(buf);
+
+            if(unlock)
+            {
+                __sync_bool_compare_and_swap(&currently_printing_cpu, this_core->cpuid, -1);
+            }
+
+            int_on(s);
+        }
+
+        kfree(buf);
+    }
+    else
+    {
+        buf = global_printk_buf;
+        buf[0] = '\0';
+    	i = npf_vsnprintf(buf, 4096, fmt, args);
+
+    	if(i > 0)
+    	{
             twritestr(buf);
         }
     }
-    
-    int_on(s);
 
 	return i;
 }

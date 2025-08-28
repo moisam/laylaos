@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: kernel_task.c
  *    This file is part of LaylaOS.
@@ -53,7 +53,7 @@ struct kernel_task_t
     pid_t pid;
 } kernel_tasks[NR_KTASKS];
 
-struct kernel_mutex_t kernel_task_lock;
+volatile struct kernel_mutex_t kernel_task_lock;
 
 
 static inline void init_table(void)
@@ -71,7 +71,7 @@ static inline void init_table(void)
 
 struct kernel_task_t *get_ktask(pid_t pid)
 {
-    int i;
+    volatile int i;
     kernel_mutex_lock(&kernel_task_lock);
     
     for(i = 0; i < NR_KTASKS; i++)
@@ -135,37 +135,20 @@ static struct kernel_task_t *add_ktask(char *name,
 }
 
 
-void ktask_elevate_priority(void)
-{
-    struct task_t *ct = cur_task;
-    uintptr_t s = int_off();
-
-    KDEBUG("%s: pid %d\n", __func__, ct->pid);
-    remove_from_ready_queue(ct);
-    ct->priority = MAX_FIFO_PRIO;
-    ct->sched_policy = SCHED_FIFO;
-    ct->user = 0;
-    ct->nice = 0;
-    append_to_ready_queue(ct);
-    
-    int_on(s);
-}
-
-
 #include "nanoprintf.h"
 
 pid_t start_kernel_task(char *name, void (*func)(void *), void *func_arg,
-                        struct task_t **t, int flags)
+                        volatile struct task_t **t, int flags)
 {
     register pid_t pid;
 
     init_table();
 
-    struct task_t *ct = cur_task;
+    struct task_t *ct = (struct task_t *)this_core->cur_task;
     struct regs r;
 
     fpu_state_save(ct);
-    ct->regs = &r;
+    //ct->syscall_regs = &r;
     save_context(ct);
     memcpy(&r, &ct->saved_context, sizeof(struct regs));
 
@@ -179,7 +162,7 @@ pid_t start_kernel_task(char *name, void (*func)(void *), void *func_arg,
     r.eax = __NR_fork;
 #endif
 
-    pid = syscall_fork();
+    pid = syscall_fork(&r);
 
     if(pid < 0)
     {
@@ -200,7 +183,7 @@ pid_t start_kernel_task(char *name, void (*func)(void *), void *func_arg,
         (*t)->user = 0;
         //sprintf(tmp, "[%s]", name);
         npf_snprintf(tmp, TASK_COMM_LEN, "[%s]", name);
-        set_task_comm(*t, tmp);
+        set_task_comm((struct task_t *)(*t), tmp);
     }
     
     KDEBUG("start_kernel_task: parent - name '%s', pid %d, func 0x%x\n", name, pid, func);
@@ -209,13 +192,14 @@ pid_t start_kernel_task(char *name, void (*func)(void *), void *func_arg,
 }
 
 
-void unblock_kernel_task(struct task_t *task)
+void unblock_kernel_task(volatile struct task_t *task)
 {
     if(!task)
     {
         return;
     }
 
+    /*
     uintptr_t s = int_off();
     
     if(task->state == TASK_READY || task->state == TASK_RUNNING ||
@@ -235,5 +219,8 @@ void unblock_kernel_task(struct task_t *task)
     append_to_ready_queue(task);
     
     int_on(s);
+    */
+
+    unblock_task_no_preempt(task);
 }
 

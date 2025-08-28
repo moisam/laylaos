@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023 (c)
+ *    Copyright 2022, 2023, 2025 (c)
  * 
  *    file: swap.c
  *    This file is part of LaylaOS.
@@ -36,7 +36,7 @@
 /*
  * Handler for syscall swapon().
  */
-int syscall_swapon(char *path, int swapflags)
+long syscall_swapon(char *path, int swapflags)
 {
     UNUSED(path);
     UNUSED(swapflags);
@@ -48,7 +48,7 @@ int syscall_swapon(char *path, int swapflags)
 /*
  * Handler for syscall swapoff().
  */
-int syscall_swapoff(char *path)
+long syscall_swapoff(char *path)
 {
     UNUSED(path);
     

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: kfork.c
  *    This file is part of LaylaOS.
@@ -41,6 +41,7 @@
 #include <kernel/ptrace.h>
 #include <kernel/syscall.h>
 #include <kernel/ksigset.h>
+#include <kernel/user.h>
 #include <mm/kstack.h>
 #include <mm/kheap.h>
 #include <fs/procfs.h>
@@ -126,7 +127,7 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
 
         if(new_task->mem == NULL)
         {
-            task_free(new_task, 1);
+            task_free(new_task);
             return NULL;
         }
 
@@ -141,12 +142,14 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
 
         if(parent->fs->root)
         {
-            new_task->fs->root->refs++;
+            //new_task->fs->root->refs++;
+            __sync_fetch_and_add(&(new_task->fs->root->refs), 1);
         }
 
         if(parent->fs->cwd)
         {
-            new_task->fs->cwd->refs++;
+            //new_task->fs->cwd->refs++;
+            __sync_fetch_and_add(&(new_task->fs->cwd->refs), 1);
         }
 
         /* increment open file refs */
@@ -155,14 +158,20 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
             /* TODO: this call should take care of releasing file locks */
             if(new_task->ofiles->ofile[i])
             {
-                new_task->ofiles->ofile[i]->refs++;
+                //new_task->ofiles->ofile[i]->refs++;
+                __sync_fetch_and_add(&(new_task->ofiles->ofile[i]->refs), 1);
             }
         }
         
         /* child doesn't inherit parent's interval timers */
-        A_memset(&new_task->itimer_real, 0, sizeof(struct itimer_t));
-        A_memset(&new_task->itimer_virt, 0, sizeof(struct itimer_t));
-        A_memset(&new_task->itimer_prof, 0, sizeof(struct itimer_t));
+        //A_memset(&new_task->itimer_real, 0, sizeof(struct itimer_t));
+        //A_memset(&new_task->itimer_virt, 0, sizeof(struct itimer_t));
+        //A_memset(&new_task->itimer_prof, 0, sizeof(struct itimer_t));
+        A_memset(&new_task->itimer_real, 0, sizeof(struct posix_timer_t));
+        A_memset(&new_task->itimer_prof, 0, sizeof(struct posix_timer_t));
+        new_task->itimer_virt.rel_ticks = 0ULL;
+        new_task->itimer_virt.interval = 0ULL;
+        new_task->last_timerid = 3;
     }
 
     /*
@@ -176,7 +185,8 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
     new_task->first_child = 0;
     new_task->first_sibling = 0;
     new_task->pid = pid;
-    A_memset(&new_task->next, 0, sizeof(new_task->next));
+    new_task->next = NULL;
+    //A_memset(&new_task->next, 0, sizeof(new_task->next));
     new_task->minflt = 0;
     new_task->majflt = 0;
     new_task->children_minflt = 0;
@@ -199,10 +209,12 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
     new_task->write_count = 0;
     new_task->read_calls = 0;
     new_task->write_calls = 0;
-    
+
+    new_task->cpuid = -1;
     ptrace_clear_state(new_task);
 
-    new_task->properties &= ~(PROPERTY_VFORK);
+    /* get rid of uninheritable properties */
+    __sync_and_and_fetch(&new_task->properties, ~(PROPERTY_VFORK|PROPERTY_IDLE));
     task_add_child(new_task->parent, new_task);
     
     return new_task;
@@ -212,17 +224,14 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
 /*
  * Handler for syscall fork().
  */
-int syscall_fork(void)
+long syscall_fork(struct regs *parent_regs)
 {
     static int first_fork = 1;
-    
-    struct task_t *parent = cur_task;
 
-    int vforking = (GET_SYSCALL_NUMBER(parent->regs) == __NR_vfork);
-    int cloning = (GET_SYSCALL_NUMBER(parent->regs) == __NR_clone);
-    
-    //printk("syscall_fork:\n");
-    //screen_refresh(NULL);
+	struct task_t *parent = (struct task_t *)this_core->cur_task;
+
+    int vforking = (GET_SYSCALL_NUMBER(parent_regs) == __NR_vfork);
+    int cloning = (GET_SYSCALL_NUMBER(parent_regs) == __NR_clone);
 
     if(cloning && parent->threads->thread_count >= THREADS_PER_PROCESS)
     {
@@ -238,12 +247,12 @@ int syscall_fork(void)
         return -EAGAIN;
     }
     
-    A_memcpy(&r, parent->regs, sizeof(struct regs));
+    A_memcpy(&r, parent_regs, sizeof(struct regs));
 
     /* if vforking, mark the child as such */
     if(vforking)
     {
-        new_task->properties |= PROPERTY_VFORK;
+        __sync_or_and_fetch(&new_task->properties, PROPERTY_VFORK);
     }
 
     // user esp is passed as the 2nd argument to the clone syscall (%ecx on
@@ -270,9 +279,18 @@ int syscall_fork(void)
     if(!vforking && !cloning)
     {
         if(clone_task_pd(parent, new_task) != 0)
-        //if(clone_task_pd(parent, new_task, 1) != 0)
         {
-            task_free(new_task, 1);
+            if(cloning)
+            {
+                new_task->ofiles = NULL;
+                new_task->fs = NULL;
+                new_task->sig = NULL;
+                new_task->threads = NULL;
+                new_task->common = NULL;
+                new_task->mem = NULL;
+            }
+
+            task_free(new_task);
             return -EAGAIN;
         }
     }
@@ -281,7 +299,18 @@ int syscall_fork(void)
     if(get_kstack(&new_task->kstack_phys, &new_task->kstack_virt) != 0)
     {
         free_pd(new_task->pd_virt);
-        task_free(new_task, (!vforking && !cloning));
+
+        if(cloning)
+        {
+            new_task->ofiles = NULL;
+            new_task->fs = NULL;
+            new_task->sig = NULL;
+            new_task->threads = NULL;
+            new_task->common = NULL;
+            new_task->mem = NULL;
+        }
+
+        task_free(new_task);
         return -EAGAIN;
     }
 
@@ -322,7 +351,7 @@ int syscall_fork(void)
     // bootstrap new task's stack
     sp -= sizeof(struct regs);
     A_memcpy((void *)sp, &r, sizeof(struct regs));
-    new_task->regs = (struct regs *)sp;
+    //new_task->syscall_regs = (struct regs *)sp;
     PUSH(resume_user);
 
 #undef PUSH
@@ -344,10 +373,8 @@ int syscall_fork(void)
     new_task->timeslice = get_task_timeslice(new_task);
     new_task->state = TASK_READY;
     reset_task_timeslice(new_task);
-    
-    lock_scheduler();
-    append_to_ready_queue(new_task);
-    unlock_scheduler();
+
+    append_to_ready_queue_locked(new_task, 0);
 
     if(parent->properties & PROPERTY_TRACE_SIGNALS)
     {
@@ -440,6 +467,7 @@ int syscall_fork(void)
     system_forks++;
 
     KDEBUG("do_fork: kstack phys 0x%lx, virt 0x%lx\n", new_task->kstack_phys, new_task->kstack_virt);
+    //__asm__ __volatile__("xchg %%bx, %%bx":::);
 
     // syscall clone returns thread's id, while syscall fork returns pid
     return cloning ? new_task->pid : new_task->threads->tgid;

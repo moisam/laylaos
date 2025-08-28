@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: thread.c
  *    This file is part of LaylaOS.
@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <kernel/thread.h>
 #include <kernel/ksignal.h>
+#include <kernel/user.h>
 
 #include "task_funcs.c"
 
@@ -38,12 +39,12 @@
  *
  * See: https://man7.org/linux/man-pages/man2/tgkill.2.html
  */
-int syscall_tgkill(pid_t tgid, pid_t tid, int sig)
+long syscall_tgkill(pid_t tgid, pid_t tid, int sig)
 {
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
     int force = !(ct->uid || ct->euid);
-    struct task_t *task = get_task_by_id(tid);
-    
+    volatile struct task_t *task = get_task_by_id(tid);
+
     if(!task || !task->threads || !task->threads->thread_group_leader ||
        sig < 1 || sig >= NSIG)
     {
@@ -66,10 +67,9 @@ int syscall_tgkill(pid_t tgid, pid_t tid, int sig)
 /*
  * Handler for syscall gettid().
  */
-pid_t syscall_gettid(void)
+long syscall_gettid(void)
 {
-    struct task_t *ct = cur_task;
-    return ct->pid;
+    return this_core->cur_task->pid;
 }
 
 
@@ -81,7 +81,7 @@ pid_t syscall_gettid(void)
  *
  * Returns 1 if all other threads are zombies, 0 if at least one is alive.
  */
-int other_threads_dead(struct task_t *task)
+int other_threads_dead(volatile struct task_t *task)
 {
     struct task_t *t;
 
@@ -114,18 +114,27 @@ int other_threads_dead(struct task_t *task)
  */
 void terminate_thread_group(int code)
 {
-    struct task_t *ct = cur_task;
-
-    /* no other threads, so just die */
-    if(!ct->threads || ct->threads->thread_count == 1)
+    if(this_core->cur_task->threads)
     {
-        terminate_task(code);
-        /* doesn't return */
+        kernel_mutex_lock(&(this_core->cur_task->threads->mutex));
+
+        if(!(this_core->cur_task->threads->flags & TG_FLAG_EXITING))
+        {
+            this_core->cur_task->threads->flags |= TG_FLAG_EXITING;
+            kernel_mutex_unlock(&(this_core->cur_task->threads->mutex));
+
+            if(this_core->cur_task->threads->thread_count > 1)
+            {
+                /* kill the other threads */
+                __terminate_thread_group();
+            }
+        }
+        else
+        {
+            kernel_mutex_unlock(&(this_core->cur_task->threads->mutex));
+        }
     }
 
-    /* kill the other threads */
-    __terminate_thread_group();
-    
     /* now kill us */
     terminate_task(code);
 }
@@ -138,9 +147,8 @@ void __terminate_thread_group(void)
 {
     volatile int retry = 1;
     struct task_t *t;
-    struct task_t *ct = cur_task;
-    
-    if(!ct->threads)
+
+    if(!this_core->cur_task->threads)
     {
         return;
     }
@@ -149,11 +157,11 @@ void __terminate_thread_group(void)
     {
         retry = 0;
 
-        kernel_mutex_lock(&(ct->threads->mutex));
+        kernel_mutex_lock(&(this_core->cur_task->threads->mutex));
 
-        for_each_thread(t, ct)
+        for_each_thread(t, this_core->cur_task)
         {
-            if(t == ct || t->state == TASK_ZOMBIE)
+            if(t == this_core->cur_task || t->state == TASK_ZOMBIE)
             {
                 continue;
             }
@@ -162,14 +170,12 @@ void __terminate_thread_group(void)
             retry = 1;
         }
 
-        kernel_mutex_unlock(&(ct->threads->mutex));
-        
+        kernel_mutex_unlock(&(this_core->cur_task->threads->mutex));
+
         /* give the threads a chance to die */
         if(retry)
         {
-            lock_scheduler();
             scheduler();
-            unlock_scheduler();
         }
     }
 }
@@ -178,6 +184,7 @@ void __terminate_thread_group(void)
 /*
  * Reap zombie threads.
  */
+/*
 void reap_dead_threads(struct task_t *task)
 {
     struct task_t *t, *prev = NULL, *next = NULL;
@@ -239,12 +246,13 @@ void reap_dead_threads(struct task_t *task)
 
     kernel_mutex_unlock(&(task->threads->mutex));
 }
+*/
 
 
 /*
  * Get thread group id.
  */
-pid_t get_tgid(struct task_t *task)
+long get_tgid(struct task_t *task)
 {
     return tgid(task);
 }

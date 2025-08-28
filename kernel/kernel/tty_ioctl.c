@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: tty_ioctl.c
  *    This file is part of LaylaOS.
@@ -118,7 +118,7 @@ static void send_break(struct tty_t *tty, int decisecs)
  * Returns:
  *    0
  */
-static int get_termios(struct tty_t *tty, struct termios *termios, int kernel)
+static long get_termios(struct tty_t *tty, struct termios *termios, int kernel)
 {
     if(!tty || !termios)
     {
@@ -138,7 +138,7 @@ static int get_termios(struct tty_t *tty, struct termios *termios, int kernel)
 }
 
 
-static int set_termios(struct tty_t *tty, struct termios *termios, int kernel)
+static long set_termios(struct tty_t *tty, struct termios *termios, int kernel)
 {
     if(!tty || !termios)
     {
@@ -163,7 +163,7 @@ static int set_termios(struct tty_t *tty, struct termios *termios, int kernel)
  * two functions, except the following works on struct termio instead of
  * struct termios.
  */
-static int get_termio(struct tty_t *tty, struct termio *termio, int kernel)
+static long get_termio(struct tty_t *tty, struct termio *termio, int kernel)
 {
     int i;
     struct termio tmp;
@@ -197,7 +197,7 @@ static int get_termio(struct tty_t *tty, struct termio *termio, int kernel)
 }
 
 
-static int set_termio(struct tty_t *tty, struct termio *termio, int kernel)
+static long set_termio(struct tty_t *tty, struct termio *termio, int kernel)
 {
     int i;
     struct termio tmp;
@@ -241,7 +241,7 @@ static int set_termio(struct tty_t *tty, struct termio *termio, int kernel)
  * Returns:
  *    0
  */
-static int get_winsize(struct tty_t *tty, struct winsize *window, int kernel)
+static long get_winsize(struct tty_t *tty, struct winsize *window, int kernel)
 {
     if(!tty || !window)
     {
@@ -260,7 +260,7 @@ static int get_winsize(struct tty_t *tty, struct winsize *window, int kernel)
 }
 
 
-static int set_winsize(struct tty_t *tty, struct winsize *window, int kernel)
+static long set_winsize(struct tty_t *tty, struct winsize *window, int kernel)
 {
     if(!tty || !window)
     {
@@ -294,9 +294,9 @@ static int set_winsize(struct tty_t *tty, struct winsize *window, int kernel)
  *
  * For details of arg, see: https://linux.die.net/man/4/tty_ioctl
  */
-int set_controlling_tty(dev_t dev, struct tty_t *tty, int arg)
+long set_controlling_tty(dev_t dev, struct tty_t *tty, int arg)
 {
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
     
     if(!tty)
     {
@@ -415,7 +415,7 @@ int set_controlling_tty(dev_t dev, struct tty_t *tty, int arg)
  *
  * For details of cmd and arg, see: https://linux.die.net/man/4/tty_ioctl
  */
-int tty_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
+long tty_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
 {
     struct tty_t *tty;
     int tmp;

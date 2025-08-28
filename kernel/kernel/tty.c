@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: tty.c
  *    This file is part of LaylaOS.
@@ -99,6 +99,34 @@ void tty_init_queues(int i)
 }
 
 
+int tty_alloc_buffer(struct tty_t *tty, int buf_index)
+{
+    if(tty->buf[buf_index] != NULL)
+    {
+        return 0;
+    }
+
+    if(!(tty->buf[buf_index] = kmalloc(VGA_MEMORY_SIZE(tty))))
+    {
+        return -ENOMEM;
+    }
+
+    A_memset(tty->buf[buf_index], 0, VGA_MEMORY_SIZE(tty));
+
+    if(!(tty->cellattribs[buf_index] =
+                kmalloc(tty->vga_width * tty->vga_height)))
+    {
+        kfree(tty->buf[buf_index]);
+        tty->buf[buf_index] = NULL;
+        return -ENOMEM;
+    }
+
+    A_memset(tty->cellattribs[buf_index], 0, tty->vga_width * tty->vga_height);
+
+    return 0;
+}
+
+
 /*
  * Initialize terminal device queues and init console.
  */
@@ -121,13 +149,10 @@ void tty_init(void)
         ttytab[i].process_key = process_key;
         ttytab[i].copy_to_buf = copy_to_buf;
 
-        if(!(ttytab[i].cellattribs =
-                kmalloc(ttytab[i].vga_width * ttytab[i].vga_height)))
+        if(tty_alloc_buffer(&ttytab[i], 0) != 0)
         {
             kpanic("tty: failed to alloc internal buffer\n");
         }
-
-        A_memset(ttytab[i].cellattribs, 0, ttytab[i].vga_width * ttytab[i].vga_height);
 
         fb_reset_charsets(&ttytab[i]);
         fb_reset_colors(&ttytab[i]);
@@ -165,7 +190,7 @@ void tty_set_defaults(struct tty_t *tty)
                     TTY_FLAG_CURSOR_RELATIVE | TTY_FLAG_LFNL);
     tty->flags |= TTY_FLAG_AUTOWRAP;
 
-    tty->waiting_task = NULL;
+    //tty->waiting_task = NULL;
 
     /* input modes */
     tty->termios.c_iflag = TTYDEF_IFLAG;
@@ -192,7 +217,7 @@ void tty_set_defaults(struct tty_t *tty)
 /*
  * Perform a select operation on a tty device.
  */
-int tty_select(struct file_t *f, int which)
+long tty_select(struct file_t *f, int which)
 {
     struct tty_t *tty;
     int canon;
@@ -223,7 +248,8 @@ int tty_select(struct file_t *f, int which)
             if(ttybuf_is_empty(&tty->secondary) ||
                (canon && !tty->secondary.extra))
             {
-        		selrecord(&tty->ssel);
+        		//selrecord(&tty->ssel);
+        		selrecord(&tty->secondary.sel);
                 return 0;
             }
             return 1;
@@ -231,7 +257,8 @@ int tty_select(struct file_t *f, int which)
     	case FWRITE:
     	    if(ttybuf_is_full(&tty->write_q))
     	    {
-        		selrecord(&tty->wsel);
+        		//selrecord(&tty->wsel);
+        		selrecord(&tty->write_q.sel);
                 return 0;
             }
             return 1;
@@ -248,9 +275,9 @@ int tty_select(struct file_t *f, int which)
 /*
  * Perform a poll operation on a tty device.
  */
-int tty_poll(struct file_t *f, struct pollfd *pfd)
+long tty_poll(struct file_t *f, struct pollfd *pfd)
 {
-    int res = 0;
+    long res = 0;
     struct tty_t *tty;
     int canon;
     dev_t dev;
@@ -276,7 +303,8 @@ int tty_poll(struct file_t *f, struct pollfd *pfd)
         if(ttybuf_is_empty(&tty->secondary) ||
            (canon && !tty->secondary.extra))
         {
-            selrecord(&tty->ssel);
+            //selrecord(&tty->ssel);
+            selrecord(&tty->secondary.sel);
         }
         else
         {
@@ -289,7 +317,8 @@ int tty_poll(struct file_t *f, struct pollfd *pfd)
     {
         if(ttybuf_is_full(&tty->write_q))
         {
-            selrecord(&tty->wsel);
+            //selrecord(&tty->wsel);
+            selrecord(&tty->write_q.sel);
         }
         else
         {
@@ -325,7 +354,7 @@ void tty_send_signal(pid_t pgid, int signal)
     {
         if(*t && (*t)->pgid == pgid)
         {
-            add_task_signal(*t, signal, NULL, 1);
+            add_task_signal((struct task_t *)(*t), signal, NULL, 1);
         }
     }
 
@@ -344,9 +373,9 @@ void tty_send_signal(pid_t pgid, int signal)
  * For details see: 
  *      https://docs.oracle.com/cd/E88353_01/html/E37841/vhangup-2.html
  */
-int syscall_vhangup(void)
+long syscall_vhangup(void)
 {
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
     
     if(!suser(ct))
     {
@@ -379,13 +408,16 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
     UNUSED(pos);
 
     dev_t dev = f->node->blocks[0];
+    int ispty = (MAJOR(dev) == PTY_MASTER_MAJ);
+    int ispty_slave = (MAJOR(dev) == PTY_SLAVE_MAJ);
     struct tty_t *tty;
+    struct kqueue_t *q;
     unsigned char c, *p = buf;
     size_t min;
     int time;
     volatile size_t count = _count;
     volatile int has_signal = 0;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
     
     /*
     if(!buf)
@@ -404,7 +436,7 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
     {
         if(valid_addr(ct, (virtual_addr)p, (virtual_addr)p + count - 1) != 0)
         {
-            add_task_segv_signal(ct, SIGSEGV, SEGV_MAPERR, (void *)p);
+            add_task_segv_signal(ct, SEGV_MAPERR, (void *)p);
             return -EFAULT;
         }
     }
@@ -415,7 +447,7 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
      *    if a background process group tries to read(2) from the terminal,
      *    then the group is sent a SIGTTIN signal, which suspends it.
      */
-    if(tty->pgid != ct->pgid)
+    if((tty->pgid != ct->pgid) && !ispty && !ispty_slave)
     {
         tty_send_signal(ct->pgid, SIGTTIN);
         return -EINVAL;
@@ -432,7 +464,8 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
     {
         min = count;
     }
-    
+
+    q = ispty ? &tty->write_q : &tty->secondary;
     ct->woke_by_signal = 0;
     
     // read input
@@ -445,15 +478,15 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
         {
             break;
         }
-        
+
         int canon = (tty->termios.c_lflag & ICANON);
-        
+
         // sleep if the secondary queue is empty, or the tty is in canonical
         // mode and there are no complete line(s) of input yet
-        if(ttybuf_is_empty(&tty->secondary) ||
-           (canon && !tty->secondary.extra))
+        if(ttybuf_is_empty(q) ||
+           (canon && !q->extra && !ispty))
         {
-            if(sleep_if_empty(tty, &tty->secondary, time) != 0)
+            if(sleep_if_empty(/* tty, */ q, time) != 0)
             {
                 // timeout has expired
                 break;
@@ -463,12 +496,12 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
         // get next char
         do
         {
-            c = ttybuf_dequeue(&tty->secondary);
+            c = ttybuf_dequeue(q);
             
             if(c == LF || c == (unsigned char)tty->termios.c_cc[VEOF])
             {
                 // decrement input line counter
-                tty->secondary.extra--;
+                q->extra--;
             }
             
             // return if we reach EOF and tty is in canonical mode
@@ -493,13 +526,19 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
             }
 
             // loop until we get our count chars or queue is empty
-        } while(count > 0 && !ttybuf_is_empty(&tty->secondary));
+        } while(count > 0 && !ttybuf_is_empty(q));
+
+        // wake up select() waiting tasks
+        if(ispty)
+        {
+            selwakeup(&q->sel);
+        }
         
         if(canon)
         {
-            if((p - buf) != 0)
+            if(c == LF /* (p - buf) != 0 */)
             {
-                // stop if canonical mode and we've got any chars
+                // stop if canonical mode and we've got a newline
                 break;
             }
         }
@@ -543,11 +582,14 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
     UNUSED(pos);
 
     dev_t dev = f->node->blocks[0];
+    int ispty = (MAJOR(dev) == PTY_MASTER_MAJ);
     struct tty_t *tty;
+    struct kqueue_t *q;
+    //struct selinfo *sel;
     unsigned char c, *p = buf;
     volatile size_t count = _count;
     volatile int has_signal = 0;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
     
     /*
     if(!buf)
@@ -566,14 +608,23 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
     {
         if(valid_addr(ct, (virtual_addr)p, (virtual_addr)p + count - 1) != 0)
         {
-            add_task_segv_signal(ct, SIGSEGV, SEGV_MAPERR, (void *)p);
+            add_task_segv_signal(ct, SEGV_MAPERR, (void *)p);
             return -EFAULT;
         }
     }
     
-    if(!tty->write_q.buf)
+    q = ispty ? &tty->read_q : &tty->write_q;
+    //sel = ispty ? &tty->rsel : &tty->wsel;
+
+    if(!q->buf)
     {
         return 0;
+    }
+
+    // hang if writing to a stopped tty
+    while(tty->flags & TTY_FLAG_STOPPED)
+    {
+        block_task(tty, 1);
     }
 
     ct->woke_by_signal = 0;
@@ -582,7 +633,7 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
     while(count > 0)
     {
         // wait until output buffer has space
-        sleep_if_full(&tty->write_q);
+        sleep_if_full(q);
 
         has_signal = ct->woke_by_signal;
         
@@ -593,7 +644,7 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
         }
         
         // copy output as long as there is space in the output buffer
-        while(count > 0 && !ttybuf_is_full(&tty->write_q))
+        while(count > 0 && !ttybuf_is_full(q))
         {
             c = *p;
             
@@ -622,9 +673,9 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
                 else if(c == LF && (tty->termios.c_oflag & ONLCR))
                 {
                     // convert NL to CR-NL
-                    ttybuf_enqueue(&tty->write_q, CR);
+                    ttybuf_enqueue(q, CR);
                     
-                    if(ttybuf_is_full(&tty->write_q))
+                    if(ttybuf_is_full(q))
                     {
                         // we will sleep until there is space in the queue
                         break;
@@ -640,7 +691,7 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
             
             p++;
             count--;
-            ttybuf_enqueue(&tty->write_q, c);
+            ttybuf_enqueue(q, c);
         }
         
         // write output to terminal
@@ -649,11 +700,18 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
             tty->write(tty);
         }
 
+        // copy input to secondary buffer, and wakeup any waiting readers
+        if(ispty)
+        {
+            copy_to_buf(tty);
+        }
+
         // wake up waiting tasks
-        unblock_tasks(&tty->write_q);
+        //unblock_tasks(q);
     
         // wake up select() waiting tasks
-        selwakeup(&tty->wsel);
+        //selwakeup(sel);
+        selwakeup(&q->sel);
     }
     
     // check if we were interrupted by a signal and no chars written

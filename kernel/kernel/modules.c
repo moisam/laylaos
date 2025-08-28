@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: modules.c
  *    This file is part of LaylaOS.
@@ -43,7 +43,7 @@ struct boot_module_t boot_module[MAX_BOOT_MODULES];
 
 // loaded modules list and the lock to access the list
 struct kmodule_t modules_head;
-struct kernel_mutex_t kmod_list_mutex;
+volatile struct kernel_mutex_t kmod_list_mutex;
 
 #define ZERO_MODULE_INDEXES(i)          \
 {                                       \
@@ -108,8 +108,6 @@ void boot_module_init(void)
                        boot_module[i].vstart, boot_module[i].vend,
                        boot_module[i].cmdline);
     }
-    
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
     for(i = 0; i < boot_module_count; i++)
     {
@@ -122,7 +120,7 @@ void boot_module_init(void)
             printk("  Found initramdisk..\n");
             found_initrd = 1;
 
-            if(ramdisk_init(boot_module[0].vstart, boot_module[0].vend) != 0)
+            if(ramdisk_init(boot_module[i].vstart, boot_module[i].vend) != 0)
             {
                 kpanic("Failed to decompress initrd\n");
             }

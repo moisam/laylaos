@@ -176,7 +176,7 @@ void *ksym_value(char *name)
 
     for(mod = modules_head.next; mod != NULL; mod = mod->next)
     {
-        if(mod->state |= MODULE_STATE_LOADED)
+        if(!(mod->state & MODULE_STATE_LOADED))
         {
             continue;
         }

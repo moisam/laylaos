@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ldso.c
  *    This file is part of LaylaOS.
@@ -38,13 +38,13 @@
 /*
  * Load the dynamic loader (ldso).
  */
-int ldso_load(size_t *auxv)
+long ldso_load(size_t *auxv)
 {
 	int open_flags = OPEN_KERNEL_CALLER | OPEN_FOLLOW_SYMLINK |
 	                 OPEN_CREATE_DENTRY;
     struct fs_node_t *filenode = NULL;
     struct cached_page_t *buf = NULL;
-    int res;
+    long res;
     char **tmp;
 
     static char *ldso_paths[] =

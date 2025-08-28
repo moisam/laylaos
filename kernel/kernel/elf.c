@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: elf.c
  *    This file is part of LaylaOS.
@@ -38,15 +38,15 @@
 #include <mm/mmap.h>
 #include "../../vdso/vdso.h"
 
-static int elf_load_exec(struct fs_node_t *node, struct cached_page_t *block0,
-                         size_t *auxv, int flags);
+static long elf_load_exec(struct fs_node_t *node, struct cached_page_t *block0,
+                          size_t *auxv, int flags);
 
 
 /*
  * Load ELF file.
  */
-int elf_load_file(struct fs_node_t *node, struct cached_page_t *block0,
-                  size_t *auxv, int flags)
+long elf_load_file(struct fs_node_t *node, struct cached_page_t *block0,
+                   size_t *auxv, int flags)
 {
     if(!node || !block0 || !auxv)
     {
@@ -200,12 +200,12 @@ static void calc_elf_limits(struct task_t *ct,
 }
 
 
-static int elf_load_exec(struct fs_node_t *node, struct cached_page_t *block0,
-                         size_t *auxv, int flags)
+static long elf_load_exec(struct fs_node_t *node, struct cached_page_t *block0,
+                          size_t *auxv, int flags)
 {
     elf_ehdr *hdr = (elf_ehdr *)block0->virt;
     uintptr_t dyn_base = 0;
-    int res;
+    long res;
     int load_now = (flags & ELF_FLAG_LOAD_NOW);
     virtual_addr vdso;
 
@@ -226,7 +226,7 @@ static int elf_load_exec(struct fs_node_t *node, struct cached_page_t *block0,
     
     elf_phdr *phdr = (elf_phdr *)buf;
     elf_phdr *lphdr = &phdr[hdr->e_phnum];
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
     
     kernel_mutex_lock(&(ct->mem->mutex));
 
@@ -247,7 +247,7 @@ static int elf_load_exec(struct fs_node_t *node, struct cached_page_t *block0,
                     calc_elf_limits(ct, hdr, (elf_phdr *)buf, 0);
                 }
                 
-                ct->properties |= PROPERTY_DYNAMICALLY_LOADED;
+                __sync_or_and_fetch(&ct->properties, PROPERTY_DYNAMICALLY_LOADED);
             }
 
             kfree(buf);

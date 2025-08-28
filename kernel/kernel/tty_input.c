@@ -76,6 +76,18 @@ static inline void emit_codes(struct kqueue_t *q, char *codes, int count)
 }
 
 
+static inline int keystate_to_modifiers(void)
+{
+    int mod;
+
+    mod = (_alt && _ctrl) ? '7' : _ctrl ? '5' : _alt ? '3' : 0;
+    if(_shift) mod++;
+    if(mod == 1) mod++;
+
+    return mod;
+}
+
+
 /*
  * Process tty input.
  */
@@ -156,35 +168,84 @@ void process_key(struct tty_t *tty, int c)
 
     count = 0;
 
-    if(c >= KEYCODE_UP && c <= KEYCODE_RIGHT)
+    /*
+     * In application keypad mode, cursor keys send ESC O x instead of ESC [ x.
+     * The keys can also be post-fixed with modifiers, which are taken from 
+     * xterm definitions:
+     *
+     *    Code     Modifiers
+     *  ---------+---------------------------
+     *     2     | Shift
+     *     3     | Alt
+     *     4     | Shift + Alt
+     *     5     | Control
+     *     6     | Shift + Control
+     *     7     | Alt + Control
+     *     8     | Shift + Alt + Control
+     *  ---------+---------------------------
+     *
+     * See:
+     *    https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-PC-Style-Function-Keys
+     */
+    uint32_t curkey = scancode & 0xff;
+
+    if(curkey == 0xfe)          // cursor keys
     {
-        // For arrow keys, we emit the following sequences (taking arrow Right
-        // as an example):
-        //   - Right             =>   ^[[C
-        //   - SHIFT-Right       =>   ^[[1;2C
-        //   - CTRL-Right        =>   ^[[1;5C
-        //   - CTRL-SHIFT-Right  =>   ^[[1;6C
+        int mod = keystate_to_modifiers();
 
-        if((scancode & 0x5b00) == 0x5b00)
+        if(ttybuf_has_space_for(&tty->read_q, mod ? 6 : 3))
         {
-            // In application keypad mode, cursor keys send ESC O x instead of ESC [ x.
-            // Modify the code by removing the '[' and putting an 'O' in its place.
-            if((tty->flags & TTY_FLAG_APP_KEYMODE))
-            {
-                scancode &= 0xffff00ff;
-                scancode |= 0x4f00;
-            }
-        }
-        else
-        {
-            uint32_t scancode2 = CTRL_ARROW_PROLOGUE;
+            codes[count++] = '\033';
+            codes[count++] = (tty->flags & TTY_FLAG_APP_CURSORKEYS_MODE) ? 'O' : '[';
 
-            while(scancode2 != 0)
+            if(mod)
             {
-                codes[count++] = scancode2 & 0xff;
-                scancode2 >>= 8;
+                codes[count++] = '1';
+                codes[count++] = ';';
+                codes[count++] = mod;
             }
+
+            codes[count++] = cursor_keys[scancode >> 8];
+            emit_codes(&tty->read_q, (char *)codes, count);
         }
+
+        return;
+    }
+    else if(curkey == 0xfd)     // function keys
+    {
+        int mod = keystate_to_modifiers();
+
+        if(ttybuf_has_space_for(&tty->read_q, mod ? 7 : 5))
+        {
+            scancode >>= 8;
+
+            if(mod)
+            {
+                emit_codes(&tty->read_q, 
+                            funckey_prologue_modifiers[scancode].seq,
+                            funckey_prologue_modifiers[scancode].len);
+                codes[count++] = ';';
+                codes[count++] = mod;
+            }
+            else
+            {
+                emit_codes(&tty->read_q, 
+                            funckey_prologue_normal[scancode].seq,
+                            funckey_prologue_normal[scancode].len);
+            }
+
+            codes[count++] = funckey_lastchar[scancode];
+            emit_codes(&tty->read_q, (char *)codes, count);
+        }
+
+        return;
+    }
+    else if(curkey == 0xfc)     // keypad keys
+    {
+        scancode >>= 8;
+        scancode = ((tty->flags & TTY_FLAG_APP_KEYPAD_MODE) && !_numlock) ?
+                    keypad_keys_application[scancode] :
+                    keypad_keys_normal[scancode];
     }
 
     while(scancode != 0)
@@ -254,7 +315,8 @@ void copy_to_buf(struct tty_t *tty)
     char c;
     int i;
     int strip = (tty->termios.c_iflag & ISTRIP);
-    
+    int was_stopped = (tty->flags & TTY_FLAG_STOPPED);
+
     // otherwise, process input
     while(!ttybuf_is_empty(&tty->read_q) && !ttybuf_is_full(&tty->secondary))
     {
@@ -304,7 +366,7 @@ void copy_to_buf(struct tty_t *tty)
                 //   - last char is EOF
                 if(ttybuf_is_empty(&tty->secondary) ||
                    (((char *)tty->secondary.buf)
-                        [((tty->secondary.head - 1) % TTY_BUF_SIZE)]
+                        [((tty->secondary.head - 1) & (TTY_BUF_SIZE - 1))]
                             == LF) ||
                    c == (char)tty->termios.c_cc[VEOF])
                 {
@@ -323,17 +385,20 @@ void copy_to_buf(struct tty_t *tty)
                     // output DEL char
                     ttybuf_enqueue(&tty->write_q, 127);
                     
-                    tty->write(tty);
+                    if(tty->write)
+                    {
+                        tty->write(tty);
+                    }
                 }
                 
                 // remove the last char from the secondary queue
-                tty->secondary.head = (tty->secondary.head - 1) % 
-                                            TTY_BUF_SIZE;
+                tty->secondary.head = (tty->secondary.head - 1) & 
+                                            (TTY_BUF_SIZE - 1);
             }
             
-            if(tty->stopped && (tty->termios.c_iflag & IXANY))
+            if((tty->flags & TTY_FLAG_STOPPED) && (tty->termios.c_iflag & IXANY))
             {
-                tty->stopped = 0;
+                tty->flags &= ~TTY_FLAG_STOPPED;
                 continue;
             }
             
@@ -341,7 +406,7 @@ void copy_to_buf(struct tty_t *tty)
             if(c == (char)tty->termios.c_cc[VSTOP] && 
                (tty->termios.c_iflag & IXOFF))
             {
-                tty->stopped = 1;
+                tty->flags |= TTY_FLAG_STOPPED;
                 continue;
             }
             
@@ -349,7 +414,7 @@ void copy_to_buf(struct tty_t *tty)
             if(c == (char)tty->termios.c_cc[VSTART] && 
                (tty->termios.c_iflag & IXOFF))
             {
-                tty->stopped = 0;
+                tty->flags &= ~TTY_FLAG_STOPPED;
                 continue;
             }
         }
@@ -378,12 +443,12 @@ void copy_to_buf(struct tty_t *tty)
         
         if(tty->termios.c_lflag & ECHO)
         {
-            if(c == LF)
+            /* if(c == LF)
             {
                 ttybuf_enqueue(&tty->write_q, 10);
                 ttybuf_enqueue(&tty->write_q, 13);
             }
-            else if(c < 32)
+            else */ if(c < 32 && !(c >= '\a' && c <= '\r'))
             {
                 if(tty->termios.c_lflag & ECHOCTL)
                 {
@@ -396,13 +461,18 @@ void copy_to_buf(struct tty_t *tty)
                 ttybuf_enqueue(&tty->write_q, c);
             }
 
+            /*
             if((c == LF || c == VT || c == FF) && 
                (tty->flags & TTY_FLAG_LFNL))
             {
                 ttybuf_enqueue(&tty->write_q, CR);
             }
+            */
             
-            tty->write(tty);
+            if(tty->write)
+            {
+                tty->write(tty);
+            }
         }
 
         ttybuf_enqueue(&tty->secondary, c);
@@ -426,26 +496,37 @@ void copy_to_buf(struct tty_t *tty)
         }
     }
 
+    if(was_stopped && !(tty->flags & TTY_FLAG_STOPPED))
+    {
+        unblock_tasks(tty);
+    }
+
     // wake up select() waiting tasks
-    selwakeup(&tty->ssel);
-    
+    //selwakeup(&tty->ssel);
+    selwakeup(&tty->secondary.sel);
+
+    /*
     // wake up waiting tasks
     if(tty->waiting_task)
     {
         unblock_task((struct task_t *)tty->waiting_task);
     }
+    */
 }
 
 
 void raw_copy_to_buf(struct tty_t *tty)
 {
     // wake up select() waiting tasks
-    selwakeup(&tty->ssel);
-    
+    //selwakeup(&tty->ssel);
+    selwakeup(&tty->secondary.sel);
+
+    /*
     // wake up waiting tasks
     if(tty->waiting_task)
     {
         unblock_task((struct task_t *)tty->waiting_task);
     }
+    */
 }
 

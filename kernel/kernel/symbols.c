@@ -29,15 +29,15 @@
 #include <sys/utsname.h>
 
 #ifdef __x86_64__
-# define MACHINE        "i686"
+# define MACHINE        "x86_64"
 #else
-# define MACHINE        "x86-64"
+# define MACHINE        "i686"
 #endif
 
 #define OSNAME          "LaylaOS"
-#define OSRELEASE       "0.0.2"
+#define OSRELEASE       "0.0.3"
 #define OSREVISION      1
-#define OSVERSION       "0.0.2"
+#define OSVERSION       "0.0.3"
 
 char osrelease[] = OSRELEASE;
 char ostype[] = OSNAME;
@@ -45,7 +45,7 @@ int  osrev = OSREVISION;
 char version[] = OSVERSION;
 
 char machine[] = MACHINE;
-char cpu_model[100] = { 0, };
+char cpu_model[100] = MACHINE;
 
 char kernel_cmdline[256] = { 0, };
 

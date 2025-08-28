@@ -26,17 +26,15 @@
  */
 
 #include <fs/devpts.h>
+#include <kernel/laylaos.h>
 #include <kernel/clock.h>
-
-#undef INLINE
-#define INLINE      static inline __attribute__((always_inline))
 
 extern struct pty_t *pty_slaves[MAX_PTY_DEVICES];
 
 /*
  * adjust row and column (if needed) after outputting a char.
  */
-INLINE void tty_adjust_indices(struct tty_t *tty)
+STATIC_INLINE void tty_adjust_indices(struct tty_t *tty)
 {
     if(tty->col >= tty->window.ws_col)
     {
@@ -67,34 +65,36 @@ INLINE void tty_adjust_indices(struct tty_t *tty)
  * Input:
  *    q => terminal device queue to sleep on
  */
-INLINE int sleep_if_empty(struct tty_t *tty, struct kqueue_t *q, int timeout_ticks)
+STATIC_INLINE int sleep_if_empty(/* struct tty_t *tty, */ struct kqueue_t *q, int timeout_ticks)
 {
-    struct task_t *ct = cur_task;
-    volatile int sig = ct->woke_by_signal;
+    volatile int sig = this_core->cur_task->woke_by_signal;
     volatile int empty = ttybuf_is_empty(q);
     
     // sleep until we get a signal then check if buffer is still empty
     while(!sig && empty)
     {
-        tty->waiting_task = ct;
+        //tty->waiting_task = ct;
 
         if(timeout_ticks)
         {
-            if(clock_wait(&waiter_head[0], ct->pid, timeout_ticks, 0) == 0)
+            if(clock_wait(&waiter_head[0], this_core->cur_task->pid, timeout_ticks, 0) == 0)
             {
-                tty->waiting_task = NULL;
-                return -ETIMEDOUT;
+                empty = ttybuf_is_empty(q);
+                return empty ? -ETIMEDOUT : 0;
+                //tty->waiting_task = NULL;
+                //return -ETIMEDOUT;
             }
         }
         else
         {
-            //block_task(q, 1);
-            block_task2(q, 20);
+            selrecord(&q->sel);
+            //block_task2(q, PIT_FREQUENCY);
+            block_task(q, 1);
         }
 
-        tty->waiting_task = NULL;
+        //tty->waiting_task = NULL;
 
-        sig = ct->woke_by_signal;
+        sig = this_core->cur_task->woke_by_signal;
         empty = ttybuf_is_empty(q);
     }
     
@@ -108,7 +108,7 @@ INLINE int sleep_if_empty(struct tty_t *tty, struct kqueue_t *q, int timeout_tic
  * Input:
  *    q => terminal device queue to sleep on
  */
-INLINE void sleep_if_full(struct kqueue_t *q)
+STATIC_INLINE void sleep_if_full(struct kqueue_t *q)
 {
     // don't sleep if queue is not full
     if(!ttybuf_is_full(q))
@@ -116,17 +116,17 @@ INLINE void sleep_if_full(struct kqueue_t *q)
         return;
     }
 
-    struct task_t *ct = cur_task;
-    volatile int sig = ct->woke_by_signal;
+    volatile int sig = this_core->cur_task->woke_by_signal;
     volatile int space = ttybuf_has_space_for(q, 128);
     
     // make sure we have space for at least 128 more chars (arbitrary number)
     while(!sig && !space)
     {
-        //block_task(q, 1);
-        block_task2(q, 20);
+        selrecord(&q->sel);
+        //block_task2(q, PIT_FREQUENCY);
+        block_task(q, 1);
 
-        sig = ct->woke_by_signal;
+        sig = this_core->cur_task->woke_by_signal;
         space = ttybuf_has_space_for(q, 128);
     }
 }
@@ -143,7 +143,7 @@ INLINE void sleep_if_full(struct kqueue_t *q)
  *
  * @return  pointer to the terminal device's tty struct.
  */
-INLINE struct tty_t *get_struct_tty(dev_t dev)
+STATIC_INLINE struct tty_t *get_struct_tty(dev_t dev)
 {
     int minor = MINOR(dev);
     int major = MAJOR(dev);
@@ -151,8 +151,8 @@ INLINE struct tty_t *get_struct_tty(dev_t dev)
     // ttyx device (major 5, minor 0)
     if(major == 5 && minor == 0)
     {
-        minor = MINOR(cur_task->ctty);
-        major = MAJOR(cur_task->ctty);
+        minor = MINOR(this_core->cur_task->ctty);
+        major = MAJOR(this_core->cur_task->ctty);
     }
 
     // tty devices (major 4)

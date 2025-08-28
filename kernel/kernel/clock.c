@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: clock.c
  *    This file is part of LaylaOS.
@@ -45,6 +45,7 @@
 #include <kernel/asm.h>
 #include <kernel/softint.h>
 #include <kernel/mutex.h>
+#include <kernel/user.h>
 #include <mm/kheap.h>
 
 #include "task_funcs.c"
@@ -56,11 +57,11 @@ struct clock_waiter_t waiter_head[2];
 time_t startup_time = 0;
 struct sys_clock monotonic_time;
 struct task_t *sleep_task = NULL;
-struct kernel_mutex_t waiter_mutex = { 0, };
+volatile struct kernel_mutex_t waiter_mutex = { 0, };
 volatile int waiter_list_busy = 0;
 volatile int waiter_mutex_locks = 0;
 
-struct task_t *softsleep_task = NULL;
+volatile struct task_t *softsleep_task = NULL;
 struct clock_waiter_t *waiter_table = NULL;
 struct clock_waiter_t *last_used_waiter = NULL;
 
@@ -211,7 +212,7 @@ void softsleep_task_func(void *unused)
 /*
  * Handler for syscall clock_getres().
  */
-int syscall_clock_getres(clockid_t clock_id, struct timespec *res)
+long syscall_clock_getres(clockid_t clock_id, struct timespec *res)
 {
     if(!res)
     {
@@ -237,9 +238,9 @@ int syscall_clock_getres(clockid_t clock_id, struct timespec *res)
 }
 
 
-int do_clock_gettime(clockid_t clock_id, struct timespec *tp)
+long do_clock_gettime(clockid_t clock_id, struct timespec *tp)
 {
-    int res = 0;
+    long res = 0;
 
     /*
      * NOTE: CLOCK_REALTIME: Its time represents seconds and nanoseconds
@@ -260,8 +261,7 @@ int do_clock_gettime(clockid_t clock_id, struct timespec *tp)
     else if(clock_id == CLOCK_PROCESS_CPUTIME_ID ||
             clock_id == CLOCK_THREAD_CPUTIME_ID)
     {
-        struct task_t *ct = cur_task;
-        time_t t = (ct->user_time + ct->sys_time);
+        time_t t = (this_core->cur_task->user_time + this_core->cur_task->sys_time);
 
         tp->tv_sec  = t / PIT_FREQUENCY;
         tp->tv_nsec = (t % PIT_FREQUENCY) * 1000000000 /* 1e9 */;
@@ -279,9 +279,9 @@ int do_clock_gettime(clockid_t clock_id, struct timespec *tp)
 /*
  * Handler for syscall clock_gettime().
  */
-int syscall_clock_gettime(clockid_t clock_id, struct timespec *tp)
+long syscall_clock_gettime(clockid_t clock_id, struct timespec *tp)
 {
-    int res;
+    long res;
     struct timespec tp2;
     
     if(!tp)
@@ -300,18 +300,16 @@ int syscall_clock_gettime(clockid_t clock_id, struct timespec *tp)
 }
 
 
-int do_clock_settime(clockid_t clock_id, struct timespec *tp)
+long do_clock_settime(clockid_t clock_id, struct timespec *tp)
 {
-    struct task_t *ct = cur_task;
-
-    if(!tp || !ct)
+    if(!tp || !this_core->cur_task)
     {
         return -EINVAL;
     }
     
     if(clock_id == CLOCK_REALTIME)
     {
-        if(!suser(ct))
+        if(!suser(this_core->cur_task))
         {
             return -EPERM;
         }
@@ -383,9 +381,9 @@ int do_clock_settime(clockid_t clock_id, struct timespec *tp)
 /*
  * Handler for syscall clock_settime().
  */
-int syscall_clock_settime(clockid_t clock_id, struct timespec *tp)
+long syscall_clock_settime(clockid_t clock_id, struct timespec *tp)
 {
-    int res;
+    long res;
     struct timespec tp2;
 
     if(!tp)
@@ -411,7 +409,7 @@ void clock_check_waiters(void)
 
     /* volatile */ struct clock_waiter_t *w;
 
-    if(waiter_list_busy)
+    if(waiter_list_busy || softsleep_task == NULL)
     {
         return;
     }
@@ -436,6 +434,8 @@ void clock_check_waiters(void)
 
 	if(unblock)
 	{
+        unblock_task_no_preempt(softsleep_task);
+#if 0
         /*
          * This is the code from unblock_kernel_task(). We inline it
          * here for performance, as this function is called repeatedly
@@ -448,6 +448,7 @@ void clock_check_waiters(void)
             remove_from_queue(softsleep_task);
             append_to_ready_queue(softsleep_task);
         }
+#endif
 	}
 }
 
@@ -455,7 +456,7 @@ void clock_check_waiters(void)
 /*
  * Get clock_waiter_t struct for a task.
  */
-struct clock_waiter_t *get_waiter(struct clock_waiter_t *head,
+struct clock_waiter_t *get_waiter(volatile struct clock_waiter_t *head,
                                   pid_t pid, ktimer_t timerid,
                                   int64_t *remaining_ticks, int unlink)
 {
@@ -499,11 +500,11 @@ struct clock_waiter_t *get_waiter(struct clock_waiter_t *head,
 }
 
 
-int clock_wait(struct clock_waiter_t *head, pid_t pid,
-               int64_t delta, ktimer_t timerid)
+long clock_wait(struct clock_waiter_t *head, pid_t pid,
+                int64_t delta, ktimer_t timerid)
 {
     struct clock_waiter_t *w, *prev, *next;
-    struct task_t *task;
+    //struct task_t *task;
     
     elevated_priority_lock_recursive(&waiter_mutex, waiter_mutex_locks);
     waiter_list_busy = 1;
@@ -572,8 +573,11 @@ int clock_wait(struct clock_waiter_t *head, pid_t pid,
 	 */
     (void)get_waiter(head, w->pid, w->timerid, NULL, 1);
 	
+	/*
 	task = get_task_by_id(pid);
     delta = (task && task->woke_by_signal) ? w->delta : 0;
+    */
+    delta = (w->delta > 0) ? w->delta : 0;
 
     waiter_free(w);
 
@@ -589,9 +593,9 @@ int clock_wait(struct clock_waiter_t *head, pid_t pid,
  *         signal handler, regardless of the use of the sigaction(2)
  *         SA_RESTART flag.
  */
-int do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags, 
-                       struct timespec *__rqtp, struct timespec *__rmtp,
-                       ktimer_t timerid)
+long do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags, 
+                        struct timespec *__rqtp, struct timespec *__rmtp,
+                        ktimer_t timerid)
 {
     struct timespec rqtp;
     struct timespec rmtp;
@@ -671,13 +675,18 @@ int do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags,
 
     if(nticks && (res_nticks = clock_wait(head, pid, nticks, timerid)) != 0)
     {
-        if(__rmtp)
-        {
-            ticks_to_timespec(nticks, &rmtp);
-            A_memcpy(__rmtp, &rmtp, sizeof(struct timespec));
-        }
+    	volatile struct task_t *task = get_task_by_id(pid);
 
-        return -EINTR;
+        if(task && task->woke_by_signal)
+        {
+            if(__rmtp)
+            {
+                ticks_to_timespec(res_nticks, &rmtp);
+                A_memcpy(__rmtp, &rmtp, sizeof(struct timespec));
+            }
+
+            return -EINTR;
+        }
     }
 
     return 0;
@@ -687,19 +696,19 @@ int do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags,
 /*
  * Handler for syscall clock_nanosleep().
  */
-int syscall_clock_nanosleep(clockid_t clock_id, int flags, 
-                            struct timespec *__rqtp, struct timespec *__rmtp)
+long syscall_clock_nanosleep(clockid_t clock_id, int flags, 
+                             struct timespec *__rqtp, struct timespec *__rmtp)
 {
     struct timespec rqtmp, rmtmp, *rqptr = NULL;
-    int res;
-    
+    long res;
+
     if(__rqtp)
     {
         COPY_FROM_USER(&rqtmp, __rqtp, sizeof(struct timespec));
         rqptr = &rqtmp;
     }
 
-    res = do_clock_nanosleep(cur_task->pid, clock_id, flags, rqptr, &rmtmp, 0);
+    res = do_clock_nanosleep(this_core->cur_task->pid, clock_id, flags, rqptr, &rmtmp, 0);
 
     if(res == -EINTR && __rmtp)
     {
@@ -713,7 +722,7 @@ int syscall_clock_nanosleep(clockid_t clock_id, int flags,
 /*
  * Handler for syscall nanosleep().
  */
-int syscall_nanosleep(struct timespec *__rqtp, struct timespec *__rmtp)
+long syscall_nanosleep(struct timespec *__rqtp, struct timespec *__rmtp)
 {
     return syscall_clock_nanosleep(CLOCK_REALTIME, 0, __rqtp, __rmtp);
 }
