@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mlock.c
  *    This file is part of LaylaOS.
@@ -42,11 +42,10 @@
 #include <kernel/task.h>
 
 
-static int update_mlock(void *addr, size_t len, int unlock)
+static long update_mlock(void *addr, size_t len, int unlock)
 {
     virtual_addr aligned_addr, aligned_size, end;
     struct memregion_t *memregion;
-    struct task_t *ct = cur_task;
     
     aligned_addr = align_down((virtual_addr)addr);
     aligned_size = align_up((virtual_addr)len);
@@ -59,7 +58,7 @@ static int update_mlock(void *addr, size_t len, int unlock)
         return -EINVAL;
     }
 
-    if((memregion = memregion_containing(ct, aligned_addr)) == NULL)
+    if((memregion = memregion_containing(this_core->cur_task, aligned_addr)) == NULL)
     {
         return -ENOMEM;
     }
@@ -80,7 +79,7 @@ static int update_mlock(void *addr, size_t len, int unlock)
 /*
  * Handler for syscall mlock().
  */
-int syscall_mlock(void *addr, size_t len)
+long syscall_mlock(void *addr, size_t len)
 {
     return update_mlock(addr, len, 0);
 }
@@ -89,7 +88,7 @@ int syscall_mlock(void *addr, size_t len)
 /*
  * Handler for syscall mlock2().
  */
-int syscall_mlock2(void *addr, size_t len, unsigned int flags)
+long syscall_mlock2(void *addr, size_t len, unsigned int flags)
 {
     // we check flags though we don't use them yet
     if(flags & ~MLOCK_ONFAULT)
@@ -104,20 +103,19 @@ int syscall_mlock2(void *addr, size_t len, unsigned int flags)
 /*
  * Handler for syscall munlock().
  */
-int syscall_munlock(void *addr, size_t len)
+long syscall_munlock(void *addr, size_t len)
 {
     return update_mlock(addr, len, 1);
 }
 
 
-int update_mlockall(int unlock)
+long update_mlockall(int unlock)
 {
     register struct memregion_t *memregion;
-    struct task_t *ct = cur_task;
 
-    kernel_mutex_lock(&(ct->mem->mutex));
+    kernel_mutex_lock(&(this_core->cur_task->mem->mutex));
 
-    for(memregion = ct->mem->first_region;
+    for(memregion = this_core->cur_task->mem->first_region;
         memregion != NULL;
         memregion = memregion->next)
     {
@@ -131,7 +129,7 @@ int update_mlockall(int unlock)
         }
     }
 
-    kernel_mutex_unlock(&(ct->mem->mutex));
+    kernel_mutex_unlock(&(this_core->cur_task->mem->mutex));
 
     return 0;
 }
@@ -142,7 +140,7 @@ int update_mlockall(int unlock)
 /*
  * Handler for syscall mlockall().
  */
-int syscall_mlockall(int flags)
+long syscall_mlockall(int flags)
 {
     if(flags & ~VALID_FLAGS)
     {
@@ -158,7 +156,7 @@ int syscall_mlockall(int flags)
 /*
  * Handler for syscall munlockall().
  */
-int syscall_munlockall(void)
+long syscall_munlockall(void)
 {
     return update_mlockall(1);
 }

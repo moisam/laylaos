@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: kheap.c
  *    This file is part of LaylaOS.
@@ -35,7 +35,10 @@
 #include <mm/mmap.h>
 
 
-struct kernel_mutex_t kheap_lock;
+volatile struct kernel_mutex_t kheap_lock;
+
+static void *sbrk_top = (void *)KHEAP_START;
+static int cur_heap_sz = 0;
 
 
 /*
@@ -49,45 +52,47 @@ void kheap_init(void)
 }
 
 
-/*
- * A priority inversion issue happens when one of our higher priority
- * kernel tasks try to lock this mutex while a lower priority user task
- * has it locked. To avoid this, we temporarily assign the task holding
- * the lock a high priority, which should be held for a very short
- * time only to avoid starving other processes. This is only one solution,
- * known as the priority ceiling protocol.
- *
- * See: https://en.wikipedia.org/wiki/Priority_inversion
- */
-
-/*
 void kfree(void *p)
 {
     int old_prio = 0, old_policy = 0;
-    elevate_priority(cur_task, &old_prio, &old_policy);
+    elevate_priority(this_core->cur_task, &old_prio, &old_policy);
 
     kernel_mutex_lock(&kheap_lock);
     dlfree(p);
     kernel_mutex_unlock(&kheap_lock);
 
-    restore_priority(cur_task, old_prio, old_policy);
+    restore_priority(this_core->cur_task, old_prio, old_policy);
 }
 
 
 void *kmalloc(size_t sz)
 {
     int old_prio = 0, old_policy = 0;
-    elevate_priority(cur_task, &old_prio, &old_policy);
+    elevate_priority(this_core->cur_task, &old_prio, &old_policy);
 
     kernel_mutex_lock(&kheap_lock);
     void *res = dlmalloc(sz);
     kernel_mutex_unlock(&kheap_lock);
 
-    restore_priority(cur_task, old_prio, old_policy);
+    restore_priority(this_core->cur_task, old_prio, old_policy);
 
     return res;
 }
-*/
+
+
+void *krealloc(void *addr, size_t sz)
+{
+    int old_prio = 0, old_policy = 0;
+    elevate_priority(this_core->cur_task, &old_prio, &old_policy);
+
+    kernel_mutex_lock(&kheap_lock);
+    void *res = dlrealloc(addr, sz);
+    kernel_mutex_unlock(&kheap_lock);
+
+    restore_priority(this_core->cur_task, old_prio, old_policy);
+
+    return res;
+}
 
 
 void *kcalloc(size_t m, size_t n)
@@ -101,13 +106,13 @@ void *kcalloc(size_t m, size_t n)
     }
     
     int old_prio = 0, old_policy = 0;
-    elevate_priority(cur_task, &old_prio, &old_policy);
+    elevate_priority(this_core->cur_task, &old_prio, &old_policy);
 
     kernel_mutex_lock(&kheap_lock);
     void *res = dlmalloc(sz);
     kernel_mutex_unlock(&kheap_lock);
 
-    restore_priority(cur_task, old_prio, old_policy);
+    restore_priority(this_core->cur_task, old_prio, old_policy);
 
     if(res)
     {
@@ -118,28 +123,11 @@ void *kcalloc(size_t m, size_t n)
 }
 
 
-/*
-void *krealloc(void *addr, size_t sz)
-{
-    int old_prio = 0, old_policy = 0;
-    elevate_priority(cur_task, &old_prio, &old_policy);
-
-    kernel_mutex_lock(&kheap_lock);
-    void *res = dlrealloc(addr, sz);
-    kernel_mutex_unlock(&kheap_lock);
-
-    restore_priority(cur_task, old_prio, old_policy);
-
-    return res;
-}
-*/
-
+#pragma GCC push_options
+#pragma GCC optimize("O0")
 
 void *kheap_brk(int incr)
 {
-    static void *sbrk_top = (void *)KHEAP_START;
-    static int cur_heap_sz = 0;
-
     if(incr > 0)
     {
         virtual_addr old_end_data = KHEAP_START + cur_heap_sz;
@@ -151,7 +139,7 @@ void *kheap_brk(int incr)
         // now alloc memory for the new pages, starting from the current
         // brk (aligned to the nearest lower page size), up to the new
         // brk address.
-        virtual_addr i;
+        volatile virtual_addr i;
         
         for(i = align_down(old_end_data);
             i < end_data_seg; i += PAGE_SIZE)
@@ -184,9 +172,18 @@ void *kheap_brk(int incr)
     else if(incr < 0)
     {
         // we don't currently support shrink behavior
+        __asm__ __volatile__("xchg %%bx, %%bx":::);
         return (void *) MFAIL;
     }
 
     return sbrk_top;
+}
+
+#pragma GCC pop_options
+
+
+void kheap_print(void)
+{
+    printk("cur_heap_sz %d, sbrk_top 0x%lx\n", cur_heap_sz, sbrk_top);
 }
 

@@ -538,7 +538,7 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 #ifdef DEBUG
 #if ABORT_ON_ASSERT_FAILURE
 #undef assert
-#define assert(x) if(!(x)) ABORT
+#define assert(x) if(!(x)) { switch_tty(1); printk("KHEAP ASSERT FAILURE\n"); ABORT; }
 #else /* ABORT_ON_ASSERT_FAILURE */
 #include <assert.h>
 #endif /* ABORT_ON_ASSERT_FAILURE */
@@ -1864,11 +1864,11 @@ static void reset_on_error(mstate m);
 #else /* PROCEED_ON_ERROR */
 
 #ifndef CORRUPTION_ERROR_ACTION
-#define CORRUPTION_ERROR_ACTION(m) ABORT
+#define CORRUPTION_ERROR_ACTION(m) { switch_tty(1); printk("CORRUPT KHEAP\n"); ABORT; }
 #endif /* CORRUPTION_ERROR_ACTION */
 
 #ifndef USAGE_ERROR_ACTION
-#define USAGE_ERROR_ACTION(m,p) ABORT
+#define USAGE_ERROR_ACTION(m,p) { switch_tty(1); printk("KHEAP ERROR\n"); ABORT; }
 #endif /* USAGE_ERROR_ACTION */
 
 #endif /* PROCEED_ON_ERROR */

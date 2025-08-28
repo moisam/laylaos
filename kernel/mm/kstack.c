@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: kstack.c
  *    This file is part of LaylaOS.
@@ -54,7 +54,7 @@ int get_kstack(physical_addr *phys, virtual_addr *virt)
     *virt = 0;
     *phys = 0;
 
-
+    /*
     if((*virt = vmmngr_alloc_and_map(PAGE_SIZE * 2, 0,
                                      PTE_FLAGS_PWU, phys, 
                                      REGION_KSTACK)) == 0)
@@ -65,8 +65,8 @@ int get_kstack(physical_addr *phys, virtual_addr *virt)
 
     vmmngr_change_page_flags(*virt, PAGE_SIZE, 0);
     *virt += (PAGE_SIZE * 2);
+    */
 
-    /*
     if(get_next_addr(phys, virt, PTE_FLAGS_PWU, REGION_KSTACK) != 0)
     {
         // nothing found
@@ -75,7 +75,6 @@ int get_kstack(physical_addr *phys, virtual_addr *virt)
 
     *virt += PAGE_SIZE;
     *phys += PAGE_SIZE;
-    */
 
     kstack_count++;
 
@@ -97,16 +96,22 @@ int get_kstack(physical_addr *phys, virtual_addr *virt)
  */
 void free_kstack(virtual_addr vaddr)
 {
+    struct kernel_region_t *r = &kernel_regions[REGION_KSTACK];
+
+    elevated_priority_lock_recursive(r->mutex, r->lock_count);
+
     vaddr -= PAGE_SIZE;
     pt_entry *pt = get_page_entry((void *)vaddr);
     vmmngr_free_page(pt);
     vmmngr_flush_tlb_entry(vaddr);
 
-
+    /*
     pt = get_page_entry((void *)(vaddr - PAGE_SIZE));
     vmmngr_free_page(pt);
     vmmngr_flush_tlb_entry(vaddr);
+    */
 
+    elevated_priority_unlock_recursive(r->mutex, r->lock_count);
 
     kstack_count--;
 }

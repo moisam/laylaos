@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mmngr_phys.c
  *    This file is part of LaylaOS.
@@ -31,15 +31,16 @@
 #include <kernel/mutex.h>
 #include <kernel/modules.h>
 #include <kernel/vga.h>
+#include <kernel/pcache.h>
 #include <mm/mmngr_phys.h>
 #include <mm/mmngr_virtual.h>
 #include <mm/mmap.h>
 #include <gui/vbe.h>
 #include <string.h>
 
-struct kernel_mutex_t physmem_lock;
+volatile struct kernel_mutex_t physmem_lock;
 
-virtual_addr placement_address = (virtual_addr)&kernel_end;
+//virtual_addr placement_address = (virtual_addr)&kernel_end;
 
 //physical_addr zeropage_phys = 0;
 
@@ -80,11 +81,14 @@ static volatile size_t _mmngr_max_blocks = 0;
 static volatile size_t _mmngr_available_blocks = 0;
 
 // memory map bit array. Each bit represents a memory block
+static volatile uint32_t __mmngr_memory_map[0x24000];
 static volatile uint32_t *_mmngr_memory_map = 0;
 
 // How many items are in the memory map bit array
 static volatile size_t _mmngr_memory_map_size = 0;
 
+// Index of the lowest available frame address (to speed lookups)
+static volatile uintptr_t lowest_available_index = 0;
 
 // set any bit (frame) within the memory map bit array
 static void mmap_set(uintptr_t bit)
@@ -113,42 +117,27 @@ static int mmap_test(uintptr_t bit)
 // finds first free frame in the bit array and returns its index
 static inline uintptr_t mmap_first_free(void)
 {
-    static volatile size_t last_index = 0;
-    size_t i, count = _mmngr_memory_map_size;
-
-    if(last_index >= count)
-    {
-        last_index = 0;
-    }
-
-loop:
+    volatile size_t i;
+    volatile uint32_t j;
 
 	// find the first free bit
-	for(i = last_index; i < count; i++)
+	for(i = lowest_available_index; i < _mmngr_memory_map_size; i++)
 	{
 		if(_mmngr_memory_map[i] != 0xffffffff)
 		{
-			for(/* volatile */ uint32_t j = 0; j < 32; j++)
+			for(j = 0; j < 32; j++)
 			{
 			    // test each bit in the dword
-				uint32_t bit = (uint32_t)1 << j;
-				if(!(_mmngr_memory_map[i] & bit))
+				if(!(_mmngr_memory_map[i] & ((uint32_t)1 << j)))
 				{
-					last_index = i;
+					lowest_available_index = i;
 					return i * 4 * 8 + j;
 				}
 			}
 		}
 	}
 
-    if(count == _mmngr_memory_map_size && last_index != 0)
-    {
-        count = last_index;
-        last_index = 0;
-        goto loop;
-    }
-
-	return -1;
+	return 0;
 }
 
 // finds first free "size" number of frames and returns its index
@@ -156,7 +145,7 @@ static uintptr_t mmap_first_free_s(size_t size)
 {
 	if(size == 0)
 	{
-		return -1;
+		return 0;
 	}
 
 	if(size == 1)
@@ -173,9 +162,7 @@ static uintptr_t mmap_first_free_s(size_t size)
 			for(volatile uint32_t j = 0; j < 32; j++)
 			{
 			    // test each bit in the dword
-				uint32_t bit = (uint32_t)1 << j;
-
-				if(!(_mmngr_memory_map[i] & bit))
+				if(!(_mmngr_memory_map[i] & ((uint32_t)1 << j)))
 				{
 					uintptr_t startingBit = i * 32;
 					
@@ -205,140 +192,84 @@ static uintptr_t mmap_first_free_s(size_t size)
 		}
 	}
 
-	return -1;
+	return 0;
 }
 
 
-/*
- * Initialize the physical memory manager.
- */
-void pmmngr_init(multiboot_info_t *mbd, physical_addr bitmap)
+#ifdef MULTIBOOT2_BOOTLOADER_MAGIC
+
+static void multiboot2_check_boot_modules(unsigned long addr)
 {
-    uintptr_t highest_addr = 0;
+    struct multiboot_tag *tag;
+    struct multiboot_tag_module *mod;
 
-    init_kernel_mutex(&physmem_lock);
-
-    if(!BIT_SET(mbd->flags, 6))
+    for(tag = (struct multiboot_tag *)(addr + 8);
+       tag->type != MULTIBOOT_TAG_TYPE_END;
+       tag = (struct multiboot_tag *)((multiboot_uint8_t *)tag 
+                                       + ((tag->size + 7) & ~7)))
     {
-        kpanic("pmm: missing bootloader memory map\n");
-        empty_loop();
-    }
-
-    multiboot_memory_map_t *mmap = 
-                (multiboot_memory_map_t *)(uintptr_t)mbd->mmap_addr;
-
-    while((uintptr_t)mmap < mbd->mmap_addr + mbd->mmap_length)
-    {
-	    if(/* mmap->type == 1 && */ mmap->len && 
-	       ((uintptr_t)mmap->addr + mmap->len) > highest_addr)
-	    {
-            highest_addr = (uintptr_t)mmap->addr + mmap->len;
-        }
-
-	    if(mmap->type == 1 && mmap->len && 
-	       ((uintptr_t)mmap->addr + mmap->len) > highest_usable_addr)
-	    {
-            highest_usable_addr = (uintptr_t)mmap->addr + mmap->len;
-        }
-
-        mmap = (multiboot_memory_map_t *)
-                    ((uintptr_t)mmap + mmap->size + sizeof(mmap->size));
-    }
-    
-    bitmap = align_up((virtual_addr)bitmap);
-
-    _mmngr_memory_size = highest_addr / 1024;
-	_mmngr_memory_map	=	(uint32_t *)bitmap;
-	_mmngr_max_blocks	=	(_mmngr_memory_size * 1024) / PMMNGR_BLOCK_SIZE;
-	_mmngr_used_blocks	=	_mmngr_max_blocks;
-	
-	_mmngr_memory_map_size = (_mmngr_max_blocks + 31) / 32;
-	
-	// account for the memory bitmap which might take 32 pages 
-	// (for 4GB address space)
-	placement_address = align_up((virtual_addr)bitmap + 
-	                             (_mmngr_memory_map_size * 4));
-	kernel_size += (placement_address - (virtual_addr)&kernel_end);
-
-	// By default, all of memory is in use
-	memset((void *)_mmngr_memory_map, 0xff, _mmngr_memory_map_size * 4);
-
-    // get complete memory map
-    printk("\nReading memory map:\n");
-    mmap = (multiboot_memory_map_t *)(uintptr_t)mbd->mmap_addr;
-
-    while((uintptr_t)mmap < mbd->mmap_addr + mbd->mmap_length)
-    {
-	    char *type = mem_type[0];
-
-	    switch(mmap->type)
+        if(tag->type != MULTIBOOT_TAG_TYPE_MODULE)
         {
-	        case 0:
-	        case 1:
-	        case 2:
-	        case 3:
-	        case 4:
-            case 5:
-	            type = mem_type[mmap->type];
-                break;
-
-            default:
-                type = mem_type[0];
-                break;
-	    }
-	    
-	    physical_addr start = mmap->addr;
-	    size_t len = mmap->len;
-
-        printk("    addr: " _XPTR_ ", len: " _XPTR_ ", type: %u [%s]\n", 
-                   start, len,
-    	           (unsigned)mmap->type, type);
-
-	    if(mmap->type == 1)		// Available memory, mark it as such
-	    {
-            pmmngr_init_region(start, len);
-            _mmngr_available_blocks += (align_up(len) / PMMNGR_BLOCK_SIZE);
+            continue;
         }
 
-        mmap = (multiboot_memory_map_t *)((uintptr_t)mmap + 
-                                           mmap->size + sizeof(mmap->size));
+        mod = (struct multiboot_tag_module *)tag;
+
+        printk("      mod_start = " _XPTR_ ", mod_end = " _XPTR_ 
+               ", cmdline = '%s'\n",
+                    (uintptr_t)mod->mod_start,
+                    (uintptr_t)mod->mod_end,
+                    (char *)(uintptr_t)mod->cmdline);
+
+        uintptr_t aligned_start = mod->mod_start;
+
+        if((aligned_start & 0x00000FFF))
+        {
+            // Align the start address;
+            aligned_start &= ~0x0FFF;
+        }
+
+        pmmngr_deinit_region(aligned_start, 
+                                 (mod->mod_end - aligned_start));
+            
+        // store the info in our modules array
+        // we can only store upto MAX_BOOT_MODULES modules
+        if(boot_module_count >= MAX_BOOT_MODULES)
+        {
+            continue;
+        }
+
+        boot_module[boot_module_count].pstart = mod->mod_start;
+        boot_module[boot_module_count].pend = mod->mod_end;
+
+        // make sure we don't overflow our limited space!
+        if(strlen((char *)(uintptr_t)mod->cmdline) >= MAX_MODULE_CMDLINE)
+        {
+            memcpy(boot_module[boot_module_count].cmdline, 
+                        (char *)(uintptr_t)mod->cmdline,
+                        MAX_MODULE_CMDLINE - 1);
+            boot_module[boot_module_count].cmdline[MAX_MODULE_CMDLINE - 1] = '\0';
+        }
+        else
+        {
+            strcpy(boot_module[boot_module_count].cmdline, 
+                                    (char *)(uintptr_t)mod->cmdline);
+        }
+
+        boot_module_count++;
     }
-    
-    /*
-     * De-init kernel memory (mark it as used).
-     * Also, de-init the first 1Mib, as this contains important things like
-     * the main BIOS area.
-     */
-    pmmngr_deinit_region(0, 0x100000 + kernel_size);
 
-    printk("pmm: kernel memory (0x100000 - 0x%x), size 0x%x bytes..\n", 
-            0x100000 + kernel_size, kernel_size);
-    
-    // mark VGA video memory area as used
-    //pmmngr_deinit_region(VGA_MEMORY_PHYSICAL, VGA_MEMORY_SIZE);
-    pmmngr_deinit_region(VGA_MEMORY_PHYSICAL, 
-                            STANDARD_VGA_WIDTH * STANDARD_VGA_HEIGHT * 2);
+    printk("    mods_count = %d\n", (int) boot_module_count);
+}
 
-    if(!using_ega())
-    {
-        // if we have VBE info, mark VBE video memory area as used
-        pmmngr_deinit_region((physical_addr)vbe_framebuffer.phys_addr,
-                                            vbe_framebuffer.memsize);
-    }
-    
-    // de-init modules memory (mark it as used), so we won't override our
-    // loaded modules when we allocate memory for the initial page directory
-    // and page tables later when we init the virtual memory manager!
-    printk("\nChecking loaded modules..\n");
+#else       /* !MULTIBOOT2_BOOTLOADER_MAGIC */
 
+static void multiboot_check_boot_modules(multiboot_info_t *mbd)
+{
     if(BIT_SET(mbd->flags, 3))
     {
         multiboot_module_t *mod;
         unsigned int i;
-        boot_module_count = 0;
-
-        memset(boot_module, 0, 
-                sizeof(struct boot_module_t) * MAX_BOOT_MODULES);
         
         printk("    mods_count = %d, mods_addr = 0x%x\n",
                     (int) mbd->mods_count, (int) mbd->mods_addr);
@@ -390,7 +321,192 @@ void pmmngr_init(multiboot_info_t *mbd, physical_addr bitmap)
             }
         }
     }
-    else
+}
+
+#endif      /* MULTIBOOT2_BOOTLOADER_MAGIC */
+
+
+/*
+ * Initialize the physical memory manager.
+ */
+void pmmngr_init(unsigned long addr, physical_addr bitmap)
+{
+    multiboot_memory_map_t *mmap;
+    uintptr_t highest_addr = 0;
+
+    init_kernel_mutex(&physmem_lock);
+
+#ifdef MULTIBOOT2_BOOTLOADER_MAGIC
+
+    struct multiboot_tag *tag;
+    struct multiboot_tag_mmap *mmtag;
+
+    if(!(tag = find_tag_of_type(addr, MULTIBOOT_TAG_TYPE_MMAP)))
+    {
+        kpanic("pmm: missing bootloader memory map\n");
+        empty_loop();
+    }
+
+    mmtag = (struct multiboot_tag_mmap *)tag;
+    mmap = (multiboot_memory_map_t *)mmtag->entries;
+
+    while((uintptr_t)mmap < (uintptr_t)tag + tag->size)
+    {
+	    if(/* mmap->type == 1 && */ mmap->len && 
+	       ((uintptr_t)mmap->addr + mmap->len) > highest_addr)
+	    {
+            highest_addr = (uintptr_t)mmap->addr + mmap->len;
+        }
+
+	    if(mmap->type == 1 && mmap->len && 
+	       ((uintptr_t)mmap->addr + mmap->len) > highest_usable_addr)
+	    {
+            highest_usable_addr = (uintptr_t)mmap->addr + mmap->len;
+        }
+
+        mmap = (multiboot_memory_map_t *)((uintptr_t)mmap + mmtag->entry_size);
+    }
+
+#else       /* !MULTIBOOT2_BOOTLOADER_MAGIC */
+
+    multiboot_info_t *mbd = (multiboot_info_t *)addr;
+
+    if(!BIT_SET(mbd->flags, 6))
+    {
+        kpanic("pmm: missing bootloader memory map\n");
+        empty_loop();
+    }
+
+    mmap = (multiboot_memory_map_t *)(uintptr_t)mbd->mmap_addr;
+
+    while((uintptr_t)mmap < mbd->mmap_addr + mbd->mmap_length)
+    {
+	    if(/* mmap->type == 1 && */ mmap->len && 
+	       ((uintptr_t)mmap->addr + mmap->len) > highest_addr)
+	    {
+            highest_addr = (uintptr_t)mmap->addr + mmap->len;
+        }
+
+	    if(mmap->type == 1 && mmap->len && 
+	       ((uintptr_t)mmap->addr + mmap->len) > highest_usable_addr)
+	    {
+            highest_usable_addr = (uintptr_t)mmap->addr + mmap->len;
+        }
+
+        mmap = (multiboot_memory_map_t *)
+                    ((uintptr_t)mmap + mmap->size + sizeof(mmap->size));
+    }
+
+#endif      /* MULTIBOOT2_BOOTLOADER_MAGIC */
+    
+    bitmap = align_up((virtual_addr)bitmap);
+
+    _mmngr_memory_size  =   highest_addr / 1024;
+	//_mmngr_memory_map	=	(uint32_t *)bitmap;
+	_mmngr_memory_map	=   __mmngr_memory_map;
+	_mmngr_max_blocks	=	(_mmngr_memory_size * 1024) / PMMNGR_BLOCK_SIZE;
+	_mmngr_used_blocks	=	_mmngr_max_blocks;
+	
+	_mmngr_memory_map_size = (_mmngr_max_blocks + 31) / 32;
+	
+	// account for the memory bitmap which might take 32 pages 
+	// (for 4GB address space)
+	/*
+	placement_address = align_up((virtual_addr)bitmap + 
+	                             (_mmngr_memory_map_size * 4));
+	kernel_size += (placement_address - (virtual_addr)&kernel_end);
+	*/
+
+	// By default, all of memory is in use
+	memset((void *)_mmngr_memory_map, 0xff, _mmngr_memory_map_size * 4);
+
+    // get complete memory map
+    printk("\nReading memory map:\n");
+
+#ifdef MULTIBOOT2_BOOTLOADER_MAGIC
+    mmap = (multiboot_memory_map_t *)mmtag->entries;
+    while((uintptr_t)mmap < (uintptr_t)tag + tag->size)
+#else       /* !MULTIBOOT2_BOOTLOADER_MAGIC */
+    mmap = (multiboot_memory_map_t *)(uintptr_t)mbd->mmap_addr;
+    while((uintptr_t)mmap < mbd->mmap_addr + mbd->mmap_length)
+#endif      /* MULTIBOOT2_BOOTLOADER_MAGIC */
+    {
+	    char *type = mem_type[0];
+
+	    switch(mmap->type)
+        {
+	        case 0:
+	        case 1:
+	        case 2:
+	        case 3:
+	        case 4:
+            case 5:
+	            type = mem_type[mmap->type];
+                break;
+
+            default:
+                type = mem_type[0];
+                break;
+	    }
+	    
+	    physical_addr start = mmap->addr;
+	    size_t len = mmap->len;
+
+        printk("    addr: " _XPTR_ ", len: " _XPTR_ ", type: %u [%s]\n", 
+                   start, len,
+    	           (unsigned)mmap->type, type);
+
+	    if(mmap->type == 1)		// Available memory, mark it as such
+	    {
+            pmmngr_init_region(start, len);
+            _mmngr_available_blocks += (align_up(len) / PMMNGR_BLOCK_SIZE);
+        }
+
+#ifdef MULTIBOOT2_BOOTLOADER_MAGIC
+        mmap = (multiboot_memory_map_t *)((uintptr_t)mmap + mmtag->entry_size);
+#else       /* !MULTIBOOT2_BOOTLOADER_MAGIC */
+        mmap = (multiboot_memory_map_t *)((uintptr_t)mmap + 
+                                           mmap->size + sizeof(mmap->size));
+#endif      /* MULTIBOOT2_BOOTLOADER_MAGIC */
+    }
+    
+    /*
+     * De-init kernel memory (mark it as used).
+     * Also, de-init the first 1Mib, as this contains important things like
+     * the main BIOS area.
+     */
+    pmmngr_deinit_region(0, 0x100000 + kernel_size);
+
+    printk("pmm: kernel memory (0x100000 - 0x%x), size 0x%x bytes..\n", 
+            0x100000 + kernel_size, kernel_size);
+    
+    // mark VGA video memory area as used
+    //pmmngr_deinit_region(VGA_MEMORY_PHYSICAL, VGA_MEMORY_SIZE);
+    pmmngr_deinit_region(VGA_MEMORY_PHYSICAL, 
+                            STANDARD_VGA_WIDTH * STANDARD_VGA_HEIGHT * 2);
+
+    if(!using_ega())
+    {
+        // if we have VBE info, mark VBE video memory area as used
+        pmmngr_deinit_region((physical_addr)vbe_framebuffer.phys_addr,
+                                            vbe_framebuffer.memsize);
+    }
+
+    // de-init modules memory (mark it as used), so we won't override our
+    // loaded modules when we allocate memory for the initial page directory
+    // and page tables later when we init the virtual memory manager!
+    printk("\nChecking loaded modules..\n");
+
+    boot_module_count = 0;
+    memset(boot_module, 0, sizeof(struct boot_module_t) * MAX_BOOT_MODULES);
+
+#ifdef MULTIBOOT2_BOOTLOADER_MAGIC
+    multiboot2_check_boot_modules(addr);
+#else       /* !MULTIBOOT2_BOOTLOADER_MAGIC */
+    multiboot_check_boot_modules(mbd);
+#endif      /* MULTIBOOT2_BOOTLOADER_MAGIC */
+
+    if(boot_module_count == 0)
     {
         printk("    Nothing found!\n");
     }
@@ -415,6 +531,7 @@ void pmmngr_init_region(physical_addr base, size_t size)
 
 	// First block is always set. This insures allocs can't be 0
 	mmap_set(0);
+    __asm__ __volatile__("":::"memory");
 }
 
 
@@ -439,35 +556,75 @@ void pmmngr_deinit_region(physical_addr base, size_t size)
 		    _mmngr_used_blocks++;
         }
 	}
+
+    __asm__ __volatile__("":::"memory");
 }
+
+
+static void pmmngr_reclaim_memory(size_t count)
+{
+    size_t ten_percent = _mmngr_available_blocks / 10;
+    size_t sz = (count > ten_percent) ? count: ten_percent;
+
+    /*
+    flush_cached_pages(NODEV);
+
+    if(pmmngr_get_free_block_count() >= sz)
+    {
+        return;
+    }
+    */
+
+    remove_unreferenced_cached_pages(NULL);
+    remove_old_cached_pages(-1, TWO_MINUTES);
+    lowest_available_index = 0;
+
+    if(pmmngr_get_free_block_count() >= sz)
+    {
+        return;
+    }
+
+    remove_old_cached_pages(-1, ONE_MINUTE);
+
+    if(pmmngr_get_free_block_count() >= sz)
+    {
+        return;
+    }
+
+    // this is really desperate :(
+    remove_old_cached_pages(-1, 10 * PIT_FREQUENCY);
+}
+
 
 void *pmmngr_alloc_block(void)
 {
-	if(pmmngr_get_free_block_count() <= 0)
+    volatile uintptr_t frame;
+    volatile int tries = 0;
+
+try: ;
+
+    elevated_priority_lock(&physmem_lock);
+	frame = mmap_first_free();
+
+	if(frame == (uintptr_t)0)
 	{
-		return 0;	//out of memory
-	}
+        elevated_priority_unlock(&physmem_lock);
 
-    int old_prio = 0, old_policy = 0;
+        if(++tries > 2)
+        {
+            kpanic("pmm: out of memory (pmmngr_alloc_block 2)!\n");
+    		return 0;	//out of memory
+		}
 
-    elevate_priority(cur_task, &old_prio, &old_policy);
-    kernel_mutex_lock(&physmem_lock);
-    
-	volatile uintptr_t frame = mmap_first_free();
-
-	if(frame == (uintptr_t)-1)
-	{
-        kpanic("pmm: out of memory!\n");
-        kernel_mutex_unlock(&physmem_lock);
-        restore_priority(cur_task, old_prio, old_policy);
-		return 0;	//out of memory
+        pmmngr_reclaim_memory(1);
+        goto try;
 	}
 
 	mmap_set(frame);
 	_mmngr_used_blocks++;
+    __asm__ __volatile__("":::"memory");
 
-    kernel_mutex_unlock(&physmem_lock);
-    restore_priority(cur_task, old_prio, old_policy);
+    elevated_priority_unlock(&physmem_lock);
     
 	return (void *)(frame * PMMNGR_BLOCK_SIZE);
 }
@@ -476,15 +633,19 @@ void *pmmngr_alloc_block(void)
 void pmmngr_free_block(void *p)
 {
 	volatile uintptr_t frame = (uintptr_t)p / PMMNGR_BLOCK_SIZE;
-    int old_prio = 0, old_policy = 0;
 
-    elevate_priority(cur_task, &old_prio, &old_policy);
-    kernel_mutex_lock(&physmem_lock);
-    
+    elevated_priority_lock(&physmem_lock);
+
     if(frame_shares[frame] == 0)
     {
     	mmap_unset(frame);
     	_mmngr_used_blocks--;
+    	frame /= 32;
+
+        if(frame < lowest_available_index)
+        {
+            lowest_available_index = frame;
+        }
     }
     else
     {
@@ -492,30 +653,33 @@ void pmmngr_free_block(void *p)
         frame_shares[frame]--;
     }
 
-    kernel_mutex_unlock(&physmem_lock);
-    restore_priority(cur_task, old_prio, old_policy);
+    __asm__ __volatile__("":::"memory");
+    elevated_priority_unlock(&physmem_lock);
 }
 
 
 void *pmmngr_alloc_blocks(size_t size)
 {
-	if(pmmngr_get_free_block_count() <= size)
+    volatile uintptr_t frame;
+    volatile int tries = 0;
+
+try: ;
+
+    elevated_priority_lock(&physmem_lock);
+	frame = mmap_first_free_s(size);
+
+	if(frame == (uintptr_t)0)
 	{
-		return 0;	//not enough space
-	}
+        elevated_priority_unlock(&physmem_lock);
 
-    int old_prio = 0, old_policy = 0;
+        if(++tries > 2)
+        {
+            kpanic("pmm: out of memory (pmmngr_alloc_blocks 2)!\n");
+    		return 0;	//not enough space
+		}
 
-    elevate_priority(cur_task, &old_prio, &old_policy);
-    kernel_mutex_lock(&physmem_lock);
-
-	uintptr_t frame = mmap_first_free_s(size);
-
-	if(frame == (uintptr_t)-1)
-	{
-        kernel_mutex_unlock(&physmem_lock);
-        restore_priority(cur_task, old_prio, old_policy);
-		return 0;	//not enough space
+        pmmngr_reclaim_memory(size);
+        goto try;
 	}
 
 	for(size_t i = 0; i < size; i++)
@@ -524,9 +688,8 @@ void *pmmngr_alloc_blocks(size_t size)
 	}
 
 	_mmngr_used_blocks += size;
-
-    kernel_mutex_unlock(&physmem_lock);
-    restore_priority(cur_task, old_prio, old_policy);
+    __asm__ __volatile__("":::"memory");
+    elevated_priority_unlock(&physmem_lock);
 
 	return (void*)(frame * PMMNGR_BLOCK_SIZE);
 }
@@ -534,17 +697,9 @@ void *pmmngr_alloc_blocks(size_t size)
 
 void *pmmngr_alloc_dma_blocks(size_t size)
 {
-	if(pmmngr_get_free_block_count() <= size)
-	{
-		return 0;	//not enough space
-	}
+    elevated_priority_lock(&physmem_lock);
 
-    int old_prio = 0, old_policy = 0;
-
-    elevate_priority(cur_task, &old_prio, &old_policy);
-    kernel_mutex_lock(&physmem_lock);
-
-	uintptr_t frame = -1;
+	uintptr_t frame = 0;
     size_t count = _mmngr_memory_map_size;
 
     if(size == 1)
@@ -599,6 +754,7 @@ void *pmmngr_alloc_dma_blocks(size_t size)
    		}
 
 try:
+
 		startingBit = i * 32;
 		// get the free bit in the dword at index i
 		startingBit += j;
@@ -629,17 +785,18 @@ try:
 		}
 		
 		// have we found anything?
-		if(frame != (uintptr_t)-1)
+		if(frame != (uintptr_t)0)
 		{
 		    break;
 		}
 	}
 
 done:
-	if(frame == (uintptr_t)-1)
+
+	if(frame == (uintptr_t)0)
 	{
-        kernel_mutex_unlock(&physmem_lock);
-        restore_priority(cur_task, old_prio, old_policy);
+        elevated_priority_unlock(&physmem_lock);
+        kpanic("pmm: out of memory (pmmngr_alloc_dma_blocks)!\n");
 		return 0;	//not enough space
 	}
 
@@ -649,9 +806,8 @@ done:
 	}
 
 	_mmngr_used_blocks += size;
-
-    kernel_mutex_unlock(&physmem_lock);
-    restore_priority(cur_task, old_prio, old_policy);
+    __asm__ __volatile__("":::"memory");
+    elevated_priority_unlock(&physmem_lock);
 
 	return (void *)(frame * PMMNGR_BLOCK_SIZE);
 }
@@ -661,10 +817,7 @@ void pmmngr_free_blocks(void *p, size_t size)
 {
 	uintptr_t frame = (uintptr_t)p / PMMNGR_BLOCK_SIZE;
 
-    int old_prio = 0, old_policy = 0;
-
-    elevate_priority(cur_task, &old_prio, &old_policy);
-    kernel_mutex_lock(&physmem_lock);
+    elevated_priority_lock(&physmem_lock);
 
 	for(size_t i = 0; i < size; i++)
 	{
@@ -680,8 +833,8 @@ void pmmngr_free_blocks(void *p, size_t size)
         }
     }
 
-    kernel_mutex_unlock(&physmem_lock);
-    restore_priority(cur_task, old_prio, old_policy);
+    __asm__ __volatile__("":::"memory");
+    elevated_priority_unlock(&physmem_lock);
 }
 
 
@@ -698,12 +851,33 @@ size_t pmmngr_get_block_count(void)
 
 size_t pmmngr_get_available_block_count(void)
 {
-	return _mmngr_available_blocks;
+	//return _mmngr_available_blocks;
+	return pmmngr_get_free_block_count();
 }
 
 size_t pmmngr_get_free_block_count(void)
 {
-	return _mmngr_max_blocks - _mmngr_used_blocks;
+	//return _mmngr_max_blocks - _mmngr_used_blocks;
+
+    volatile size_t i;
+    size_t unused = 0, count = _mmngr_memory_map_size;
+
+	for(i = 0; i < count; i++)
+	{
+		if(_mmngr_memory_map[i] != 0xffffffff)
+		{
+			for(volatile uint32_t j = 0; j < 32; j++)
+			{
+			    // test each bit in the dword
+				if(!(_mmngr_memory_map[i] & ((uint32_t)1 << j)))
+				{
+				    unused++;
+				}
+			}
+		}
+	}
+
+	return unused;
 }
 
 

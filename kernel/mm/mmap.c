@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mmap.c
  *    This file is part of LaylaOS.
@@ -35,6 +35,7 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/types.h>
+#include <fcntl.h>
 #include <mm/mmap.h>
 #include <mm/memregion.h>
 #include <kernel/laylaos.h>
@@ -44,6 +45,7 @@
 #include <kernel/mutex.h>
 #include <kernel/user.h>
 #include <kernel/ipc.h>
+#include <kernel/user.h>
 
 //#include <fs/dentry.h>
 
@@ -62,7 +64,7 @@
 virtual_addr get_user_addr(virtual_addr size, virtual_addr min, virtual_addr max)
 {
     virtual_addr end, diff;
-    struct memregion_t *memregion = cur_task->mem->first_region;
+    struct memregion_t *memregion = this_core->cur_task->mem->first_region;
 
     while(memregion)
     {
@@ -106,7 +108,7 @@ virtual_addr get_user_addr(virtual_addr size, virtual_addr min, virtual_addr max
 
         if(diff >= size)
         {
-            pt_entry *e = get_page_entry_pd((pdirectory *)cur_task->pd_virt, 
+            pt_entry *e = get_page_entry_pd((pdirectory *)this_core->cur_task->pd_virt, 
                                             (void *)end);
 
             if(e && PTE_FRAME(*e))
@@ -157,10 +159,11 @@ virtual_addr get_user_addr(virtual_addr size, virtual_addr min, virtual_addr max
 /*
  * Handler for syscall mmap().
  */
-int syscall_mmap(struct syscall_args *__args)
+long syscall_mmap(struct syscall_args *__args)
 {
     struct syscall_args a;
-    int res, type;
+    long res;
+    int type;
     virtual_addr aligned_addr, aligned_size, end;
     struct file_t *f = NULL;
     struct fs_node_t *node = NULL;
@@ -187,7 +190,7 @@ int syscall_mmap(struct syscall_args *__args)
     int overlaps;
     int fixed = FLAG_SET(flags, MAP_FIXED) | FLAG_SET(flags, MAP_FIXED_NOREPLACE);
     int anon = FLAG_SET(flags, MAP_ANONYMOUS);
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
     // check addr is aligned
     if(fixed && !PAGE_ALIGNED(addr))
@@ -272,6 +275,11 @@ int syscall_mmap(struct syscall_args *__args)
         {
             return -EACCES;
         }
+
+        if(f->flags & O_PATH)
+        {
+            return -EBADF;
+        }
     }
     
     // set the region's type
@@ -343,33 +351,38 @@ int syscall_mmap(struct syscall_args *__args)
     // shared between processes (NOTE: side effect is more memory consumption)
     if(anon || node == NULL)
     {
-        int page_flags = 0;
-
-        // prepare page flags
-        if(prot != PROT_NONE)
+        if(!FLAG_SET(flags, MAP_PRIVATE))
         {
-            page_flags = I86_PTE_PRESENT |
-                    ((prot & PROT_WRITE) ? I86_PTE_WRITABLE : 0) |
-                    (((aligned_addr < USER_MEM_END) &&
-                        (end < USER_MEM_END)) ? I86_PTE_USER : 0);
-        }
+            int page_flags = 0;
+
+            // prepare page flags
+            if(prot != PROT_NONE)
+            {
+                page_flags = I86_PTE_PRESENT |
+                        ((prot & PROT_WRITE) ? I86_PTE_WRITABLE : 0) |
+                        (((aligned_addr < USER_MEM_END) &&
+                            (end < USER_MEM_END)) ? I86_PTE_USER : 0);
+            }
         
-        if(FLAG_SET(flags, MAP_PRIVATE))
-        {
-            page_flags |= I86_PTE_PRIVATE;
-        }
+            /*
+            if(FLAG_SET(flags, MAP_PRIVATE))
+            {
+                page_flags |= I86_PTE_PRIVATE;
+            }
+            */
 
-        if(!vmmngr_alloc_pages(aligned_addr, (size_t)aligned_size, page_flags))
-        {
-            //printk("mmap: ********** removing memregion\n");
-            //screen_refresh(NULL);
+            if(!vmmngr_alloc_pages(aligned_addr, (size_t)aligned_size, page_flags))
+            {
+                //printk("mmap: ********** removing memregion\n");
+                //screen_refresh(NULL);
 
-            kernel_mutex_unlock(&(ct->mem->mutex));
-            memregion_detach(ct, memregion_containing(ct, aligned_addr), 1);
-            return -ENOMEM;
-        }
+                kernel_mutex_unlock(&(ct->mem->mutex));
+                memregion_detach(ct, memregion_containing(ct, aligned_addr), 1);
+                return -ENOMEM;
+            }
         
-        A_memset((void *)aligned_addr, 0, aligned_size);
+            A_memset((void *)aligned_addr, 0, aligned_size);
+        }
     }
 
     /*
@@ -399,10 +412,10 @@ int syscall_mmap(struct syscall_args *__args)
 /*
  * Handler for syscall munmap().
  */
-int syscall_munmap(void *addr, size_t length)
+long syscall_munmap(void *addr, size_t length)
 {
-    int res;
-    struct task_t *ct = cur_task;
+    long res;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
     //printk("munmap: task %d, addr %lx, length %lx\n", ct->pid, addr, length);
 
@@ -444,11 +457,11 @@ int syscall_munmap(void *addr, size_t length)
 /*
  * Handler for syscall mprotect().
  */
-int syscall_mprotect(void *addr, size_t length, int prot)
+long syscall_mprotect(void *addr, size_t length, int prot)
 {
     virtual_addr aligned_size, end;
-    int res;
-    struct task_t *ct = cur_task;
+    long res;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
     //printk("mprotect: addr %lx, length %lx\n", addr, length);
 
@@ -530,14 +543,14 @@ static void remap_pages(virtual_addr dest, virtual_addr src, size_t memsz)
 /*
  * Handler for syscall mremap().
  */
-int syscall_mremap(struct syscall_args *__args)
+long syscall_mremap(struct syscall_args *__args)
 {
     struct syscall_args a;
-    int res, i;
+    long res, i;
     virtual_addr addr = 0, aligned_size, end;
     size_t memsz;
     struct memregion_t *memregion = NULL;
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
     
     // syscall args
     void *old_address;
@@ -576,7 +589,7 @@ int syscall_mremap(struct syscall_args *__args)
     if((memregion = memregion_containing(ct, 
                                          (virtual_addr)old_address)) == NULL)
     {
-        add_task_segv_signal(ct, SIGSEGV, SEGV_MAPERR, old_address);
+        add_task_segv_signal(ct, SEGV_MAPERR, old_address);
         return -EFAULT;
     }
     
@@ -585,7 +598,7 @@ int syscall_mremap(struct syscall_args *__args)
     
     if(memregion->addr + memsz < (virtual_addr)old_address + old_size)
     {
-        add_task_segv_signal(ct, SIGSEGV, SEGV_MAPERR,
+        add_task_segv_signal(ct, SEGV_MAPERR,
                              (void *)((virtual_addr)old_address + old_size));
         return -EFAULT;
     }
@@ -840,17 +853,17 @@ fin:
 /*
  * Handler for syscall mincore().
  */
-int syscall_mincore(void *__addr, size_t length, unsigned char *vec)
+long syscall_mincore(void *__addr, size_t length, unsigned char *vec)
 {
     int i;
     size_t arrsz;
     virtual_addr addr = (virtual_addr)__addr, aligned_size, end;
     struct memregion_t *memregion = NULL;
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
     
     if(!addr || !vec)
     {
-        add_task_segv_signal(ct, SIGSEGV, SEGV_MAPERR, addr ? vec : __addr);
+        add_task_segv_signal(ct, SEGV_MAPERR, addr ? vec : __addr);
         return -EFAULT;
     }
     

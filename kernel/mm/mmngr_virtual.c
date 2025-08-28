@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mmngr_virtual.c
  *    This file is part of LaylaOS.
@@ -38,6 +38,7 @@
 #include <kernel/isr.h>
 #include <kernel/mutex.h>
 #include <kernel/vga.h>
+#include <kernel/smp.h>
 #include <mm/mmngr_virtual.h>
 #include <mm/mmngr_phys.h>
 #include <mm/memregion.h>
@@ -55,8 +56,8 @@
  */
 
 // current directory table
-pdirectory *_cur_directory_virt = 0;
-pdirectory *_cur_directory_phys = 0;
+//pdirectory *_cur_directory_virt = 0;
+//pdirectory *_cur_directory_phys = 0;
 
 #ifdef __x86_64__
 volatile size_t pagetable_count = 0;
@@ -73,8 +74,8 @@ void vmmngr_switch_pdirectory(pdirectory *dir_phys, pdirectory *dir_virt)
         return;
     }
     
-    _cur_directory_phys = dir_phys;
-    _cur_directory_virt = dir_virt;
+    this_core->_cur_directory_phys = dir_phys;
+    this_core->_cur_directory_virt = dir_virt;
     pmmngr_load_PDBR((physical_addr)&dir_phys->m_entries_phys);
 
     return;
@@ -86,13 +87,32 @@ void vmmngr_switch_pdirectory(pdirectory *dir_phys, pdirectory *dir_virt)
  */
 pdirectory *vmmngr_get_directory_virt(void)
 {
-    return _cur_directory_virt;
+    return this_core->_cur_directory_virt;
 }
 
 
 pdirectory *vmmngr_get_directory_phys(void)
 {
-    return _cur_directory_phys;
+    return this_core->_cur_directory_phys;
+}
+
+
+/**
+ * @brief Get page entry.
+ *
+ * Get the page table entry representing the given virtual address.
+ *
+ * @param   virt    virtual address
+ *
+ * @return  page table entry.
+ */
+pt_entry *get_page_entry(void *virt)
+{
+    pdirectory *page_directory = this_core->cur_task ? 
+                    (pdirectory *)this_core->cur_task->pd_virt : 
+                                  vmmngr_get_directory_virt();
+
+    return get_page_entry_pd(page_directory, virt);
 }
 
 
@@ -143,7 +163,7 @@ int vmmngr_alloc_pages(virtual_addr addr, size_t sz, int flags)
     virtual_addr i = addr;
 
     void *p;
-    pt_entry *page;
+    volatile pt_entry *page;
 
 	if(pmmngr_get_free_block_count() <= (sz / PAGE_SIZE))
 	{
@@ -331,13 +351,29 @@ void free_pd(virtual_addr src_addr)
 {
     size_t i;
     volatile virtual_addr addr = src_addr;
+    pt_entry *pt;
+    struct kernel_region_t *r = &kernel_regions[REGION_PAGETABLE];
+
+    elevated_priority_lock_recursive(r->mutex, r->lock_count);
     
     for(i = 0; i < PDIRECTORY_FRAMES; i++, addr += PAGE_SIZE)
     {
+        if((pt = get_page_entry((void *)addr)))
+        {
+            vmmngr_free_page(pt);
+            *pt = 0;
+            vmmngr_flush_tlb_entry(addr);
+            __atomic_fetch_sub(&pagetable_count, 1, __ATOMIC_SEQ_CST);
+        }
+
+        /*
         vmmngr_free_page(get_page_entry((void *)addr));
         vmmngr_flush_tlb_entry(addr);
         __atomic_fetch_sub(&pagetable_count, 1, __ATOMIC_SEQ_CST);
+        */
     }
+
+    elevated_priority_unlock_recursive(r->mutex, r->lock_count);
 }
 
 
@@ -434,34 +470,35 @@ volatile virtual_addr last_mmio_addr = MMIO_START;
 
 // mutex to avoid clashes between tasks wanting to allocate page tables,
 // pipes, ...
-struct kernel_mutex_t table_mutex = { 0, };
-struct kernel_mutex_t pipefs_mutex = { 0, };
-struct kernel_mutex_t kstack_mutex = { 0, };
-struct kernel_mutex_t kmod_mem_mutex = { 0, };
-struct kernel_mutex_t pcache_mutex = { 0, };
-struct kernel_mutex_t dma_mutex = { 0, };
-struct kernel_mutex_t acpi_mutex = { 0, };
-struct kernel_mutex_t mmio_mutex = { 0, };
+volatile struct kernel_mutex_t table_mutex = { 0, };
+volatile struct kernel_mutex_t pipefs_mutex = { 0, };
+volatile struct kernel_mutex_t kstack_mutex = { 0, };
+volatile struct kernel_mutex_t kmod_mem_mutex = { 0, };
+volatile struct kernel_mutex_t pcache_mutex = { 0, };
+volatile struct kernel_mutex_t dma_mutex = { 0, };
+volatile struct kernel_mutex_t acpi_mutex = { 0, };
+volatile struct kernel_mutex_t mmio_mutex = { 0, };
 
 // the following is included for consistency, we don't actually need them
 volatile virtual_addr last_vbe_backbuf_addr = VBE_BACKBUF_START;
 volatile virtual_addr last_vbe_frontbuf_addr = VBE_FRONTBUF_START;
-struct kernel_mutex_t vbe_backbuf_mutex = { 0, };
-struct kernel_mutex_t vbe_frontbuf_mutex = { 0, };
+volatile struct kernel_mutex_t vbe_backbuf_mutex = { 0, };
+volatile struct kernel_mutex_t vbe_frontbuf_mutex = { 0, };
 
 
 struct kernel_region_t kernel_regions[] =
 {
-    { REGION_PAGETABLE, PAGE_TABLE_START, PAGE_TABLE_END, &last_table_addr, &table_mutex },
-    { REGION_KSTACK, USER_KSTACK_START, USER_KSTACK_END, &last_kstack_addr, &kstack_mutex },
-    { REGION_KMODULE, KMODULE_START, KMODULE_END, &last_kmod_addr, &kmod_mem_mutex },
-    { REGION_VBE_BACKBUF, VBE_BACKBUF_START, VBE_BACKBUF_END, &last_vbe_backbuf_addr, &vbe_backbuf_mutex },
-    { REGION_VBE_FRONTBUF, VBE_FRONTBUF_START, VBE_FRONTBUF_END, &last_vbe_frontbuf_addr, &vbe_frontbuf_mutex },
-    { REGION_PIPE, PIPE_MEMORY_START, PIPE_MEMORY_END, &last_pipe_addr, &pipefs_mutex },
-    { REGION_PCACHE, PCACHE_MEM_START, PCACHE_MEM_END, &last_pcache_addr, &pcache_mutex },
-    { REGION_DMA, DMA_BUF_MEM_START, DMA_BUF_MEM_END, &last_dma_addr, &dma_mutex },
-    { REGION_ACPI, ACPI_MEMORY_START, ACPI_MEMORY_END, &last_acpi_addr, &acpi_mutex },
-    { REGION_MMIO, MMIO_START, MMIO_END, &last_mmio_addr, &mmio_mutex },
+    { 0, 0, 0, 0, 0 },
+    { REGION_PAGETABLE, PAGE_TABLE_START, PAGE_TABLE_END, /* &last_table_addr, */ 0, &table_mutex },
+    { REGION_KSTACK, USER_KSTACK_START, USER_KSTACK_END, /* &last_kstack_addr, */ 0, &kstack_mutex },
+    { REGION_PIPE, PIPE_MEMORY_START, PIPE_MEMORY_END, /* &last_pipe_addr, */ 0, &pipefs_mutex },
+    { REGION_VBE_BACKBUF, VBE_BACKBUF_START, VBE_BACKBUF_END, /* &last_vbe_backbuf_addr, */ 0, &vbe_backbuf_mutex },
+    { REGION_VBE_FRONTBUF, VBE_FRONTBUF_START, VBE_FRONTBUF_END, /* &last_vbe_frontbuf_addr, */ 0, &vbe_frontbuf_mutex },
+    { REGION_KMODULE, KMODULE_START, KMODULE_END, /* &last_kmod_addr, */ 0, &kmod_mem_mutex },
+    { REGION_PCACHE, PCACHE_MEM_START, PCACHE_MEM_END, /* &last_pcache_addr, */ 0, &pcache_mutex },
+    { REGION_DMA, DMA_BUF_MEM_START, DMA_BUF_MEM_END, /* &last_dma_addr, */ 0, &dma_mutex },
+    { REGION_ACPI, ACPI_MEMORY_START, ACPI_MEMORY_END, /* &last_acpi_addr, */ 0, &acpi_mutex },
+    { REGION_MMIO, MMIO_START, MMIO_END, /* &last_mmio_addr, */ 0, &mmio_mutex },
     { 0, 0, 0, 0, 0 },
 };
 
@@ -472,54 +509,9 @@ struct kernel_region_t kernel_regions[] =
  */
 virtual_addr phys_to_virt(physical_addr phys, int flags, int region)
 {
-    virtual_addr addr_min, addr_max, res, end;
-    volatile virtual_addr *last_addr;
-    struct kernel_mutex_t *mutex;
-    
-    get_region_bounds(&addr_min, &addr_max, &last_addr, 
-                      &mutex, region, __func__);
+    virtual_addr res = phys_to_virt_off(phys, phys + PAGE_SIZE, flags, region);
 
-    kernel_mutex_lock(mutex);
-
-    end = addr_max;
-
-    if(*last_addr >= addr_max)
-    {
-        *last_addr = addr_min;
-    }
-    
-    res = *last_addr;
-
-retry:
-
-    for( ; res < end; res += PAGE_SIZE)
-    {
-        pt_entry *pt = get_page_entry((void *)res);
-
-        if(PTE_FRAME(*pt) == 0)
-        {
-            PTE_SET_FRAME(pt, phys);
-            PTE_ADD_ATTRIB(pt, flags);
-            *last_addr = res + PAGE_SIZE;
-            kernel_mutex_unlock(mutex);
-            vmmngr_flush_tlb_entry(res);
-            return res;
-        }
-    }
-
-    // if we started searching from the middle, try to search from the 
-    // beginning, maybe we'll find a page that someone has free'd
-    if((end == addr_max) && (*last_addr != addr_min))
-    {
-        end = *last_addr;
-        res = addr_min;
-        goto retry;
-    }
-    
-    kernel_mutex_unlock(mutex);
-    
-    // nothing found
-    return -1;
+    return res ? res : (virtual_addr)-1;
 }
 
 
@@ -532,18 +524,14 @@ retry:
 virtual_addr phys_to_virt_off(physical_addr pstart, physical_addr pend,
                               int flags, int region)
 {
-    virtual_addr addr_min, addr_max;
-    volatile virtual_addr *last_addr;
-    struct kernel_mutex_t *mutex;
+    struct kernel_region_t *r = &kernel_regions[region];
     volatile virtual_addr a, addr = 0;
     size_t sz = align_up(pend - pstart);
     size_t i, j, pages = sz / PAGE_SIZE;
-
-    get_region_bounds(&addr_min, &addr_max, &last_addr, 
-                      &mutex, region, __func__);
-    kernel_mutex_lock(mutex);
     
-    for(i = addr_min, j = 0; i < addr_max; i += PAGE_SIZE)
+    elevated_priority_lock_recursive(r->mutex, r->lock_count);
+
+    for(i = r->min, j = 0; i < r->max; i += PAGE_SIZE)
     {
         pt_entry *pt = get_page_entry((void *)i);
 
@@ -565,8 +553,7 @@ virtual_addr phys_to_virt_off(physical_addr pstart, physical_addr pend,
 
     if(j != pages)
     {
-        kernel_mutex_unlock(mutex);
-
+        elevated_priority_unlock_recursive(r->mutex, r->lock_count);
         return 0;
     }
 
@@ -576,7 +563,7 @@ virtual_addr phys_to_virt_off(physical_addr pstart, physical_addr pend,
         vmmngr_flush_tlb_entry(a);
     }
 
-    kernel_mutex_unlock(mutex);
+    elevated_priority_unlock_recursive(r->mutex, r->lock_count);
 
     return addr + (pstart - align_down(pstart));
 }
@@ -610,16 +597,12 @@ virtual_addr vmmngr_alloc_and_map(size_t sz, int pcontiguous,
                                   int flags, physical_addr *__phys, 
                                   int region)
 {
-    virtual_addr addr_min, addr_max;
-    struct kernel_mutex_t *mutex = NULL;
-    volatile virtual_addr *last_addr = NULL;
-
-
+    struct kernel_region_t *r = &kernel_regions[region];
     size_t i, j, pages = sz / PAGE_SIZE;
-    virtual_addr addr = 0;
-    physical_addr phys = 0;
-    
-    if(sz % PAGE_SIZE)
+    volatile virtual_addr addr = 0;
+    volatile physical_addr phys = 0;
+
+    if(sz & (PAGE_SIZE - 1))
     {
         pages++;
     }
@@ -635,14 +618,10 @@ virtual_addr vmmngr_alloc_and_map(size_t sz, int pcontiguous,
         return 0;
     }
 
-
-    get_region_bounds(&addr_min, &addr_max, &last_addr, 
-                      &mutex, region, __func__);
-
-    kernel_mutex_lock(mutex);
+    elevated_priority_lock_recursive(r->mutex, r->lock_count);
     
     // try and get consecutive virtual address pages
-    for(i = addr_min, j = 0; i < addr_max; i += PAGE_SIZE)
+    for(i = r->min, j = 0; i < r->max; i += PAGE_SIZE)
     {
         pt_entry *pt = get_page_entry((void *)i);
 
@@ -670,7 +649,7 @@ virtual_addr vmmngr_alloc_and_map(size_t sz, int pcontiguous,
             pmmngr_free_blocks((void *)phys, pages);
         }
 
-        kernel_mutex_unlock(mutex);
+        elevated_priority_unlock_recursive(r->mutex, r->lock_count);
         
         return 0;
     }
@@ -699,12 +678,14 @@ virtual_addr vmmngr_alloc_and_map(size_t sz, int pcontiguous,
     }
 
 
+    /*
     if(addr)
     {
-        *last_addr = addr + sz;
+        *(r->last) = addr + sz;
     }
+    */
 
-    kernel_mutex_unlock(mutex);
+    elevated_priority_unlock_recursive(r->mutex, r->lock_count);
 
     if(region == REGION_PAGETABLE)
     {

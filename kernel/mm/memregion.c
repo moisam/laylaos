@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: memregion.c
  *    This file is part of LaylaOS.
@@ -43,10 +43,10 @@
 
 struct memregion_t *memregion_freelist_head = NULL;
 struct memregion_t *memregion_freelist_tail = NULL;
-struct kernel_mutex_t memregion_freelist_mutex;
+volatile struct kernel_mutex_t memregion_freelist_mutex;
 
-static int msync_internal(struct memregion_t *memregion, 
-                          size_t sz, int flags);
+static long msync_internal(struct memregion_t *memregion, 
+                           size_t sz, int flags);
 
 
 /* 
@@ -64,8 +64,10 @@ static void memregion_add_free(struct memregion_t *memregion)
 
     if(memregion->refs == 0 && memregion->inode)
     {
-        release_node(memregion->inode);
+        struct fs_node_t *node = memregion->inode;
+
         memregion->inode = NULL;
+        release_node(node);
         memregion->fpos = 0;
         memregion->flen = 0;
     }
@@ -128,39 +130,6 @@ static struct memregion_t *memregion_first_free(void)
 }
 
 
-/*
- * Helper function. The task's mem struct should be locked by the caller.
- *
- * Check if the given address range from 'start' to 'end-1' overlaps with
- * other memory regions.
- *
- * Returns 0 if no overlaps, or -EEXIST if there are one or more overlaps.
- */
-int memregion_check_overlaps(struct task_t *task,
-                             virtual_addr start, virtual_addr end)
-{
-    struct memregion_t *memregion = task->mem->first_region;
-    end--;
-
-    while(memregion)
-    {
-        virtual_addr start2 = memregion->addr;
-        virtual_addr end2 = start2 + (memregion->size * PAGE_SIZE) - 1;
-                
-        // no overlap
-        if(end < start2 || start > end2)
-        {
-            memregion = memregion->next;
-            continue;
-        }
-
-        return -EEXIST;
-    }
-
-    return 0;
-}
-
-
 /* Helper function */
 static inline
 void memregion_insert_leftto(struct task_t *task,
@@ -216,15 +185,15 @@ void memregion_insert_rightto(struct task_t *task,
  *   The newly allocated memregion is returned in the 'res' field.
  */
 static inline
-int alloc_and_insert(struct task_t *task, struct fs_node_t *inode,
-                     virtual_addr start, virtual_addr end,
-                     int prot, int type, int flags,
-                     struct memregion_t *leftto, struct memregion_t *rightto,
-                     struct memregion_t **res)
+long alloc_and_insert(struct task_t *task, struct fs_node_t *inode,
+                      virtual_addr start, virtual_addr end,
+                      int prot, int type, int flags,
+                      struct memregion_t *leftto, struct memregion_t *rightto,
+                      struct memregion_t **res)
 {
     struct memregion_t *memregion;
-    int err;
-    
+    long err;
+
     *res = NULL;
 
     if((err = memregion_alloc(inode, prot, type, flags, &memregion)) != 0)
@@ -234,7 +203,8 @@ int alloc_and_insert(struct task_t *task, struct fs_node_t *inode,
     
     memregion->addr = start;
     memregion->size = (end - start) / PAGE_SIZE;
-    memregion->refs++;
+    //memregion->refs++;
+    __sync_fetch_and_add(&memregion->refs, 1);
     memregion->prev = NULL;
     memregion->next = NULL;
     
@@ -265,15 +235,15 @@ int alloc_and_insert(struct task_t *task, struct fs_node_t *inode,
  * Returns:
  *   0 on success, -errno on failure.
  */
-int memregion_alloc_and_attach(struct task_t *task, struct fs_node_t *inode,
-                               off_t fpos, off_t flen,
-                               virtual_addr start, virtual_addr end,
-                               int prot, int type, int flags,
-                               int remove_overlaps)
+long memregion_alloc_and_attach(struct task_t *task, struct fs_node_t *inode,
+                                off_t fpos, off_t flen,
+                                virtual_addr start, virtual_addr end,
+                                int prot, int type, int flags,
+                                int remove_overlaps)
 {
     struct memregion_t *memregion = NULL;
-    int err;
-    
+    long err;
+
     if((err = memregion_alloc(inode, prot, type, flags, &memregion)) != 0)
     {
         return err;
@@ -281,7 +251,7 @@ int memregion_alloc_and_attach(struct task_t *task, struct fs_node_t *inode,
 
     memregion->addr = start;
     memregion->size = (end - start) / PAGE_SIZE;
-    memregion->refs++;
+    ////memregion->refs++;
     memregion->fpos = fpos;
     memregion->flen = flen;
     memregion->prev = NULL;
@@ -306,9 +276,9 @@ int memregion_alloc_and_attach(struct task_t *task, struct fs_node_t *inode,
  * Returns:
  *   0 on success, -errno on failure.
  */
-int memregion_change_prot(struct task_t *task,
-                              virtual_addr start, virtual_addr end,
-                              int prot, int detach)
+long memregion_change_prot(struct task_t *task,
+                           virtual_addr start, virtual_addr end,
+                           int prot, int detach)
 {
     struct memregion_t *tmp, *memregion = task->mem->first_region;
     //size_t sz = (end - start);
@@ -590,26 +560,6 @@ int memregion_change_prot(struct task_t *task,
 }
 
 
-/*
- * Check for, and remove, overlapping memory mapped regions.
- * The target address range could be part of a wider memory region, in which
- * case we split the region into smaller regions and remove the desired 
- * address range only. The address range is detached from the task's memory 
- * map.
- *
- * NOTE: The task's mem struct should be locked by the caller.
- *       This function is called by syscall_unmap().
- *
- * Returns:
- *   0 on success, -errno on failure.
- */
-int memregion_remove_overlaps(struct task_t *task,
-                              virtual_addr start, virtual_addr end)
-{
-    return memregion_change_prot(task, start, end, 0, 1);
-}
-
-
 /* 
  * Allocate a new memory region struct. We try to get a memregion from
  * the free region list. If the list is empty, we try to allocate a new
@@ -624,9 +574,9 @@ int memregion_remove_overlaps(struct task_t *task,
  *   0 on success, -errno on failure.
  *   The newly allocated memregion is returned in the 'res' field.
  */
-int memregion_alloc(struct fs_node_t *inode,
-                    int prot, int type, int flags,
-                    struct memregion_t **res)
+long memregion_alloc(struct fs_node_t *inode,
+                     int prot, int type, int flags,
+                     struct memregion_t **res)
 {
     *res = NULL;
 
@@ -687,8 +637,8 @@ int memregion_alloc(struct fs_node_t *inode,
  * Returns:
  *   0 on success, -errno on failure.
  */
-int memregion_attach(struct task_t *task, struct memregion_t *memregion,
-                     virtual_addr attachat, size_t size, int remove_overlaps)
+long memregion_attach(struct task_t *task, struct memregion_t *memregion,
+                      virtual_addr attachat, size_t size, int remove_overlaps)
 {
     if(!task || !memregion || !attachat)
     {
@@ -699,8 +649,8 @@ int memregion_attach(struct task_t *task, struct memregion_t *memregion,
 
     //printk("memregion_attach: s %lx, e %lx\n", attachat, end);
 
-    int overlaps = memregion_check_overlaps(task, attachat, end);
-    int res;
+    long overlaps = memregion_check_overlaps(task, attachat, end);
+    long res;
     struct memregion_t *tmp;
 
     // If mmap() is not called with the MAP_FIXED flag, we don't remove
@@ -722,7 +672,8 @@ int memregion_attach(struct task_t *task, struct memregion_t *memregion,
 
     memregion->addr = attachat;
     memregion->size = size;
-    memregion->refs++;
+    //memregion->refs++;
+    __sync_fetch_and_add(&memregion->refs, 1);
     
     if(task->mem->first_region == NULL)
     {
@@ -814,10 +765,10 @@ static void memregion_detach_from_task(struct task_t *task,
 /*
  * Handler for syscall msync().
  */
-int syscall_msync(void *addr, size_t length, int flags)
+long syscall_msync(void *addr, size_t length, int flags)
 {
     virtual_addr aligned_size, end;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
     struct memregion_t *memregion;
     int sync = (flags & MS_SYNC);
     int async = (flags & MS_ASYNC);
@@ -868,7 +819,7 @@ int syscall_msync(void *addr, size_t length, int flags)
 }
 
 
-static int msync_internal(struct memregion_t *memregion, size_t sz, int flags)
+static long msync_internal(struct memregion_t *memregion, size_t sz, int flags)
 {
     UNUSED(flags);
 
@@ -947,8 +898,8 @@ static int msync_internal(struct memregion_t *memregion, size_t sz, int flags)
  * Returns:
  *   0 on success, -errno on failure.
  */
-int memregion_detach(struct task_t *task, struct memregion_t *memregion,
-                     int free_pages)
+long memregion_detach(struct task_t *task, struct memregion_t *memregion,
+                      int free_pages)
 {
     if(!task || !memregion)
     {
@@ -956,8 +907,8 @@ int memregion_detach(struct task_t *task, struct memregion_t *memregion,
     }
     
     size_t sz = memregion->size * PAGE_SIZE;
-    int res;
-    
+    long res;
+
     // don't remove shared memory mappings if this task was vforked, as the
     // parent will essentially be stuffed
     if(!(task->properties & PROPERTY_VFORK))
@@ -988,7 +939,8 @@ int memregion_detach(struct task_t *task, struct memregion_t *memregion,
     task->image_size -= memregion->size;
     
     // add region to free list
-    memregion->refs--;
+    //memregion->refs--;
+    __sync_fetch_and_sub(&memregion->refs, 1);
     memregion_add_free(memregion);
 
     return 0;
@@ -1060,7 +1012,10 @@ bailout:
             {
                 if(memregion->inode)
                 {
-                    release_node(memregion->inode);
+                    struct fs_node_t *node = memregion->inode;
+
+                    memregion->inode = NULL;
+                    release_node(node);
                 }
 
                 tmp = memregion->next;
@@ -1075,7 +1030,7 @@ bailout:
 
         if(memregion->type == MEMREGION_TYPE_SHMEM)
         {
-            if(shmat_internal(cur_task, memregion,
+            if(shmat_internal((struct task_t *)this_core->cur_task, memregion,
                                         (void *)memregion->addr) < 0)
             {
                 kfree(tmp);
@@ -1203,7 +1158,8 @@ void memregion_consolidate(struct task_t *task)
                 }
 
                 // add region to free list
-                tmp->refs--;
+                //tmp->refs--;
+                __sync_fetch_and_sub(&tmp->refs, 1);
                 memregion_add_free(tmp);
 
                 //printk("memregion_consolidate: after - fp %lx, fs %lx, mp %lx, ms %lx\n", memregion->fpos, memregion->flen, memregion->addr, memregion->size * PAGE_SIZE);
@@ -1243,7 +1199,7 @@ static inline void release_and_wakeup_waiters(struct cached_page_t *pcache)
     int wanted = (pcache->flags & PCACHE_FLAG_WANTED);
     
     kernel_mutex_lock(&pcachetab_lock);
-    pcache->flags &= ~(PCACHE_FLAG_BUSY | PCACHE_FLAG_WANTED);
+    __sync_and_and_fetch(&pcache->flags, ~(PCACHE_FLAG_BUSY | PCACHE_FLAG_WANTED));
     kernel_mutex_unlock(&pcachetab_lock);
 
     if(wanted)
@@ -1275,12 +1231,12 @@ static inline void release_and_wakeup_waiters(struct cached_page_t *pcache)
  * Returns:
  *   0 on success, -errno on failure.
  */
-int memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
-                        volatile virtual_addr __addr)
+long memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
+                         volatile virtual_addr __addr)
 {
     //struct file_t file;
     off_t file_pos;
-    int res = 0;
+    //int res = 0;
     size_t read_size = 0, file_end = 0, mem_end = 0;
     struct cached_page_t *pcache = NULL;
 
@@ -1371,6 +1327,12 @@ int memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
 
                 PTE_SET_FRAME(e, pcache->phys);
                 PTE_ADD_ATTRIB(e, PTE_FLAGS_PWU);
+
+                if((memregion->prot & PROT_WRITE))
+                {
+                    __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_ALWAYS_DIRTY);
+                }
+
                 //pcache->flags &= ~PCACHE_FLAG_BUSY;
                 release_and_wakeup_waiters(pcache);
                 
@@ -1403,6 +1365,9 @@ int memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
             }
         }
 
+        __asm__ __volatile__("xchg %%bx, %%bx":::);
+        return -ENOMEM;
+        /*
         if(!vmmngr_alloc_page(e, PTE_FLAGS_PWU))
         {
             return -ENOMEM;
@@ -1422,6 +1387,7 @@ int memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
         {
             A_memset((void *)(addr + res), 0, PAGE_SIZE - res);
         }
+        */
     }
 
 fin:
@@ -1442,8 +1408,60 @@ fin:
         PTE_ADD_ATTRIB(e, I86_PTE_PRIVATE);
     }
 
+    __asm__ __volatile__("":::"memory");
     vmmngr_flush_tlb_entry(__addr);
     
+    return 0;
+}
+
+
+struct memregion_t *memregion_containing(volatile struct task_t *task, virtual_addr addr)
+{
+    volatile struct memregion_t *memregion;
+    virtual_addr start = align_down(addr);
+    virtual_addr end = start + PAGE_SIZE - 1;
+    
+    for(memregion = task->mem->first_region; 
+        memregion != NULL; 
+        memregion = memregion->next)
+    {
+        virtual_addr start2 = memregion->addr;
+        virtual_addr end2 = start2 + (memregion->size * PAGE_SIZE) - 1;
+
+        // no overlap
+        if(end < start2 || start > end2)
+        {
+            continue;
+        }
+        
+        return (struct memregion_t *)memregion;
+    }
+    
+    return NULL;
+}
+
+
+long memregion_check_overlaps(struct task_t *task,
+                              virtual_addr start, virtual_addr end)
+{
+    volatile struct memregion_t *memregion = task->mem->first_region;
+    end--;
+
+    while(memregion)
+    {
+        virtual_addr start2 = memregion->addr;
+        virtual_addr end2 = start2 + (memregion->size * PAGE_SIZE) - 1;
+                
+        // no overlap
+        if(end < start2 || start > end2)
+        {
+            memregion = memregion->next;
+            continue;
+        }
+
+        return -EEXIST;
+    }
+
     return 0;
 }
 
@@ -1454,7 +1472,7 @@ fin:
  * Returns:
  *   memory usage in pages (not bytes).
  */
-size_t memregion_shared_pagecount(struct task_t *task)
+size_t memregion_shared_pagecount(volatile struct task_t *task)
 {
     struct memregion_t *memregion;
     size_t count = 0;
@@ -1484,7 +1502,7 @@ size_t memregion_shared_pagecount(struct task_t *task)
  * Returns:
  *   memory usage in pages (not bytes).
  */
-size_t memregion_anon_pagecount(struct task_t *task)
+size_t memregion_anon_pagecount(volatile struct task_t *task)
 {
     struct memregion_t *memregion;
     size_t count = 0;
@@ -1513,7 +1531,7 @@ size_t memregion_anon_pagecount(struct task_t *task)
 /*
  * Helper function.
  */
-static size_t memregion_pagecount_by_type(struct task_t *task, int type)
+static size_t memregion_pagecount_by_type(volatile struct task_t *task, int type)
 {
     struct memregion_t *memregion;
     size_t count = 0;
@@ -1543,7 +1561,7 @@ static size_t memregion_pagecount_by_type(struct task_t *task, int type)
  * Returns:
  *   memory usage in pages (not bytes).
  */
-size_t memregion_text_pagecount(struct task_t *task)
+size_t memregion_text_pagecount(volatile struct task_t *task)
 {
     return memregion_pagecount_by_type(task, MEMREGION_TYPE_TEXT);
 }
@@ -1555,7 +1573,7 @@ size_t memregion_text_pagecount(struct task_t *task)
  * Returns:
  *   memory usage in pages (not bytes).
  */
-size_t memregion_data_pagecount(struct task_t *task)
+size_t memregion_data_pagecount(volatile struct task_t *task)
 {
     return memregion_pagecount_by_type(task, MEMREGION_TYPE_DATA);
 }
@@ -1567,8 +1585,20 @@ size_t memregion_data_pagecount(struct task_t *task)
  * Returns:
  *   memory usage in pages (not bytes).
  */
-size_t memregion_stack_pagecount(struct task_t *task)
+size_t memregion_stack_pagecount(volatile struct task_t *task)
 {
     return memregion_pagecount_by_type(task, MEMREGION_TYPE_STACK);
+}
+
+
+/*
+ * Get the number of kernel memory pages.
+ *
+ * Returns:
+ *   memory usage in pages (not bytes).
+ */
+size_t memregion_kernel_pagecount(volatile struct task_t *task)
+{
+    return memregion_pagecount_by_type(task, MEMREGION_TYPE_KERNEL);
 }
 
