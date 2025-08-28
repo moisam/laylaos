@@ -29,7 +29,11 @@
 #define __VBE_H__
 
 #ifdef KERNEL
+#ifdef USE_MULTIBOOT2
+#include <kernel/multiboot2.h>
+#else
 #include <kernel/multiboot.h>
+#endif
 #endif      /* KERNEL */
 
 
@@ -210,7 +214,8 @@ struct framebuffer_t
  *
  * @see fb_init, fb_init_screen
  */
-void get_vbe_info(multiboot_info_t *mbd);
+void get_vbe_info(unsigned long mbd);
+//void get_vbe_info(multiboot_info_t *mbd);
 
 /**
  * @brief Initialize the VBE driver.

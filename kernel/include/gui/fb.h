@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: fb.h
  *    This file is part of LaylaOS.
@@ -160,7 +160,7 @@ void fb_init_screen(void);
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int fb_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
+long fb_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
 
 /**
  * @brief Set framebuffer charset.
