@@ -189,10 +189,20 @@ int main(int argc, char **argv)
         window_destroy(main_window);
         gui_exit(EXIT_FAILURE);
     }
+
+    if((tcsetattr(fd_master, TCSAFLUSH, &termios) == -1))
+    {
+        fprintf(stderr, "%s: failed to set pty attributes: %s\n", 
+                        argv[0], strerror(errno));
+        close(fd_master);
+        close(fd_slave);
+        window_destroy(main_window);
+        gui_exit(EXIT_FAILURE);
+    }
     
     if((child_pid = fork()) == 0)
     {
-        char *child_argv[] = { SHELL_EXE, NULL };
+        char *child_argv[4] = { SHELL_EXE, NULL };
         sigset_t oldset, sigttou;
 
         sigemptyset(&sigttou);
@@ -233,7 +243,16 @@ int main(int argc, char **argv)
         }
 
         sigprocmask(SIG_SETMASK, &oldset, NULL);
-        
+
+        // If there are args, assume they are the name and args of a command
+        // to execute. We do this for now until we support options.
+        if(argc > 1)
+        {
+            child_argv[1] = "-c";
+            child_argv[2] = argv[1];
+            child_argv[3] = NULL;
+        }
+
         execvp(SHELL_EXE, child_argv);
         exit(EXIT_FAILURE);
     }

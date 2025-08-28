@@ -32,7 +32,7 @@
 
 #include <termios.h>
 #define __WANT_TTY_DEFCHARS_ARRAY__
-#include <kernel/ttydefaults.h>
+#include <kernel/tty.h>
 
 #include "../include/mouse.h"
 
@@ -46,20 +46,10 @@
 #define FF                      12      /* \f */
 #define CR                      13      /* \r */
 
-#define TTY_FLAG_EXCLUSIVE        0x01      /**< exclusive opening 
-                                                   (open fails with EBUSY) */
-#define TTY_FLAG_REVERSE_VIDEO    0x02      /**< reverse video mode */
-#define TTY_FLAG_AUTOWRAP         0x04      /**< autowrap mode */
-#define TTY_FLAG_CURSOR_RELATIVE  0x08      /**< cursor addressing relative to
-                                                   scroll region */
-#define TTY_FLAG_LFNL             0x10      /**< follow each LF/VT/FF with 
-                                                   a CR */
-#define TTY_FLAG_BOLD             0x20
-#define TTY_FLAG_UNDERLINED       0x40
-#define TTY_FLAG_BLINK            0x80
-#define TTY_FLAG_BRIGHT           0x100
-#undef TTY_FLAG_APP_KEYMODE         // undef the kernel's definition
-#define TTY_FLAG_APP_KEYMODE      0x200
+#define TTY_FLAG_BOLD           0x10000
+#define TTY_FLAG_UNDERLINED     0x20000
+#define TTY_FLAG_BLINK          0x40000
+#define TTY_FLAG_BRIGHT         0x80000
 
 
 #define COLOR_BLACK		        0
@@ -95,6 +85,7 @@ extern uint32_t terminal_col;
 extern uint32_t terminal_flags;
 extern uint32_t first_text_row, first_visible_row, mouse_scroll_top;
 extern struct winsize windowsz;
+extern struct termios termios;
 
 int init_terminal(char *myname, uint32_t w, uint32_t h);
 void console_write(char c);

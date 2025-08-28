@@ -190,6 +190,7 @@ static inline void console_reset(void)
     saved_row = 0;
     terminal_col = 0;
     saved_col = 0;
+    cursor_shown = 1;
     first_text_row = terminal_height * (BACKBUF_PAGES - 1);
     first_visible_row = first_text_row;
     mouse_scroll_top = first_text_row;
@@ -240,6 +241,7 @@ int init_terminal(char *myname, uint32_t w, uint32_t h)
     saved_row = 0;
     terminal_col = 0;
     saved_col = 0;
+    cursor_shown = 1;
     first_text_row = h * (BACKBUF_PAGES - 1);
     first_visible_row = first_text_row;
     mouse_scroll_top = first_text_row;
@@ -257,15 +259,21 @@ int init_terminal(char *myname, uint32_t w, uint32_t h)
 
     /* input modes */
     termios.c_iflag = TTYDEF_IFLAG;
-    /* output modes: change outgoing NL to CRNL */
+    termios.c_iflag &= ~ICRNL;
+
+    /* output modes */
     termios.c_oflag = TTYDEF_OFLAG;
+    termios.c_oflag &= ~ONLCR;
+
     /* control modes */
     termios.c_cflag = TTYDEF_CFLAG;
+
     /* local modes */
     termios.c_lflag = TTYDEF_LFLAG;
 
     /* input speed */
     termios.c_ispeed = TTYDEF_SPEED;
+
     /* output speed */
     termios.c_ospeed = TTYDEF_SPEED;
 
@@ -666,7 +674,7 @@ static inline int cursor_in_view(void)
     }
 
     // only draw cursor if it is in the viewable window
-    if(cursor_in_view())
+    if(cursor_in_view() && cursor_shown)
     {
         repaint_cursor();
     }
@@ -701,7 +709,7 @@ void repaint_dirty(void)
     }
 
     // only draw cursor if it is in the viewable window
-    if(cursor_in_view())
+    if(cursor_in_view() && cursor_shown)
     {
         repaint_cursor();
     }
@@ -762,7 +770,10 @@ void scroll_up(uint32_t width, uint32_t height, uint32_t row)
  */
 void scroll_down(uint32_t width, uint32_t height)
 {
-    int i, j;
+    char *src;
+    char *dest;
+    size_t row_bytes = sizeof(struct tty_cell_t) * width;
+    int i;
     uint32_t row = terminal_row;
 
     // scroll down from the back buffer if we are starting at the top row
@@ -783,29 +794,14 @@ void scroll_down(uint32_t width, uint32_t height)
     }
     
     // now scroll
-    for(i = height - 1; i > row; i++)
-    //for(i = height - 1; i > terminal_row; i++)
-    {
-        struct tty_cell_t *src;
-        struct tty_cell_t *dest;
-        
-        src  = &cells[(i - 1) * terminal_width];
-        dest  = &cells[i * terminal_width];
+    src = (char *)&cells[(height - 2) * terminal_width];
+    dest = (char *)&cells[(height - 1) * terminal_width];
 
-        for(j = 0; j < width; j++)
-        {
-            src->fg = dest->fg;
-            src->bg = dest->bg;
-            src->chr = dest->chr;
-            src->dirty = 1;
-            src->bold = dest->bold;
-            src->underlined = dest->underlined;
-            src->blink = dest->blink;
-            src->bright = dest->bright;
-            src->is_line_graphic = dest->is_line_graphic;
-            src++;
-            dest++;
-        }
+    for(i = height - 1; i > row; i--)
+    {
+        A_memcpy(dest, src, row_bytes);
+        src -= row_bytes;
+        dest -= row_bytes;
     }
 
     // reset last line to spaces
@@ -1035,9 +1031,9 @@ void insert_chars(unsigned long count)
     
     while(count--)
     {
-        struct tty_cell_t *src = cells + last;
-        struct tty_cell_t *dest = src - 1;
-        struct tty_cell_t *end = cells + location;
+        struct tty_cell_t *dest = cells + location;
+        struct tty_cell_t *src = dest - 1;
+        struct tty_cell_t *end = cells + last;
         
         for( ; dest > end; src--, dest--)
         {
@@ -1199,60 +1195,58 @@ void set_attribs(unsigned long npar, unsigned long *par)
 }
 
 
-void handle_dec_sequence(unsigned long cmd, int set)
+#define TOGGLE_FLAG(flag, set) \
+    if(set) terminal_flags |= flag;     \
+    else    terminal_flags &= ~flag;
+
+
+void handle_dec_sequence(unsigned long cmd, int query, int set)
 {
-    switch(cmd)
+    if(query)
     {
-        case 1:
-            break;
+        // handle ESC-[ ? char h
+        switch(cmd)
+        {
+            case 1:
+                TOGGLE_FLAG(TTY_FLAG_APP_CURSORKEYS_MODE, set);
+                break;
+
+            case 5:
+                TOGGLE_FLAG(TTY_FLAG_REVERSE_VIDEO, set);
+                break;
+
+            case 6:
+                TOGGLE_FLAG(TTY_FLAG_CURSOR_RELATIVE, set);
+                break;
         
-        case 5:
-            if(set)
-            {
-                terminal_flags |= TTY_FLAG_REVERSE_VIDEO;
-            }
-            else
-            {
-                terminal_flags &= ~TTY_FLAG_REVERSE_VIDEO;
-            }
-            break;
+            case 7:
+                // NOTE: we wrap anyway regardless of the flag
+                TOGGLE_FLAG(TTY_FLAG_AUTOWRAP, set);
+                break;
 
-        case 6:
-            if(set)
-            {
-                terminal_flags |= TTY_FLAG_CURSOR_RELATIVE;
-            }
-            else
-            {
-                terminal_flags &= ~TTY_FLAG_CURSOR_RELATIVE;
-            }
-            break;
-        
-        case 7:
-            // NOTE: we wrap anyway regardless of the flag
-            if(set)
-            {
-                terminal_flags |= TTY_FLAG_AUTOWRAP;
-            }
-            else
-            {
-                terminal_flags &= ~TTY_FLAG_AUTOWRAP;
-            }
-            break;
+            case 25:
+                cursor_shown = !!set;
+                cell_dirty(terminal_col, terminal_row + first_visible_row);
+                pending_refresh = 1;
+                break;
 
-        case 20:
-            if(set)
-            {
-                terminal_flags |= TTY_FLAG_LFNL;
-            }
-            else
-            {
-                terminal_flags &= ~TTY_FLAG_LFNL;
-            }
-            break;
+            default:
+                break;
+        }
+    }
+    else
+    {
+        // handle ESC-[ char h (that is, with no question mark)
+        switch(cmd)
+        {
+            case 4:
+                TOGGLE_FLAG(TTY_FLAG_INSERT_MODE, set);
+                break;
 
-        default:
-            break;
+            case 20:
+                TOGGLE_FLAG(TTY_FLAG_LFNL, set);
+                break;
+        }
     }
 }
 
@@ -1574,23 +1568,16 @@ void set_palette_from_str(char *str)
  */
 void console_write(char c)
 {
-    int csi_ignore = 0;
+    static int csi_ignore = 0;
+    static int query = 0;
     
     if(c == 0)
     {
         return;
     }
 
-    // scroll down to cursor if needed
-    /*
-    if(mouse_scroll_top != first_visible_row)
-    {
-        mouse_scroll_top = first_visible_row;
-        repaint_all();
-    }
-    */
-
-    //hide_cur();
+    // mark the cursor cell as dirty
+    cell_dirty(terminal_col, terminal_row + first_visible_row);
 
     switch(state)
     {
@@ -1602,6 +1589,11 @@ void console_write(char c)
             // 12 => form feed, 13 => carriage return
             if((c >= '\b' && c <= '\r') || (c >= ' ' && c < DEL))
             {
+                if(terminal_flags & TTY_FLAG_INSERT_MODE)
+                {
+                    insert_chars(1);
+                }
+
                 tputchar(c);
             }
             else if(c == '\033' /* '\e' */)
@@ -1657,6 +1649,11 @@ void console_write(char c)
                     break;
                         
                 case 'D':       // linefeed
+                    if(terminal_flags & TTY_FLAG_INSERT_MODE)
+                    {
+                        insert_chars(1);
+                    }
+
                     tputchar('\n');
                     break;
                         
@@ -1689,11 +1686,11 @@ void console_write(char c)
                     break;
 
                 case '>':       // set numeric keypad mode
-                    terminal_flags &= ~TTY_FLAG_APP_KEYMODE;
+                    terminal_flags &= ~TTY_FLAG_APP_KEYPAD_MODE;
                     break;
 
                 case '=':       // set application keypad mode
-                    terminal_flags |= TTY_FLAG_APP_KEYMODE;
+                    terminal_flags |= TTY_FLAG_APP_KEYPAD_MODE;
                     break;
 
                 case ']':       // set/reset palette
@@ -1721,14 +1718,14 @@ void console_write(char c)
             {
                 break;
             }
-                
+
             // read and discard the optional '?'
             // this will continue the loop and read the next input char
-            if(c == '?')
+            if((query = (c == '?')))
             {
                 break;
             }
-                
+
             // otherwise, start reading parameters
             __attribute__((fallthrough));
 
@@ -1892,6 +1889,12 @@ void console_write(char c)
 
                 // Delete the indicated # of chars in the current line
                 case 'P':
+                    if(!par[0])
+                    {
+                        // delete at least one char
+                        par[0]++;
+                    }
+
                     delete_chars(par[0]);
                     break;
                         
@@ -1935,11 +1938,11 @@ void console_write(char c)
                 // 'h' sequences set, and 'l' sequences reset modes.
                 // For more info, see the link above.
                 case 'h':
-                    handle_dec_sequence(par[0], 1);
+                    handle_dec_sequence(par[0], query, 1);
                     break;
 
                 case 'l':
-                    handle_dec_sequence(par[0], 0);
+                    handle_dec_sequence(par[0], query, 0);
                     break;
 
                 default:
@@ -2006,6 +2009,16 @@ void console_write(char c)
                 window_str_arg = c - '0';
                 state = 9;
             }
+            else if(c == '7')
+            {
+                // Could not find much online about this escape sequence,
+                // but it seems it is non-standard and has something to do
+                // with setting/reporting the remote host and cwd:
+                //   https://iterm2.com/documentation-escape-codes.html
+                // We ignore this for now.
+                window_str_arg = -1;
+                state = 9;
+            }
             else
             {
                 state = 0;
@@ -2036,6 +2049,22 @@ void console_write(char c)
          * See: https://tldp.org/HOWTO/Xterm-Title-3.html
          */
         case 9:
+            if(window_str_arg < 0)
+            {
+                // Ignored sequence. See the previous switch case.
+                if(c == '\033')
+                {
+                    npar = 1;
+                }
+                else if(((c == '\\') && npar) || (c == '\a'))
+                {
+                    npar = 0;
+                    state = 0;
+                }
+
+                break;
+            }
+
             if(window_str)
             {
                 if(window_str_bytes >= window_str_alloced)
@@ -2058,7 +2087,12 @@ void console_write(char c)
                 }
             }
 
-            if(c == '\a')
+            if(c == '\033')
+            {
+                npar = 1;
+                break;
+            }
+            else if(((c == '\\') && npar) || (c == '\a'))
             {
                 window_str[window_str_bytes] = '\0';
 
@@ -2072,6 +2106,7 @@ void console_write(char c)
                     window_set_icon(main_window, window_str);
                 }
 
+                npar = 0;
                 state = 0;
                 break;
             }
