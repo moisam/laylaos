@@ -38,6 +38,10 @@ cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+
+mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+
 mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
 cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
 

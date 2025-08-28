@@ -37,6 +37,10 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 mv ${DOWNLOAD_SRCDIR}/conftools/config.sub ${DOWNLOAD_SRCDIR}/conftools/config.sub.OLD
 cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/conftools/config.sub
+
+mv ${DOWNLOAD_SRCDIR}/conftools/config.guess ${DOWNLOAD_SRCDIR}/conftools/config.guess.OLD
+cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/conftools/config.guess
+
 mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
 cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
 

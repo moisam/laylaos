@@ -34,6 +34,10 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 mv ${DOWNLOAD_SRCDIR}/config/config.sub ${DOWNLOAD_SRCDIR}/config/config.sub.OLD
 cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config/config.sub
+
+mv ${DOWNLOAD_SRCDIR}/config/config.guess ${DOWNLOAD_SRCDIR}/config/config.guess.OLD
+cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config/config.guess
+
 mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
 cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
 
@@ -49,8 +53,9 @@ make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
-# Fix libtiff.la for the future generations
+# Fix libtiff*.la for the future generations
 sed -i "s/dependency_libs=.*/dependency_libs='-llzma -ljpeg -lz -lm'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libtiff.la
+sed -i "s/dependency_libs=.*/dependency_libs='-ltiff -llzma -ljpeg -lz -lstdc++'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libtiffxx.la
 
 # Clean up
 cd ${CWD}

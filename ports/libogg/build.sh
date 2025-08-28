@@ -36,6 +36,10 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+
+mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+
 mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
 cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
 
@@ -45,7 +49,8 @@ cd ${DOWNLOAD_SRCDIR} && autoreconf
 mkdir ${DOWNLOAD_SRCDIR}/build2
 cd ${DOWNLOAD_SRCDIR}/build2
 
-../configure --host=${BUILD_TARGET} --enable-shared || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
+../configure --host=${BUILD_TARGET} --enable-shared --with-pic=yes \
+    || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 

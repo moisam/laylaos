@@ -39,6 +39,9 @@ cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
 
+mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+
 # build
 mkdir ${DOWNLOAD_SRCDIR}/build
 cd ${DOWNLOAD_SRCDIR}/build

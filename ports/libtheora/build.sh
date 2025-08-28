@@ -38,6 +38,9 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
 
+mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+
 cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 
 # build libtheora
@@ -58,6 +61,10 @@ PNG_CFLAGS="`${PKG_CONFIG} --cflags libpng`" \
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
+
+# Fix libtheora*.la for the future generations
+sed -i "s/dependency_libs=.*/dependency_libs='-logg'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libtheora.la
+sed -i "s/dependency_libs=.*/dependency_libs='-logg -ltheoradec'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libtheoraenc.la
 
 # Clean up
 cd ${CWD}
