@@ -14,7 +14,9 @@ EXEC_PREFIX?=$(PREFIX)
 BOOTDIR?=$(EXEC_PREFIX)/boot
 INCLUDEDIR?=$(PREFIX)/include
 
-CFLAGS:=$(KERNEL_CFLAGS) -fno-omit-frame-pointer -ffreestanding -fbuiltin -Iinclude -DKERNEL -DCOMPILE_YEAR=$(shell date +%Y)
+CFLAGS:=$(KERNEL_CFLAGS) -fno-omit-frame-pointer -ffreestanding -fbuiltin \
+        -Iinclude -DKERNEL -DUSE_MULTIBOOT2 -DSMP \
+        -DCOMPILE_YEAR=$(shell date +%Y)
 CPPFLAGS:=$(KERNEL_CPPFLAGS)
 
 LDFLAGS:=$(LDFLAGS)
@@ -44,20 +46,28 @@ $(patsubst %.S, %.o, $(shell find kernel/ mm/ syscall/ -name '*.S')) \
 #$(patsubst %.c, %.o, ../ld/fnv1a.c)
 
 OBJS:=\
-$(ARCHDIR)/crti.o \
-$(ARCHDIR)/crtbegin.o \
-$(KERNEL_OBJS) \
-$(ARCHDIR)/crtend.o \
-$(ARCHDIR)/crtn.o
+$(KERNEL_OBJS)
 
 LINK_LIST:=\
 $(LDFLAGS) \
-$(ARCHDIR)/crti.o \
-$(ARCHDIR)/crtbegin.o \
 $(KERNEL_OBJS) \
-$(LIBS) \
-$(ARCHDIR)/crtend.o \
-$(ARCHDIR)/crtn.o \
+$(LIBS)
+
+#OBJS:=\
+#$(ARCHDIR)/crti.o \
+#$(ARCHDIR)/crtbegin.o \
+#$(KERNEL_OBJS) \
+#$(ARCHDIR)/crtend.o \
+#$(ARCHDIR)/crtn.o
+
+#LINK_LIST:=\
+#$(LDFLAGS) \
+#$(ARCHDIR)/crti.o \
+#$(ARCHDIR)/crtbegin.o \
+#$(KERNEL_OBJS) \
+#$(LIBS) \
+#$(ARCHDIR)/crtend.o \
+#$(ARCHDIR)/crtn.o \
 
 all: laylaos.kernel System.map compile-modules
 
