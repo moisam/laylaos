@@ -1,7 +1,7 @@
 /*
  * Code in this file is largely based on the semaphore implementation from
  * Sortix. The original code is released under the license below.
- * Other bits are released under the same lincense, copyright (c) 2022
+ * Other bits are released under the same lincense, copyright (c) 2022-2025
  * Mohammed Isam [mailto:mohammed_isam1984@yahoo.com].
  *
  * Copyright (c) 2014 Jonas 'Sortie' Termansen.
@@ -145,9 +145,9 @@ int acpi_sem_unlink(const char *name)
 int acpi_sem_wait(acpi_sem_t *sem)
 {
     int err;
-    //struct task_t *ct = get_cur_task();
-    struct task_t *ct = cur_task;
-    
+    struct task_t *ct = (struct task_t *)get_cur_task();
+    //struct task_t *ct = cur_task;
+
     if(!sem)
     {
         return -EINVAL;
@@ -197,8 +197,8 @@ int acpi_sem_timedwait(acpi_sem_t *__restrict sem,
                        const struct timespec *__restrict abstime)
 {
     int err;
-    //struct task_t *ct = get_cur_task();
-    struct task_t *ct = cur_task;
+    struct task_t *ct = (struct task_t *)get_cur_task();
+    //struct task_t *ct = cur_task;
 
     if(!sem)
     {
