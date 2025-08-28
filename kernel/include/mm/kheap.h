@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: kheap.h
  *    This file is part of LaylaOS.
@@ -34,7 +34,13 @@
 #include <mm/malloc.h>
 #include <kernel/task.h>
 
-extern struct kernel_mutex_t kheap_lock;
+extern volatile struct kernel_mutex_t kheap_lock;
+
+void kfree(void *p);
+void *kmalloc(size_t sz);
+void *krealloc(void *addr, size_t sz);
+
+#if 0
 
 /**
  * @brief Free dynamic memory.
@@ -106,6 +112,8 @@ static inline void *krealloc(void *addr, size_t sz)
 
     return res;
 }
+
+#endif
 
 
 /**

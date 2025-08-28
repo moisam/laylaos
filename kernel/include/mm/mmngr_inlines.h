@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mmngr_inlines.h
  *    This file is part of LaylaOS.
@@ -25,21 +25,22 @@
  *  Inlined functions that are used frequently by the virtual memory manager.
  */
 
-//#include <mm/mmap.h>
+#include <errno.h>
+#include <kernel/laylaos.h>
 #include "../include/kernel/bits/task-defs.h"
 
-#undef INLINE
-#define INLINE      static inline __attribute__((always_inline))
 
 #ifndef __ALIGN_DOWN__
 #define __ALIGN_DOWN__
 
-INLINE virtual_addr align_down(virtual_addr addr)
+STATIC_INLINE virtual_addr align_down(virtual_addr addr)
 {
     return (addr & ~(PAGE_SIZE - 1));
 }
 
 #endif
+
+#if 0
 
 /**
  * @brief Find the memory region that contains the given address.
@@ -61,10 +62,10 @@ INLINE virtual_addr align_down(virtual_addr addr)
  * @return  the memregion containing the given address on success, 
  *          NULL on failure.
  */
-INLINE struct memregion_t *memregion_containing(struct task_t *task,
-                                                virtual_addr addr)
+STATIC_INLINE struct memregion_t *memregion_containing(struct task_t *task,
+                                                       virtual_addr addr)
 {
-    register struct memregion_t *memregion;
+    volatile struct memregion_t *memregion;
     virtual_addr start = align_down(addr);
     virtual_addr end = start + PAGE_SIZE - 1;
     
@@ -72,9 +73,8 @@ INLINE struct memregion_t *memregion_containing(struct task_t *task,
         memregion != NULL; 
         memregion = memregion->next)
     {
-        register virtual_addr start2 = memregion->addr;
-        register virtual_addr end2 = 
-                            start2 + (memregion->size * PAGE_SIZE) - 1;
+        virtual_addr start2 = memregion->addr;
+        virtual_addr end2 = start2 + (memregion->size * PAGE_SIZE) - 1;
 
         // no overlap
         if(end < start2 || start > end2)
@@ -82,11 +82,51 @@ INLINE struct memregion_t *memregion_containing(struct task_t *task,
             continue;
         }
         
-        return memregion;
+        return (struct memregion_t *)memregion;
     }
     
     return NULL;
 }
+
+/**
+ * @brief Check for memregion overlaps.
+ *
+ * Check if the given address range from 'start' to 'end-1' overlaps with
+ * other memory regions.
+ *
+ * This is a helper function. The task's memory struct should be locked by
+ * the caller.
+ *
+ * @param   task        pointer to task
+ * @param   start       start address
+ * @param   end         end address
+ *
+ * @return  zero if no overlaps, or -EEXIST if there are one or more overlaps.
+ */
+STATIC_INLINE int memregion_check_overlaps(struct task_t *task,
+                                           virtual_addr start, virtual_addr end)
+{
+    volatile struct memregion_t *memregion = task->mem->first_region;
+    end--;
+
+    while(memregion)
+    {
+        virtual_addr start2 = memregion->addr;
+        virtual_addr end2 = start2 + (memregion->size * PAGE_SIZE) - 1;
+                
+        // no overlap
+        if(end < start2 || start > end2)
+        {
+            memregion = memregion->next;
+            continue;
+        }
+
+        return -EEXIST;
+    }
+
+    return 0;
+}
+
 
 /**
  * @brief Get page entry.
@@ -97,7 +137,7 @@ INLINE struct memregion_t *memregion_containing(struct task_t *task,
  *
  * @return  page table entry.
  */
-INLINE pt_entry *get_page_entry(void *virt)
+STATIC_INLINE pt_entry *get_page_entry(void *virt)
 {
     extern struct task_t *cur_task;
 
@@ -107,43 +147,17 @@ INLINE pt_entry *get_page_entry(void *virt)
     return get_page_entry_pd(page_directory, virt);
 }
 
+#endif
+
 
 struct kernel_region_t
 {
     int region;
     virtual_addr min, max;
-    volatile virtual_addr *last;
-    struct kernel_mutex_t *mutex;
+    //volatile virtual_addr *last;
+    volatile int lock_count;
+    volatile struct kernel_mutex_t *mutex;
 };
 
 extern struct kernel_region_t kernel_regions[];
-
-static inline
-void get_region_bounds(virtual_addr *addr_min, virtual_addr *addr_max,
-                       volatile virtual_addr **last_addr,
-                       struct kernel_mutex_t **mutex,
-                       int region, const char *caller)
-{
-    struct kernel_region_t *r;
-    
-    *addr_min = 0;
-    *addr_max = 0;
-    *last_addr = NULL;
-    *mutex = NULL;
-    
-    for(r = kernel_regions; r->mutex; r++)
-    {
-        if(r->region == region)
-        {
-            *addr_min = r->min;
-            *addr_max = r->max;
-            *last_addr = r->last;
-            *mutex = r->mutex;
-            return;
-        }
-    }
-
-    printk("vmm: invalid memory region specified (%s())\n", caller);
-    empty_loop();
-}
 

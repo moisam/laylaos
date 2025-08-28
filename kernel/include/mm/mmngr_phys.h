@@ -35,9 +35,12 @@
 
 #include <stdint.h>
 #include <stddef.h>
-//#include <sys/pagesize.h>
 #include <kernel/pagesize.h>
+#ifdef USE_MULTIBOOT2
+#include <kernel/multiboot2.h>
+#else
 #include <kernel/multiboot.h>
+#endif
 
 // block size (4k by default)
 #define PMMNGR_BLOCK_SIZE	    PAGE_SIZE
@@ -59,21 +62,45 @@ typedef	uint32_t physical_addr;     /**< 32-bit physical address */
 extern volatile unsigned char *frame_shares;
 
 
-// increment a frame's share count by 1
+/**
+ * @brief Increment page shares.
+ *
+ * Increment the share count for the given physical page.
+ *
+ * @param   addr    physical address
+ *
+ * @return  nothing.
+ */
 static inline void inc_frame_shares(physical_addr frame_addr)
 {
    frame_shares[frame_addr / PAGE_SIZE] += 1;
+    __asm__ __volatile__("":::"memory");
 }
 
-
-// decrement a frame's share count by 1
+/**
+ * @brief Decrement page shares.
+ *
+ * Decrement the share count for the given physical page.
+ *
+ * @param   addr    physical address
+ *
+ * @return  nothing.
+ */
 static inline void dec_frame_shares(physical_addr frame_addr)
 {
    frame_shares[frame_addr / PAGE_SIZE] -= 1;
+    __asm__ __volatile__("":::"memory");
 }
 
-
-// get a frame's share count
+/**
+ * @brief Get page shares.
+ *
+ * Get the share count for the given physical page.
+ *
+ * @param   addr    physical address
+ *
+ * @return  page share count (0 to 255).
+ */
 static inline unsigned char get_frame_shares(physical_addr frame_addr)
 {
     return frame_shares[frame_addr / PAGE_SIZE];
@@ -99,7 +126,8 @@ static inline unsigned char get_frame_shares(physical_addr frame_addr)
  *
  * @return  nothing.
  */
-void pmmngr_init(multiboot_info_t *mbd, physical_addr bitmap);
+void pmmngr_init(unsigned long mbd, physical_addr bitmap);
+//void pmmngr_init(multiboot_info_t *mbd, physical_addr bitmap);
 
 /**
  * @brief Initialize physical memory region.
@@ -234,38 +262,5 @@ size_t pmmngr_get_free_block_count(void);
  * @return  nothing.
  */
 void pmmngr_load_PDBR(physical_addr addr);
-
-/**
- * @brief Increment page shares.
- *
- * Increment the share count for the given physical page.
- *
- * @param   addr    physical address
- *
- * @return  nothing.
- */
-void inc_frame_shares(physical_addr addr);
-
-/**
- * @brief Decrement page shares.
- *
- * Decrement the share count for the given physical page.
- *
- * @param   addr    physical address
- *
- * @return  nothing.
- */
-void dec_frame_shares(physical_addr addr);
-
-/**
- * @brief Get page shares.
- *
- * Get the share count for the given physical page.
- *
- * @param   addr    physical address
- *
- * @return  page share count (0 to 255).
- */
-unsigned char get_frame_shares(physical_addr addr);
 
 #endif      /* __MMNGR_PHYS_H__ */

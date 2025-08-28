@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mmngr_virtual.h
  *    This file is part of LaylaOS.
@@ -54,6 +54,7 @@
 #define REGION_DMA              8       /**< DMA memory region */
 #define REGION_ACPI             9       /**< ACPI memory region */
 #define REGION_MMIO             10      /**< Memory-mapped IO memory region */
+#define REGION_LAST             10
 
 
 #ifdef __x86_64__
@@ -153,6 +154,7 @@ static inline void vmmngr_flush_tlb_entry(virtual_addr addr)
 {
     __asm__ __volatile__("invlpg (%0)"
                          ::"r"(addr):"memory");
+    tlb_shootdown(addr);
 }
 
 
@@ -473,6 +475,17 @@ virtual_addr mmio_map(physical_addr pstart, physical_addr pend);
 pt_entry *get_page_entry_pd(pdirectory *page_directory, void *virt);
 
 /**
+ * @brief Get page entry.
+ *
+ * Get the page table entry representing the given virtual address.
+ *
+ * @param   virt    virtual address
+ *
+ * @return  page table entry.
+ */
+pt_entry *get_page_entry(void *virt);
+
+/**
  * @brief Initialize the virtual memory manager.
  *
  * This function is called early during boot to initialize internal structs,
@@ -481,7 +494,7 @@ pt_entry *get_page_entry_pd(pdirectory *page_directory, void *virt);
  *
  * @return  nothing.
  */
-void vmmngr_initialize(multiboot_info_t *mbd);
+void vmmngr_initialize(/* multiboot_info_t *mbd */);
 
 /**
  * @brief Clone task page directory.
@@ -530,28 +543,15 @@ int page_fault_check_table(pdirectory *pd,
 
 #ifdef __x86_64__
 
+/*
+ * Values to the flags param to get_pde().
+ */
 #define FLAG_GETPDE_CREATE          1   /**< create page directory */
 #define FLAG_GETPDE_USER            2   /**< userspace page directory */
 #define FLAG_GETPDE_ISPD            4   /**< requested entry is a 
                                              page directory */
 #define FLAG_GETPDE_ISPDP           8   /**< requested entry is a 
                                              page directory pointer */
-
-/**
- * @brief Get page directory entry.
- *
- * Get the page directory at index \a pd_index, creating a new page directory
- * if needed.
- *
- * @param   pd          page directory
- * @param   pd_index    index of entry in \a pd
- * @param   flags       zero or a combination of FLAG_GETPDE_CREATE,
- *                        FLAG_GETPDE_USER, FLAG_GETPDE_ISPD and 
- *                        FLAG_GETPDE_ISPD
- *
- * @return  page directory entry.
- */
-pdirectory *get_pde(pdirectory *pd, size_t pd_index, int flags);
 
 /**
  * @var pagetable_count

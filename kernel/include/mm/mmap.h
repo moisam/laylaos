@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mmap.h
  *    This file is part of LaylaOS.
@@ -112,7 +112,7 @@ virtual_addr get_user_addr(virtual_addr size, virtual_addr min, virtual_addr max
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_mmap(struct syscall_args *__args);
+long syscall_mmap(struct syscall_args *__args);
 
 /**
  * @brief Handler for syscall munmap().
@@ -124,7 +124,7 @@ int syscall_mmap(struct syscall_args *__args);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_munmap(void *addr, size_t length);
+long syscall_munmap(void *addr, size_t length);
 
 /**
  * @brief Handler for syscall mprotect().
@@ -138,7 +138,7 @@ int syscall_munmap(void *addr, size_t length);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_mprotect(void *addr, size_t length, int prot);
+long syscall_mprotect(void *addr, size_t length, int prot);
 
 /**
  * @brief Handler for syscall mremap().
@@ -150,7 +150,7 @@ int syscall_mprotect(void *addr, size_t length, int prot);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_mremap(struct syscall_args *__args);
+long syscall_mremap(struct syscall_args *__args);
 
 /**
  * @brief Handler for syscall mincore().
@@ -166,7 +166,7 @@ int syscall_mremap(struct syscall_args *__args);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_mincore(void *addr, size_t length, unsigned char *vec);
+long syscall_mincore(void *addr, size_t length, unsigned char *vec);
 
 
 /**********************************
@@ -183,7 +183,7 @@ int syscall_mincore(void *addr, size_t length, unsigned char *vec);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_mlock(void *addr, size_t length);
+long syscall_mlock(void *addr, size_t length);
 
 /**
  * @brief Handler for syscall mlock2().
@@ -196,7 +196,7 @@ int syscall_mlock(void *addr, size_t length);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_mlock2(void *addr, size_t length, unsigned int flags);
+long syscall_mlock2(void *addr, size_t length, unsigned int flags);
 
 /**
  * @brief Handler for syscall munlock().
@@ -208,7 +208,7 @@ int syscall_mlock2(void *addr, size_t length, unsigned int flags);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_munlock(void *addr, size_t length);
+long syscall_munlock(void *addr, size_t length);
 
 /**
  * @brief Handler for syscall mlockall().
@@ -219,7 +219,7 @@ int syscall_munlock(void *addr, size_t length);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_mlockall(int flags);
+long syscall_mlockall(int flags);
 
 /**
  * @brief Handler for syscall munlockall().
@@ -228,6 +228,6 @@ int syscall_mlockall(int flags);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_munlockall(void);
+long syscall_munlockall(void);
 
 #endif      /* __KERNEL_MMAP_H__ */

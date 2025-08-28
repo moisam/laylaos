@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: memregion.h
  *    This file is part of LaylaOS.
@@ -88,7 +88,7 @@ struct memregion_t
     size_t size;                /**< mapping size in pages, not bytes */
     int    refs;                /**< mapping reference count */
     virtual_addr addr;          /**< mapping virtual address */
-    struct kernel_mutex_t mutex;    /**< struct lock */
+    volatile struct kernel_mutex_t mutex;    /**< struct lock */
     struct memregion_t *next_free;  /**< next region in the free list */
     struct memregion_t *next;       /**< next region in task mappings */
     struct memregion_t *prev;       /**< previous region in task mappings */
@@ -105,7 +105,7 @@ struct task_vm_t
 {
     struct memregion_t *first_region;   /**< pointer to first memory region */
     struct memregion_t *last_region;    /**< pointer to last memory region */
-    struct kernel_mutex_t mutex;        /**< struct lock */
+    volatile struct kernel_mutex_t mutex;        /**< struct lock */
 
     uintptr_t vdso_code_start;          /**< start of vdso code */
 
@@ -129,6 +129,28 @@ struct task_vm_t
  **********************************/
 
 /**
+ * @brief Find the memory region that contains the given address.
+ *
+ * This function is called from the page fault handler. The sought address
+ * need not be page-aligned, as the function automatically aligns it down to
+ * the nearest page boundary. If no suitable region is found, the function
+ * tries to find a region one page above the given address, provided this
+ * region is mapped as a stack region (type == MEMREGION_TYPE_STACK). This
+ * way, the page fault handler can expand the stack downwards if the task
+ * touches the page right below the stack's lowest address.
+ *
+ * NOTES:
+ *   - The caller must have locked mem->mutex before calling us.
+ *
+ * @param   task        pointer to task
+ * @param   addr        address to search
+ *
+ * @return  the memregion containing the given address on success, 
+ *          NULL on failure.
+ */
+struct memregion_t *memregion_containing(volatile struct task_t *task, virtual_addr addr);
+
+/**
  * @brief Check for memregion overlaps.
  *
  * Check if the given address range from 'start' to 'end-1' overlaps with
@@ -143,8 +165,8 @@ struct task_vm_t
  *
  * @return  zero if no overlaps, or -EEXIST if there are one or more overlaps.
  */
-int memregion_check_overlaps(struct task_t *task,
-                             virtual_addr start, virtual_addr end);
+long memregion_check_overlaps(struct task_t *task,
+                              virtual_addr start, virtual_addr end);
 
 /**
  * @brief Allocate and attach a memregion.
@@ -171,11 +193,11 @@ int memregion_check_overlaps(struct task_t *task,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int memregion_alloc_and_attach(struct task_t *task, struct fs_node_t *inode,
-                               off_t fpos, off_t flen,
-                               virtual_addr start, virtual_addr end,
-                               int prot, int type, int flags,
-                               int remove_overlaps);
+long memregion_alloc_and_attach(struct task_t *task, struct fs_node_t *inode,
+                                off_t fpos, off_t flen,
+                                virtual_addr start, virtual_addr end,
+                                int prot, int type, int flags,
+                                int remove_overlaps);
 
 /**
  * @brief Change the protection bits of a memory address range.
@@ -197,29 +219,9 @@ int memregion_alloc_and_attach(struct task_t *task, struct fs_node_t *inode,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int memregion_change_prot(struct task_t *task,
-                              virtual_addr start, virtual_addr end,
-                              int prot, int detach);
-
-/**
- * @brief Check for, and remove, overlapping memory mapped regions.
- *
- * The target address range could be part of a wider memory region, in which
- * case we split the region into smaller regions and remove the desired 
- * address range only. The address range is detached from the task's memory
- * map.
- *
- * NOTE: The task's mem struct should be locked by the caller.
- *       This function is called by syscall_unmap().
- *
- * @param   task                pointer to task
- * @param   start               start address
- * @param   end                 end address
- *
- * @return  zero on success, -(errno) on failure.
- */
-int memregion_remove_overlaps(struct task_t *task,
-                              virtual_addr start, virtual_addr end);
+long memregion_change_prot(struct task_t *task,
+                           virtual_addr start, virtual_addr end,
+                           int prot, int detach);
 
 /**
  * @brief Allocate a new memory region struct.
@@ -241,9 +243,9 @@ int memregion_remove_overlaps(struct task_t *task,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int memregion_alloc(struct fs_node_t *inode,
-                    int prot, int type, int flags,
-                    struct memregion_t **res);
+long memregion_alloc(struct fs_node_t *inode,
+                     int prot, int type, int flags,
+                     struct memregion_t **res);
 
 /**
  * @brief Attach a memory region to a task.
@@ -263,8 +265,8 @@ int memregion_alloc(struct fs_node_t *inode,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int memregion_attach(struct task_t *task, struct memregion_t *memregion,
-                     virtual_addr attachat, size_t size, int remove_overlaps);
+long memregion_attach(struct task_t *task, struct memregion_t *memregion,
+                      virtual_addr attachat, size_t size, int remove_overlaps);
 
 /**
  * @brief Detach a memory region from a task.
@@ -283,8 +285,8 @@ int memregion_attach(struct task_t *task, struct memregion_t *memregion,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int memregion_detach(struct task_t *task, struct memregion_t *memregion,
-                     int free_pages);
+long memregion_detach(struct task_t *task, struct memregion_t *memregion,
+                      int free_pages);
 
 /**
  * @brief Detach user memory regions.
@@ -324,7 +326,7 @@ void memregion_free(struct memregion_t *memregion);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_msync(void *addr, size_t length, int flags);
+long syscall_msync(void *addr, size_t length, int flags);
 
 /**
  * @brief Duplicate task memory map.
@@ -379,8 +381,8 @@ void task_mem_free(struct task_vm_t *mem);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int memregion_load_page(struct memregion_t *memregion, pdirectory *pd, 
-                        volatile virtual_addr __addr);
+long memregion_load_page(struct memregion_t *memregion, pdirectory *pd, 
+                         volatile virtual_addr __addr);
 
 /**
  * @brief Consolidate memory regions.
@@ -404,7 +406,7 @@ void memregion_consolidate(struct task_t *task);
  *
  * @return  memory usage in pages (not bytes).
  */
-size_t memregion_shared_pagecount(struct task_t *task);
+size_t memregion_shared_pagecount(volatile struct task_t *task);
 
 /**
  * @brief Get anonymous page count.
@@ -415,7 +417,7 @@ size_t memregion_shared_pagecount(struct task_t *task);
  *
  * @return  memory usage in pages (not bytes).
  */
-size_t memregion_anon_pagecount(struct task_t *task);
+size_t memregion_anon_pagecount(volatile struct task_t *task);
 
 /**
  * @brief Get code page count.
@@ -426,7 +428,7 @@ size_t memregion_anon_pagecount(struct task_t *task);
  *
  * @return  memory usage in pages (not bytes).
  */
-size_t memregion_text_pagecount(struct task_t *task);
+size_t memregion_text_pagecount(volatile struct task_t *task);
 
 /**
  * @brief Get data page count.
@@ -437,7 +439,7 @@ size_t memregion_text_pagecount(struct task_t *task);
  *
  * @return  memory usage in pages (not bytes).
  */
-size_t memregion_data_pagecount(struct task_t *task);
+size_t memregion_data_pagecount(volatile struct task_t *task);
 
 /**
  * @brief Get stack page count.
@@ -448,6 +450,41 @@ size_t memregion_data_pagecount(struct task_t *task);
  *
  * @return  memory usage in pages (not bytes).
  */
-size_t memregion_stack_pagecount(struct task_t *task);
+size_t memregion_stack_pagecount(volatile struct task_t *task);
+
+/**
+ * @brief Get kernel page count.
+ *
+ * Get the number of kernel memory pages.
+ *
+ * @param   task        pointer to task
+ *
+ * @return  memory usage in pages (not bytes).
+ */
+size_t memregion_kernel_pagecount(volatile struct task_t *task);
+
+
+/**
+ * @brief Check for, and remove, overlapping memory mapped regions.
+ *
+ * The target address range could be part of a wider memory region, in which
+ * case we split the region into smaller regions and remove the desired 
+ * address range only. The address range is detached from the task's memory
+ * map.
+ *
+ * NOTE: The task's mem struct should be locked by the caller.
+ *       This function is called by syscall_unmap().
+ *
+ * @param   task                pointer to task
+ * @param   start               start address
+ * @param   end                 end address
+ *
+ * @return  zero on success, -(errno) on failure.
+ */
+STATIC_INLINE long memregion_remove_overlaps(struct task_t *task,
+                                             virtual_addr start, virtual_addr end)
+{
+    return memregion_change_prot(task, start, end, 0, 1);
+}
 
 #endif      /* __MEMREGION_H__ */

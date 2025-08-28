@@ -37,6 +37,7 @@
 
 #include <kernel/laylaos.h>     // printk()
 #include <kernel/clock.h>       // now()
+#include <kernel/tty.h>
 #define USE_DL_PREFIX           1
 
 /* Version identifier to allow people to support multiple versions */
