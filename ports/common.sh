@@ -62,12 +62,13 @@ download_only()
 {
     # Create download dir if it does not exist
     if ! [ -e ${DOWNLOAD_PORTS_PATH} ]; then
-        mkdir ${DOWNLOAD_PORTS_PATH} || exit_failure "$0: failed to create ${DOWNLOAD_PORTS_PATH}"
+        mkdir -p ${DOWNLOAD_PORTS_PATH} || exit_failure "$0: failed to create ${DOWNLOAD_PORTS_PATH}"
     fi
 
     # Download
+    # Some downloads, like musl, pass an extra flag to wget
     echo "   ==> Downloading ${DOWNLOAD_URL}/${DOWNLOAD_FILE} to ${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}"
-    wget -O "${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}" "${DOWNLOAD_URL}/${DOWNLOAD_FILE}"
+    wget -O "${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}" "${DOWNLOAD_URL}/${DOWNLOAD_FILE}" $1
 
     [ $? -ne 0 ] && exit_failure "$0: failed to download ${DOWNLOAD_URL}/${DOWNLOAD_FILE}"
 }
@@ -75,11 +76,18 @@ download_only()
 download_and_extract()
 {
     # Download first
-    download_only
+    # Some downloads, like musl, pass an extra flag to wget
+    myname=`uname -s`
+    if [ "$myname" == "LaylaOS" ]; then
+        download_only --no-check-certificate
+    else
+        download_only
+    fi
 
     # Then extract
     echo "   ==> Extracting ${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}"
-    tar -C ${DOWNLOAD_PORTS_PATH} -xf ${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}
+    tar -C "${DOWNLOAD_PORTS_PATH}" -xf "${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}" \
+        || exit_failure "$0: failed to extract ${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}"
 
     # And remove the downloaded file
     echo "   ==> Removing ${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}"

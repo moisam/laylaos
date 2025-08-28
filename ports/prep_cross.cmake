@@ -1,7 +1,14 @@
 set(crosscompile_arch $ENV{BUILD_ARCH})
 set(crosscompile_sysroot $ENV{CROSSCOMPILE_SYSROOT_PATH})
 
-set(CMAKE_SYSTEM_NAME LaylaOS)
+# Setting CMAKE_SYSTEM_NAME causes cmake to automatically set CMAKE_CROSSCOMPILING.
+# When cross-compiling, this is fine, but when we build natively on LaylaOS,
+# this won't work. Therefore, only set CMAKE_SYSTEM_NAME if we know we are
+# cross-compiling.
+if(NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "LaylaOS")
+    set(CMAKE_SYSTEM_NAME LaylaOS)
+endif()
+
 set(CMAKE_SYSTEM_PROCESSOR ${crosscompile_arch})
 set(LAYLAOS True)
 
@@ -15,8 +22,8 @@ set(tools $ENV{CROSSCOMPILE_TOOLS_PATH}/bin)
 set(CMAKE_C_COMPILER ${tools}/${crosscompile_arch}-laylaos-gcc)
 set(CMAKE_CXX_COMPILER ${tools}/${crosscompile_arch}-laylaos-g++)
 
-set(CMAKE_C_FLAGS "-I${crosscompile_sysroot}/usr/include --sysroot=${crosscompile_sysroot} -D__laylaos__ -D__${crosscompile_arch}__ -D_GNU_SOURCE")
-set(CMAKE_CXX_FLAGS "-I${crosscompile_sysroot}/usr/include --sysroot=${crosscompile_sysroot} -D__laylaos__ -D__${crosscompile_arch}__ -D_GNU_SOURCE")
+set(CMAKE_C_FLAGS "-I${crosscompile_sysroot}/usr/include --sysroot=${crosscompile_sysroot} -D__laylaos__ -D__${crosscompile_arch}__ -D_GNU_SOURCE -mstackrealign")
+set(CMAKE_CXX_FLAGS "-I${crosscompile_sysroot}/usr/include --sysroot=${crosscompile_sysroot} -D__laylaos__ -D__${crosscompile_arch}__ -D_GNU_SOURCE -mstackrealign -fPIC")
 
 set(CMAKE_FIND_ROOT_PATH ${crosscompile_sysroot})
 list(APPEND CMAKE_FIND_ROOT_PATH ${crosscompile_sysroot}/usr)
