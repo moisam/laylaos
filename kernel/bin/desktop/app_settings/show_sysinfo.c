@@ -77,17 +77,44 @@ winid_t show_window_sysinfo(void)
     {
         while(fgets(buf, sizeof(buf), f) != NULL)
         {
-            if((s = strstr(buf, "Detected Processor Name:")))
+            // fall back if we don't have a model name
+            if((s = strstr(buf, "vendor_id")))
             {
-                processor = strdup(s + 25);
-                sz = strlen(processor);
-
-                if(processor[sz - 1] == '\n')
+                if((s = strchr(buf, ':')))
                 {
-                    processor[sz - 1] = '\0';
-                }
+                    processor = strdup(s + 2);
+                    sz = strlen(processor);
 
-                break;
+                    if(processor[sz - 1] == '\n')
+                    {
+                        processor[sz - 1] = '\0';
+                    }
+
+                    continue;
+                }
+            }
+
+            // prefer this if available
+            if((s = strstr(buf, "model name")))
+            {
+                if((s = strchr(buf, ':')))
+                {
+                    if(processor)
+                    {
+                        free(processor);
+                        processor = NULL;
+                    }
+
+                    processor = strdup(s + 2);
+                    sz = strlen(processor);
+
+                    if(processor[sz - 1] == '\n')
+                    {
+                        processor[sz - 1] = '\0';
+                    }
+
+                    break;
+                }
             }
         }
 

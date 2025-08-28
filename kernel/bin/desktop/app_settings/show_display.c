@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2024 (c)
+ *    Copyright 2024, 2025 (c)
  * 
  *    file: show_display.c
  *    This file is part of LaylaOS.
@@ -77,11 +77,10 @@ winid_t show_window_display(void)
     }
 
     // load the monitor icon
-    monitor_bitmap.width = iconw;
-    monitor_bitmap.height = iconw;
-
     if(!monitor_bitmap.data)
     {
+        monitor_bitmap.width = iconw;
+        monitor_bitmap.height = iconw;
         sysicon_load("device-computer", &monitor_bitmap);
     }
 
