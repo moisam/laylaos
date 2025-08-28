@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: task-defs.h
  *    This file is part of LaylaOS.
@@ -65,12 +65,7 @@
 #define PROPERTY_USED_FPU           (1 << 8)    /**< task has used the fpu */
 #define PROPERTY_IN_WAIT            (1 << 9)    /**< task is blocked waiting
                                                      for children */
-
-#if 0
-#define PROPERTY_TIMEOUT            (1 << 9)    /**< a call to block_task2()  
-                                                     has timed out */
-#endif
-
+#define PROPERTY_IDLE               (1 << 10)   /**< this is an idle task */
 #define PROPERTY_HANDLING_SIG       (1 << 11)   /**< task is handling 
                                                      a signal */
 #define PROPERTY_IN_SYSCALL         (1 << 12)   /**< task in the middle of 
@@ -78,6 +73,9 @@
 #define PROPERTY_HANDLING_PAGEFAULT (1 << 13)   /**< task is handling a 
                                                      page fault */
 #define PROPERTY_DYNAMICALLY_LOADED (1 << 14)   /**< dynamically loaded */
+
+/* thread group flags */
+#define TG_FLAG_EXITING             (1 << 0)
 
 
 #define NR_TASKS                    256         /**< max system tasks 
@@ -104,8 +102,8 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/resource.h>
-#include <kernel/mutex.h>
 #include <kernel/timer.h>
+#include <kernel/mutex.h>
 #include <mm/mmngr_virtual.h>
 #include <kernel/vfs.h>
 
@@ -119,7 +117,7 @@
 struct task_files_t
 {
     struct file_t *ofile[NR_OPEN];  /**< open files */
-    struct kernel_mutex_t mutex;    /**< struct lock */
+    volatile struct kernel_mutex_t mutex;    /**< struct lock */
 };
 
 /**
@@ -133,7 +131,7 @@ struct task_fs_t
     struct fs_node_t *root,         /**< task root directory */
                      *cwd;          /**< task current working directory */
     mode_t umask;                   /**< file creation mask */
-    struct kernel_mutex_t mutex;    /**< struct lock */
+    volatile struct kernel_mutex_t mutex;    /**< struct lock */
 };
 
 /**
@@ -157,10 +155,11 @@ struct task_threads_t
 {
     struct task_t *thread_group_leader; /**< thread group leader */
     int thread_count;       /**< number of threads in this task */
+    int flags;              /**< thread group flags */
     pid_t tgid;             /**< thread group id */
     unsigned long group_user_time,      /**< thread group user time */
                   group_sys_time;       /**< thread group system time */
-    struct kernel_mutex_t mutex;        /**< struct lock */
+    volatile struct kernel_mutex_t mutex;        /**< struct lock */
 };
 
 /**
@@ -172,9 +171,14 @@ struct task_threads_t
 struct task_common_t
 {
     /* task-wide interval timers, shared by all threads */
-    struct itimer_t __itimer_real,      /**< real timer */
-                    __itimer_virt,      /**< virtual timer */
-                    __itimer_prof;      /**< profiling timer */
+    struct posix_timer_t __itimer_real,      /**< real timer */
+                         __itimer_prof;      /**< profiling timer */
+
+    struct
+    {
+        unsigned long long rel_ticks;    /**< relative timer value in ticks */
+        unsigned long long interval;     /**< relative timer interval in ticks */
+    } __itimer_virt;      /**< virtual timer */
 
 #define itimer_real   common->__itimer_real
 #define itimer_virt   common->__itimer_virt
@@ -192,7 +196,7 @@ struct task_common_t
 #define last_timerid  common->__last_timerid
 #define posix_timers  common->__head
 
-    struct kernel_mutex_t mutex;        /**< struct lock */
+    volatile struct kernel_mutex_t mutex;        /**< struct lock */
 };
 
 /**
@@ -283,8 +287,8 @@ struct task_t
 
     struct task_fs_t *fs;       /**< filesystem info */
 
-    struct task_t *next,                /**< pointer to next task */
-                  *prev;                /**< pointer to previous task */
+    volatile struct task_t *next,       /**< pointer to next task */
+                           *prev;       /**< pointer to previous task */
 
     struct task_t *parent;              /**< pointer to parent task */
 
@@ -309,6 +313,8 @@ struct task_t
     struct task_files_t *ofiles;        /**< open files handlers */
 
     uint32_t cloexec;               /**< which files are closed on exec() */
+
+    int32_t cpuid;                  /**< id of the cpu the task is running on */
   
     struct task_vm_t *mem;          /**< task memory map */
 
@@ -364,8 +370,9 @@ struct task_t
 
     struct task_common_t *common;       /**< resource limits and timers */
 
-    struct kernel_mutex_t task_mutex;   /**< task lock */
-    struct kernel_mutex_t *lock_held;
+    volatile struct kernel_mutex_t task_mutex;   /**< task lock */
+    volatile struct kernel_mutex_t *lock_held;
+    volatile struct kernel_mutex_t *lock_waited;
 
     /* 
      * Name of the executable whose code is running in this task 
@@ -410,8 +417,12 @@ struct task_t
      * fields to support process tracing
      */
 
-    struct regs *regs;          /**< traced registers, also contains user
+#if 0
+    struct regs *syscall_regs;  /**< traced registers, also contains user
                                      registers on entry to syscall */
+    struct regs *irq_regs;      /**< registers on interrupt */
+#endif
+
     unsigned int interrupted_syscall;   /**< number of the 
                                                interrupted syscall */
 

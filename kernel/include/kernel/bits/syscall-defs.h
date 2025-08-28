@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: syscall-defs.h
  *    This file is part of LaylaOS.
@@ -51,7 +51,7 @@ struct syscall_args
 
 
 #define SYSCALL_EFAULT(addr)                                \
-        add_task_segv_signal(cur_task, SIGSEGV,             \
+        add_task_segv_signal(this_core->cur_task,           \
                              SEGV_MAPERR, (void *)addr);    \
         return -EFAULT;
 

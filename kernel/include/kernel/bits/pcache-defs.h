@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: pcache-defs.h
  *    This file is part of LaylaOS.
@@ -30,16 +30,24 @@
 
 #include <mm/mmngr_virtual.h>
 
-#define PCACHE_NOINODE          (0)
+#define PCACHE_NOINODE              (0)
 
 // values for the flags field of struct cached_page_t
-#define PCACHE_FLAG_DIRTY       0x01
-#define PCACHE_FLAG_WANTED      0x02
-#define PCACHE_FLAG_BUSY        0x04
+#define PCACHE_FLAG_DIRTY           0x01
+#define PCACHE_FLAG_WANTED          0x02
+#define PCACHE_FLAG_BUSY            0x04
+#define PCACHE_FLAG_ALWAYS_DIRTY    0x08
+#define PCACHE_FLAG_STALE           0x10
 
 // values for the flags parameter of function get_cached_page()
-#define PCACHE_AUTO_ALLOC       0x01
-#define PCACHE_PEEK_ONLY        0x02
+#define PCACHE_AUTO_ALLOC           0x01
+#define PCACHE_PEEK_ONLY            0x02
+#define PCACHE_IGNORE_STALE         0x04
+
+#define ONE_MINUTE                  (1 * 60 * PIT_FREQUENCY)
+#define TWO_MINUTES                 (2 * 60 * PIT_FREQUENCY)
+#define THREE_MINUTES               (3 * 60 * PIT_FREQUENCY)
+#define FIVE_MINUTES                (5 * 60 * PIT_FREQUENCY)
 
 /**
  * @struct cached_page_t
@@ -50,14 +58,16 @@
 struct cached_page_t
 {
     dev_t dev;          /**< device id */
-    ino_t ino;          /**< inode number */
+    ino_t ino;          /**< inode number, zero if this page is not part of an 
+                             inode, i.e. a disk metadata block */
     off_t offset;       /**< page offset in file */
+    struct fs_node_t *node; /**< pointer to inode struct, NULL if ino == 0 */
     //int refs;           /**< number of references to this page */
     virtual_addr virt;  /**< virtual address to which page is loaded */
     physical_addr phys; /**< physical address to which page is loaded */
     int len;            /**< number of bytes in cached page */
     int flags;          /**< cache flags */
-    pid_t pid;
+    pid_t pid;          /**< last task to access the page */
     unsigned long long last_accessed;   /**< last access time in ticks */
     struct cached_page_t *next; /**< next page in cache list */
 };
@@ -100,6 +110,6 @@ struct pcache_key_t
  *
  * A lock used to regulate access to the page cache.
  */
-extern struct kernel_mutex_t pcachetab_lock;
+extern volatile struct kernel_mutex_t pcachetab_lock;
 
 #endif      /* __KERNEL_PCACHE_DEFS_H__ */

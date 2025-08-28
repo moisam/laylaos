@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: vfs-defs.h
  *    This file is part of LaylaOS.
@@ -63,10 +63,11 @@ struct mount_info_t;
 
 struct superblock_t
 {
-	virtual_addr       data;        /**< physical address of buffer data */
+	virtual_addr       data;        /**< virtual address of buffer data */
 	unsigned long      blocksz;     /**< buffer size */
 	unsigned long      blockno;     /**< LBA address of disk block to read
 	                                        or write */
+	virtual_addr       privdata;    /**< private data for use by the fs driver */
 	dev_t              dev;         /**< device id */
 };
 
@@ -82,17 +83,17 @@ struct fs_ops_t
     /*
      * inode operations
      */
-    int (*read_inode)(struct fs_node_t *);              /**< read inode */
-    int (*write_inode)(struct fs_node_t *);             /**< write inode */
-    int (*trunc_inode)(struct fs_node_t *, size_t);     /**< truncate inode */
-    int (*alloc_inode)(struct fs_node_t *);         /**< allocate new inode */
-    int (*free_inode)(struct fs_node_t *);          /**< free inode */
+    long (*read_inode)(struct fs_node_t *);              /**< read inode */
+    long (*write_inode)(struct fs_node_t *);             /**< write inode */
+    long (*trunc_inode)(struct fs_node_t *, size_t);     /**< truncate inode */
+    long (*alloc_inode)(struct fs_node_t *);         /**< allocate new inode */
+    long (*free_inode)(struct fs_node_t *);          /**< free inode */
 
     size_t (*bmap)(struct fs_node_t *, size_t, 
                                        size_t, int);    /**< bmap function */
 
-    int (*read_symlink)(struct fs_node_t *, char *, 
-                        size_t, int);       /**< read symbolic link */
+    long (*read_symlink)(struct fs_node_t *, char *, 
+                         size_t, int);       /**< read symbolic link */
 
     size_t (*write_symlink)(struct fs_node_t *, char *, 
                             size_t, int);   /**< write symbolic link */
@@ -100,37 +101,37 @@ struct fs_ops_t
     /*
      * directory operations
      */
-    int (*finddir)(struct fs_node_t *, char *, struct dirent **,
-                   struct cached_page_t **, size_t *);  /**< find file in dir */
+    long (*finddir)(struct fs_node_t *, char *, struct dirent **,
+                    struct cached_page_t **, size_t *);  /**< find file in dir */
 
-    int (*finddir_by_inode)(struct fs_node_t *, struct fs_node_t *,
-                            struct dirent **, struct cached_page_t **, 
-                            size_t *);      /**< find inode in dir */
+    long (*finddir_by_inode)(struct fs_node_t *, struct fs_node_t *,
+                             struct dirent **, struct cached_page_t **, 
+                             size_t *);      /**< find inode in dir */
+    long (*addir)(struct fs_node_t *, struct fs_node_t *, char *);
+                                            /**< add file to dir */
+    long (*mkdir)(struct fs_node_t *, struct fs_node_t *);/**< make new dir */
 
-    int (*addir)(struct fs_node_t *, char *, ino_t);    /**< add file to dir */
-    int (*mkdir)(struct fs_node_t *, ino_t parent);     /**< make new dir */
+    long (*deldir)(struct fs_node_t *, struct dirent *, int);
+                                            /**< delete file from dir */
 
-    int (*deldir)(struct fs_node_t *, struct dirent *,
-                  struct cached_page_t *, size_t);  /**< delete file from dir */
-
-    int (*dir_empty)(struct fs_node_t *);         /**< check dir is empty */
+    long (*dir_empty)(struct fs_node_t *);         /**< check dir is empty */
 
     /*
      * device operations
      */
-    int (*mount)(struct mount_info_t *, int, char *); /**< mount device */
-    int (*umount)(struct mount_info_t *);             /**< unmount device */
+    long (*mount)(struct mount_info_t *, int, char *); /**< mount device */
+    long (*umount)(struct mount_info_t *);             /**< unmount device */
 
-    int (*read_super)(dev_t, struct mount_info_t *, 
+    long (*read_super)(dev_t, struct mount_info_t *, 
                              size_t);                 /**< read superblock */
 
-    int (*write_super)(dev_t, struct superblock_t *);  /**< write superblock */
+    long (*write_super)(dev_t, struct superblock_t *);  /**< write superblock */
     void (*put_super)(dev_t, struct superblock_t *);   /**< put superblock */
 
-    int (*ustat)(struct mount_info_t *, struct ustat *);    /**< get stats */
-    int (*statfs)(struct mount_info_t *, struct statfs *);  /**< more stats */
+    long (*ustat)(struct mount_info_t *, struct ustat *);    /**< get stats */
+    long (*statfs)(struct mount_info_t *, struct statfs *);  /**< more stats */
 
-    int (*getdents)(struct fs_node_t *, off_t *, 
+    long (*getdents)(struct fs_node_t *, off_t *, 
                                         void *, int);  /**< get dir entries */
 };
 
@@ -170,7 +171,7 @@ struct mount_info_t
     struct fs_node_t *mpoint;   /**< The root inode for this filesystem */
     struct fs_info_t *fs;       /**< Pointer to filesystem info struct */
     struct superblock_t *super; /**< Pointer to superblock buffer */
-    //struct kernel_mutex_t superblock_mutex;     /**< superblock lock */
+    //volatile struct kernel_mutex_t superblock_mutex;     /**< superblock lock */
 
 #define FS_SUPER_DIRTY      0x01
 //#define FS_SUPER_RDONLY     0x02
@@ -181,14 +182,18 @@ struct mount_info_t
     char *mountopts;            /**< Copy of the user-supplied mount options */
 
     /* fields for housekeeping */
+#if 0
 #define NR_FREE_CACHE       100
     int nfree;                  /**< Number of incore free blocks
                                      (between 0 and 100) */
     ino_t free[NR_FREE_CACHE];  /**< incore free blocks */
     int ninode;                 /**< Number of incore inodes (0-100) */
     ino_t inode[NR_FREE_CACHE]; /**< incore free inodes */
-    struct kernel_mutex_t flock;    /**< Lock used during free list access */
-    struct kernel_mutex_t ilock;    /**< Lock used during inode list access */
+    volatile struct kernel_mutex_t flock;    /**< Lock used during free list access */
+    volatile struct kernel_mutex_t ilock;    /**< Lock used during inode list access */
+#endif
+    volatile struct kernel_mutex_t lock;     /**< Lock used during superblock access */
+
     time_t update_time;             /**< Time of last update */
 };
 
@@ -203,7 +208,7 @@ struct fs_node_t
     dev_t dev;          /**< devid of device containing this inode */
     ino_t inode;        /**< inode number */
     struct mount_info_t *minfo;     /**< device mount info for quick access */
-    unsigned short refs;    /**< reference count */
+    unsigned int refs;    /**< reference count */
 
     mode_t mode;        /**< access mode */
     uid_t uid;          /**< user id */
@@ -216,13 +221,24 @@ struct fs_node_t
     gid_t gid;          /**< group id */
     unsigned long blocks[15];   /**< pointer to disk blocks (for pipes, 
                                      [0] and [1] point to pipe head/tail */
-    struct kernel_mutex_t lock; /**< struct lock */
-    struct kernel_mutex_t sleeping_task;    /**< waiting task sleep channel */
 
-#define FS_NODE_DIRTY       0x01
-#define FS_NODE_PIPE        0x02
-#define FS_NODE_MOUNTPOINT  0x04
-#define FS_NODE_SOCKET      0x08
+    uint32_t disk_sectors;  /**<  count of disk sectors (not Ext2 blocks) in
+                                  use by this inode, not counting the actual
+                                  inode structure or directory entries linking
+                                  to the inode */
+
+    volatile struct kernel_mutex_t lock; /**< struct lock */
+    //volatile struct kernel_mutex_t sleeping_task;    /**< waiting task sleep channel */
+
+#define FS_NODE_DIRTY           0x01
+#define FS_NODE_PIPE            0x02
+#define FS_NODE_MOUNTPOINT      0x04
+#define FS_NODE_SOCKET          0x08
+#define FS_NODE_SOCKET_ONDISK   0x10
+#define FS_NODE_KEEP_INCORE     0x20
+#define FS_NODE_STALE           0x40
+#define FS_NODE_LOOP_BACKING    0x80
+//#define FS_NODE_WANTED          0x80
     unsigned int flags;     /**< node flags */
     struct fs_ops_t *ops;   /**< pointer to filesystem operations struct */
     struct fs_node_t *ptr;  /**< alias pointer for symlinks and mount-points */
@@ -231,8 +247,8 @@ struct fs_node_t
     
     void *data;             /**< used by sockets (ptr to struct socket) */
 
-    int (*poll)(struct file_t *, struct pollfd *);  /**< polling function */
-    int (*select)(struct file_t *f, int which);     /**< select function */
+    long (*poll)(struct file_t *, struct pollfd *);  /**< polling function */
+    long (*select)(struct file_t *f, int which);     /**< select function */
     ssize_t (*read)(struct file_t *, off_t *,
                   unsigned char *, size_t, int);    /**< read function */
     ssize_t (*write)(struct file_t *, off_t *,
@@ -262,11 +278,11 @@ struct file_t
 #define PREAD_MODE          1   // for pipes: to identify the reading fd
 #define PWRITE_MODE         2   // for pipes: to identify the writing fd
     unsigned short mode;        /**< access mode */
-    unsigned int flags;         /**< flags */
-    unsigned short refs;        /**< reference count */
+    unsigned int flags;         /**< flags passed to open() */
+    volatile unsigned int refs; /**< reference count */
     struct fs_node_t *node;     /**< pointer to incore node */
     off_t pos;                  /**< read/write position in file */
-    struct kernel_mutex_t lock; /**< struct lock */
+    volatile struct kernel_mutex_t lock; /**< struct lock */
 };
 
 #endif      /* __VFS_DEFS__ */
