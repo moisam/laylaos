@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: dev.c
  *    This file is part of LaylaOS.
@@ -29,6 +29,7 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <kernel/vfs.h>
 #include <kernel/dev.h>
@@ -38,6 +39,7 @@
 #include <kernel/hda.h>
 #include <kernel/ahci.h>
 #include <kernel/fio.h>
+#include <kernel/cdrom.h>
 //#include <kernel/mouse.h>
 #include <fs/sockfs.h>
 #include <fs/devpts.h>
@@ -70,13 +72,17 @@ struct bdev_ops_t bdev_tab[NR_DEV] =
     ZDEV_ENTRY,
     ZDEV_ENTRY,
     ZDEV_ENTRY,
-    ZDEV_ENTRY,
+
+    /* 7 = loopback devices */
+    { lodev_strategy, NULL, NULL, lodev_ioctl, NULL, NULL, ZDIRENT, ZCACHE },
 
     /* 8 = sda, ... sdp */
     { ahci_strategy, NULL, NULL, ahci_ioctl, NULL, NULL, ZDIRENT, ZCACHE },
     ZDEV_ENTRY,
     ZDEV_ENTRY,
-    ZDEV_ENTRY,
+
+    /* 11 = scd0, ... */
+    { ahci_strategy, NULL, NULL, ahci_cdrom_ioctl, NULL, NULL, ZDIRENT, ZCACHE },
     ZDEV_ENTRY,
     ZDEV_ENTRY,
     ZDEV_ENTRY,
@@ -112,7 +118,9 @@ struct cdev_ops_t cdev_tab[NR_DEV] =
     { NULL, NULL, NULL, NULL, NULL },
     { NULL, NULL, NULL, NULL, NULL },
     { NULL, NULL, NULL, NULL, NULL },
-    { NULL, NULL, NULL, NULL, NULL },
+
+    /* 10 = misc devices */
+    { miscdev_read, miscdev_write, miscdev_ioctl, miscdev_select, miscdev_poll },
 
     /* 11 = raw keyboard device */
     //{ kbddev_read, NULL, NULL, kbddev_select, NULL },
@@ -121,10 +129,10 @@ struct cdev_ops_t cdev_tab[NR_DEV] =
 
     /* 13 = input core */
     { inputdev_read, inputdev_write, NULL /* inputdev_ioctl */,
-                     inputdev_select, NULL },
+                     inputdev_select, inputdev_poll },
 
     /* 14 = dsp */
-    { snddev_read, snddev_write, snddev_ioctl, snddev_select, NULL },
+    { snddev_read, snddev_write, snddev_ioctl, snddev_select, snddev_poll },
     { NULL, NULL, NULL, NULL, NULL },
     { NULL, NULL, NULL, NULL, NULL },
     { NULL, NULL, NULL, NULL, NULL },
@@ -168,6 +176,8 @@ void dev_init(void)
 
     add_dev_node("fb0", TO_DEVID(29, 0), (S_IFCHR | 0440));     // cr--r-----
     //add_dev_node("guiev", TO_DEVID(13, 64), (S_IFCHR | 0660));     // crw-rw----
+
+    add_dev_node("loop-control", TO_DEVID(10, 237), (S_IFCHR | 0664)); // crw-rw-r--
 
     /*
      * TODO: this should be under /dev/input.
@@ -222,8 +232,8 @@ void dev_init(void)
     }
     
     // add functions to handle master pseudoterminal devices
-    cdev_tab[PTY_MASTER_MAJ].read = pty_master_read;
-    cdev_tab[PTY_MASTER_MAJ].write = pty_master_write;
+    cdev_tab[PTY_MASTER_MAJ].read = ttyx_read /* pty_master_read */;
+    cdev_tab[PTY_MASTER_MAJ].write = ttyx_write /* pty_master_write */;
     cdev_tab[PTY_MASTER_MAJ].ioctl = tty_ioctl;
 
 	// handle pseudoterminal master devices (major 2) separately, as they read
@@ -241,16 +251,22 @@ void dev_init(void)
     // add sound devices
     // dsp -> first digital audio device
     // dsp1 -> second digital audio
+    // audio -> Sun-compatible digital audio
     struct hda_dev_t *hda = first_hda ? first_hda->next : NULL;
 
     if(first_hda)
     {
         add_dev_node("dsp", first_hda->devid, (S_IFCHR | 0666));  // crw-rw-rw-
+        add_dev_node("audio", first_hda->devid, (S_IFCHR | 0666));  // crw-rw-rw-
+        add_dev_node("audio0", first_hda->devid, (S_IFCHR | 0666));  // crw-rw-rw-
     }
     else
     {
         // create a dummy output device
-        add_dev_node("dsp", create_dummy_hda(), (S_IFCHR | 0666));  // crw-rw-rw-
+        dev_t dummy = create_dummy_hda();
+        add_dev_node("dsp", dummy, (S_IFCHR | 0666));  // crw-rw-rw-
+        add_dev_node("audio", dummy, (S_IFCHR | 0666));  // crw-rw-rw-
+        add_dev_node("audio0", dummy, (S_IFCHR | 0666));  // crw-rw-rw-
     }
 
     i = 1;
@@ -261,6 +277,8 @@ void dev_init(void)
         
         ksprintf(buf, 8, "dsp%d", i);
         add_dev_node(buf, hda->devid, (S_IFCHR | 0666));     // crw-rw-rw-
+        ksprintf(buf, 8, "audio%d", i);
+        add_dev_node(buf, hda->devid, (S_IFCHR | 0666));     // crw-rw-rw-
 
         hda = hda->next;
         i++;
@@ -268,21 +286,25 @@ void dev_init(void)
 }
 
 
-int syscall_ioctl_internal(int fd, unsigned int cmd, char *arg, int kernel)
+long syscall_ioctl_internal(int fd, unsigned int cmd, char *arg, int kernel)
 {
 	struct file_t *fp = NULL;
     struct fs_node_t *node = NULL;
 	dev_t dev;
 	mode_t mode;
 	int major;
-    int (*func)(dev_t, unsigned int, char *, int) = NULL;
-    struct task_t *ct = cur_task;
+    long (*func)(dev_t, unsigned int, char *, int) = NULL;
 
-    if(fdnode(fd, ct, &fp, &node) != 0)
+    if(fdnode(fd, this_core->cur_task, &fp, &node) != 0)
 	{
 		return -EBADF;
 	}
-	
+
+    if(fp->flags & O_PATH)
+    {
+        return -EBADF;
+    }
+
 	mode = node->mode;
 	
 	if(IS_SOCKET(node))
@@ -320,7 +342,7 @@ int syscall_ioctl_internal(int fd, unsigned int cmd, char *arg, int kernel)
 /*
  * Handler for syscall ioctl().
  */
-int syscall_ioctl(int fd, unsigned int cmd, char *arg)
+long syscall_ioctl(int fd, unsigned int cmd, char *arg)
 {
     return syscall_ioctl_internal(fd, cmd, arg, 0);
 }
