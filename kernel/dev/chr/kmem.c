@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: kmem.c
  *    This file is part of LaylaOS.
@@ -41,9 +41,8 @@
 ssize_t kmemdev_read(dev_t dev, unsigned char *buf, size_t count)
 {
     UNUSED(dev);
-    struct task_t *ct = cur_task;
     
-    if(ct->euid != 0)
+    if(this_core->cur_task->euid != 0)
     {
         return -EPERM;
     }
@@ -67,9 +66,8 @@ ssize_t kmemdev_read(dev_t dev, unsigned char *buf, size_t count)
 ssize_t kmemdev_write(dev_t dev, unsigned char *buf, size_t count)
 {
     UNUSED(dev);
-    struct task_t *ct = cur_task;
     
-    if(ct->euid != 0)
+    if(this_core->cur_task->euid != 0)
     {
         return -EPERM;
     }

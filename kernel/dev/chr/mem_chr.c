@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mem_chr.c
  *    This file is part of LaylaOS.
@@ -126,7 +126,7 @@ ssize_t memdev_char_write(struct file_t *f, off_t *pos,
 /*
  * Perform a select operation on a memory core device (major = 1).
  */
-int memdev_char_select(struct file_t *f, int which)
+long memdev_char_select(struct file_t *f, int which)
 {
     dev_t dev;
     int n;
@@ -139,7 +139,7 @@ int memdev_char_select(struct file_t *f, int which)
 	dev = f->node->blocks[0];
     n = MINOR(dev);
     
-    if(MAJOR(dev) != 1 || n < 0 || n >= NCHAR)
+    if(MAJOR(dev) != 1 || n < 1 || n >= NCHAR)
     {
         return 0;
     }
@@ -147,16 +147,14 @@ int memdev_char_select(struct file_t *f, int which)
     switch(n)
     {
         case 1:         // mem
+        case 3:         // null
         case 5:         // zero
         case 8:         // rand
         case 9:         // urand
             return (which == FREAD || which == FWRITE);
 
         case 2:         // kmem
-            return !!suser(cur_task);
-
-        case 3:         // null
-            return (which == FWRITE);
+            return !!suser(this_core->cur_task);
 
         case 7:         // full
             return 0;
@@ -169,10 +167,11 @@ int memdev_char_select(struct file_t *f, int which)
 /*
  * Perform a poll operation on a memory core device (major = 1).
  */
-int memdev_char_poll(struct file_t *f, struct pollfd *pfd)
+long memdev_char_poll(struct file_t *f, struct pollfd *pfd)
 {
     dev_t dev;
-    int n, res = 0;
+    int n;
+    long res = 0;
 
     if(!f || !f->node || !S_ISCHR(f->node->mode))
 	{
@@ -182,7 +181,7 @@ int memdev_char_poll(struct file_t *f, struct pollfd *pfd)
 	dev = f->node->blocks[0];
     n = MINOR(dev);
     
-    if(MAJOR(dev) != 1 || n < 0 || n >= NCHAR)
+    if(MAJOR(dev) != 1 || n < 1 || n >= NCHAR)
     {
         return 0;
     }
@@ -190,13 +189,14 @@ int memdev_char_poll(struct file_t *f, struct pollfd *pfd)
     switch(n)
     {
         case 2:         // kmem
-            if(!suser(cur_task))
+            if(!suser(this_core->cur_task))
             {
                 break;
             }
             /* fallthrough */
 
         case 1:         // mem
+        case 3:         // null
         case 5:         // zero
         case 8:         // rand
         case 9:         // urand
@@ -206,14 +206,6 @@ int memdev_char_poll(struct file_t *f, struct pollfd *pfd)
                 res = 1;
             }
 
-            if(pfd->events & POLLOUT)
-            {
-                pfd->revents |= POLLOUT;
-                res = 1;
-            }
-            break;
-
-        case 3:         // null
             if(pfd->events & POLLOUT)
             {
                 pfd->revents |= POLLOUT;

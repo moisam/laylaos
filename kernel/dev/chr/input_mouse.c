@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: input_mouse.c
  *    This file is part of LaylaOS.
@@ -36,7 +36,6 @@
 #include <kernel/task.h>
 #include <kernel/user.h>
 #include <kernel/fcntl.h>
-
 
 extern struct selinfo mouse_ssel;
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: sound.c
  *    This file is part of LaylaOS.
@@ -70,14 +70,22 @@ static struct hda_dev_t *hda_for_devid(dev_t dev)
 }
 
 
+#define COPY_RESULT_AND_RETURN(arg, st)                 \
+    if(kernel) {                                        \
+        A_memcpy(arg, &st, sizeof(st));                 \
+        return 0;                                       \
+    } else return copy_to_user(arg, &st, sizeof(st));
+
+
 /*
  * General device control function.
  */
-int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
+long snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
 {
     struct hda_dev_t *hda;
     audio_info_t info;
-    int res;
+    struct audio_swpar swpar;
+    long res;
 
     if(!(hda = hda_for_devid(dev)))
     {
@@ -206,20 +214,95 @@ int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
                 info.mode = AUMODE_PLAY;
             }
 
+            COPY_RESULT_AND_RETURN(arg, info);
+
+        case AUDIO_SETPAR:
             if(kernel)
             {
-                A_memcpy(arg, &info, sizeof(audio_info_t));
-                return 0;
+                A_memcpy(&swpar, arg, sizeof(swpar));
             }
             else
             {
-                return copy_to_user(arg, &info, sizeof(audio_info_t));
+                COPY_FROM_USER(&swpar, arg, sizeof(swpar));
             }
 
+            // NOTE: We ignore the bps (bytes per sample) field and use
+            //       the bits per sample field instead
+            if(swpar.bits &&
+               (res = hda_set_bits_per_sample(hda, swpar.bits)) != 0)
+            {
+                return -EINVAL;
+            }
+
+#if BYTE_ORDER == BIG_ENDIAN
+            if(swpar.le)
+            {
+                return -EINVAL;
+            }
+#endif
+
+            if(swpar.pchan && (res = hda_set_channels(hda, swpar.pchan)) != 0)
+            {
+                return -EINVAL;
+            }
+
+            /*
+             * TODO: Use rchan to set recording channels.
+             */
+
+            if(swpar.rate && (res = hda_set_sample_rate(hda, swpar.rate)) != 0)
+            {
+                return -EINVAL;
+            }
+
+            return 0;
+
+        case AUDIO_GETPAR:
+            A_memset(&swpar, 0, sizeof(swpar));
+
+            if(hda->out)
+            {
+#if BYTE_ORDER == LITTLE_ENDIAN
+                swpar.le = 1;
+#elif BYTE_ORDER == BIG_ENDIAN
+                swpar.le = 0;
+#else
+# error Byte order not specified!
+#endif
+
+                swpar.sig = 1;
+                swpar.bits = hda_get_bits_per_sample(hda);
+                swpar.bps = (swpar.bits <= 16) ? 2 : 4;
+                swpar.msb = 1;
+                swpar.rate = hda_get_sample_rate(hda);
+                swpar.pchan = hda->out->nchan;
+                swpar.rchan = 2;    // TODO
+                swpar.nblks = 2;
+                swpar.round = BDL_BUFSZ / 2;
+            }
+
+            COPY_RESULT_AND_RETURN(arg, swpar);
+
+        case AUDIO_GETPOS:
+        {
+            struct audio_pos pos;
+
+            pos.play_pos = hda->bytes_played;  // total bytes played
+
+            // TODO: Fill these fields
+            pos.play_xrun = 0;      // bytes of silence inserted
+            pos.rec_pos = 0;        // total bytes recorded
+            pos.rec_xrun = 0;       // bytes dropped
+
+            COPY_RESULT_AND_RETURN(arg, pos);
+        }
+
         case AUDIO_START:
+            hda->bytes_played = 0;
             return hda_play_stop(hda, 1);
 
         case AUDIO_STOP:
+            hda->bytes_played = 0;
             return hda_play_stop(hda, 0);
 
         case AUDIO_FLUSH:
@@ -228,9 +311,11 @@ int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
                 return 0;
             }
 
+#if 0
+
             if(hda->out)
             {
-                struct hda_buf_t *buf;
+                volatile struct hda_buf_t *buf;
 
                 elevated_priority_lock(&hda->outq.lock);
 
@@ -238,7 +323,7 @@ int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
                 {
                     buf = hda->outq.head;
                     hda->outq.head = buf->next;
-                    kfree(buf);
+                    kfree((void *)buf);
                 }
 
                 hda->outq.tail = NULL;
@@ -248,17 +333,22 @@ int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
                 elevated_priority_unlock(&hda->outq.lock);
             }
 
+#endif
+
             /*
              * TODO: flush input (microphone/recording) buffers as well.
              */
 
-            return 0;
+            hda->bytes_played = 0;
+            return hda_play_stop(hda, 0);
 
         case AUDIO_DRAIN:
             if(hda->flags & HDA_FLAG_DUMMY)
             {
                 return 0;
             }
+
+#if 0
 
             if(hda->out)
             {
@@ -270,9 +360,7 @@ int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
                 while(queued)
                 {
                     elevated_priority_unlock(&hda->outq.lock);
-                    lock_scheduler();
                     scheduler();
-                    unlock_scheduler();
                     elevated_priority_relock(&hda->outq.lock);
                     queued = hda->outq.queued;
                 }
@@ -280,11 +368,23 @@ int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
                 elevated_priority_unlock(&hda->outq.lock);
             }
 
+#endif
+
             /*
              * TODO: drain input (microphone/recording) buffers as well.
              */
 
-            return 0;
+            hda->bytes_played = 0;
+            return hda_play_stop(hda, 0);
+
+        case AUDIO_GETDEV:
+        {
+            struct audio_device adev;
+
+            A_memset(&adev, 0, sizeof(adev));
+            ksprintf(adev.name, MAX_AUDIO_DEV_LEN, "%s", "Intel HDA");
+            COPY_RESULT_AND_RETURN(arg, adev);
+        }
     }
     
     return -EINVAL;
@@ -316,11 +416,11 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
     UNUSED(kernel);
 
     struct hda_dev_t *hda;
-    struct hda_buf_t *hdabuf /* , *head, *tail */;
-    volatile size_t pending;
-    //volatile int queued;
-    //int bufcount;
-    //size_t left, len;
+    //struct hda_buf_t *hdabuf /* , *head, *tail */;
+    //volatile size_t pending;
+    ////volatile int queued;
+    ////int bufcount;
+    ////size_t left, len;
     dev_t dev = f->node->blocks[0];
 
     if(!(hda = hda_for_devid(dev)))
@@ -342,8 +442,15 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
 
     if(hda->flags & HDA_FLAG_DUMMY)
     {
+        hda->bytes_played += count;
         return count;
     }
+
+
+    return hda_write_buf(hda, (char *)buf, count);
+
+
+#if 0
 
     elevated_priority_lock(&hda->outq.lock);
 
@@ -364,9 +471,7 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
     {
         elevated_priority_unlock(&hda->outq.lock);
         //block_task2(&hda->outq, PIT_FREQUENCY);
-        lock_scheduler();
         scheduler();
-        unlock_scheduler();
         elevated_priority_relock(&hda->outq.lock);
         pending = hda->outq.bytes;
     }
@@ -383,8 +488,13 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
     }
 
     A_memset(hdabuf, 0, sizeof(struct hda_buf_t));
+
     hdabuf->size = count;
     hdabuf->curptr = hdabuf->buf;
+    /*
+    __lock_xchg_ptr(&hdabuf->size, count);
+    __lock_xchg_ptr(&hdabuf->curptr, (uintptr_t)hdabuf->buf);
+    */
 
     if(copy_from_user(hdabuf->buf, buf, count) != 0)
     {
@@ -445,15 +555,24 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
         hda->outq.tail->next = hdabuf /* head */;
         hda->outq.tail = hdabuf /* tail */;
     }
-    
+
     hda->outq.queued++;
     //hda->outq.queued += bufcount;
     hda->outq.bytes += count;
-    
+    hda->bytes_played += count;
+    /*
+    __sync_fetch_and_add(&hda->outq.queued, 1);
+    __sync_fetch_and_add(&hda->outq.bytes, count);
+    __sync_fetch_and_add(&hda->bytes_played, count);
+    */
+
     elevated_priority_unlock(&hda->outq.lock);
     unblock_kernel_task(hda->task);
     
     return count;
+
+#endif
+
 }
 
 
@@ -464,6 +583,7 @@ ssize_t snddev_read(struct file_t *f, off_t *pos,
                     unsigned char *buf, size_t count, int kernel)
 {
     UNUSED(pos);
+    UNUSED(buf);
     UNUSED(kernel);
 
     struct hda_dev_t *hda;
@@ -490,7 +610,7 @@ ssize_t snddev_read(struct file_t *f, off_t *pos,
 /*
  * Perform a select operation on a sound device (major = 14).
  */
-int snddev_select(struct file_t *f, int which)
+long snddev_select(struct file_t *f, int which)
 {
     dev_t dev;
     //int res;
@@ -537,5 +657,43 @@ int snddev_select(struct file_t *f, int which)
 	}
 
 	return 0;
+}
+
+
+/*
+ * Perform a poll operation on a sound device (major = 14).
+ */
+long snddev_poll(struct file_t *f, struct pollfd *pfd)
+{
+    long res = 0;
+    dev_t dev;
+    struct hda_dev_t *hda;
+
+    if(!f || !f->node)
+    {
+        return 0;
+    }
+    
+	if(!S_ISCHR(f->node->mode))
+	{
+	    return 0;
+	}
+	
+	dev = f->node->blocks[0];
+
+    if(!(hda = hda_for_devid(dev)))
+    {
+        return 0;
+    }
+    
+    if(pfd->events & POLLOUT)
+    {
+        pfd->revents |= POLLOUT;
+        res = 1;
+    }
+
+    // TODO: we don't support reading for now (that is, no POLLIN events)
+    
+    return res;
 }
 
