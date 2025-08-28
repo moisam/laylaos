@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ram.c
  *    This file is part of LaylaOS.
@@ -52,9 +52,12 @@ struct ramdisk_s ramdisk[NR_RAMDISK] = { 0, };
 /*
  * General Block Read/Write Operations.
  */
-int ramdev_strategy(struct disk_req_t *req)
+long ramdev_strategy(struct disk_req_t *req)
 {
+    uint32_t sect;
+    int sectors_per_block, bytes_to_read;
     int min = MINOR(req->dev);
+    virtual_addr addr;
     struct ramdisk_s *rd;
     
     if(min >= NR_RAMDISK)
@@ -70,20 +73,23 @@ int ramdev_strategy(struct disk_req_t *req)
     }
 
     // get the block's virtual address in memory
-    virtual_addr addr = rd->start + (req->blockno * RAMDISK_BLKSIZE);
+    bytes_to_read = (req->datasz / RAMDISK_BLKSIZE) * RAMDISK_BLKSIZE;
+    sectors_per_block = req->fs_blocksz / RAMDISK_BLKSIZE;
+    sect = req->blockno * sectors_per_block;
+    addr = rd->start + (sect * RAMDISK_BLKSIZE);
 
     // now copy the data
     if(!req->write)
     {
         //__asm__ __volatile__("xchg %%bx, %%bx"::);
-        A_memcpy((void *)req->data, (void *)addr, RAMDISK_BLKSIZE);
+        A_memcpy((void *)req->data, (void *)addr, bytes_to_read);
     }
     else
     {
-        A_memcpy((void *)addr, (void *)req->data, RAMDISK_BLKSIZE);
+        A_memcpy((void *)addr, (void *)req->data, bytes_to_read);
     }
 
-    return (int)RAMDISK_BLKSIZE;
+    return (long)bytes_to_read;
 }
 
 
@@ -157,11 +163,8 @@ fin:
 /*
  * General block device control function.
  */
-int ramdev_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
+long ramdev_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
 {
-    UNUSED(arg);
-    UNUSED(kernel);
-    
     int min = MINOR(dev_id);
     struct ramdisk_s *rd;
     
@@ -179,9 +182,23 @@ int ramdev_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
 
     switch(cmd)
     {
-        case DEV_IOCTL_GET_BLOCKSIZE:
+        case BLKSSZGET:
             // get the block size in bytes
-            return RAMDISK_BLKSIZE;
+            RETURN_IOCTL_RES(int, arg, RAMDISK_BLKSIZE, kernel);
+
+        case BLKGETSIZE:
+        {
+            // get disk size in 512-blocks
+            long sects = (long)((rd->end - rd->start) / 512);
+            RETURN_IOCTL_RES(long, arg, sects, kernel);
+        }
+
+        case BLKGETSIZE64:
+        {
+            // get disk size in bytes
+            unsigned long long bytes = (rd->end - rd->start);
+            RETURN_IOCTL_RES(unsigned long long, arg, bytes, kernel);
+        }
     }
     
     return -EINVAL;
