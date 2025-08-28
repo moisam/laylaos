@@ -2938,22 +2938,6 @@ diff -rub ./musl-1.2.4/src/stat/fstatat.c ./musl-1.2.4/src/stat/fstatat.c
  	ret = fstatat_kstat(fd, path, st, flag);
  #else
  	ret = fstatat_statx(fd, path, st, flag);
-diff -rub ./musl-1.2.4/src/stat/utimensat.c ./musl-1.2.4/src/stat/utimensat.c
---- ./musl-1.2.4/src/stat/utimensat.c	2023-05-02 16:45:28.000000000 +0100
-+++ ./musl-1.2.4/src/stat/utimensat.c	2023-11-12 03:17:14.112179270 +0000
-@@ -32,7 +32,12 @@
- 	r = __syscall(SYS_utimensat, fd, path,
- 		times ? ((long[]){s0, ns0, s1, ns1}) : 0, flags);
- #else
-+#ifndef __laylaos__
- 	r = __syscall(SYS_utimensat, fd, path, times, flags);
-+#else
-+	//r = __syscall(SYS_futimesat, fd, path, times);
-+	r = -ENOSYS;
-+#endif
- #endif
- 
- #ifdef SYS_futimesat
 diff -rub ./musl-1.2.4/src/stdio/__stdio_read.c ./musl-1.2.4/src/stdio/__stdio_read.c
 --- ./musl-1.2.4/src/stdio/__stdio_read.c	2023-05-02 16:45:28.000000000 +0100
 +++ ./musl-1.2.4/src/stdio/__stdio_read.c	2023-09-07 11:28:12.107949023 +0100

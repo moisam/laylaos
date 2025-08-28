@@ -15,6 +15,13 @@ CWD=`pwd`
 # where the downloaded and extracted source will end up
 DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 
+OLDCC=${CC}
+myname=`uname -s`
+
+if [ "$myname" == "LaylaOS" ]; then
+    export CC=gcc
+fi
+
 # get common funcs
 source ../common.sh
 
@@ -40,8 +47,25 @@ download_and_extract
 # patch and copy our extra files
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/gcc.diff -p0 && cd ${CWD}
+
+cd ${DOWNLOAD_PORTS_PATH}
+patch -i ${CWD}/gcc.diff -p0
+patch -i ${CWD}/gcc2.diff -p0
+patch -i ${CWD}/gcc3.diff -p0
+cd ${CWD}
+
 cp extra/laylaos.h extra/laylaos.opt extra/laylaos-kernel.h extra/laylaos-user.h extra/laylaos-bootstrap.h ${DOWNLOAD_SRCDIR}/gcc/config
+
+mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+
+mv ${DOWNLOAD_SRCDIR}/libtool.m4 ${DOWNLOAD_SRCDIR}/libtool.m4.OLD
+mv ${DOWNLOAD_SRCDIR}/libgo/config/libtool.m4 ${DOWNLOAD_SRCDIR}/libgo/config/libtool.m4.OLD
+mv ${DOWNLOAD_SRCDIR}/libphobos/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/libphobos/m4/libtool.m4.OLD
+
+cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/libtool.m4
+cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/libgo/config/libtool.m4
+cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/libphobos/m4/libtool.m4
 
 # build GCC
 echo " ==>"
@@ -73,4 +97,6 @@ echo " ==>"
 # We need to do this or otherwise MUSL will NOT overwrite our files with 
 # the proper ones when we build libc
 source ./bootstrap-remove-header-files.sh
+
+export CC=${OLDCC}
 

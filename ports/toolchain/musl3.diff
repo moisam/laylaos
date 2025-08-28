@@ -1,0 +1,146 @@
+diff -rub ./musl-1.2.4/src/locale/setlocale.c ./musl-1.2.4/src/locale/setlocale.c
+--- ./musl-1.2.4/src/locale/setlocale.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/locale/setlocale.c	2024-11-18 19:27:56.431341968 +0000
+@@ -5,6 +5,136 @@
+ #include "libc.h"
+ #include "lock.h"
+ 
++#ifdef __laylaos__
++
++/*
++ * The default musl implementation returns locale values separated by ';' when
++ * LC_ALL is requested. This is different from glibc, which returns a string of
++ * name=value pairs, separated by ';'. This causes issues for some of our 
++ * ported software that expects glibc's behaviour.
++ *
++ * This implementation is more compatible with glibc's, except it only uses the
++ * locale categories defined by musl.
++ */
++
++static char buf[LC_ALL*(LOCALE_NAME_MAX+18)];
++
++// this is the same envvars[] array from locale_map.c
++static const char locnames[][12] = {
++	"LC_CTYPE",
++	"LC_NUMERIC",
++	"LC_TIME",
++	"LC_COLLATE",
++	"LC_MONETARY",
++	"LC_MESSAGES",
++};
++
++char *setlocale(int cat, const char *locale)
++{
++	const struct __locale_map *lm;
++
++	if ((unsigned)cat > LC_ALL) return 0;
++
++	LOCK(__locale_lock);
++
++	if (cat == LC_ALL) {
++		int i;
++		if (locale) {
++			struct __locale_struct tmp_locale;
++			char name[18];
++			char val[LOCALE_NAME_MAX+1] = "C.UTF-8";
++			const char *p = locale;
++			const char *z = __strchrnul(p, ';');
++			const char *eq = __strchrnul(p, '=');
++
++			if (!*z && !*eq) {
++				if (strlen(p) <= LOCALE_NAME_MAX) {
++					strcpy(val, p);
++				}
++				for (i=0; i<LC_ALL; i++) {
++					lm = __get_locale(i, val);
++					if (lm == LOC_MAP_FAILED) {
++						UNLOCK(__locale_lock);
++						return 0;
++					}
++					tmp_locale.cat[i] = lm;
++				}
++			} else {
++				while (*eq) {
++					if (eq > z) {
++						UNLOCK(__locale_lock);
++						return 0;
++					}
++					if (eq-p < 18) {
++						memcpy(name, p, eq-p);
++						name[eq-p] = 0;
++					} else {
++						name[0] = 0;
++					}
++					if (z-eq-1 <= LOCALE_NAME_MAX) {
++						memcpy(val, eq+1, z-eq-1);
++						val[z-eq-1] = 0;
++						if (*z) p = z+1;
++					}
++					for (i=0; i<LC_ALL; i++) {
++						if (strcmp(name, locnames[i]) == 0) break;
++					}
++					if (i == LC_ALL) {
++						UNLOCK(__locale_lock);
++						return 0;
++					}
++					lm = __get_locale(i, val);
++					if (lm == LOC_MAP_FAILED) {
++						UNLOCK(__locale_lock);
++						return 0;
++					}
++					tmp_locale.cat[i] = lm;
++					z = __strchrnul(p, ';');
++					eq = __strchrnul(p, '=');
++				}
++			}
++
++			libc.global_locale = tmp_locale;
++		}
++
++		char *s = buf;
++		const char *part;
++		for (i=0; i<LC_ALL; i++) {
++			const struct __locale_map *lm =
++				libc.global_locale.cat[i];
++			part = lm ? lm->name : "C";
++			size_t l = strlen(part);
++			size_t l2 = strlen(locnames[i]);
++			memcpy(s, locnames[i], l2);
++			memcpy(s+l2+1, part, l);
++			s[l2] = '=';
++			s[l+l2+1] = ';';
++			s += l+l2+2;
++		}
++		*--s = 0;
++		UNLOCK(__locale_lock);
++		return buf;
++	}
++
++	if (locale) {
++		lm = __get_locale(cat, locale);
++		if (lm == LOC_MAP_FAILED) {
++			UNLOCK(__locale_lock);
++			return 0;
++		}
++		libc.global_locale.cat[cat] = lm;
++	} else {
++		lm = libc.global_locale.cat[cat];
++	}
++	char *ret = lm ? (char *)lm->name : "C";
++
++	UNLOCK(__locale_lock);
++
++	return ret;
++}
++
++#else   /* __laylaos__ */
++
+ static char buf[LC_ALL*(LOCALE_NAME_MAX+1)];
+ 
+ char *setlocale(int cat, const char *name)
+@@ -76,3 +206,5 @@
+ 
+ 	return ret;
+ }
++
++#endif      /* __laylaos__ */

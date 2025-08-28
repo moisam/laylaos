@@ -40,8 +40,21 @@ download_and_extract
 # patch and copy our extra files
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/binutils.diff -p0 && cd ${CWD}
+
+# now patch
+cd ${DOWNLOAD_PORTS_PATH}
+patch -i ${CWD}/binutils.diff -p0
+patch -i ${CWD}/binutils2.diff -p0
+patch -i ${CWD}/binutils3.diff -p0
+cd ${CWD}
+
 cp extra/elf_i386_laylaos.sh extra/elf_x86_64_laylaos.sh ${DOWNLOAD_SRCDIR}/ld/emulparams
+
+mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+
+mv ${DOWNLOAD_SRCDIR}/libtool.m4 ${DOWNLOAD_SRCDIR}/libtool.m4.OLD
+cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/libtool.m4
 
 # bootstrap headers
 echo " ==> Bootstrapping headers"

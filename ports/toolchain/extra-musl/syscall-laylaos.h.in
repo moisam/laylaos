@@ -234,6 +234,8 @@
 #define __NR_pselect                    308
 #define __NR_ppoll                      309
 
+#define __NR_utimensat                  320
+
 #define __NR_dup3	                    330
 #define __NR_pipe2	                    331
 

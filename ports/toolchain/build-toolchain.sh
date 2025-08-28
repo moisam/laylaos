@@ -26,6 +26,11 @@ export PREFIX="${CROSSCOMPILE_TOOLS_PATH}"
 export PATH="${PREFIX}/bin:${PATH}"
 export TARGET=${BUILD_TARGET}
 
+myname=`uname -s`
+if [ "$myname" == "LaylaOS" ]; then
+    export CPPFLAGS="-D__laylaos__ -D_GNU_SOURCE -D__${BUILD_ARCH}__"
+fi
+
 ####################################
 # Build the userland cross compiler
 ####################################
@@ -55,8 +60,8 @@ cd ${BINUTILS_SRCDIR}/build || exit_failure "$0: failed to chdir to build direct
 
 ${BINUTILS_SRCDIR}/configure --target=${TARGET} --prefix="${PREFIX}" --disable-nls --disable-werror --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --enable-shared
 
-make
-make install
+make || "$0: failed to build binutils (second pass)"
+make install || "$0: failed to install binutils (second pass)"
 
 # Rebuild with threads support
 echo " ==>"
@@ -66,7 +71,7 @@ echo " ==>"
 mkdir -p ${GCC_SRCDIR}/build
 cd ${GCC_SRCDIR}/build || exit_failure "$0: failed to chdir to build directory"
 
-${GCC_SRCDIR}/configure --target=${TARGET} --prefix="${PREFIX}" --disable-nls --enable-languages=c,c++ --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --enable-shared --enable-threads=yes --enable-libssp
+${GCC_SRCDIR}/configure --target=${TARGET} --prefix="${PREFIX}" --disable-nls --enable-languages=c,c++ --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --enable-shared --enable-threads=yes --enable-libssp --disable-tls
 
 make all-gcc || "$0: failed to build gcc (second pass)"
 make install-gcc || exit_failure "$0: failed to install gcc (second pass)"
@@ -102,6 +107,10 @@ ${MUSL_SRCDIR}/configure --prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \
 make || exit_failure "$0: failed to build musl (second pass)"
 make install || exit_failure "$0: failed to install musl (second pass)"
 
+# remove unneeded linux header files
+rm ${CROSSCOMPILE_SYSROOT_PATH}/usr/include/sys/soundcard.h
+rm ${CROSSCOMPILE_SYSROOT_PATH}/usr/include/bits/soundcard.h
+
 
 # Build and install libgcc and libstdc++-v3
 cd ${GCC_SRCDIR}/build || exit_failure "$0: failed to chdir to build directory"
@@ -114,6 +123,19 @@ make install-target-libstdc++-v3 || exit_failure "$0: failed to install libstdc+
 
 make all-target-libssp CFLAGS_FOR_TARGET='-D_POSIX_THREADS -g -O2 -mcmodel=large -mstackrealign' || exit_failure "$0: failed to build libssp (third pass)"
 make install-target-libssp || exit_failure "$0: failed to install libssp (third pass)"
+
+
+# copy libgcc and libstdc++ as some libs will need to link to them
+# the installation directory differs between native and cross compiles
+if [ "$myname" == "LaylaOS" ]; then
+    PATH_TO_GCC_LIBS=${CROSSCOMPILE_TOOLS_PATH}/lib
+else
+    PATH_TO_GCC_LIBS=${CROSSCOMPILE_TOOLS_PATH}/${BUILD_ARCH}-laylaos/lib
+fi
+
+cp ${PATH_TO_GCC_LIBS}/libgcc_s.so.1 ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/
+cp ${PATH_TO_GCC_LIBS}/libstdc++.so.6 ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/
+
 
 ####################################
 # Build the kernel cross compiler
@@ -145,11 +167,6 @@ make all-gcc || "$0: failed to build kernel gcc"
 make all-target-libgcc CFLAGS_FOR_TARGET='-g -O2 -mcmodel=large -mno-red-zone' || "$0: failed to build kernel libgcc"
 make install-gcc || "$0: failed to install kernel gcc"
 make install-target-libgcc || "$0: failed to install kernel libgcc"
-
-
-# copy libgcc and libstdc++ as some libs will need to link to them
-cp ${CROSSCOMPILE_TOOLS_PATH}/${BUILD_ARCH}-laylaos/lib/libgcc_s.so.1 ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/
-cp ${CROSSCOMPILE_TOOLS_PATH}/${BUILD_ARCH}-laylaos/lib/libstdc++.so.6 ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/
 
 
 # Clean up

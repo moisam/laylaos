@@ -12,6 +12,7 @@ DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 PATCH_FILE=musl.diff
 PATCH2_FILE=musl2.diff
+PATCH3_FILE=musl3.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -44,6 +45,7 @@ echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH2_FILE} -p0 && cd ${CWD}
+cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH3_FILE} -p0 && cd ${CWD}
 
 # we will replace some of musl's original files with our own
 rm ${DOWNLOAD_SRCDIR}/src/process/x86_64/vfork.s

@@ -1,0 +1,49 @@
+diff -rub ./sndio-1.10.0/bsd-compat/getpeereid.c ./sndio-1.10.0/bsd-compat/getpeereid.c
+--- ./sndio-1.10.0/bsd-compat/getpeereid.c	2024-08-01 16:36:54.000000000 +0100
++++ ./sndio-1.10.0/bsd-compat/getpeereid.c	2024-09-15 20:10:53.553539812 +0100
+@@ -21,13 +21,23 @@
+ int
+ getpeereid(int s, uid_t *ruid, gid_t *rgid)
+ {
++#ifdef __laylaos__
++	struct xucred cr;
++#else
+ 	struct ucred cr;
++#endif
+ 	socklen_t len = sizeof(cr);
+ 
+ 	if (getsockopt(s, SOL_SOCKET, SO_PEERCRED, &cr, &len) < 0)
+ 		return -1;
++
++#ifdef __laylaos__
++	*ruid = cr.cr_uid;
++	*rgid = cr.cr_groups[0];
++#else
+ 	*ruid = cr.uid;
+ 	*rgid = cr.gid;
++#endif
+ 	return 0;
+ }
+ #endif
+diff -rub ./sndio-1.10.0/configure ./sndio-1.10.0/configure
+--- ./sndio-1.10.0/configure	2024-08-01 16:36:54.000000000 +0100
++++ ./sndio-1.10.0/configure	2024-09-15 20:12:41.134707775 +0100
+@@ -221,6 +221,18 @@
+ 	CC=*|CFLAGS=*|LDFLAGS=*|AR=*)
+ 		vars="$vars$i$nl"
+ 		shift;;
++	--laylaos)
++		alsa=no
++		sun=yes
++		rmidi=no
++		oss=no
++		umidi=no
++		ldadd="-lrt -lm"
++		user=audio
++		so_link="libsndio.so libsndio.so.\${MAJ} libsndio.so.\${MAJ}.0"
++		so_ldflags="-Wl,-soname=libsndio.so.\${MAJ}"
++		defs='-D__laylaos__ -D_GNU_SOURCE -DHAVE_SOCK_CLOEXEC -DHAVE_CLOCK_GETTIME'
++		shift;;
+ 	*)
+ 		help
+ 		exit 1

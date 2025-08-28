@@ -1,0 +1,54 @@
+diff -rub ./gcc-11.3.0/gcc/doc/extend.texi ./gcc-11.3.0/gcc/doc/extend.texi
+--- ./gcc-11.3.0/gcc/doc/extend.texi	2022-04-21 08:58:53.175586000 +0100
++++ ./gcc-11.3.0/gcc/doc/extend.texi	2025-04-25 18:21:29.779297047 +0100
+@@ -2487,7 +2487,7 @@
+ @table @code
+ @c Keep this table alphabetized by attribute name.  Treat _ as space.
+ 
+-@itemx access (@var{access-mode}, @var{ref-index})
++@item access (@var{access-mode}, @var{ref-index})
+ @itemx access (@var{access-mode}, @var{ref-index}, @var{size-index})
+ 
+ The @code{access} attribute enables the detection of invalid or unsafe
+diff -rub ./gcc-11.3.0/lto-plugin/configure ./gcc-11.3.0/lto-plugin/configure
+--- ./gcc-11.3.0/lto-plugin/configure	2022-04-21 08:58:57.483591000 +0100
++++ ./gcc-11.3.0/lto-plugin/configure	2025-04-25 09:45:40.741109730 +0100
+@@ -6825,7 +6825,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos* | laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -11250,6 +11250,17 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++laylaos*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  hardcode_into_libs=yes
++  dynamic_linker='LaylaOS ld.so'
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
+@@ -11738,6 +11749,11 @@
+ 
+     ;;
+ 
++  laylaos*)
++    lt_cv_dlopen="dlopen"
++    lt_cv_dlopen_libs=
++    ;;
++
+   *)
+     ac_fn_c_check_func "$LINENO" "shl_load" "ac_cv_func_shl_load"
+ if test "x$ac_cv_func_shl_load" = xyes; then :

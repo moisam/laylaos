@@ -1,0 +1,21 @@
+diff -rub ./binutils-2.38/libiberty/mkstemps.c ./binutils-2.38/libiberty/mkstemps.c
+--- ./binutils-2.38/libiberty/mkstemps.c	2025-06-29 10:22:38.299651000 +0100
++++ ./binutils-2.38/libiberty/mkstemps.c	2025-06-29 10:22:59.471887188 +0100
+@@ -81,7 +81,7 @@
+ {
+   static const char letters[]
+     = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+-  static gcc_uint64_t value;
++  static volatile gcc_uint64_t value;
+ #ifdef HAVE_GETTIMEOFDAY
+   struct timeval tv;
+ #endif
+@@ -109,7 +109,7 @@
+ 
+   for (count = 0; count < TMP_MAX; ++count)
+     {
+-      gcc_uint64_t v = value;
++      volatile gcc_uint64_t v = value;
+       int fd;
+ 
+       /* Fill in the random bits.  */
