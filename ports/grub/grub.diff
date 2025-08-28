@@ -1,0 +1,37 @@
+diff -rub ./grub-2.12/grub-core/osdep/getroot.c ./grub-2.12/grub-core/osdep/getroot.c
+--- ./grub-2.12/grub-core/osdep/getroot.c	2018-11-24 17:13:02.000000000 +0000
++++ ./grub-2.12/grub-core/osdep/getroot.c	2025-07-13 14:18:13.652162660 +0100
+@@ -16,6 +16,8 @@
+ #include "aros/getroot.c"
+ #elif defined (__HAIKU__)
+ #include "haiku/getroot.c"
++#elif defined (__laylaos__)
++#include "laylaos/getroot.c"
+ #else
+ # warning "No getroot OS-specific functions is available for your system. Device detection may not work properly."
+ #include "basic/getroot.c"
+diff -rub ./grub-2.12/grub-core/osdep/hostdisk.c ./grub-2.12/grub-core/osdep/hostdisk.c
+--- ./grub-2.12/grub-core/osdep/hostdisk.c	2018-11-24 17:13:02.000000000 +0000
++++ ./grub-2.12/grub-core/osdep/hostdisk.c	2025-07-13 14:19:10.072755340 +0100
+@@ -16,6 +16,8 @@
+ #include "aros/hostdisk.c"
+ #elif defined (__HAIKU__)
+ #include "haiku/hostdisk.c"
++#elif defined (__laylaos__)
++#include "laylaos/hostdisk.c"
+ #else
+ # warning "No hostdisk OS-specific functions is available for your system. Device detection may not work properly."
+ #include "basic/hostdisk.c"
+diff -rub ./grub-2.12/grub-core/osdep/random.c ./grub-2.12/grub-core/osdep/random.c
+--- ./grub-2.12/grub-core/osdep/random.c	2018-11-24 17:13:02.000000000 +0000
++++ ./grub-2.12/grub-core/osdep/random.c	2025-07-13 14:36:50.232205522 +0100
+@@ -3,7 +3,8 @@
+ #elif defined (__linux__) || defined (__FreeBSD__) \
+   || defined (__FreeBSD_kernel__) || defined (__OpenBSD__) \
+   || defined (__GNU__) || defined (__NetBSD__) \
+-  || defined (__APPLE__) || defined(__sun__) || defined (__HAIKU__)
++  || defined (__APPLE__) || defined(__sun__) || defined (__HAIKU__) \
++  || defined (__laylaos__)
+ #include "unix/random.c"
+ #else
+ #include "basic/random.c"
