@@ -333,3 +333,16 @@ diff -rub ./qt5/qtscript/util/mkdist-javascriptcore ./qt5/qtscript/util/mkdist-j
  excluded_directories="$excluded_directories JavaScriptCore/icu"
  excluded_directories="$excluded_directories JavaScriptCore/qt"
  excluded_directories="$excluded_directories JavaScriptCore/JavaScriptCore.gyp"
+diff -rub ./qt5/qtbase/src/tools/bootstrap/bootstrap.pro ./qt5/qtbase/src/tools/bootstrap/bootstrap.pro
+--- ./qt5/qtbase/src/tools/bootstrap/bootstrap.pro	2024-05-31 21:57:41.464583000 +0100
++++ ./qt5/qtbase/src/tools/bootstrap/bootstrap.pro	2025-05-05 15:55:32.309940795 +0100
+@@ -111,6 +111,9 @@
+                  ../../corelib/kernel/qcoreapplication_win.cpp \
+                  ../../corelib/plugin/qsystemlibrary.cpp \
+ 
++laylaos:DEFINES += _GNU_SOURCE \
++                   __laylaos__
++
+ mac {
+     SOURCES += \
+         ../../corelib/kernel/qcoreapplication_mac.cpp \

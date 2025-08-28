@@ -1,0 +1,33 @@
+diff -rub ./readline/support/shlib-install ./readline/support/shlib-install
+--- ./readline/support/shlib-install	2024-11-03 01:50:07.570222955 +0000
++++ ./readline/support/shlib-install	2024-11-01 12:49:25.895876755 +0000
+@@ -71,7 +71,7 @@
+ # Cygwin installs both a dll (which must go in $BINDIR) and an implicit
+ # link library (in $libdir)
+ case "$host_os" in
+-hpux*|darwin*|macosx*|linux*|solaris2*)
++hpux*|darwin*|macosx*|linux*|solaris2*|laylaos*)
+ 	if [ -z "$uninstall" ]; then
+ 		chmod 755 ${INSTALLDIR}/${LIBNAME}
+ 	fi ;;
+@@ -118,7 +118,7 @@
+ # Create symlinks to the installed library.  This section is incomplete.
+ #
+ case "$host_os-$host_vendor" in
+-*linux*|freebsd*|dragonfly*)
++*linux*|freebsd*|dragonfly*|laylaos*)
+ 	# libname.so.M -> libname.so.M.N
+ 	${echo} ${RM} ${INSTALLDIR}/$LINK2
+ 	if [ -z "$uninstall" ]; then
+diff -rub ./readline/support/shobj-conf ./readline/support/shobj-conf
+--- ./readline/support/shobj-conf	2024-11-03 01:50:07.570222955 +0000
++++ ./readline/support/shobj-conf	2024-11-01 12:49:52.144606213 +0000
+@@ -123,7 +123,7 @@
+ 	;;
+ 
+ # All versions of Linux (including Gentoo/FreeBSD) or the semi-mythical GNU Hurd.
+-linux*-*|gnu*-*|k*bsd*-gnu-*|midnightbsd*|freebsd*|dragonfly*)
++linux*-*|gnu*-*|k*bsd*-gnu-*|midnightbsd*|freebsd*|dragonfly*|laylaos*)
+ 	SHOBJ_CFLAGS=-fPIC
+ 	SHOBJ_LD='${CC}'
+ 	SHOBJ_LDFLAGS='-shared -Wl,-soname,$@'

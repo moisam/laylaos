@@ -1,0 +1,95 @@
+diff -rub ./qt5/qtbase/configure ./qt5/qtbase/configure
+--- ./qt5/qtbase/configure	2024-05-31 21:57:40.440580000 +0100
++++ ./qt5/qtbase/configure	2025-05-04 20:19:50.923646537 +0100
+@@ -36,9 +36,9 @@
+ relconf=`basename $0`
+ # the directory of this script is the "source tree"
+ relpath=`dirname $0`
+-relpath=`(cd "$relpath"; /bin/pwd)`
++relpath=`(cd "$relpath"; /usr/bin/pwd)`
+ # the current directory is the "build tree" or "object tree"
+-outpath=`/bin/pwd`
++outpath=`/usr/bin/pwd`
+ 
+ WHICH="which"
+ 
+diff -rub ./qt5/qtbase/qmake/library/ioutils.cpp ./qt5/qtbase/qmake/library/ioutils.cpp
+--- ./qt5/qtbase/qmake/library/ioutils.cpp	2024-05-31 21:57:40.688581000 +0100
++++ ./qt5/qtbase/qmake/library/ioutils.cpp	2025-05-05 14:24:02.116511386 +0100
+@@ -36,6 +36,7 @@
+ #else
+ #  include <sys/types.h>
+ #  include <sys/stat.h>
++#  include <limits.h>       /* PATH_MAX */
+ #  include <unistd.h>
+ #  include <utime.h>
+ #  include <fcntl.h>
+diff -rub ./qt5/qtdeclarative/src/qml/jsruntime/jsruntime.pri ./qt5/qtdeclarative/src/qml/jsruntime/jsruntime.pri
+--- ./qt5/qtdeclarative/src/qml/jsruntime/jsruntime.pri	2024-05-31 21:57:42.896586000 +0100
++++ ./qt5/qtdeclarative/src/qml/jsruntime/jsruntime.pri	2025-05-10 10:43:40.642555941 +0100
+@@ -163,3 +163,8 @@
+ heaptrack {
+     DEFINES += V4_USE_HEAPTRACK
+ }
++
++laylaos {
++    DEFINES += _GNU_SOURCE
++}
++
+diff -rub ./qt5/qtdeclarative/src/qml/qml.pro ./qt5/qtdeclarative/src/qml/qml.pro
+--- ./qt5/qtdeclarative/src/qml/qml.pro	2024-05-31 21:57:42.916587000 +0100
++++ ./qt5/qtdeclarative/src/qml/qml.pro	2025-05-10 10:43:55.866718814 +0100
+@@ -13,6 +13,7 @@
+ msvc:DEFINES *= _CRT_SECURE_NO_WARNINGS
+ win32:!winrt:LIBS += -lshell32
+ solaris-cc*:QMAKE_CXXFLAGS_RELEASE -= -O2
++laylaos:DEFINES += _GNU_SOURCE
+ 
+ # Ensure this gcc optimization is switched off for mips platforms to avoid trouble with JIT.
+ gcc:isEqual(QT_ARCH, "mips"): QMAKE_CXXFLAGS += -fno-reorder-blocks
+diff -rub ./qt5/qtbase/mkspecs/features/qt_functions.prf ./qt5/qtbase/mkspecs/features/qt_functions.prf
+--- ./qt5/qtbase/mkspecs/features/qt_functions.prf	2024-05-31 21:57:40.664581000 +0100
++++ ./qt5/qtbase/mkspecs/features/qt_functions.prf	2025-05-26 18:47:58.755332343 +0100
+@@ -191,7 +191,7 @@
+             libs = bins
+             deppath.CONFIG = always_prepend
+             deppath.name = PATH
+-        } else:contains(QMAKE_HOST.os, Linux|FreeBSD|OpenBSD|NetBSD|DragonFly|SunOS|HP-UX|QNX|GNU) {
++        } else:contains(QMAKE_HOST.os, Linux|FreeBSD|OpenBSD|NetBSD|DragonFly|SunOS|HP-UX|QNX|GNU|LaylaOS) {
+             deppath.name = LD_LIBRARY_PATH
+         } else:contains(QMAKE_HOST.os, Haiku) {
+             deppath.name = LIBRARY_PATH
+diff -rub ./qt5/qttools/src/linguist/linguist.pro ./qt5/qttools/src/linguist/linguist.pro
+--- ./qt5/qttools/src/linguist/linguist.pro	2024-05-31 21:57:44.956592000 +0100
++++ ./qt5/qttools/src/linguist/linguist.pro	2025-05-26 18:22:31.939386159 +0100
+@@ -15,6 +15,7 @@
+ )
+ 
+ equals(QMAKE_HOST.os, Windows): CMAKE_BIN_SUFFIX = ".exe"
++laylaos:DEFINES += _GNU_SOURCE
+ 
+ load(cmake_functions)
+ 
+diff -rub ./qt5/qttools/src/linguist/lrelease/lrelease.pro ./qt5/qttools/src/linguist/lrelease/lrelease.pro
+--- ./qt5/qttools/src/linguist/lrelease/lrelease.pro	2024-05-31 21:57:44.968592000 +0100
++++ ./qt5/qttools/src/linguist/lrelease/lrelease.pro	2025-05-26 18:23:46.300356523 +0100
+@@ -2,6 +2,8 @@
+ QT = core-private
+ DEFINES += QT_NO_CAST_FROM_ASCII QT_NO_CAST_TO_ASCII
+ 
++laylaos:DEFINES += _GNU_SOURCE
++
+ SOURCES += main.cpp
+ 
+ include(../shared/formats.pri)
+diff -rub ./qt5/qttools/src/linguist/lupdate/lupdate.pro ./qt5/qttools/src/linguist/lupdate/lupdate.pro
+--- ./qt5/qttools/src/linguist/lupdate/lupdate.pro	2024-05-31 21:57:44.968592000 +0100
++++ ./qt5/qttools/src/linguist/lupdate/lupdate.pro	2025-05-26 18:32:04.698864795 +0100
+@@ -32,6 +32,7 @@
+ mingw {
+     RC_FILE = lupdate.rc
+ }
++laylaos:DEFINES += _GNU_SOURCE
+ 
+ qmake.name = QMAKE
+ qmake.value = $$shell_path($$QMAKE_QMAKE)

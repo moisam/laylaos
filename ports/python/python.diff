@@ -1,0 +1,128 @@
+diff -rub ./Python-3.10.16/configure ./Python-3.10.16/configure
+--- ./Python-3.10.16/configure	2024-12-03 17:27:57.000000000 +0000
++++ ./Python-3.10.16/configure	2024-12-08 09:54:32.780805265 +0000
+@@ -3335,6 +3335,9 @@
+        # a lot of different things including 'define_xopen_source'
+        # in the case statement below.
+ 	case "$host" in
++	*-*-laylaos*)
++		ac_sys_system=LaylaOS
++		;;
+ 	*-*-linux-android*)
+ 		ac_sys_system=Linux-android
+ 		;;
+@@ -3370,6 +3373,7 @@
+ 
+     case $MACHDEP in
+ 	aix*) MACHDEP="aix";;
++	laylaos*) MACHDEP="laylaos";;
+ 	linux*) MACHDEP="linux";;
+ 	cygwin*) MACHDEP="cygwin";;
+ 	darwin*) MACHDEP="darwin";;
+@@ -3382,6 +3386,9 @@
+ 
+ if test "$cross_compiling" = yes; then
+ 	case "$host" in
++	*-*-laylaos*)
++		_host_cpu=$host_cpu
++		;;
+ 	*-*-linux*)
+ 		case "$host_cpu" in
+ 		arm*)
+@@ -5368,6 +5375,8 @@
+         darwin
+ #elif defined(__VXWORKS__)
+         vxworks
++#elif defined(__laylaos__)
++        laylaos
+ #else
+ # error unknown platform triplet
+ #endif
+@@ -5391,6 +5400,8 @@
+     MULTIARCH="" ;; #(
+   FreeBSD*) :
+     MULTIARCH="" ;; #(
++  LaylaOS*) :
++    MULTIARCH="" ;; #(
+   *) :
+     MULTIARCH=$($CC --print-multiarch 2>/dev/null)
+  ;;
+@@ -5989,7 +6000,7 @@
+ 	      PY3LIBRARY=libpython3.so
+ 	  fi
+           ;;
+-    Linux*|GNU*|NetBSD*|FreeBSD*|DragonFly*|OpenBSD*|VxWorks*)
++    Linux*|GNU*|NetBSD*|FreeBSD*|DragonFly*|OpenBSD*|VxWorks*|LaylaOS*)
+ 	  LDLIBRARY='libpython$(LDVERSION).so'
+ 	  BLDLIBRARY='-L. -lpython$(LDVERSION)'
+ 	  RUNSHARED=LD_LIBRARY_PATH=`pwd`${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+@@ -9787,7 +9798,7 @@
+ 			BLDSHARED="$LDSHARED"
+ 		fi
+ 		;;
+-	Linux*|GNU*|QNX*|VxWorks*)
++	Linux*|GNU*|QNX*|VxWorks*|LaylaOS*)
+ 		LDSHARED='$(CC) -shared'
+ 		LDCXXSHARED='$(CXX) -shared';;
+ 	FreeBSD*)
+@@ -9856,7 +9867,7 @@
+ 		 else CCSHARED="+z";
+ 		 fi;;
+ 	Linux-android*) ;;
+-	Linux*|GNU*) CCSHARED="-fPIC";;
++	Linux*|GNU*|LaylaOS*) CCSHARED="-fPIC";;
+ 	FreeBSD*|NetBSD*|OpenBSD*|DragonFly*) CCSHARED="-fPIC";;
+ 	OpenUNIX*|UnixWare*)
+ 		if test "$GCC" = "yes"
+@@ -9886,7 +9897,7 @@
+ 	    LINKFORSHARED="-Wl,-E -Wl,+s";;
+ #	    LINKFORSHARED="-Wl,-E -Wl,+s -Wl,+b\$(BINLIBDEST)/lib-dynload";;
+ 	Linux-android*) LINKFORSHARED="-pie -Xlinker -export-dynamic";;
+-	Linux*|GNU*) LINKFORSHARED="-Xlinker -export-dynamic";;
++	Linux*|GNU*|LaylaOS*) LINKFORSHARED="-Xlinker -export-dynamic";;
+ 	# -u libsys_s pulls in all symbols in libsys
+ 	Darwin/*)
+ 		LINKFORSHARED="$extra_undefs -framework CoreFoundation"
+@@ -11991,7 +12002,8 @@
+ # Force lchmod off for Linux. Linux disallows changing the mode of symbolic
+ # links. Some libc implementations have a stub lchmod implementation that always
+ # returns an error.
+-if test "$MACHDEP" != linux; then
++# LaylaOS uses musl, which is built fot Linux, so use the same semantics here.
++if test "$MACHDEP" != linux -a "$MACHDEP" != laylaos; then
+   for ac_func in lchmod
+ do :
+   ac_fn_c_check_func "$LINENO" "lchmod" "ac_cv_func_lchmod"
+diff -rub ./Python-3.10.16/Python/thread_pthread.h ./Python-3.10.16/Python/thread_pthread.h
+--- ./Python-3.10.16/Python/thread_pthread.h	2024-12-03 17:27:57.000000000 +0000
++++ ./Python-3.10.16/Python/thread_pthread.h	2024-12-09 18:51:49.467042170 +0000
+@@ -21,6 +21,8 @@
+ #   include <unistd.h>          /* getthrid() */
+ #elif defined(_AIX)
+ #   include <sys/thread.h>      /* thread_self() */
++#elif defined(__laylaos__)
++#   include <pthread.h>         /* pthread_self() */
+ #elif defined(__NetBSD__)
+ #   include <lwp.h>             /* _lwp_self() */
+ #endif
+@@ -65,6 +67,10 @@
+ #undef  THREAD_STACK_SIZE
+ #define THREAD_STACK_SIZE       0x100000
+ #endif
++#if defined(__laylaos__) && defined(THREAD_STACK_SIZE) && THREAD_STACK_SIZE == 0
++#undef  THREAD_STACK_SIZE
++#define THREAD_STACK_SIZE       0x100000
++#endif
+ /* for safety, ensure a viable minimum stacksize */
+ #define THREAD_STACK_MIN        0x8000  /* 32 KiB */
+ #else  /* !_POSIX_THREAD_ATTR_STACKSIZE */
+@@ -356,6 +362,9 @@
+ #elif defined(_AIX)
+     tid_t native_id;
+     native_id = thread_self();
++#elif defined(__laylaos__)
++    tid_t native_id;
++    native_id = pthread_self()->tid;
+ #elif defined(__NetBSD__)
+     lwpid_t native_id;
+     native_id = _lwp_self();
