@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: dummy.h
  *    This file is part of LaylaOS.
@@ -32,6 +32,14 @@
 #include <sys/types.h>
 #include <poll.h>
 
+/**
+ * @var dummyfs_ops
+ * @brief dummy filesystem ops.
+ *
+ * A filesystem operations structure for unmountable filesystems (e.g. sockfs
+ * and pipefs).
+ */
+extern struct fs_ops_t dummyfs_ops;
 
 /**
  * @brief General block device control function.
@@ -46,7 +54,7 @@
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int dummyfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
+long dummyfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
 
 /**
  * @brief Perform a dummy select operation.
@@ -58,7 +66,7 @@ int dummyfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
  *
  * @return  always 1.
  */
-int dummyfs_select(struct file_t *f, int which);
+long dummyfs_select(struct file_t *f, int which);
 
 /**
  * @brief Perform a dummy poll operation.
@@ -70,7 +78,7 @@ int dummyfs_select(struct file_t *f, int which);
  *
  * @return  always 1.
  */
-int dummyfs_poll(struct file_t *f, struct pollfd *pfd);
+long dummyfs_poll(struct file_t *f, struct pollfd *pfd);
 
 /**
  * @brief Perform a dummy read operation.
@@ -103,6 +111,5 @@ ssize_t dummyfs_read(struct file_t *f, off_t *pos,
  */
 ssize_t dummyfs_write(struct file_t *f, off_t *pos,
                       unsigned char *buf, size_t count, int kernel);
-
 
 #endif      /* __DUMMY_FSYS_H__ */

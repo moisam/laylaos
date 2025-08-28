@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: devpts.h
  *    This file is part of LaylaOS.
@@ -108,8 +108,8 @@ void devpts_init(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int devpts_read_super(dev_t dev, struct mount_info_t *d,
-                      size_t bytes_per_sector);
+long devpts_read_super(dev_t dev, struct mount_info_t *d,
+                       size_t bytes_per_sector);
 
 /**
  * @brief Release the filesystem's superblock and its buffer.
@@ -133,7 +133,7 @@ void devpts_put_super(dev_t dev, struct superblock_t *sb);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int devpts_read_inode(struct fs_node_t *node);
+long devpts_read_inode(struct fs_node_t *node);
 
 /**
  * @brief Write inode data structure.
@@ -144,7 +144,7 @@ int devpts_read_inode(struct fs_node_t *node);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int devpts_write_inode(struct fs_node_t *node);
+long devpts_write_inode(struct fs_node_t *node);
 
 /**
  * @brief Find the given filename in the parent directory.
@@ -169,9 +169,9 @@ int devpts_write_inode(struct fs_node_t *node);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int devpts_finddir(struct fs_node_t *dir, char *filename,
-                   struct dirent **entry,
-                   struct cached_page_t **dbuf, size_t *dbuf_off);
+long devpts_finddir(struct fs_node_t *dir, char *filename,
+                    struct dirent **entry,
+                    struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -199,9 +199,9 @@ int devpts_finddir(struct fs_node_t *dir, char *filename,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int devpts_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                            struct dirent **entry,
-                            struct cached_page_t **dbuf, size_t *dbuf_off);
+long devpts_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                             struct dirent **entry,
+                             struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Get dir entries.
@@ -215,7 +215,7 @@ int devpts_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  *
  * @return number of bytes read on success, -(errno) on failure
  */
-int devpts_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
+long devpts_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
 
 /**
  * @brief Get a pty device's tty struct.
@@ -250,7 +250,7 @@ struct tty_t *devpts_get_struct_tty(dev_t dev);
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-int pty_master_select(struct file_t *f, int which);
+long pty_master_select(struct file_t *f, int which);
 
 /**
  * @brief Perform a poll operation on a master pty device.
@@ -266,7 +266,7 @@ int pty_master_select(struct file_t *f, int which);
  *
  * @return  1 if there are pollable events, 0 otherwise.
  */
-int pty_master_poll(struct file_t *f, struct pollfd *pfd);
+long pty_master_poll(struct file_t *f, struct pollfd *pfd);
 
 /**
  * @brief Create a new master pty device.
@@ -278,7 +278,7 @@ int pty_master_poll(struct file_t *f, struct pollfd *pfd);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int pty_master_create(struct fs_node_t **master);
+long pty_master_create(struct fs_node_t **master);
 
 /**
  * @brief Close a master pty device.
@@ -351,7 +351,7 @@ ssize_t pty_master_write(struct file_t *f, off_t *pos,
  *
  * @return  nothing.
  */
-int pty_slave_open(struct fs_node_t *node);
+long pty_slave_open(struct fs_node_t *node);
 
 /**
  * @brief Close a slave pty device.

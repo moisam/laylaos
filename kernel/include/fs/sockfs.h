@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: sockfs.h
  *    This file is part of LaylaOS.
@@ -96,7 +96,7 @@ ssize_t sockfs_write(struct file_t *f, off_t *pos,
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int sockfs_ioctl(struct file_t *fp, int cmd, char *data, int kernel);
+long sockfs_ioctl(struct file_t *fp, int cmd, char *data, int kernel);
 
 /**
  * @brief Perform a select operation on a socket.
@@ -110,7 +110,7 @@ int sockfs_ioctl(struct file_t *fp, int cmd, char *data, int kernel);
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-int sockfs_select(struct file_t *fp, int which);
+long sockfs_select(struct file_t *fp, int which);
 
 /**
  * @brief Perform a poll operation on a socket.
@@ -125,6 +125,6 @@ int sockfs_select(struct file_t *fp, int which);
  *
  * @return  1 if there are pollable events, 0 otherwise.
  */
-int sockfs_poll(struct file_t *f, struct pollfd *pfd);
+long sockfs_poll(struct file_t *f, struct pollfd *pfd);
 
 #endif      /* __SOCK_FSYS_H__ */

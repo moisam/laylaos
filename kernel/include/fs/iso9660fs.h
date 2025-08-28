@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: iso9660fs.h
  *    This file is part of LaylaOS.
@@ -218,8 +218,8 @@ void iso9660fs_init(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int iso9660fs_read_super(dev_t dev, struct mount_info_t *d,
-                         size_t bytes_per_sector);
+long iso9660fs_read_super(dev_t dev, struct mount_info_t *d,
+                          size_t bytes_per_sector);
 
 /**
  * @brief Release the filesystem's superblock and its buffer.
@@ -243,7 +243,7 @@ void iso9660fs_put_super(dev_t dev, struct superblock_t *sb);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int iso9660fs_read_inode(struct fs_node_t *node);
+long iso9660fs_read_inode(struct fs_node_t *node);
 
 /**
  * @brief Map logical block to disk block.
@@ -272,7 +272,7 @@ size_t iso9660fs_bmap(struct fs_node_t *node, size_t lblock,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int iso9660fs_free_inode(struct fs_node_t *node);
+long iso9660fs_free_inode(struct fs_node_t *node);
 
 /**
  * @brief Allocate a new inode.
@@ -287,7 +287,7 @@ int iso9660fs_free_inode(struct fs_node_t *node);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int iso9660fs_alloc_inode(struct fs_node_t *node);
+long iso9660fs_alloc_inode(struct fs_node_t *node);
 
 /**
  * @brief Free a disk block.
@@ -327,8 +327,7 @@ uint32_t iso9660fs_alloc(dev_t dev);
  * @param   dir         the parent directory's node
  * @param   filename    the searched-for filename
  * @param   entry       if the \a filename is found, its entry is converted to
- *                        a kmalloc'd dirent struct (by calling
- *                        ext2_entry_to_dirent()), and the result is
+ *                        a kmalloc'd dirent struct, and the result is
  *                        stored in this field
  * @param   dbuf        the disk buffer representing the disk block containing
  *                        the found \a filename, this is useful if the caller
@@ -339,9 +338,9 @@ uint32_t iso9660fs_alloc(dev_t dev);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int iso9660fs_finddir(struct fs_node_t *dir, char *filename,
-                      struct dirent **entry, struct cached_page_t **dbuf,
-                      size_t *dbuf_off);
+long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
+                       struct dirent **entry, struct cached_page_t **dbuf,
+                       size_t *dbuf_off);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -357,8 +356,7 @@ int iso9660fs_finddir(struct fs_node_t *dir, char *filename,
  * @param   dir         the parent directory's node
  * @param   node        the searched-for inode
  * @param   entry       if the \a node is found, its entry is converted to a
- *                        kmalloc'd dirent struct (by calling
- *                        entry_to_dirent()), and the result is stored in
+ *                        kmalloc'd dirent struct, and the result is stored in
  *                        this field
  * @param   dbuf        the disk buffer representing the disk block containing
  *                        the found file, this is useful if the caller wants to
@@ -369,9 +367,9 @@ int iso9660fs_finddir(struct fs_node_t *dir, char *filename,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                               struct dirent **entry,
-                               struct cached_page_t **dbuf, size_t *dbuf_off);
+long iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                                struct dirent **entry,
+                                struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Add new entry to a directory.
@@ -380,12 +378,12 @@ int iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  * entry will be assigned inode number \a n.
  *
  * @param   dir         the parent directory's node
+ * @param   file        the new file's node (contains the new inode number)
  * @param   filename    the new file's name
- * @param   n           the new file's inode number
  *
  * @return  zero on success, -(errno) on failure.
  */
-int iso9660fs_addir(struct fs_node_t *dir, char *filename, ino_t n);
+long iso9660fs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename);
 
 /**
  * @brief Create a new directory.
@@ -394,13 +392,13 @@ int iso9660fs_addir(struct fs_node_t *dir, char *filename, ino_t n);
  * the '.' and '..' entries to point to the current and \a parent directory
  * inodes, respectively.
  *
- * @param   parent  the parent directory's inode number
+ * @param   parent  the parent directory
  * @param   dir     node struct containing the new directory's inode number
  *                    (the directory's link count and block[0] will be updated)
  *
  * @return  zero on success, -(errno) on failure.
  */
-int iso9660fs_mkdir(struct fs_node_t *dir, ino_t parent);
+long iso9660fs_mkdir(struct fs_node_t *dir, struct fs_node_t *parent);
 
 /**
  * @brief Remove an entry from a directory.
@@ -410,16 +408,13 @@ int iso9660fs_mkdir(struct fs_node_t *dir, ino_t parent);
  *
  * @param   dir         the parent directory's node
  * @param   entry       the entry to be removed
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the entry we want to remove (we get this from an 
- *                        earlier call to finddir)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the entry to be removed
+ * @param   is_dir      non-zero if entry is a directory and this is the last 
+ *                        hard link, i.e. there is no other filename referring
+ *                        to the directory's inode
  *
  * @return  always zero.
  */
-int iso9660fs_deldir(struct fs_node_t *dir, struct dirent *entry,
-                     struct cached_page_t *dbuf, size_t dbuf_off);
+long iso9660fs_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir);
 
 /**
  * @brief Check if a directory is empty.
@@ -430,7 +425,7 @@ int iso9660fs_deldir(struct fs_node_t *dir, struct dirent *entry,
  *
  * @return  1 if \a dir is empty, 0 if it is not
  */
-int iso9660fs_dir_empty(struct fs_node_t *dir);
+long iso9660fs_dir_empty(struct fs_node_t *dir);
 
 /**
  * @brief Get dir entries.
@@ -444,8 +439,8 @@ int iso9660fs_dir_empty(struct fs_node_t *dir);
  *
  * @return number of bytes read on success, -(errno) on failure
  */
-int iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
-                       void *buf, int bufsz);
+long iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
+                        void *buf, int bufsz);
 
 /**
  * @brief Return filesystem statistics.
@@ -457,7 +452,7 @@ int iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int iso9660fs_ustat(struct mount_info_t *d, struct ustat *ubuf);
+long iso9660fs_ustat(struct mount_info_t *d, struct ustat *ubuf);
 
 /**
  * @brief Return detailed filesystem statistics.
@@ -470,7 +465,7 @@ int iso9660fs_ustat(struct mount_info_t *d, struct ustat *ubuf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int iso9660fs_statfs(struct mount_info_t *d, struct statfs *statbuf);
+long iso9660fs_statfs(struct mount_info_t *d, struct statfs *statbuf);
 
 /**
  * @brief Read a symbolic link.
@@ -489,8 +484,8 @@ int iso9660fs_statfs(struct mount_info_t *d, struct statfs *statbuf);
  *
  * @return  number of chars read on success, -(errno) on failure.
  */
-int iso9660fs_read_symlink(struct fs_node_t *link, char *buf,
-                           size_t bufsz, int kernel);
+long iso9660fs_read_symlink(struct fs_node_t *link, char *buf,
+                            size_t bufsz, int kernel);
 
 /**
  * @brief Write a symbolic link.

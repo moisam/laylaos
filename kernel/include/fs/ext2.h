@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ext2.h
  *    This file is part of LaylaOS.
@@ -76,7 +76,7 @@ struct ext2_superblock_t
     uint32_t last_check_time;   /**<  time of last consistency check
                                       (using fsck) */
     uint32_t check_interval;    /**<  interval between forced consistency
-                                      checks (usnig fsck) */
+                                      checks (using fsck) */
     uint32_t sys_id;    /**<  operating system ID from which the filesystem
                               was created:
                                 0 = Linux,
@@ -256,6 +256,27 @@ struct ext2_dirent_t
 #define EXT2_FT_SOCK        6   /**< Socket File       */
 #define EXT2_FT_SYMLINK     7   /**< Symbolic Link     */
 
+/*
+ * Values for the flags field of the inode_data_t struct.
+ */
+#define EXT2_SECRM_FL           0x00000001  // secure deletion
+#define EXT2_UNRM_FL            0x00000002  // record for undelete
+#define EXT2_COMPR_FL           0x00000004  // compressed file
+#define EXT2_SYNC_FL            0x00000008  // synchronous updates
+#define EXT2_IMMUTABLE_FL       0x00000010  // immutable file
+#define EXT2_APPEND_FL          0x00000020  // append only
+#define EXT2_NODUMP_FL          0x00000040  // do not dump/delete file
+#define EXT2_NOATIME_FL         0x00000080  // do not update .i_atime
+#define EXT2_DIRTY_FL           0x00000100  // Dirty (modified)
+#define EXT2_COMPRBLK_FL        0x00000200  // compressed blocks
+#define EXT2_NOCOMPR_FL         0x00000400  // access raw compressed data
+#define EXT2_ECOMPR_FL          0x00000800  // compression error
+#define EXT2_BTREE_FL           0x00001000  // b-tree format directory
+#define EXT2_INDEX_FL           0x00001000  // hash indexed directory
+#define EXT2_IMAGIC_FL          0x00002000  // AFS directory
+#define EXT3_JOURNAL_DATA_FL    0x00004000  // journal file data
+#define EXT2_RESERVED_FL        0x80000000  // reserved for ext2 library
+
 /**
  * \def EXT2_MAX_FILENAME_LEN
  *
@@ -376,7 +397,7 @@ int find_free_blocks(dev_t dev, int n, ino_t *needed_blocks);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector);
+long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector);
 
 /**
  * @brief Write the filesystem's superblock to disk.
@@ -388,7 +409,7 @@ int ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_write_super(dev_t dev, struct superblock_t *sb);
+long ext2_write_super(dev_t dev, struct superblock_t *sb);
 
 /**
  * @brief Release the filesystem's superblock and its buffer.
@@ -412,7 +433,7 @@ void ext2_put_super(dev_t dev, struct superblock_t *sb);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_read_inode(struct fs_node_t *node);
+long ext2_read_inode(struct fs_node_t *node);
 
 /**
  * @brief Write inode data structure.
@@ -423,7 +444,7 @@ int ext2_read_inode(struct fs_node_t *node);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_write_inode(struct fs_node_t *node);
+long ext2_write_inode(struct fs_node_t *node);
 
 /**
  * @brief Allocate a new inode.
@@ -439,7 +460,7 @@ int ext2_write_inode(struct fs_node_t *node);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_alloc_inode(struct fs_node_t *new_node);
+long ext2_alloc_inode(struct fs_node_t *new_node);
 
 /**
  * @brief Free an inode.
@@ -450,7 +471,7 @@ int ext2_alloc_inode(struct fs_node_t *new_node);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_free_inode(struct fs_node_t *node);
+long ext2_free_inode(struct fs_node_t *node);
 
 /**
  * @brief Map logical block to disk block.
@@ -493,8 +514,8 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                 struct cached_page_t **dbuf, size_t *dbuf_off);
+long ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
+                  struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -522,9 +543,9 @@ int ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                          struct dirent **entry,
-                          struct cached_page_t **dbuf, size_t *dbuf_off);
+long ext2_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                           struct dirent **entry,
+                           struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Add new entry to a directory.
@@ -533,12 +554,12 @@ int ext2_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  * entry will be assigned inode number \a n.
  *
  * @param   dir         the parent directory's node
+ * @param   file        the new file's node (contains the new inode number)
  * @param   filename    the new file's name
- * @param   n           the new file's inode number
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_addir(struct fs_node_t *dir, char *filename, ino_t n);
+long ext2_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename);
 
 /**
  * @brief Create a new directory.
@@ -547,13 +568,13 @@ int ext2_addir(struct fs_node_t *dir, char *filename, ino_t n);
  * the '.' and '..' entries to point to the current and \a parent directory
  * inodes, respectively.
  *
- * @param   parent  the parent directory's inode number
+ * @param   parent  the parent directory
  * @param   dir     node struct containing the new directory's inode number
  *                    (the directory's link count and block[0] will be updated)
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_mkdir(struct fs_node_t *dir, ino_t parent);
+long ext2_mkdir(struct fs_node_t *dir, struct fs_node_t *parent);
 
 /**
  * @brief Remove an entry from a directory.
@@ -563,17 +584,13 @@ int ext2_mkdir(struct fs_node_t *dir, ino_t parent);
  *
  * @param   dir         the parent directory's node
  * @param   entry       the entry to be removed
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the entry we want to remove (we get this from an 
- *                        earlier call to finddir)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the entry to be removed
+ * @param   is_dir      non-zero if entry is a directory and this is the last 
+ *                        hard link, i.e. there is no other filename referring
+ *                        to the directory's inode
  *
  * @return  always zero.
  */
-int ext2_deldir(struct fs_node_t *dir, struct dirent *entry,
-                struct cached_page_t *dbuf, size_t dbuf_off);
-                //struct IO_buffer_s *dbuf, size_t dbuf_off);
+long ext2_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir);
 
 /**
  * @brief Check if a directory is empty.
@@ -584,7 +601,7 @@ int ext2_deldir(struct fs_node_t *dir, struct dirent *entry,
  *
  * @return  1 if \a dir is empty, 0 if it is not
  */
-int ext2_dir_empty(struct fs_node_t *dir);
+long ext2_dir_empty(struct fs_node_t *dir);
 
 /**
  * @brief Get dir entries.
@@ -598,7 +615,7 @@ int ext2_dir_empty(struct fs_node_t *dir);
  *
  * @return number of bytes read on success, -(errno) on failure
  */
-int ext2_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
+long ext2_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
 
 /**
  * @brief Return filesystem statistics.
@@ -610,7 +627,7 @@ int ext2_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_ustat(struct mount_info_t *d, struct ustat *ubuf);
+long ext2_ustat(struct mount_info_t *d, struct ustat *ubuf);
 
 /**
  * @brief Return detailed filesystem statistics.
@@ -623,7 +640,7 @@ int ext2_ustat(struct mount_info_t *d, struct ustat *ubuf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ext2_statfs(struct mount_info_t *d, struct statfs *statbuf);
+long ext2_statfs(struct mount_info_t *d, struct statfs *statbuf);
 
 /**
  * @brief Read a symbolic link.
@@ -642,8 +659,8 @@ int ext2_statfs(struct mount_info_t *d, struct statfs *statbuf);
  *
  * @return  number of chars read on success, -(errno) on failure.
  */
-int ext2_read_symlink(struct fs_node_t *link, char *buf,
-                      size_t bufsz, int kernel);
+long ext2_read_symlink(struct fs_node_t *link, char *buf,
+                       size_t bufsz, int kernel);
 
 /**
  * @brief Write a symbolic link.
@@ -668,20 +685,22 @@ size_t ext2_write_symlink(struct fs_node_t *link, char *target,
  * Internal functions.
  */
 
-int ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent);
-int ext2_dir_empty_internal(char *module, struct fs_node_t *dir);
-int ext2_getdents_internal(struct fs_node_t *dir, off_t *pos, void *buf,
-                           int bufsz, int ext_dir_type);
-int ext2_finddir_internal(struct fs_node_t *dir, char *filename,
-                          struct dirent **entry, struct cached_page_t **dbuf,
-                          size_t *dbuf_off, int ext_dir_type);
-int ext2_finddir_by_inode_internal(struct fs_node_t *dir,
-                                   struct fs_node_t *node,
-                                   struct dirent **entry,
-                                   struct cached_page_t **dbuf,
-                                   size_t *dbuf_off, int ext_dir_type);
-int ext2_addir_internal(struct fs_node_t *dir, char *filename,
-                        ino_t n, int ext_dir_type, size_t block_size);
+long ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent, 
+                         int ext_dir_type, size_t block_size);
+long ext2_dir_empty_internal(char *module, struct fs_node_t *dir);
+long ext2_getdents_internal(struct fs_node_t *dir, off_t *pos, void *buf,
+                            int bufsz, int ext_dir_type);
+long ext2_finddir_internal(struct fs_node_t *dir, char *filename,
+                           struct dirent **entry, struct cached_page_t **dbuf,
+                           size_t *dbuf_off, int ext_dir_type);
+long ext2_finddir_by_inode_internal(struct fs_node_t *dir,
+                                    struct fs_node_t *node,
+                                    struct dirent **entry,
+                                    struct cached_page_t **dbuf,
+                                    size_t *dbuf_off, int ext_dir_type);
+long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
+                         char *filename, int ext_dir_type, size_t block_size);
+long ext2_deldir_internal(struct fs_node_t *dir, struct dirent *entry, int ext_dir_type);
 
 int matching_node(dev_t dev, ino_t ino, struct fs_node_t *node);
 

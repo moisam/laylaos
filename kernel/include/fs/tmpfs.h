@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: tmpfs.h
  *    This file is part of LaylaOS.
@@ -48,7 +48,10 @@ extern struct fs_ops_t tmpfs_ops;
  *
  * A lock to synchronize access to the tmpfs filesystem table.
  */
-extern struct kernel_mutex_t tmpfs_lock;
+extern volatile struct kernel_mutex_t tmpfs_lock;
+
+
+struct fs_node_t *tmpfs_create_fsnode(void);
 
 
 /**
@@ -73,7 +76,7 @@ extern struct kernel_mutex_t tmpfs_lock;
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_mount(struct mount_info_t *d, int flags, char *options);
+long tmpfs_mount(struct mount_info_t *d, int flags, char *options);
 
 /**
  * @brief Read tmpfs superblock and root inode.
@@ -88,8 +91,8 @@ int tmpfs_mount(struct mount_info_t *d, int flags, char *options);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_read_super(dev_t dev, struct mount_info_t *d,
-                     size_t bytes_per_sector);
+long tmpfs_read_super(dev_t dev, struct mount_info_t *d,
+                      size_t bytes_per_sector);
 
 /**
  * @brief Release the filesystem's superblock and its buffer.
@@ -115,7 +118,7 @@ void tmpfs_put_super(dev_t dev, struct superblock_t *sb);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_read_inode(struct fs_node_t *);
+long tmpfs_read_inode(struct fs_node_t *);
 
 /**
  * @brief Write inode data structure.
@@ -126,7 +129,7 @@ int tmpfs_read_inode(struct fs_node_t *);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_write_inode(struct fs_node_t *);
+long tmpfs_write_inode(struct fs_node_t *);
 
 /**
  * @brief Map logical block to disk block.
@@ -158,7 +161,7 @@ size_t tmpfs_bmap(struct fs_node_t *node, size_t lblock,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_free_inode(struct fs_node_t *node);
+long tmpfs_free_inode(struct fs_node_t *node);
 
 /**
  * @brief Allocate a new inode.
@@ -173,7 +176,7 @@ int tmpfs_free_inode(struct fs_node_t *node);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_alloc_inode(struct fs_node_t *node);
+long tmpfs_alloc_inode(struct fs_node_t *node);
 
 /**
  * @brief Free a disk block.
@@ -225,8 +228,8 @@ uint32_t tmpfs_alloc(dev_t dev);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                  struct cached_page_t **dbuf, size_t *dbuf_off);
+long tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
+                   struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -254,9 +257,9 @@ int tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                           struct dirent **entry,
-                           struct cached_page_t **dbuf, size_t *dbuf_off);
+long tmpfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                            struct dirent **entry,
+                            struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Add new entry to a directory.
@@ -265,12 +268,12 @@ int tmpfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  * entry will be assigned inode number \a n.
  *
  * @param   dir         the parent directory's node
+ * @param   file        the new file's node (contains the new inode number)
  * @param   filename    the new file's name
- * @param   n           the new file's inode number
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_addir(struct fs_node_t *dir, char *filename, ino_t n);
+long tmpfs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename);
 
 /**
  * @brief Create a new directory.
@@ -279,13 +282,29 @@ int tmpfs_addir(struct fs_node_t *dir, char *filename, ino_t n);
  * the '.' and '..' entries to point to the current and \a parent directory
  * inodes, respectively.
  *
- * @param   parent  the parent directory's inode number
+ * @param   parent  the parent directory
  * @param   dir     node struct containing the new directory's inode number
  *                    (the directory's link count and block[0] will be updated)
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_mkdir(struct fs_node_t *dir, ino_t parent);
+long tmpfs_mkdir(struct fs_node_t *dir, struct fs_node_t *parent);
+
+/**
+ * @brief Remove an entry from a directory.
+ *
+ * Remove the given \a entry from the given parent \a dir.
+ * The caller is responsible for writing dbuf to disk and calling brelse().
+ *
+ * @param   dir         the parent directory's node
+ * @param   entry       the entry to be removed
+ * @param   is_dir      non-zero if entry is a directory and this is the last 
+ *                        hard link, i.e. there is no other filename referring
+ *                        to the directory's inode
+ *
+ * @return  always zero.
+ */
+long tmpfs_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir);
 
 /**
  * @brief Check if a directory is empty.
@@ -296,7 +315,7 @@ int tmpfs_mkdir(struct fs_node_t *dir, ino_t parent);
  *
  * @return  1 if \a dir is empty, 0 if it is not
  */
-int tmpfs_dir_empty(struct fs_node_t *dir);
+long tmpfs_dir_empty(struct fs_node_t *dir);
 
 /**
  * @brief Get dir entries.
@@ -310,7 +329,7 @@ int tmpfs_dir_empty(struct fs_node_t *dir);
  *
  * @return number of bytes read on success, -(errno) on failure
  */
-int tmpfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
+long tmpfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
 
 /**
  * @brief General Block Read/Write Operations.
@@ -325,7 +344,7 @@ int tmpfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
  *
  * @return number of bytes read or written on success, -(errno) on failure
  */
-int tmpfs_strategy(struct disk_req_t *buf);
+long tmpfs_strategy(struct disk_req_t *buf);
 
 /**
  * @brief General block device control function.
@@ -340,7 +359,7 @@ int tmpfs_strategy(struct disk_req_t *buf);
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int tmpfs_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
+long tmpfs_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
 
 /**
  * @brief Initialize the tmpfs virtual filesystem.
@@ -381,7 +400,7 @@ struct fs_node_t *tmpfs_create(size_t inode_count,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_ustat(struct mount_info_t *d, struct ustat *ubuf);
+long tmpfs_ustat(struct mount_info_t *d, struct ustat *ubuf);
 
 /**
  * @brief Return detailed filesystem statistics.
@@ -394,6 +413,6 @@ int tmpfs_ustat(struct mount_info_t *d, struct ustat *ubuf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int tmpfs_statfs(struct mount_info_t *d, struct statfs *statbuf);
+long tmpfs_statfs(struct mount_info_t *d, struct statfs *statbuf);
 
 #endif      /* __TMP_FSYS_H__ */

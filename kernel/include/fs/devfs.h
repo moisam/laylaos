@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: devfs.h
  *    This file is part of LaylaOS.
@@ -42,7 +42,7 @@
  */
 struct devnode_t
 {
-    char name[8];           /**<  device name */
+    char name[16];          /**<  device name */
     dev_t dev;              /**<  device id number */
     ino_t inode;            /**<  inode number */
     mode_t mode;            /**<  access mode */
@@ -118,8 +118,8 @@ void devfs_init(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int devfs_read_super(dev_t dev, struct mount_info_t *d,
-                     size_t bytes_per_sector);
+long devfs_read_super(dev_t dev, struct mount_info_t *d,
+                      size_t bytes_per_sector);
 
 /**
  * @brief Release the filesystem's superblock and its buffer.
@@ -143,7 +143,7 @@ void devfs_put_super(dev_t dev, struct superblock_t *sb);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int devfs_read_inode(struct fs_node_t *);
+long devfs_read_inode(struct fs_node_t *);
 
 /**
  * @brief Write inode data structure.
@@ -154,7 +154,7 @@ int devfs_read_inode(struct fs_node_t *);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int devfs_write_inode(struct fs_node_t *);
+long devfs_write_inode(struct fs_node_t *);
 
 /**
  * @brief Find the given filename in the parent directory.
@@ -179,9 +179,8 @@ int devfs_write_inode(struct fs_node_t *);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                  struct cached_page_t **dbuf, size_t *dbuf_off);
-                  //struct IO_buffer_s **dbuf, size_t *dbuf_off);
+long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
+                   struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -209,10 +208,9 @@ int devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                           struct dirent **entry,
-                           struct cached_page_t **dbuf, size_t *dbuf_off);
-                           //struct IO_buffer_s **dbuf, size_t *dbuf_off);
+long devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                            struct dirent **entry,
+                            struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Get dir entries.
@@ -226,7 +224,7 @@ int devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  *
  * @return number of bytes read on success, -(errno) on failure
  */
-int devfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
+long devfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
 
 /**
  * @brief Find a device entry under /dev.

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: procfs.h
  *    This file is part of LaylaOS.
@@ -181,7 +181,7 @@ void procfs_init(void);
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int procfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
+long procfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
 
 /**
  * @brief Mount the procfs filesystem.
@@ -200,7 +200,7 @@ int procfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int procfs_mount(struct mount_info_t *d, int flags, char *options);
+long procfs_mount(struct mount_info_t *d, int flags, char *options);
 
 /**
  * @brief Read procfs superblock and root inode.
@@ -215,8 +215,8 @@ int procfs_mount(struct mount_info_t *d, int flags, char *options);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int procfs_read_super(dev_t dev, struct mount_info_t *d,
-                      size_t bytes_per_sector);
+long procfs_read_super(dev_t dev, struct mount_info_t *d,
+                       size_t bytes_per_sector);
 
 /**
  * @brief Release the filesystem's superblock and its buffer.
@@ -242,7 +242,7 @@ void procfs_put_super(dev_t dev, struct superblock_t *sb);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int procfs_read_inode(struct fs_node_t *);
+long procfs_read_inode(struct fs_node_t *);
 
 /**
  * @brief Write inode data structure.
@@ -253,7 +253,7 @@ int procfs_read_inode(struct fs_node_t *);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int procfs_write_inode(struct fs_node_t *);
+long procfs_write_inode(struct fs_node_t *);
 
 /**
  * @brief Find the given filename in the parent directory.
@@ -278,9 +278,9 @@ int procfs_write_inode(struct fs_node_t *);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int procfs_finddir(struct fs_node_t *dir, char *filename,
-                   struct dirent **entry,
-                   struct cached_page_t **dbuf, size_t *dbuf_off);
+long procfs_finddir(struct fs_node_t *dir, char *filename,
+                    struct dirent **entry,
+                    struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -308,9 +308,9 @@ int procfs_finddir(struct fs_node_t *dir, char *filename,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int procfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                            struct dirent **entry,
-                            struct cached_page_t **dbuf, size_t *dbuf_off);
+long procfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                             struct dirent **entry,
+                             struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Get dir entries.
@@ -324,7 +324,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  *
  * @return number of bytes read on success, -(errno) on failure
  */
-int procfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
+long procfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
 
 /**
  * @brief Read a symbolic link.
@@ -343,8 +343,8 @@ int procfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
  *
  * @return  number of chars read on success, -(errno) on failure.
  */
-int procfs_read_symlink(struct fs_node_t *link, char *buf,
-                        size_t bufsz, int kernel);
+long procfs_read_symlink(struct fs_node_t *link, char *buf,
+                         size_t bufsz, int kernel);
 
 /**
  * @brief Write a symbolic link.
@@ -375,7 +375,7 @@ size_t procfs_write_symlink(struct fs_node_t *link, char *target,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int procfs_ustat(struct mount_info_t *d, struct ustat *ubuf);
+long procfs_ustat(struct mount_info_t *d, struct ustat *ubuf);
 
 /**
  * @brief Return detailed filesystem statistics.
@@ -388,7 +388,7 @@ int procfs_ustat(struct mount_info_t *d, struct ustat *ubuf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int procfs_statfs(struct mount_info_t *d, struct statfs *statbuf);
+long procfs_statfs(struct mount_info_t *d, struct statfs *statbuf);
 
 /**
  * @brief Read from a procfs file.
@@ -408,9 +408,9 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                          unsigned char *buf, size_t count);
 
 /* some helper functions for internal use */
-int copy_internal(char *dest, char *src, size_t destsz,
-                  size_t srcsz, int kernel);
-int copy_string_internal(char *dest, char *src, size_t destsz, int kernel);
+long copy_internal(char *dest, char *src, size_t destsz,
+                   size_t srcsz, int kernel);
+long copy_string_internal(char *dest, char *src, size_t destsz, int kernel);
 
 #define procfs_deldir       ext2_deldir
 
@@ -448,6 +448,7 @@ size_t get_fs_list(char **_buf);
 size_t get_uptime(char **buf);
 size_t get_version(char **buf);
 size_t get_vmstat(char **buf);
+size_t get_loadavg(char **buf);
 size_t get_meminfo(char **buf);
 size_t get_modules(char **buf);
 size_t get_mounts(char **buf);
@@ -475,7 +476,17 @@ size_t get_net_udp(char **buf);
 size_t get_net_unix(char **buf);
 size_t get_net_raw(char **buf);
 
+/**************************************
+ * Functions defined in procfs_tty.c
+ **************************************/
+size_t get_tty_driver_list(char **buf);
+
+/**************************************
+ * Functions defined in procfs_tty.c
+ **************************************/
+size_t detect_cpu(char **buf);
+
 /* this is defined in cpudet-clean.c */
-extern void detect_cpu(char **buf);
+//extern void detect_cpu(char **buf);
 
 #endif      /* __PROC_FSYS_H__ */

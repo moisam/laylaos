@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: pipefs.h
  *    This file is part of LaylaOS.
@@ -102,7 +102,7 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-int pipefs_select(struct file_t *f, int which);
+long pipefs_select(struct file_t *f, int which);
 
 /**
  * @brief Perform a poll operation on a pipe.
@@ -117,6 +117,6 @@ int pipefs_select(struct file_t *f, int which);
  *
  * @return  1 if there are pollable events, 0 otherwise.
  */
-int pipefs_poll(struct file_t *f, struct pollfd *pfd);
+long pipefs_poll(struct file_t *f, struct pollfd *pfd);
 
 #endif      /* __PIPE_FSYS_H__ */

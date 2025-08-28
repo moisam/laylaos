@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: dentry.h
  *    This file is part of LaylaOS.
@@ -46,8 +46,9 @@ struct dentry_t
     //struct fs_node_t *node;
     dev_t dev;                  /**<  device id */
     ino_t inode;                /**<  inode number */
+    unsigned long long last_accessed;   /**< last access time in ticks */
     struct dentry_t *dev_next;  /**<  next dentry in the list */
-    //struct kernel_mutex_t lock;
+    //volatile struct kernel_mutex_t lock;
     struct dentry_list_t *list; /**<  containing list */
 };
 
@@ -62,7 +63,7 @@ struct dentry_t
 struct dentry_list_t
 {
     struct dentry_t *first_dentry;  /**<  first dentry in the list */
-    struct kernel_mutex_t lock;     /**<  mutex lock */
+    volatile struct kernel_mutex_t lock;     /**<  mutex lock */
 };
 
 
@@ -143,6 +144,17 @@ void invalidate_dev_dentries(dev_t dev);
  */
 int create_file_dentry(struct fs_node_t *dir, struct fs_node_t *file,
                        char *filename);
+
+/**
+ * @brief Remove old dentries.
+ *
+ * Remove the dentries that are older than the given time.
+ *
+ * @param   older_than_ticks    time in ticks
+ *
+ * @return  nothing.
+ */
+void remove_old_dentries(unsigned long long older_than_ticks);
 
 /**
  * @brief Get the path of the given dir or file node.
