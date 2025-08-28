@@ -24,7 +24,7 @@ fi
 cat << EOF > "$2/bochsrc"
 romimage: file=/usr/local/share/bochs/BIOS-bochs-latest, address=0xfffe0000
 vgaromimage: file=/usr/local/share/bochs/VGABIOS-lgpl-latest
-megs: 1024
+megs: 2048
 
 debug: action=ignore
 error: action=report

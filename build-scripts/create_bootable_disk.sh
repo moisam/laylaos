@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ##
-# Copyright 2021-2024 (c) Mohammed Isam
+# Copyright 2021-2025 (c) Mohammed Isam
 #
 # This script is part of LaylaOS
 
@@ -20,6 +20,14 @@
 # reason this option exists is to allow us to test AHCI driver code (in 
 # which case a value like 'sda4' would be expected).
 #
+
+# sudo is not available on LaylaOS yet
+myname=`uname -s`
+if [ "$myname" == "LaylaOS" ]; then
+    SUDO=
+else
+    SUDO=sudo
+fi
 
 # build 64bit OS by default
 ARCH=x86_64
@@ -131,9 +139,14 @@ SECTOR_COUNT=`du -B ${BYTES_PER_SECTOR} -s ${SYSROOT} | awk '{print \$1}'`
 # (this magic number comes from gdisk - see the comments below!)
 SECTOR_COUNT=$((${SECTOR_COUNT} + 200704))
 
-# and add the space need for etc/ files, and throw an extra 100MiB for fun
-# (the magic number is 100 MiB divided by 512)
-SECTOR_COUNT=$((${SECTOR_COUNT} + ${ETC_SECTOR_COUNT} + 204800))
+# and add the space need for etc/ files, and throw an extra 4 GiB to
+# account for waste space, e.g. directories can be 1-4 KiB in size
+# (the magic number is 4 GiB divided by 512)
+SECTOR_COUNT=$((${SECTOR_COUNT} + ${ETC_SECTOR_COUNT} + 8388608))
+
+# account for the reserved sectors at the disk's end, which will take out
+# some of our calculated sector count
+SECTOR_COUNT=$((${SECTOR_COUNT} + 34))
 
 # this is the last data sector on disk
 LAST_SECTOR=$((${SECTOR_COUNT} - 34))
@@ -156,10 +169,12 @@ echo "  Sector count:  ${SECTOR_COUNT}"
 echo "  Last sector:   ${LAST_SECTOR}"
 echo "  Output path:   ${IMAGE}"
 echo
+echo "  Zeroing out disk image"
 
 # create an empty img with the given size
 dd if=/dev/zero of=${IMAGE} bs=${BYTES_PER_SECTOR} count=${SECTOR_COUNT} || exit 1
 
+echo "  Partitioning disk image: ${IMAGE}"
 
 # partition it
 # we use the following gdisk commands (DO NOT REMOVE the empty lines!):
@@ -187,7 +202,7 @@ dd if=/dev/zero of=${IMAGE} bs=${BYTES_PER_SECTOR} count=${SECTOR_COUNT} || exit
 #       \n - Choose default type (Linux filesystem)
 #   p - Print partition table
 #   w - Write partition table to our 'disk' and exit.
-gdisk $IMAGE <<EOF
+gdisk "$IMAGE" <<TILLEOF
 o
 y
 n
@@ -213,7 +228,9 @@ n
 p
 w
 y
-EOF
+TILLEOF
+
+[ $? -ne 0 ] && echo "Failed to partition disk" && exit 1
 
 
 # Create loopdevices:
@@ -221,108 +238,203 @@ EOF
 #    2nd lodev for 2nd (EFI) partition
 #    3nd lodev for 3rd (Ext2) partition
 
+echo "  Finding loop device (1/4)"
 for lonum0 in $(seq 0 256)
 do
-    sudo losetup /dev/loop${lonum0} $IMAGE && break
+    ${SUDO} losetup /dev/loop${lonum0} $IMAGE && break
 done
 
+echo "  Finding loop device (2/4)"
 for lonum1 in $(seq 0 256)
 do
-    sudo losetup --offset $((4096*512)) \
+    ${SUDO} losetup --offset $((4096*512)) \
         --sizelimit $(((102399-4096+1)*512)) \
         /dev/loop${lonum1} ${IMAGE} >/dev/null 2>&1 \
             && break
 done
 
+echo "  Finding loop device (3/4)"
 for lonum2 in $(seq 0 256)
 do
-    sudo losetup --offset $((102400*512)) \
+    ${SUDO} losetup --offset $((102400*512)) \
         --sizelimit $(((200703-102400+1)*512)) \
         /dev/loop${lonum2} ${IMAGE} >/dev/null 2>&1 \
             && break
 done
 
+echo "  Finding loop device (4/4)"
 for lonum3 in $(seq 0 256)
 do
-    sudo losetup --offset $((200704*512)) \
+    ${SUDO} losetup --offset $((200704*512)) \
         --sizelimit $(((${LAST_SECTOR}-200704+1)*512)) \
         /dev/loop${lonum3} ${IMAGE} >/dev/null 2>&1 \
             && break
 done
 
+echo "  Using: /dev/loop${lonum0} for boot"
+echo "         /dev/loop${lonum1} for EFI"
+echo "         /dev/loop${lonum2} for GRUB"
+echo "         /dev/loop${lonum3} for data"
 
 # Format partitions:
 #    FAT32 for EFI partition
 #    Ext2 for our data partition (with 1k blocks)
 
-sudo mkdosfs -F 32 /dev/loop${lonum1}
-sudo mkdosfs -F 32 /dev/loop${lonum2}
-sudo mke2fs -b1024 /dev/loop${lonum3}
+${SUDO} mkdosfs -F 32 /dev/loop${lonum1}
+[ $? -ne 0 ] && echo "Failed to create FAT32 partition (1/2)" && exit 1
+
+${SUDO} mkdosfs -F 32 /dev/loop${lonum2}
+[ $? -ne 0 ] && echo "Failed to create FAT32 partition (2/2)" && exit 1
+
+${SUDO} mke2fs -b1024 /dev/loop${lonum3}
+[ $? -ne 0 ] && echo "Failed to create Ext2 partition" && exit 1
 
 
 # Create temp dirs
 mkdir tefi tgrub tdrive
 
-sudo mount /dev/loop${lonum1} tefi
-sudo mount /dev/loop${lonum2} tgrub
-sudo mount /dev/loop${lonum3} tdrive
+${SUDO} mount /dev/loop${lonum1} tefi
+[ $? -ne 0 ] && echo "Failed to mount EFI partition" && exit 1
+
+${SUDO} mount /dev/loop${lonum2} tgrub
+[ $? -ne 0 ] && echo "Failed to mount GRUB partition" && exit 1
+
+${SUDO} mount /dev/loop${lonum3} tdrive
+[ $? -ne 0 ] && echo "Failed to mount main disk partition" && exit 1
 
 # Install GRUB EFI and compatibility i386 modules
-sudo grub-install --target=x86_64-efi --efi-directory=tefi \
-    --bootloader-id=GRUB \
-    --modules="normal part_msdos part_gpt ext2 multiboot" \
-    --root-directory=tgrub --boot-directory=tgrub/boot \
-    --no-floppy /dev/loop${lonum0}
+${SUDO} grub-install --target=x86_64-efi --recheck --removable \
+    --uefi-secure-boot --efi-directory=tefi --boot-directory=tefi/boot \
+    --modules="normal part_msdos part_gpt ext2 multiboot"
+#${SUDO} grub-install --target=x86_64-efi --efi-directory=tefi \
+#    --bootloader-id=GRUB \
+#    --modules="normal part_msdos part_gpt ext2 multiboot" \
+#    --root-directory=tgrub --boot-directory=tgrub/boot \
+#    --no-floppy /dev/loop${lonum0}
+[ $? -ne 0 ] && echo "Failed to install EFI module" && exit 1
 
-sudo grub-install --target=i386-pc \
+${SUDO} grub-install --target=i386-pc --recheck \
     --modules="normal part_msdos part_gpt ext2 multiboot" \
-    --root-directory=tgrub --boot-directory=tgrub/boot \
-    --no-floppy /dev/loop${lonum0}
+    --boot-directory=tgrub/boot /dev/loop${lonum0}
+#${SUDO} grub-install --target=i386-pc \
+#    --modules="normal part_msdos part_gpt ext2 multiboot" \
+#    --root-directory=tgrub --boot-directory=tgrub/boot \
+#    --no-floppy /dev/loop${lonum0}
+[ $? -ne 0 ] && echo "Failed to install GRUB module" && exit 1
 
+# Remove problematic files
+sudo rm tefi/EFI/BOOT/BOOTX64.CSV
+sudo rm tefi/EFI/BOOT/fbx64.efi
+sudo rm tefi/EFI/BOOT/grub.cfg
+
+
+echo "Copying main disk contents"
 
 # create the disk
 ./copy_files_to_disk.sh tdrive ${SYSROOT}
 
-sudo sed -i -e "s/hda./${ROOTDEV}/" -e "s/sda./${ROOTDEV}/" tdrive/etc/fstab
+# fix the root dev in fstab
+${SUDO} sed -i -e "s/hda./${ROOTDEV}/" -e "s/sda./${ROOTDEV}/" tdrive/etc/fstab
+
+# comment out the cdrom mount line in fstab
+${SUDO} sed -i -e "s~/dev/cdrom~#/dev/cdrom~" tdrive/etc/fstab
 
 #sudo mkdir -p tdrive/boot/grub
 
 echo "Copying kernel img"
-sudo cp "${SYSROOT}/boot/laylaos.kernel" tgrub/boot/laylaos.kernel
+${SUDO} cp "${SYSROOT}/boot/laylaos.kernel" tgrub/boot/laylaos.kernel
 
 echo "Copying kernel symbol table System.map"
-sudo cp "${SYSROOT}/boot/System.map" tgrub/boot/System.map
+${SUDO} cp "${SYSROOT}/boot/System.map" tgrub/boot/System.map
 
 echo "Copying boot modules"
-sudo cp "${SYSROOT}/boot/modules/"* tgrub/boot/
+${SUDO} cp "${SYSROOT}/boot/modules/"* tgrub/boot/
 
 echo "Making initrd img"
-./make_initrd.sh root ${ROOTDEV}
+./make_initrd.sh root ${ROOTDEV} sysroot ${SYSROOT}
 
 echo "Copying initrd img"
-sudo mv initrd.img.gz tgrub/boot/
+${SUDO} mv initrd.img.gz tgrub/boot/
 
 echo "Copying vdso img"
-sudo cp ${CWD}/../vdso/vdso.so tgrub/boot/
+${SUDO} cp ${CWD}/../vdso/vdso.so tgrub/boot/
 
-echo "default=0
-timeout=0
+
+# Create sample configuration files
+echo "search --set=root --file /grubhybrid.cfg
+configfile /grubhybrid.cfg" | ${SUDO} tee tefi/boot/grub/grub.cfg > /dev/null
+
+${SUDO} cp tefi/boot/grub/grub.cfg tgrub/boot/grub/grub.cfg
+
+echo "set menu_color_normal=black/cyan
+set menu_color_highlight=light-cyan/cyan
+
+insmod part_msdos
+insmod part_gpt
+insmod fat
+insmod ext2
+#loadfont /boot/grub/fonts/unicode.pf2
+
+insmod font
+if loadfont unicode ; then
+    if keystatus --shift ; then true ; else
+        if [ \${grub_platform} == \"efi\" ]; then
+            insmod efi_gop
+            insmod efi_uga
+        else
+            insmod vbe
+            insmod vga
+        fi
+        insmod gfxterm
+        set gfxmode=1024x768
+        set gfxpayload=auto
+        terminal_output gfxterm
+        if terminal_output gfxterm ; then true ; else
+            terminal gfxterm
+        fi
+        insmod gfxmenu
+    fi
+fi
+
 menuentry \"Layla OS\" {
-  multiboot /boot/laylaos.kernel root=/dev/${ROOTDEV}
-  module --nounzip /boot/initrd.img.gz \"INITRD\"
-  module /boot/System.map \"SYSTEM.MAP\"
-  module /boot/acpica.o \"ACPICA\"
-  module /boot/vdso.so \"VDSO\"
-}" | sudo tee tgrub/boot/grub/grub.cfg > /dev/null
+  multiboot2 /boot/laylaos.kernel root=/dev/${ROOTDEV}
+  module2 --nounzip /boot/initrd.img.gz \"INITRD\"
+  module2 /boot/System.map \"SYSTEM.MAP\"
+  module2 /boot/acpica.o \"ACPICA\"
+  module2 /boot/vdso.so \"VDSO\"
+}
 
+menuentry \"Reboot\" { reboot }
+menuentry \"Poweroff\" { halt }
+if [ \${grub_platform} == \"efi\" ]; then
+    menuentry \"UEFI setup\" { fwsetup  }
+fi" | ${SUDO} tee tgrub/grubhybrid.cfg > /dev/null
+
+#echo "default=0
+#timeout=0
+#menuentry \"Layla OS\" {
+#  multiboot /boot/laylaos.kernel root=/dev/${ROOTDEV}
+#  module --nounzip /boot/initrd.img.gz \"INITRD\"
+#  module /boot/System.map \"SYSTEM.MAP\"
+#  module /boot/acpica.o \"ACPICA\"
+#  module /boot/vdso.so \"VDSO\"
+#}" | ${SUDO} tee tgrub/boot/grub/grub.cfg > /dev/null
+
+
+echo
+echo "EFI partition contents:"
+ls -l tefi
 
 echo
 echo "GRUB partition contents:"
-ls tgrub
+ls -l tgrub
 
 echo
 echo "Main partition contents:"
-ls tdrive
+ls -l tdrive
+
+echo
+df -h
 
 sleep 3
 
@@ -330,19 +442,19 @@ sleep 3
 echo
 echo "Finishing"
 echo "---------"
-sudo umount /dev/loop${lonum1}
-sudo umount /dev/loop${lonum2}
-sudo umount /dev/loop${lonum3}
-sudo losetup -d /dev/loop${lonum0}
-sudo losetup -d /dev/loop${lonum1}
-sudo losetup -d /dev/loop${lonum2}
-sudo losetup -d /dev/loop${lonum3}
+${SUDO} umount /dev/loop${lonum1}
+${SUDO} umount /dev/loop${lonum2}
+${SUDO} umount /dev/loop${lonum3}
+${SUDO} losetup -d /dev/loop${lonum0}
+${SUDO} losetup -d /dev/loop${lonum1}
+${SUDO} losetup -d /dev/loop${lonum2}
+${SUDO} losetup -d /dev/loop${lonum3}
 
 # remove tmp dirs
-sudo sync
-sudo rm -rf tefi
-sudo rm -rf tgrub
-sudo rm -rf tdrive
+${SUDO} sync
+${SUDO} rm -rf tefi
+${SUDO} rm -rf tgrub
+${SUDO} rm -rf tdrive
 
 MBSIZE=$(( ${SECTOR_COUNT} * ${BYTES_PER_SECTOR} / 1048576 ))
 
@@ -363,7 +475,7 @@ else
 fi
 
 cat << EOF > "${OUTDIR}/qemu.sh"
-qemu-system-${QEMU_ARCH} -accel tcg,thread=single -cpu core2duo -m 512 -M pc -no-reboot -no-shutdown -drive format=raw,file=${IMAGE},index=0,media=disk -boot d -serial stdio -smp 1 -usb -vga std -net nic,model=ne2k_pci -net tap,ifname=tap0,script=no,downscript=no,id=net0 -device intel-hda,debug=4 -device hda-duplex -audiodev id=pa,driver=pa,server=/run/user/1000/pulse/native
+qemu-system-${QEMU_ARCH} -accel tcg,thread=single -cpu core2duo -m 2048 -M pc -no-reboot -no-shutdown -drive format=raw,file=${IMAGE},index=0,media=disk -boot d -serial stdio -smp 1 -usb -vga std -net nic,model=ne2k_pci -net tap,ifname=tap0,script=no,downscript=no,id=net0 -device intel-hda,debug=4 -device hda-duplex -audiodev id=pa,driver=pa,server=/run/user/1000/pulse/native
 EOF
 
 chmod +x "${OUTDIR}/qemu.sh"

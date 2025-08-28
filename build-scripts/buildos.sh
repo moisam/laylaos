@@ -15,30 +15,47 @@
 ##############################################
 
 # libs with no dependencies -- a.k.a. easy wins
-NODEPS_LIBS="zlib xz libiconv libexpat libffi libucontext fribidi gzip hunspell jsoncpp openssl"
+NODEPS_LIBS="zlib xz libiconv libexpat libffi libucontext fribidi gzip hunspell jsoncpp"
+NODEPS_LIBS="${NODEPS_LIBS} openssl uchardet bzip2 ncurses popt unifont"
 
 # image, multimedia and font libs
 IMAGE_LIBS="libjpeg libpng16 libtiff libwebp"
-MULTIMEDIA_LIBS="aomedia dav1d libavif libdvdread faad2 twolame liba52 libogg"
-MULTIMEDIA_LIBS="${MULTIMEDIA_LIBS} flac vorbis libcaca opus opusfile"
+MULTIMEDIA_LIBS="aomedia dav1d libavif libdvdread faad2 twolame lame liba52 libogg"
+MULTIMEDIA_LIBS="${MULTIMEDIA_LIBS} flac vorbis libcaca opus opusfile libsndfile"
 
 FONT_LIBS="freetype fontconfig harfbuzz"
 SDL_LIBS="SDL2 SDL2_mixer SDL2_image SDL2_ttf SDL2_net"
 
-MULTIMEDIA_LIBS2="libtheora libass ffmpeg openal mplayer"
+MULTIMEDIA_LIBS2="libtheora libass ffmpeg openal sndio mplayer"
 
-# terminal apps and games
-TERMINAL_APPS_AND_LIBS="ncurses coreutils bash inetutils nano links curl cups gnudos fontopia"
-GAMES_APPS="openttd sdl2-doom uMario DungeonRush freegemas"
+# terminal apps, games and filesystem tools
+TERMINAL_APPS_AND_LIBS="coreutils bash inetutils nano links curl cups gnudos fontopia"
+TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} mpg123 htop less libpipeline flex"
+TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} psutils groff readline gdbm gawk sed man-db"
+TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} hexedit tar grep diffutils patch"
+TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} file findutils cpio patchelf help2man which"
+TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} libuuid pcre2"
+GAMES_APPS="openttd sdl2-doom uMario DungeonRush"
+FILESYSTEM_APPS="gptfdisk e2fsprogs dosfstools libcddb libcdio libcdio-paranoia mtools xorriso"
 
-# compiler
-COMPILER_APPS="binutils gmp mpfr mpc gcc"
+# networking stuff
+NET_APPS_AND_LIBS="wget openssh git"
+
+# compilers, linkers & interpreters
+COMPILER_APPS="binutils gmp mpfr mpc gcc bison m4 perl"
+COMPILER_APPS="${COMPILER_APPS} libidn libunistring libidn2 gettext texinfo make"
+COMPILER_APPS="${COMPILER_APPS} automake-1.17"
+COMPILER_APPS="${COMPILER_APPS} autoconf-2.71 getconf libtool cmake"
+COMPILER_APPS="${COMPILER_APPS} python meson nasm pkg-config ninja yasm"
 
 # Qt-based apps
 QT_APPS="FeatherPad"
 
 # PDF
 PDF_APPS_AND_LIBS="DjVuLibre openjpeg jbig2dec mupdf SDLBook"
+
+# Apps that need other stuff, e.g. SDL, Qt, glib
+NEEDY_APPS="mc freegemas grub"
 
 ##############################################
 # prepare for the build
@@ -89,6 +106,17 @@ do
     shift 1
 done
 
+# some ports (e.g. texinfo) need perl, and to build perl we need to make sure
+# we have the same version installed on the host system
+if [ -z "${HOST_PERL_FOR_CROSSCOMPILE}" ]; then
+    echo
+    echo "You must set \$HOST_PERL_FOR_CROSSCOMPILE to the path of your host"
+    echo "perl program. This, unfortunately, has to be the same version we need"
+    echo "to compile LaylaOS. See ports/perl/build.sh for the required perl version."
+    echo
+    exit 1
+fi
+
 # make sure the directories exist
 mkdir -p ${PORTSDIR}
 mkdir -p ${CROSS}
@@ -100,6 +128,7 @@ export BUILD_TARGET=${ARCH}-laylaos
 export DOWNLOAD_PORTS_PATH=${PORTSDIR}
 export CROSSCOMPILE_TOOLS_PATH=${CROSS}
 export CROSSCOMPILE_SYSROOT_PATH=${SYSROOT}
+export HOST_PERL_FOR_CROSSCOMPILE=${HOST_PERL_FOR_CROSSCOMPILE}
 
 # some scripts expect this var
 export SYSROOT=${SYSROOT}
@@ -132,18 +161,18 @@ fi
 # build the kernel
 ##############################################
 
+export PREFIX=/usr
+export EXEC_PREFIX=${PREFIX}
+export BOOTDIR=/boot
+export LIBDIR=${EXEC_PREFIX}/lib
+export INCLUDEDIR=${PREFIX}/include
+
 export KERNEL_AR=${CROSS}/bin/${ARCH}-laylakernel-ar
 export KERNEL_AS=${CROSS}/bin/${ARCH}-laylakernel-as
 export KERNEL_CC="${CROSS}/bin/${ARCH}-laylakernel-gcc --sysroot=\"${SYSROOT}\" -isystem=${INCLUDEDIR}"
 export USERLAND_AR=${CROSS}/bin/${ARCH}-laylaos-ar
 export USERLAND_AS=${CROSS}/bin/${ARCH}-laylaos-as
 export USERLAND_CC="${CROSS}/bin/${ARCH}-laylaos-gcc --sysroot=\"${SYSROOT}\" -isystem=${INCLUDEDIR}"
-
-export PREFIX=/usr
-export EXEC_PREFIX=${PREFIX}
-export BOOTDIR=/boot
-export LIBDIR=${EXEC_PREFIX}/lib
-export INCLUDEDIR=${PREFIX}/include
 
 case "${ARCH}" in
     x86_64)
@@ -246,7 +275,15 @@ mkdir -p ${SYSROOT}/usr/sbin
 cd ${CWD}/../kernel/bin/
 
 echo " ==> installing bins and gui apps"
-KERNEL_BINS=`find . -type f -executable ! '(' -name '*.a' -o -name '*.so' -o -name '*.o' ')'`
+
+# the -executable option does not work properly on the ported 'find' utility on LaylaOS
+# TODO: investigate this
+myname=`uname -s`
+if [ "$myname" == "LaylaOS" ]; then
+    KERNEL_BINS=`find . -type f ! '(' -name '*.a' -o -name '*.so' -o -name '*.o' -o -name '*.h' -o -name '*.c' -o -name '*.syms' ')'`
+else
+    KERNEL_BINS=`find . -type f -executable ! '(' -name '*.a' -o -name '*.so' -o -name '*.o' ')'`
+fi
 
 #cp ${KERNEL_BINS} ${SYSROOT}/usr/bin/
 
@@ -263,6 +300,7 @@ done
 
 # reboot needs to be under sbin/
 mv ${SYSROOT}/usr/bin/reboot ${SYSROOT}/usr/sbin/reboot
+mv ${SYSROOT}/usr/bin/daemon ${SYSROOT}/usr/sbin/daemon
 
 echo " ==> installing desktop widgets"
 cd desktop/widgets/
@@ -301,6 +339,7 @@ build_list "${MULTIMEDIA_LIBS2}"
 ##############################################
 
 build_list "${TERMINAL_APPS_AND_LIBS}"
+build_list "${FILESYSTEM_APPS}"
 build_list "${GAMES_APPS}"
 
 ##############################################
@@ -332,6 +371,16 @@ build_list "Qt5"
 build_list "${COMPILER_APPS}"
 build_list "${QT_APPS}"
 build_list "${PDF_APPS_AND_LIBS}"
+build_list "${NET_APPS_AND_LIBS}"
+build_list "${NEEDY_APPS}"
+
+
+##############################################
+# Cleanup
+##############################################
+
+# remove the g++, gcc, etc. that were cross-compiled
+rm ${SYSROOT}/usr/bin/${BUILD_TARGET}-*
 
 ##############################################
 # Done!

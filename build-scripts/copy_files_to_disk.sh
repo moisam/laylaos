@@ -1,7 +1,7 @@
-#!/bin/sh
+#!/bin/bash
 
 #
-# Copyright 2021-2024 (c) Mohammed Isam
+# Copyright 2021-2025 (c) Mohammed Isam
 #
 # This script is part of LaylaOS
 #
@@ -9,6 +9,14 @@
 # It is called by create_bootable_disk.sh with the
 # appropriate options.
 #
+
+# sudo is not available on LaylaOS yet
+myname=`uname -s`
+if [ "$myname" == "LaylaOS" ]; then
+    SUDO=
+else
+    SUDO=sudo
+fi
 
 TMPBUILDDIR=$1
 SYSROOT=$2
@@ -21,72 +29,75 @@ echo "---------------------------"
 echo "    Under ${TMPBUILDDIR} (`pwd`)"
 echo
 
-sudo mkdir dev etc initrd lib mnt proc root tmp usr var
-sudo mkdir -p usr/share/gui/desktop
-sudo mkdir var/log
-sudo mkdir var/run
-sudo mkdir var/tmp
-sudo mkdir mnt/cdrom
-sudo ln -s /usr/bin bin
-sudo ln -s /usr/sbin sbin
+${SUDO} mkdir dev etc initrd lib mnt proc root tmp usr var
+${SUDO} mkdir -p usr/share/gui/desktop
+${SUDO} mkdir var/log
+${SUDO} mkdir var/run
+${SUDO} mkdir var/tmp
+${SUDO} mkdir mnt/cdrom
+${SUDO} ln -s /usr/bin bin
+${SUDO} ln -s /usr/sbin sbin
 
 # set up appropriate permissions for dirs
-sudo chmod 0755 bin dev etc lib mnt sbin usr var
-sudo chmod 0700 root
-sudo chmod 0644 initrd
-sudo chmod 0555 proc
-sudo chmod 0777 tmp
+${SUDO} chmod 0755 bin dev etc lib mnt sbin usr var
+${SUDO} chmod 0700 root
+${SUDO} chmod 0644 initrd
+${SUDO} chmod 0555 proc
+${SUDO} chmod 0777 tmp
 
-sudo touch root/.profile
-sudo cp ${CWD}/../others/home_files/inputrc root/.inputrc
-sudo cp ${CWD}/../others/home_files/bashrc root/.bashrc
+${SUDO} touch root/.profile
+${SUDO} cp ${CWD}/../others/home_files/inputrc root/.inputrc
+${SUDO} cp ${CWD}/../others/home_files/bashrc root/.bashrc
 
-sudo cp ${CWD}/../others/share_files/pci.ids usr/share/
+${SUDO} cp ${CWD}/../others/share_files/pci.ids usr/share/
 
 echo
 echo "Copying files in /usr and /etc"
 echo "------------------------------"
 
 for d in etc usr; do
-    sudo cp -R ${SYSROOT}/${d}/* ./${d}/
+    ${SUDO} cp -R ${SYSROOT}/${d}/* ./${d}/
 done
 
-sudo ln -s /usr/share/doc usr/doc
-sudo ln -s /usr/share/info usr/info
-sudo ln -s /usr/share/man usr/man
+${SUDO} ln -s /usr/share/doc usr/doc
+${SUDO} ln -s /usr/share/info usr/info
+${SUDO} ln -s /usr/share/man usr/man
+
+${SUDO} cp usr/Qt-5.12-hosttools/bin/* usr/Qt-5.12/bin/
+${SUDO} rm -rf usr/Qt-5.12-hosttools
 
 echo
 echo "Copying other files in /etc"
 echo "---------------------------"
-sudo cp -r ${CWD}/../others/etc_files/* etc/
-sudo cp -r ${CWD}/../others/timidity etc/
-sudo ln -s /etc/timidity/timidity.cfg etc/timidity.cfg
+${SUDO} cp -r ${CWD}/../others/etc_files/* etc/
+${SUDO} cp -r ${CWD}/../others/timidity etc/
+${SUDO} ln -s /etc/timidity/timidity.cfg etc/timidity.cfg
 
 echo
 echo "Symlinking poweroff and halt"
 echo "----------------------------"
-sudo ln usr/sbin/reboot usr/sbin/poweroff
-sudo ln usr/sbin/reboot usr/sbin/halt
+${SUDO} ln usr/sbin/reboot usr/sbin/poweroff
+${SUDO} ln usr/sbin/reboot usr/sbin/halt
 
 echo
 echo "Copying desktop resources"
 echo "-------------------------"
-sudo mkdir -p usr/share/gui
-sudo mkdir -p usr/share/fonts
+${SUDO} mkdir -p usr/share/gui
+${SUDO} mkdir -p usr/share/fonts
 
-sudo cp -r ${CWD}/../others/share_files/gui/ usr/share/
-sudo cp -r ${CWD}/../others/share_files/fonts/ usr/share/
+${SUDO} cp -r ${CWD}/../others/share_files/gui/ usr/share/
+${SUDO} cp -r ${CWD}/../others/share_files/fonts/ usr/share/
 
 echo
 echo "Creating /bin/sh"
 echo "----------------"
 cd bin
-sudo ln -s /bin/bash ./sh
+${SUDO} ln -s /bin/bash ./sh
 cd ..
 
 
-sudo chown root:root usr/bin/*
-sudo chown root:root usr/sbin/*
+${SUDO} chown root:root usr/bin/*
+${SUDO} chown root:root usr/sbin/*
 cd ${CWD}
 
 echo
