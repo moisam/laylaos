@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: syscall.h
  *    This file is part of LaylaOS.
@@ -50,6 +50,8 @@
 
 #include "bits/syscall-defs.h"
 
+typedef long (*syscall_func)();
+
 
 /**
  * @var NR_SYSCALLS
@@ -57,13 +59,21 @@
  *
  * Contains the number of supported system calls.
  */
-extern int NR_SYSCALLS;
+extern unsigned int NR_SYSCALLS;
 
 
 /*
  * We use fork to handle the clone syscall.
  */
 #define syscall_clone       syscall_fork
+
+/*
+ * Return 1 if the given sysnum is a valid syscall number.
+ */
+static inline int valid_syscall_number(unsigned int sysnum)
+{
+    return (sysnum && sysnum < NR_SYSCALLS);
+}
 
 
 /**********************************
@@ -107,7 +117,7 @@ void syscall_dispatcher(struct regs *r);
  *
  * @return  zero if caller has access, -(ACCES) if not.
  */
-int has_access(struct fs_node_t *node, int mode, int use_ruid);
+long has_access(struct fs_node_t *node, int mode, int use_ruid);
 
 /**
  * @brief Handler for syscall exit().
@@ -118,7 +128,7 @@ int has_access(struct fs_node_t *node, int mode, int use_ruid);
  *
  * @return  never returns.
  */
-int syscall_exit(int code);
+long syscall_exit(int code);
 
 /**
  * @brief Handler for syscall exit_group().
@@ -129,7 +139,7 @@ int syscall_exit(int code);
  *
  * @return  never returns.
  */
-int syscall_exit_group(int code);
+long syscall_exit_group(int code);
 
 /**
  * @brief Handler for syscall close().
@@ -140,7 +150,7 @@ int syscall_exit_group(int code);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_close(int fd);
+long syscall_close(int fd);
 
 /**
  * @brief Handler for syscall creat().
@@ -155,7 +165,7 @@ int syscall_close(int fd);
  *
  * @see     syscall_open()
  */
-int syscall_creat(char *pathname, mode_t mode);
+long syscall_creat(char *pathname, mode_t mode);
 
 /**
  * @brief Handler for syscall time().
@@ -166,7 +176,7 @@ int syscall_creat(char *pathname, mode_t mode);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_time(time_t *tloc);
+long syscall_time(time_t *tloc);
 
 /**
  * @brief Handler for syscall mknodat().
@@ -184,7 +194,7 @@ int syscall_time(time_t *tloc);
  *
  * @see     syscall_mknod()
  */
-int syscall_mknodat(int dirfd, char *pathname, mode_t mode, dev_t dev);
+long syscall_mknodat(int dirfd, char *pathname, mode_t mode, dev_t dev);
 
 /**
  * @brief Handler for syscall mknod().
@@ -200,7 +210,7 @@ int syscall_mknodat(int dirfd, char *pathname, mode_t mode, dev_t dev);
  *
  * @see     syscall_mknodat()
  */
-int syscall_mknod(char *pathname, mode_t mode, dev_t dev);
+long syscall_mknod(char *pathname, mode_t mode, dev_t dev);
 
 /**
  * @brief Handler for syscall lseek().
@@ -213,7 +223,7 @@ int syscall_mknod(char *pathname, mode_t mode, dev_t dev);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_lseek(int fd, off_t offset, int origin);
+long syscall_lseek(int fd, off_t offset, int origin);
 
 /**
  * @brief Handler for syscall mount().
@@ -228,8 +238,8 @@ int syscall_lseek(int fd, off_t offset, int origin);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_mount(char *source, char *target, char *fstype, 
-                  int flags, char *options);
+long syscall_mount(char *source, char *target, char *fstype, 
+                   int flags, char *options);
 
 /**
  * @brief Handler for syscall umount2().
@@ -244,7 +254,7 @@ int syscall_mount(char *source, char *target, char *fstype,
  *
  * @see     syscall_umount()
  */
-int syscall_umount2(char *target, int flags);
+long syscall_umount2(char *target, int flags);
 
 /**
  * @brief Handler for syscall umount().
@@ -257,7 +267,7 @@ int syscall_umount2(char *target, int flags);
  *
  * @see     syscall_umount2()
  */
-int syscall_umount(char *target);
+long syscall_umount(char *target);
 
 /**
  * @brief Handler for syscall stime().
@@ -268,7 +278,7 @@ int syscall_umount(char *target);
  *
  * @return  -(ENOSYS) always.
  */
-int syscall_stime(long *buf);
+long syscall_stime(long *buf);
 
 /**
  * @brief Handler for syscall pause().
@@ -279,7 +289,7 @@ int syscall_stime(long *buf);
  *
  * @return  -(EINTR) if the task is not terminated by a signal.
  */
-int syscall_pause(void);
+long syscall_pause(struct regs *r);
 
 /**
  * @brief Handler for syscall rmdir().
@@ -290,7 +300,7 @@ int syscall_pause(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_rmdir(char *pathname);
+long syscall_rmdir(char *pathname);
 
 /**
  * @brief Handler for syscall times().
@@ -301,7 +311,7 @@ int syscall_rmdir(char *pathname);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_times(struct tms *buf);
+long syscall_times(struct tms *buf);
 
 /**
  * @brief Handler for syscall setheap().
@@ -312,7 +322,7 @@ int syscall_times(struct tms *buf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setheap(void *data_end);
+long syscall_setheap(void *data_end);
 
 /**
  * @brief Handler for syscall brk().
@@ -326,7 +336,7 @@ int syscall_setheap(void *data_end);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_brk(unsigned long incr, uintptr_t *res);
+long syscall_brk(long incr, volatile uintptr_t *res);
 
 /**
  * @brief Handler for syscall uname().
@@ -337,7 +347,7 @@ int syscall_brk(unsigned long incr, uintptr_t *res);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_uname(struct utsname *name);
+long syscall_uname(struct utsname *name);
 
 /**
  * @brief Handler for syscall umask().
@@ -348,7 +358,7 @@ int syscall_uname(struct utsname *name);
  *
  * @return  old mask value.
  */
-int syscall_umask(mode_t mask);
+long syscall_umask(mode_t mask);
 
 /**
  * @brief Handler for syscall setdomainname().
@@ -360,7 +370,7 @@ int syscall_umask(mode_t mask);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setdomainname(char *name, size_t len);
+long syscall_setdomainname(char *name, size_t len);
 
 /**
  * @brief Handler for syscall sethostname().
@@ -372,7 +382,7 @@ int syscall_setdomainname(char *name, size_t len);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_sethostname(char *name, size_t len);
+long syscall_sethostname(char *name, size_t len);
 
 /**
  * @brief Handler for syscall gettimeofday().
@@ -384,8 +394,8 @@ int syscall_sethostname(char *name, size_t len);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_gettimeofday(struct timeval *restrict tv, 
-                         struct timezone *restrict tz);
+long syscall_gettimeofday(struct timeval *restrict tv, 
+                          struct timezone *restrict tz);
 
 /**
  * @brief Handler for syscall settimeofday().
@@ -397,7 +407,7 @@ int syscall_gettimeofday(struct timeval *restrict tv,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_settimeofday(struct timeval *tv, struct timezone *tz);
+long syscall_settimeofday(struct timeval *tv, struct timezone *tz);
 
 /**
  * @brief Handler for syscall getdents().
@@ -410,7 +420,7 @@ int syscall_settimeofday(struct timeval *tv, struct timezone *tz);
  *
  * @return  number of bytes read on success, -(errno) on failure.
  */
-int syscall_getdents(int fd, void *dp, int count);
+long syscall_getdents(int fd, void *dp, int count);
 
 /**
  * @brief Handler for syscall getcwd().
@@ -422,7 +432,7 @@ int syscall_getdents(int fd, void *dp, int count);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getcwd(char *buf, size_t sz);
+long syscall_getcwd(char *buf, size_t sz);
 
 /**
  * @brief Handler for syscall getrandom().
@@ -436,8 +446,8 @@ int syscall_getcwd(char *buf, size_t sz);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getrandom(void *buf, size_t buflen, unsigned int flags, 
-                      ssize_t *copied);
+long syscall_getrandom(void *buf, size_t buflen, unsigned int flags, 
+                       ssize_t *copied);
 
 
 /**********************************
@@ -454,7 +464,7 @@ int syscall_getrandom(void *buf, size_t buflen, unsigned int flags,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_access(char *filename, int mode);
+long syscall_access(char *filename, int mode);
 
 /**
  * @brief Handler for syscall faccessat().
@@ -469,7 +479,7 @@ int syscall_access(char *filename, int mode);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_faccessat(int dirfd, char *filename, int mode, int flags);
+long syscall_faccessat(int dirfd, char *filename, int mode, int flags);
 
 
 /**********************************
@@ -491,7 +501,7 @@ int syscall_faccessat(int dirfd, char *filename, int mode, int flags);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_acct(char *filename);
+long syscall_acct(char *filename);
 
 /**
  * @brief Write task accounting information.
@@ -518,7 +528,7 @@ void task_account(struct task_t *task);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_chdir(char *filename);
+long syscall_chdir(char *filename);
 
 /**
  * @brief Handler for syscall fchdir().
@@ -529,7 +539,7 @@ int syscall_chdir(char *filename);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_fchdir(int fd);
+long syscall_fchdir(int fd);
 
 /**
  * @brief Handler for syscall chroot().
@@ -540,7 +550,7 @@ int syscall_fchdir(int fd);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_chroot(char *filename);
+long syscall_chroot(char *filename);
 
 
 /**********************************
@@ -557,7 +567,7 @@ int syscall_chroot(char *filename);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_chmod(char *filename, mode_t mode);
+long syscall_chmod(char *filename, mode_t mode);
 
 /**
  * @brief Handler for syscall fchmod().
@@ -569,7 +579,7 @@ int syscall_chmod(char *filename, mode_t mode);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_fchmod(int fd, mode_t mode);
+long syscall_fchmod(int fd, mode_t mode);
 
 /**
  * @brief Handler for syscall fchmodat().
@@ -583,7 +593,7 @@ int syscall_fchmod(int fd, mode_t mode);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_fchmodat(int dirfd, char *pathname, mode_t mode, int flags);
+long syscall_fchmodat(int dirfd, char *pathname, mode_t mode, int flags);
 
 
 /**********************************
@@ -601,7 +611,7 @@ int syscall_fchmodat(int dirfd, char *pathname, mode_t mode, int flags);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_chown(char *filename, uid_t uid, gid_t gid);
+long syscall_chown(char *filename, uid_t uid, gid_t gid);
 
 /**
  * @brief Handler for syscall lchown().
@@ -616,7 +626,7 @@ int syscall_chown(char *filename, uid_t uid, gid_t gid);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_lchown(char *filename, uid_t uid, gid_t gid);
+long syscall_lchown(char *filename, uid_t uid, gid_t gid);
 
 /**
  * @brief Handler for syscall fchown().
@@ -629,7 +639,7 @@ int syscall_lchown(char *filename, uid_t uid, gid_t gid);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_fchown(int fd, uid_t uid, gid_t gid);
+long syscall_fchown(int fd, uid_t uid, gid_t gid);
 
 /**
  * @brief Handler for syscall fchownat().
@@ -645,8 +655,8 @@ int syscall_fchown(int fd, uid_t uid, gid_t gid);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_fchownat(int dirfd, char *pathname, uid_t uid, gid_t gid, 
-                     int flags);
+long syscall_fchownat(int dirfd, char *pathname, uid_t uid, gid_t gid, 
+                      int flags);
 
 
 /**********************************
@@ -667,7 +677,7 @@ int syscall_fchownat(int dirfd, char *pathname, uid_t uid, gid_t gid,
  *
  * @see     syscall_dup2(), syscall_dup()
  */
-int syscall_dup3(int oldfd, int newfd, int flags);
+long syscall_dup3(int oldfd, int newfd, int flags);
 
 /**
  * @brief Handler for syscall dup2().
@@ -681,7 +691,7 @@ int syscall_dup3(int oldfd, int newfd, int flags);
  *
  * @see     syscall_dup3(), syscall_dup()
  */
-int syscall_dup2(int oldfd, int newfd);
+long syscall_dup2(int oldfd, int newfd);
 
 /**
  * @brief Handler for syscall dup().
@@ -694,7 +704,7 @@ int syscall_dup2(int oldfd, int newfd);
  *
  * @see     syscall_dup3(), syscall_dup2()
  */
-int syscall_dup(int filedes);
+long syscall_dup(int filedes);
 
 
 /**********************************
@@ -714,7 +724,7 @@ int syscall_dup(int filedes);
  *
  * @see     syscall_execveat()
  */
-int syscall_execve(char *path, char **argv, char **env);
+long syscall_execve(char *path, char **argv, char **env);
 
 /**
  * @brief Handler for syscall execveat().
@@ -732,8 +742,8 @@ int syscall_execve(char *path, char **argv, char **env);
  *
  * @see     syscall_execve()
  */
-int syscall_execveat(int dirfd, char *path, 
-                     char **argv, char **env, int flags);
+long syscall_execveat(int dirfd, char *path, 
+                      char **argv, char **env, int flags);
 
 
 /**********************************
@@ -750,7 +760,7 @@ int syscall_execveat(int dirfd, char *path,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_flock(int fd, int operation);
+long syscall_flock(int fd, int operation);
 
 
 /**********************************
@@ -762,28 +772,30 @@ int syscall_flock(int fd, int operation);
  *
  * Synchronize a file's in-core state with storage device. 
  * Unlike syscall_fsync(), this function does not synchronize file metadata.
+ * This function internally calls vfs_fdatasync().
  *
  * @param   fd          file descriptor
  *
  * @return  zero on success, -(errno) on failure.
  *
- * @see     syscall_fsync()
+ * @see     syscall_fsync(), vfs_fdatasync()
  */
-int syscall_fdatasync(int fd);
+long syscall_fdatasync(int fd);
 
 /**
  * @brief Handler for syscall fsync().
  *
  * Synchronize a file's in-core state with storage device. 
  * Unlike syscall_fdatasync(), this function synchronizes file metadata.
+ * This function internally calls vfs_fsync().
  *
  * @param   fd          file descriptor
  *
  * @return  zero on success, -(errno) on failure.
  *
- * @see     syscall_fdatasync()
+ * @see     syscall_fdatasync(), vfs_fsync()
  */
-int syscall_fsync(int fd);
+long syscall_fsync(int fd);
 
 /**
  * @brief Handler for syscall sync().
@@ -794,7 +806,7 @@ int syscall_fsync(int fd);
  *
  * @see     syscall_syncfs()
  */
-int syscall_sync(void);
+long syscall_sync(void);
 
 /**
  * @brief Handler for syscall syncfs().
@@ -809,7 +821,7 @@ int syscall_sync(void);
  *
  * @see     syscall_sync()
  */
-int syscall_syncfs(int fd);
+long syscall_syncfs(int fd);
 
 
 /**********************************
@@ -847,7 +859,7 @@ int gid_perm(gid_t gid, int use_rgid);
  *
  * @see     https://man7.org/linux/man-pages/man2/getgroups.2.html
  */
-int syscall_getgroups(int gidsetsize, gid_t grouplist[]);
+long syscall_getgroups(int gidsetsize, gid_t grouplist[]);
 
 /**
  * @brief Handler for syscall setgroups().
@@ -862,7 +874,7 @@ int syscall_getgroups(int gidsetsize, gid_t grouplist[]);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setgroups(int ngroups, gid_t grouplist[]);
+long syscall_setgroups(int ngroups, gid_t grouplist[]);
 
 
 /**********************************
@@ -877,7 +889,7 @@ int syscall_setgroups(int ngroups, gid_t grouplist[]);
  *
  * @return  does not return on success, -(errno) on failure.
  */
-int syscall_idle(void);
+long syscall_idle(void);
 
 
 /**************************************
@@ -894,7 +906,7 @@ int syscall_idle(void);
  *
  * @return  zero or positive number on success, -(errno) on failure.
  */
-int syscall_sysctl(struct __sysctl_args *__args);
+long syscall_sysctl(struct __sysctl_args *__args);
 
 
 /**************************************
@@ -909,7 +921,7 @@ int syscall_sysctl(struct __sysctl_args *__args);
  * @return  new task pid in the parent and zero in the new child task 
  *          on success, or -(errno) on failure.
  */
-int syscall_fork(void);
+long syscall_fork(struct regs *r);
 
 
 /**************************************
@@ -927,7 +939,7 @@ int syscall_fork(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_kill(pid_t pid, int signum);
+long syscall_kill(pid_t pid, int signum);
 
 
 /**************************************
@@ -944,7 +956,7 @@ int syscall_kill(pid_t pid, int signum);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_link(char *oldname, char *newname);
+long syscall_link(char *oldname, char *newname);
 
 /**
  * @brief Handler for syscall linkat().
@@ -960,8 +972,8 @@ int syscall_link(char *oldname, char *newname);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_linkat(int olddirfd, char *oldname,
-                   int newdirfd, char *newname, int flags);
+long syscall_linkat(int olddirfd, char *oldname,
+                    int newdirfd, char *newname, int flags);
 
 /**
  * @brief Handler for syscall unlink().
@@ -972,7 +984,7 @@ int syscall_linkat(int olddirfd, char *oldname,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_unlink(char *pathname);
+long syscall_unlink(char *pathname);
 
 /**
  * @brief Handler for syscall unlinkat().
@@ -985,7 +997,7 @@ int syscall_unlink(char *pathname);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_unlinkat(int dirfd, char *pathname, int flags);
+long syscall_unlinkat(int dirfd, char *pathname, int flags);
 
 
 /**************************************
@@ -1002,7 +1014,7 @@ int syscall_unlinkat(int dirfd, char *pathname, int flags);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_mkdir(char *pathname, mode_t mode);
+long syscall_mkdir(char *pathname, mode_t mode);
 
 /**
  * @brief Handler for syscall mkdirat().
@@ -1015,7 +1027,7 @@ int syscall_mkdir(char *pathname, mode_t mode);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_mkdirat(int dirfd, char *pathname, mode_t mode);
+long syscall_mkdirat(int dirfd, char *pathname, mode_t mode);
 
 
 /**************************************
@@ -1032,7 +1044,7 @@ int syscall_mkdirat(int dirfd, char *pathname, mode_t mode);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_nice(int incr);
+long syscall_nice(int incr);
 
 /**
  * @brief Handler for syscall getpriority().
@@ -1045,7 +1057,7 @@ int syscall_nice(int incr);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getpriority(int which, id_t who, int *__nice);
+long syscall_getpriority(int which, id_t who, int *__nice);
 
 /**
  * @brief Handler for syscall setpriority().
@@ -1058,7 +1070,7 @@ int syscall_getpriority(int which, id_t who, int *__nice);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setpriority(int which, id_t who, int value);
+long syscall_setpriority(int which, id_t who, int value);
 
 
 /**************************************
@@ -1078,7 +1090,7 @@ int syscall_setpriority(int which, id_t who, int value);
  *
  * @see     syscall_openat()
  */
-int syscall_open(char *pathname, int flags, mode_t mode);
+long syscall_open(char *pathname, int flags, mode_t mode);
 
 /**
  * @brief Handler for syscall openat().
@@ -1094,8 +1106,9 @@ int syscall_open(char *pathname, int flags, mode_t mode);
  *
  * @see     syscall_open()
  */
-int syscall_openat(int dirfd, char *pathname, int flags, mode_t mode);
+long syscall_openat(int dirfd, char *pathname, int flags, mode_t mode);
 
+#if 0
 /**
  * @brief Open a temporary file descriptor.
  *
@@ -1107,7 +1120,7 @@ int syscall_openat(int dirfd, char *pathname, int flags, mode_t mode);
  * @return  zero or positive file descriptor on success, -(errno) on failure.
  */
 int open_tmp_fd(struct fs_node_t *node);
-
+#endif
 
 /**************************************
  * Functions defined in pipe.c
@@ -1124,7 +1137,7 @@ int open_tmp_fd(struct fs_node_t *node);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_pipe(int *filedes);
+long syscall_pipe(int *filedes);
 
 /**
  * @brief Handler for syscall pipe2().
@@ -1140,7 +1153,7 @@ int syscall_pipe(int *filedes);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_pipe2(int *filedes, int flags);
+long syscall_pipe2(int *filedes, int flags);
 
 
 /**************************************
@@ -1159,7 +1172,7 @@ int syscall_pipe2(int *filedes, int flags);
  *
  * @return  zero or positive number on success, -(errno) on failure.
  */
-int syscall_poll(struct pollfd *fds, nfds_t nfds, int timeout);
+long syscall_poll(struct pollfd *fds, nfds_t nfds, int timeout);
 
 /**
  * @brief Handler for syscall ppoll().
@@ -1185,8 +1198,8 @@ int syscall_poll(struct pollfd *fds, nfds_t nfds, int timeout);
  *
  * @return  zero or positive number on success, -(errno) on failure.
  */
-int syscall_ppoll(struct pollfd *fds, nfds_t nfds,
-                  struct timespec *tmo_p, sigset_t *sigmask);
+long syscall_ppoll(struct pollfd *fds, nfds_t nfds,
+                   struct timespec *tmo_p, sigset_t *sigmask);
 
 
 /**************************************
@@ -1206,7 +1219,7 @@ int syscall_ppoll(struct pollfd *fds, nfds_t nfds,
  *
  * @return zero on success, -(errno) on failure
  */
-int syscall_read(int _fd, unsigned char *buf, size_t count, ssize_t *copied);
+long syscall_read(int _fd, unsigned char *buf, size_t count, ssize_t *copied);
 
 /**
  * @brief Handler for syscall pread().
@@ -1222,8 +1235,8 @@ int syscall_read(int _fd, unsigned char *buf, size_t count, ssize_t *copied);
  *
  * @return zero on success, -(errno) on failure
  */
-int syscall_pread(int _fd, void *buf, size_t count, off_t offset, 
-                  ssize_t *copied);
+long syscall_pread(int _fd, void *buf, size_t count, off_t offset, 
+                   ssize_t *copied);
 
 /**
  * @brief Handler for syscall readv().
@@ -1238,7 +1251,7 @@ int syscall_pread(int _fd, void *buf, size_t count, off_t offset,
  *
  * @return zero on success, -(errno) on failure
  */
-int syscall_readv(int _fd, struct iovec *iov, int count, ssize_t *copied);
+long syscall_readv(int _fd, struct iovec *iov, int count, ssize_t *copied);
 
 /**
  * @brief Handler for syscall preadv().
@@ -1255,8 +1268,8 @@ int syscall_readv(int _fd, struct iovec *iov, int count, ssize_t *copied);
  *
  * @return zero on success, -(errno) on failure
  */
-int syscall_preadv(int _fd, struct iovec *iov, int count,
-                   off_t offset, ssize_t *copied);
+long syscall_preadv(int _fd, struct iovec *iov, int count,
+                    off_t offset, ssize_t *copied);
 
 
 /**************************************
@@ -1273,7 +1286,7 @@ int syscall_preadv(int _fd, struct iovec *iov, int count,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_rename(char *oldname, char *newname);
+long syscall_rename(char *oldname, char *newname);
 
 /**
  * @brief Handler for syscall renameat().
@@ -1287,7 +1300,7 @@ int syscall_rename(char *oldname, char *newname);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_renameat(int olddirfd, char *oldname, int newdirfd, char *newname);
+long syscall_renameat(int olddirfd, char *oldname, int newdirfd, char *newname);
 
 
 /**************************************
@@ -1304,7 +1317,7 @@ int syscall_renameat(int olddirfd, char *oldname, int newdirfd, char *newname);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_sched_rr_get_interval(pid_t pid, struct timespec *tp);
+long syscall_sched_rr_get_interval(pid_t pid, struct timespec *tp);
 
 /**
  * @brief Handler for syscall sched_getparam().
@@ -1316,7 +1329,7 @@ int syscall_sched_rr_get_interval(pid_t pid, struct timespec *tp);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_sched_getparam(pid_t pid, struct sched_param *param);
+long syscall_sched_getparam(pid_t pid, struct sched_param *param);
 
 /**
  * @brief Handler for syscall sched_setparam().
@@ -1328,7 +1341,7 @@ int syscall_sched_getparam(pid_t pid, struct sched_param *param);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_sched_setparam(pid_t pid, struct sched_param *param);
+long syscall_sched_setparam(pid_t pid, struct sched_param *param);
 
 /**
  * @brief Handler for syscall sched_getscheduler().
@@ -1339,7 +1352,7 @@ int syscall_sched_setparam(pid_t pid, struct sched_param *param);
  *
  * @return  sched policy on success, -(errno) on failure.
  */
-int syscall_sched_getscheduler(pid_t pid);
+long syscall_sched_getscheduler(pid_t pid);
 
 /**
  * @brief Handler for syscall sched_setscheduler().
@@ -1352,8 +1365,8 @@ int syscall_sched_getscheduler(pid_t pid);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_sched_setscheduler(pid_t pid, int policy, 
-                               struct sched_param *param);
+long syscall_sched_setscheduler(pid_t pid, int policy, 
+                                struct sched_param *param);
 
 /**
  * @brief Handler for syscall sched_get_priority_max().
@@ -1365,7 +1378,7 @@ int syscall_sched_setscheduler(pid_t pid, int policy,
  *
  * @return  zero or positive number on success, -(errno) on failure.
  */
-int syscall_sched_get_priority_max(int policy);
+long syscall_sched_get_priority_max(int policy);
 
 /**
  * @brief Handler for syscall sched_get_priority_min().
@@ -1377,7 +1390,7 @@ int syscall_sched_get_priority_max(int policy);
  *
  * @return  zero or positive number on success, -(errno) on failure.
  */
-int syscall_sched_get_priority_min(int policy);
+long syscall_sched_get_priority_min(int policy);
 
 /**
  * @brief Handler for syscall sched_yield().
@@ -1386,7 +1399,7 @@ int syscall_sched_get_priority_min(int policy);
  *
  * @return  zero always.
  */
-int syscall_sched_yield(void);
+long syscall_sched_yield(void);
 
 
 /**************************************
@@ -1403,7 +1416,7 @@ int syscall_sched_yield(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_stat(char *filename, struct stat *statbuf);
+long syscall_stat(char *filename, struct stat *statbuf);
 
 /**
  * @brief Handler for syscall lstat().
@@ -1417,7 +1430,7 @@ int syscall_stat(char *filename, struct stat *statbuf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_lstat(char *filename, struct stat *statbuf);
+long syscall_lstat(char *filename, struct stat *statbuf);
 
 /**
  * @brief Handler for syscall fstat().
@@ -1429,7 +1442,7 @@ int syscall_lstat(char *filename, struct stat *statbuf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_fstat(int fd, struct stat *statbuf);
+long syscall_fstat(int fd, struct stat *statbuf);
 
 /**
  * @brief Handler for syscall fstat().
@@ -1443,8 +1456,8 @@ int syscall_fstat(int fd, struct stat *statbuf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_fstatat(int dirfd, char *filename,
-                    struct stat *statbuf, int flags);
+long syscall_fstatat(int dirfd, char *filename,
+                     struct stat *statbuf, int flags);
 
 
 /**************************************
@@ -1461,7 +1474,7 @@ int syscall_fstatat(int dirfd, char *filename,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_statfs(char *path, struct statfs *buf);
+long syscall_statfs(char *path, struct statfs *buf);
 
 /**
  * @brief Handler for syscall fstatfs().
@@ -1474,7 +1487,7 @@ int syscall_statfs(char *path, struct statfs *buf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_fstatfs(int fd, struct statfs *buf);
+long syscall_fstatfs(int fd, struct statfs *buf);
 
 /**
  * @brief Handler for syscall ustat().
@@ -1488,7 +1501,7 @@ int syscall_fstatfs(int fd, struct statfs *buf);
  *
  * @see: https://man7.org/linux/man-pages/man2/ustat.2.html
  */
-int syscall_ustat(dev_t dev, struct ustat *ubuf);
+long syscall_ustat(dev_t dev, struct ustat *ubuf);
 
 
 /**************************************
@@ -1504,7 +1517,7 @@ int syscall_ustat(dev_t dev, struct ustat *ubuf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_sysinfo(struct sysinfo *info);
+long syscall_sysinfo(struct sysinfo *info);
 
 
 /**************************************
@@ -1521,7 +1534,7 @@ int syscall_sysinfo(struct sysinfo *info);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_symlink(char *target, char *linkpath);
+long syscall_symlink(char *target, char *linkpath);
 
 /**
  * @brief Handler for syscall symlinkat().
@@ -1534,7 +1547,7 @@ int syscall_symlink(char *target, char *linkpath);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_symlinkat(char *target, int newdirfd, char *linkpath);
+long syscall_symlinkat(char *target, int newdirfd, char *linkpath);
 
 /**
  * @brief Handler for syscall readlink().
@@ -1549,8 +1562,8 @@ int syscall_symlinkat(char *target, int newdirfd, char *linkpath);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_readlink(char *pathname, char *buf,
-                     size_t bufsize, ssize_t *__copied);
+long syscall_readlink(char *pathname, char *buf,
+                      size_t bufsize, ssize_t *__copied);
 
 /**
  * @brief Handler for syscall readlinkat().
@@ -1566,8 +1579,8 @@ int syscall_readlink(char *pathname, char *buf,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_readlinkat(int dirfd, char *pathname, char *buf,
-                       size_t bufsize, ssize_t *__copied);
+long syscall_readlinkat(int dirfd, char *pathname, char *buf,
+                        size_t bufsize, ssize_t *__copied);
 
 /**
  * @brief Follow a symbolic link.
@@ -1582,8 +1595,8 @@ int syscall_readlinkat(int dirfd, char *pathname, char *buf,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
-                   int flags, struct fs_node_t **target);
+long follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
+                    int flags, struct fs_node_t **target);
 
 /**
  * @brief Read the contents of a symbolic link.
@@ -1603,7 +1616,22 @@ int follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
  *
  * @return  number of bytes read on success, -(errno) on failure
  */
-int read_symlink(struct fs_node_t *link, char *buf, size_t bufsz, int kernel);
+long read_symlink(struct fs_node_t *link, char *buf, size_t bufsz, int kernel);
+
+/**
+ * @brief Write a symbolic link.
+ *
+ * Helper function that write the given path to a symlink.
+ *
+ * @param   link    the symlink we want to write
+ * @param   path    the symlink target
+ * @param   kernel  set if the caller is a kernel function (i.e. \a path 
+ *                    address is in kernel memory), 0 if \a path is a 
+ *                    userspace address
+ *
+ * @return  number of bytes written on success, -(errno) on failure
+ */
+long write_symlink(struct fs_node_t *link, char *path, int kernel);
 
 
 /*********************************************
@@ -1634,7 +1662,7 @@ extern void enter_user(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_truncate(char *pathname, off_t length);
+long syscall_truncate(char *pathname, off_t length);
 
 /**
  * @brief Handler for syscall ftruncate().
@@ -1646,7 +1674,7 @@ int syscall_truncate(char *pathname, off_t length);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_ftruncate(int fd, off_t length);
+long syscall_ftruncate(int fd, off_t length);
 
 
 /**************************************
@@ -1664,7 +1692,7 @@ int syscall_ftruncate(int fd, off_t length);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_utime(char *filename, struct utimbuf *times);
+long syscall_utime(char *filename, struct utimbuf *times);
 
 /**
  * @brief Handler for syscall utimes().
@@ -1677,7 +1705,7 @@ int syscall_utime(char *filename, struct utimbuf *times);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_utimes(char *filename, struct timeval *times);
+long syscall_utimes(char *filename, struct timeval *times);
 
 /**
  * @brief Handler for syscall futimesat().
@@ -1691,7 +1719,24 @@ int syscall_utimes(char *filename, struct timeval *times);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_futimesat(int dirfd, char *filename, struct timeval *times);
+long syscall_futimesat(int dirfd, char *filename, struct timeval *times);
+
+/**
+ * @brief Handler for syscall utimensat().
+ *
+ * Change file last access and modification times.
+ *
+ * @param   dirfd       \a filename is interpreted relative to this directory
+ * @param   filename    file name
+ * @param   times       if NULL, times are set to current time, otherwise 
+ *                        they are set to the times specified in this struct.
+ *                        see the manpage for the use of special values UTIME_OMIT
+ *                        and UTIME_NOW
+ * @param   flags       zero or AT_SYMLINK_NOFOLLOW
+ *
+ * @return  zero on success, -(errno) on failure.
+ */
+long syscall_utimensat(int dirfd, char *filename, struct timespec *times, int flags);
 
 
 /**************************************
@@ -1710,7 +1755,7 @@ int syscall_futimesat(int dirfd, char *filename, struct timeval *times);
  * @return  process id (or zero if no process has changed status and WNOHANG 
  *            is specified in \a options) on success, -(errno) on failure.
  */
-int syscall_waitpid(pid_t pid, int *status, int options);
+long syscall_waitpid(pid_t pid, int *status, int options);
 
 /**
  * @brief Handler for syscall wait4().
@@ -1725,8 +1770,8 @@ int syscall_waitpid(pid_t pid, int *status, int options);
  * @return  process id (or zero if no process has changed status and WNOHANG 
  *            is specified in \a options) on success, -(errno) on failure.
  */
-int syscall_wait4(pid_t pid, int *status,
-                  int options, struct rusage *rusage);
+long syscall_wait4(pid_t pid, int *status,
+                   int options, struct rusage *rusage);
 
 /**
  * @brief Handler for syscall waitid().
@@ -1741,7 +1786,7 @@ int syscall_wait4(pid_t pid, int *status,
  * @return  process id (or zero if no process has changed status and WNOHANG 
  *            is specified in \a options) on success, -(errno) on failure.
  */
-int syscall_waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options);
+long syscall_waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options);
 
 
 /**************************************
@@ -1761,7 +1806,7 @@ int syscall_waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options);
  *
  * @return zero on success, -(errno) on failure
  */
-int syscall_write(int _fd, unsigned char *buf, size_t count, ssize_t *copied);
+long syscall_write(int _fd, unsigned char *buf, size_t count, ssize_t *copied);
 
 /**
  * @brief Handler for syscall pwrite().
@@ -1778,8 +1823,8 @@ int syscall_write(int _fd, unsigned char *buf, size_t count, ssize_t *copied);
  *
  * @return zero on success, -(errno) on failure
  */
-int syscall_pwrite(int _fd, void *buf, size_t count, off_t offset, 
-                   ssize_t *copied);
+long syscall_pwrite(int _fd, void *buf, size_t count, off_t offset, 
+                    ssize_t *copied);
 
 /**
  * @brief Handler for syscall writev().
@@ -1794,7 +1839,7 @@ int syscall_pwrite(int _fd, void *buf, size_t count, off_t offset,
  *
  * @return zero on success, -(errno) on failure
  */
-int syscall_writev(int _fd, struct iovec *iov, int count, ssize_t *copied);
+long syscall_writev(int _fd, struct iovec *iov, int count, ssize_t *copied);
 
 /**
  * @brief Handler for syscall pwritev().
@@ -1811,7 +1856,7 @@ int syscall_writev(int _fd, struct iovec *iov, int count, ssize_t *copied);
  *
  * @return zero on success, -(errno) on failure
  */
-int syscall_pwritev(int _fd, struct iovec *iov, int count,
-                    off_t offset, ssize_t *copied);
+long syscall_pwritev(int _fd, struct iovec *iov, int count,
+                     off_t offset, ssize_t *copied);
 
 #endif      /* __KERNEL_SYSCALL_H__ */

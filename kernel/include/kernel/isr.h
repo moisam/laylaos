@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: isr.h
  *    This file is part of LaylaOS.
@@ -65,5 +65,11 @@ void isr28();
 void isr29();
 void isr30();
 void isr31();
+
+void isr123();
+void isr124();
+void isr125();
+void isr126();
+void isr255();
 
 #endif      /* __ISR_H__ */

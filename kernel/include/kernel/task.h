@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: task.h
  *    This file is part of LaylaOS.
@@ -55,7 +55,7 @@
  */
 struct task_queue_t
 {
-    struct task_t head;    /**< pointer to queue head */
+    volatile struct task_t head;    /**< pointer to queue head */
     int has_ready_tasks;   /**< non-zero if queue has ready-to-run tasks */
 };
 
@@ -65,50 +65,19 @@ struct task_queue_t
  * We do it this way so that if we change the implementation of the cloexec
  * field in struct task_t, we only change the code in one place.
  */
-static inline void cloexec_set(struct task_t *t, int fd)
+static inline void cloexec_set(volatile struct task_t *t, int fd)
 {
     t->cloexec |= (1 << fd);
 }
 
-static inline void cloexec_clear(struct task_t *t, int fd)
+static inline void cloexec_clear(volatile struct task_t *t, int fd)
 {
     t->cloexec &= ~(1 << fd);
 }
 
-static inline int is_cloexec(struct task_t *t, int fd)
+static inline int is_cloexec(volatile struct task_t *t, int fd)
 {
     return (t->cloexec & (1 << fd));
-}
-
-
-#include <sched.h>
-
-/*
- * Temporarily elevate a task's priority.
- */
-static inline void elevate_priority(struct task_t *task, int *old_prio, 
-                                                         int *old_policy)
-{
-    if(task)
-    {
-        *old_prio = task->priority;
-        *old_policy = task->sched_policy;
-        task->priority = MAX_FIFO_PRIO;
-        task->sched_policy = SCHED_FIFO;
-    }
-}
-
-/*
- * Restore a temporarily elevated task's priority.
- */
-static inline void restore_priority(struct task_t *task, int old_prio, 
-                                                         int old_policy)
-{
-    if(task)
-    {
-        task->priority = old_prio;
-        task->sched_policy = old_policy;
-    }
 }
 
 
@@ -125,73 +94,29 @@ static inline void restore_priority(struct task_t *task, int old_prio,
 
 
 // a short-hand for all the code that traverses the master task table
-#define for_each_taskptr(t)                     \
-    struct task_t **t;                          \
-    struct task_t **lt = &task_table[NR_TASKS]; \
+#define for_each_taskptr(t)                              \
+    volatile struct task_t **t;                          \
+    volatile struct task_t **lt = &task_table[NR_TASKS]; \
     for(t = task_table; t < lt; t++)
 
 
-/*
- * A priority inversion issue happens when one of our higher priority
- * kernel tasks try to lock some mutex while a lower priority user task
- * has it locked. This happens with some locks like the select table mutex 
- * and the master task table mutex, which are contended by user, fifo and 
- * round-robin tasks alike.
- *
- * To avoid this, we temporarily assign the task holding the lock a high
- * priority, which should be held for a very short time only to avoid 
- * starving other processes. This is only one solution, known as the 
- * priority ceiling protocol.
- *
- * See: https://en.wikipedia.org/wiki/Priority_inversion
- */
+//extern struct task_t *idle_task;    /**< pointer to the idle task (pid 0) */
+//extern struct task_t *cur_task;     /**< pointer to the current task */
+extern struct task_t *init_task;    /**< pointer to the init task (pid 1) */
 
-#define elevated_priority_lock(lock)    \
-    int old_prio = 0, old_policy = 0;   \
-    elevate_priority(cur_task, &old_prio, &old_policy); \
-    kernel_mutex_lock(lock);
-
-#define elevated_priority_relock(lock)  \
-    elevate_priority(cur_task, &old_prio, &old_policy); \
-    kernel_mutex_lock(lock);
-
-#define elevated_priority_unlock(lock)  \
-    kernel_mutex_unlock(lock);          \
-    restore_priority(cur_task, old_prio, old_policy);
-
-#define elevated_priority_lock_recursive(lock, count)   \
-    int old_prio = 0, old_policy = 0;                   \
-    elevate_priority(cur_task, &old_prio, &old_policy); \
-    if(kernel_mutex_trylock(lock)) {                    \
-        if((lock)->holder != cur_task->pid)             \
-            kernel_mutex_lock(lock);                    \
-        else (count) = (count) + 1;                     \
-    } else {                                            \
-        (lock)->holder = cur_task->pid;                 \
-        (count) = 0;                                    \
-    }
-
-#define elevated_priority_unlock_recursive(lock, count) \
-    if((count) != 0) (count) = (count) - 1;             \
-    else {                                              \
-        kernel_mutex_unlock(lock);                      \
-        restore_priority(cur_task, old_prio, old_policy); \
-    }
-
-
-
-extern struct task_t *idle_task,    /**< pointer to the idle task (pid 0) */
-                     *init_task,    /**< pointer to the init task (pid 1) */
-                     *cur_task;     /**< pointer to the current task */
-extern struct task_t *task_table[];         /**< the master task table */
+extern volatile struct task_t *task_table[];/**< the master task table */
 extern struct task_queue_t ready_queue[];   /**< pointers to the 
                                                    ready-to-run queues */
 extern struct task_queue_t blocked_queue;   /**< pointer to the queue of 
                                                    blocked tasks */
 extern struct task_queue_t zombie_queue;    /**< pointer to the queue of
                                                    zombie tasks */
-extern struct kernel_mutex_t task_table_lock;   /**< master task table lock */
+
+extern volatile struct kernel_mutex_t task_table_lock;   /**< master task table lock */
+extern volatile struct kernel_mutex_t scheduler_lock;    /**< master scheduler lock */
+
 extern int total_tasks;                     /**< total tasks on the system */
+extern pid_t next_pid;              /**< next pid for creating new tasks */
 
 
 /**************************************
@@ -199,13 +124,25 @@ extern int total_tasks;                     /**< total tasks on the system */
  **************************************/
 
 /**
- * @brief Initialise tasking.
+ * @brief Initialize tasking.
  *
  * Initialize the kernel's tasking subsystem and kick off the idle task.
  *
  * @return  nothing.
  */
-void  tasking_init(void);
+void tasking_init(void);
+
+/**
+ * @brief Get idle task.
+ *
+ * Get the idle task of the given cpu id. Used during boot to set up idle 
+ * tasks for each of the available processors.
+ *
+ * @param   cpuid       cpu id
+ *
+ * @return  pointer to task.
+ */
+struct task_t *get_cpu_idle_task(int cpuid);
 
 /**
  * @brief The scheduler.
@@ -217,15 +154,6 @@ void  tasking_init(void);
 void  scheduler(void);
 
 /**
- * @brief Get current task.
- *
- * Get a pointer to the currently running task.
- *
- * @return  pointer to task.
- */
-struct task_t *get_cur_task(void);
-
-/**
  * @brief Get init task.
  *
  * Get a pointer to the init task (pid 1).
@@ -235,24 +163,23 @@ struct task_t *get_cur_task(void);
 struct task_t *get_init_task(void);
 
 /**
+ * @brief Get current task.
+ *
+ * Get a pointer to the currently running task. This function is mainly used
+ * by kernel modules.
+ *
+ * @return  pointer to task.
+ */
+volatile struct task_t *get_cur_task(void);
+
+/**
  * @brief Get idle task.
  *
  * Get a pointer to the idle task (pid 0).
  *
  * @return  pointer to task.
  */
-struct task_t *get_idle_task(void);
-
-/**
- * @brief Set current task.
- *
- * Only the scheduler should set the current task.
- *
- * @param   task    pointer to task
- *
- * @return  nothing.
- */
-void set_cur_task(struct task_t *task);
+volatile struct task_t *get_idle_task(void);
 
 /**
  * @brief Set init task.
@@ -287,7 +214,7 @@ void set_task_comm(struct task_t *task, char *command);
  *
  * @return  virtual address.
  */
-virtual_addr task_get_code_end(struct task_t *task);
+virtual_addr task_get_code_end(volatile struct task_t *task);
 
 /**
  * @brief Get data segment end.
@@ -298,7 +225,7 @@ virtual_addr task_get_code_end(struct task_t *task);
  *
  * @return  virtual address.
  */
-virtual_addr task_get_data_end(struct task_t *task);
+virtual_addr task_get_data_end(volatile struct task_t *task);
 
 /**
  * @brief Get code segment start.
@@ -309,7 +236,7 @@ virtual_addr task_get_data_end(struct task_t *task);
  *
  * @return  virtual address.
  */
-virtual_addr task_get_code_start(struct task_t *task);
+virtual_addr task_get_code_start(volatile struct task_t *task);
 
 /**
  * @brief Get data segment start.
@@ -320,7 +247,7 @@ virtual_addr task_get_code_start(struct task_t *task);
  *
  * @return  virtual address.
  */
-virtual_addr task_get_data_start(struct task_t *task);
+virtual_addr task_get_data_start(volatile struct task_t *task);
 
 /**
  * @brief Allocate a task struct.
@@ -340,12 +267,10 @@ struct task_t *task_alloc(void);
  * Called when reaping zombie tasks and when a fork fails midway.
  *
  * @param   task            pointer to task
- * @param   add_to_cache    if non-zero, the task struct is added to the
- *                            cache to be reused, otherwise it is freed
  *
  * @return  nothing.
  */
-void task_free(struct task_t *task, int add_to_cache);
+void task_free(volatile struct task_t *task);
 
 /**
  * @brief Blocked task callback.
@@ -357,7 +282,7 @@ void task_free(struct task_t *task, int add_to_cache);
  *
  * @return  nothing.
  */
-void  block_task_callback(void *arg);
+void block_task_callback(void *arg);
 
 /**
  * @brief Block task with timeout.
@@ -372,7 +297,7 @@ void  block_task_callback(void *arg);
  * @return  EWOULDBLOCK if \a timeout expired, EINTR if woken up by a signal,
  *            zero if woken by some other event.
  */
-int   block_task2(void *wait_channel, int timeout);
+int block_task2(void *wait_channel, int timeout);
 
 /**
  * @brief Block task.
@@ -385,7 +310,7 @@ int   block_task2(void *wait_channel, int timeout);
  *
  * @return  1 if interruptible sleep and woken by a signal, zero otherwise.
  */
-int   block_task(void *wait_channel, int interruptible);
+int block_task(void *wait_channel, int interruptible);
 
 /**
  * @brief Unblock tasks.
@@ -396,7 +321,7 @@ int   block_task(void *wait_channel, int interruptible);
  *
  * @return  nothing.
  */
-void  unblock_tasks(void *wait_channel);
+void unblock_tasks(void *wait_channel);
 
 /**
  * @brief Unblock task.
@@ -410,7 +335,7 @@ void  unblock_tasks(void *wait_channel);
  *
  * @see     unblock_task()
  */
-void  unblock_task_no_preempt(struct task_t *task);
+void unblock_task_no_preempt(volatile struct task_t *task);
 
 /**
  * @brief Unblock task.
@@ -424,7 +349,7 @@ void  unblock_task_no_preempt(struct task_t *task);
  *
  * @see     unblock_task_no_preempt()
  */
-void  unblock_task(struct task_t *task);
+void unblock_task(volatile struct task_t *task);
 
 /**
  * @brief Add child task to parent.
@@ -436,7 +361,7 @@ void  unblock_task(struct task_t *task);
  *
  * @return  nothing.
  */
-void  task_add_child(struct task_t *parent, struct task_t *child);
+void task_add_child(struct task_t *parent, struct task_t *child);
 
 /**
  * @brief Remove child task from parent.
@@ -449,7 +374,7 @@ void  task_add_child(struct task_t *parent, struct task_t *child);
  *
  * @return  nothing.
  */
-void  task_remove_child(struct task_t *parent, struct task_t *child);
+void task_remove_child(struct task_t *parent, volatile struct task_t *child);
 
 /**
  * @brief Reap a zombie task.
@@ -462,7 +387,7 @@ void  task_remove_child(struct task_t *parent, struct task_t *child);
  *
  * @return  nothing.
  */
-void reap_zombie(struct task_t *task);
+void reap_zombie(volatile struct task_t *task);
 
 /**
  * @brief Terminate task.
@@ -474,7 +399,13 @@ void reap_zombie(struct task_t *task);
  *
  * @return  never returns.
  */
-void  terminate_task(int code);
+void terminate_task(int code);
+
+
+void append_to_ready_queue_locked(volatile struct task_t *task, int move_queue);
+void move_to_queue_end_locked(volatile struct task_t *task);
+void task_change_priority(volatile struct task_t *t, int new_prio, int new_policy);
+void schedule_and_block(volatile struct task_t *tracer, volatile struct task_t *tracee);
 
 
 /**************************************
@@ -498,7 +429,7 @@ void  terminate_task(int code);
  *          on success, or -(errno) on failure.
  */
 pid_t start_kernel_task(char *name, void (*func)(void *), void *func_arg,
-                        struct task_t **t, int flags);
+                        volatile struct task_t **t, int flags);
 
 /**
  * @brief Unblock kernel task.
@@ -510,7 +441,7 @@ pid_t start_kernel_task(char *name, void (*func)(void *), void *func_arg,
  *
  * @return  nothing.
  */
-void unblock_kernel_task(struct task_t *task);
+void unblock_kernel_task(volatile struct task_t *task);
 
 
 /**************************************
@@ -534,44 +465,6 @@ void task_cancel_select(struct task_t *task);
  * Functions defined in switch_task.S
  **************************************/
 
-#ifndef __LOCK_SCHEDULER_DEFINED__
-#define __LOCK_SCHEDULER_DEFINED__
-
-extern volatile int IRQ_disable_counter;
-
-/**
- * @brief Lock the scheduler.
- *
- * Lock the scheduler.
- *
- * @return  nothing.
- */
-static inline void lock_scheduler(void)
-{
-    __asm__ __volatile__ ("cli");
-    IRQ_disable_counter++;
-}
-
-/**
- * @brief Unlock the scheduler.
- *
- * Unlock the scheduler.
- *
- * @return  nothing.
- */
-static inline void unlock_scheduler(void)
-{
-    IRQ_disable_counter--;
-
-    if(IRQ_disable_counter == 0)
-    {
-        __asm__ __volatile__ ("sti");
-    }
-}
-
-#endif
-
-
 /**
  * @brief Save task context.
  *
@@ -581,7 +474,7 @@ static inline void unlock_scheduler(void)
  *
  * @return  1 if returning from a context switch, 0 otherwise.
  */
-int save_context(struct task_t *task);
+int save_context(volatile struct task_t *task);
 
 /**
  * @brief Restore task context.
@@ -592,6 +485,6 @@ int save_context(struct task_t *task);
  *
  * @return  nothing.
  */
-void restore_context(struct task_t *task);
+void restore_context(volatile struct task_t *task);
 
 #endif      /* __TASK_H__ */

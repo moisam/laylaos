@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: tty.h
  *    This file is part of LaylaOS.
@@ -49,20 +49,23 @@
 /*
  * Flags for all tty devices
  */
-#define TTY_FLAG_EXCLUSIVE        0x01      /**< exclusive opening 
+#define TTY_FLAG_EXCLUSIVE            0x01    /**< exclusive opening 
                                                    (open fails with EBUSY) */
-#define TTY_FLAG_REVERSE_VIDEO    0x02      /**< reverse video mode */
-#define TTY_FLAG_AUTOWRAP         0x04      /**< autowrap mode */
-#define TTY_FLAG_CURSOR_RELATIVE  0x08      /**< cursor addressing relative to
+#define TTY_FLAG_REVERSE_VIDEO        0x02    /**< reverse video mode */
+#define TTY_FLAG_AUTOWRAP             0x04    /**< autowrap mode */
+#define TTY_FLAG_CURSOR_RELATIVE      0x08    /**< cursor addressing relative to
                                                    scroll region */
-#define TTY_FLAG_LFNL             0x10      /**< follow each LF/VT/FF with 
+#define TTY_FLAG_LFNL                 0x10    /**< follow each LF/VT/FF with 
                                                    a CR */
-#define TTY_FLAG_FRAMEBUFFER      0x80      /**< graphics managed by the
+#define TTY_FLAG_FRAMEBUFFER          0x80    /**< graphics managed by the
                                                    framebuffer device */
-#define TTY_FLAG_NO_TEXT          0x100     /**< no text (used by the gui) */
-#define TTY_FLAG_ACTIVE           0x200     /**< the active tty (there can be
+#define TTY_FLAG_NO_TEXT              0x100   /**< no text (used by the gui) */
+#define TTY_FLAG_ACTIVE               0x200   /**< the active tty (there can be
                                                    only one - highlander) */
-#define TTY_FLAG_APP_KEYMODE      0x400     /**< tty in application keypad mode */
+#define TTY_FLAG_APP_KEYPAD_MODE      0x400   /**< tty in application keypad mode */
+#define TTY_FLAG_APP_CURSORKEYS_MODE  0x800   /**< tty in cursor keys mode */
+#define TTY_FLAG_INSERT_MODE          0x1000  /**< tty in insert mode */
+#define TTY_FLAG_STOPPED              0x2000  /**< tty is stopped */
 
 /*
  * Flags for pseudo-ttys
@@ -113,6 +116,9 @@
 // maximum parameters for a CSI-sequence
 #define NPAR                16
 
+#define ACTIVE_BUF(tty)         tty->buf[tty->active_buf]
+#define ACTIVE_CELLATTRIBS(tty) tty->cellattribs[tty->active_buf]
+
 /**
  * @struct tty_t
  * @brief The tty_t structure.
@@ -124,15 +130,14 @@ struct tty_t
 	struct termios termios;     /**< tty info struct */
 	pid_t pgid,                 /**< tty foreground process group id */
 	      sid;                  /**< tty session id */
-	int stopped;                /**< non-zero if tty is stopped */
 	void (*write)(struct tty_t *tty);   /**< function to write to device */
 	struct kqueue_t read_q;     /**< tty read queue */
 	struct kqueue_t write_q;    /**< tty write queue */
 	struct kqueue_t secondary;  /**< tty secondary queue */
 	struct winsize window;      /**< tty window size */
-    struct selinfo rsel;        /**< select channel for the read queue */
-    struct selinfo wsel;        /**< select channel for the write queue */
-    struct selinfo ssel;        /**< select channel for the secondary queue */
+    //struct selinfo rsel;        /**< select channel for the read queue */
+    //struct selinfo wsel;        /**< select channel for the write queue */
+    //struct selinfo ssel;        /**< select channel for the secondary queue */
 
     void (*process_key)(struct tty_t *tty, int c);  /**< function to process 
                                                            input keys */
@@ -140,11 +145,11 @@ struct tty_t
                                                            input to secondary
                                                            buffer */
 
-	unsigned int flags;             /**< tty flags */
+	volatile unsigned int flags;    /**< tty flags */
 
 	unsigned int scroll_top,        /**< top row of scrolling window */
 	             scroll_bottom;     /**< bottom row of scrolling window */
-    volatile struct task_t *waiting_task;   /**< task waiting on input */
+    //volatile struct task_t *waiting_task;   /**< task waiting on input */
 
     unsigned long npar,             /**< number of CSI-sequence parameters */
                   par[NPAR];        /**< parameters of a CSI-sequence */
@@ -157,8 +162,11 @@ struct tty_t
              col;                   /**< current column */
     uint8_t color,                  /**< current color */
             default_color;          /**< default color */
-    uint16_t *buf;                  /**< terminal buffer */
-    uint8_t *cellattribs;           /**< attributes for terminal buffer cells */
+
+    int active_buf;                 /**< 0 = normal buffer, 
+                                         1 = alternate buffer */
+    uint16_t *buf[2];               /**< terminal buffers */
+    uint8_t *cellattribs[2];        /**< attributes for terminal buffer cells */
 
     // used by the framebuffer device
     uint32_t attribs;               /**< display attributes */
@@ -231,6 +239,18 @@ extern struct tty_t ttytab[];
  **************************************/
 
 /**
+ * @brief Allocate tty buffer.
+ *
+ * Allocate internal tty buffers.
+ *
+ * @param   tty         pointer to terminal device
+ * @param   buf_index   0 for the normal buffer, 1 for the alternate buffer
+ *
+ * @return  zero on success, -(errno) on failure.
+ */
+int tty_alloc_buffer(struct tty_t *tty, int buf_index);
+
+/**
  * @brief Dummy tty write.
  *
  * Dummy function for ttys that do not actually write to the screen.
@@ -275,7 +295,7 @@ void tty_set_defaults(struct tty_t *tty);
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-int tty_select(struct file_t *f, int which);
+long tty_select(struct file_t *f, int which);
 
 /**
  * @brief Perform a poll operation on a tty device.
@@ -291,7 +311,7 @@ int tty_select(struct file_t *f, int which);
  *
  * @return  1 if there are pollable events, 0 otherwise.
  */
-int tty_poll(struct file_t *f, struct pollfd *pfd);
+long tty_poll(struct file_t *f, struct pollfd *pfd);
 
 /**
  * @brief Send a tty signal.
@@ -314,7 +334,7 @@ void tty_send_signal(pid_t pgid, int signal);
  *
  * @see     https://docs.oracle.com/cd/E88353_01/html/E37841/vhangup-2.html
  */
-int syscall_vhangup(void);
+long syscall_vhangup(void);
 
 /**
  * @brief Read from tty device.
@@ -441,7 +461,7 @@ void flush_queue(struct kqueue_t *q);
  *
  * @see     https://linux.die.net/man/4/tty_ioctl
  */
-int set_controlling_tty(dev_t dev, struct tty_t *tty, int arg);
+long set_controlling_tty(dev_t dev, struct tty_t *tty, int arg);
 
 /**
  * @brief tty ioctl.
@@ -459,7 +479,7 @@ int set_controlling_tty(dev_t dev, struct tty_t *tty, int arg);
  *
  * @see     https://linux.die.net/man/4/tty_ioctl
  */
-int tty_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
+long tty_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
 
 
 /**************************************

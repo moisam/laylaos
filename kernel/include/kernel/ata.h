@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ata.h
  *    This file is part of LaylaOS.
@@ -99,12 +99,18 @@
 #define ATA_CMD_IDENTIFY            0xEC
 #define ATA_CMD_SET_FEATURES        0xEF
 
-#define ATAPI_CMD_MEDIA_LOCK        0xDE
 #define ATAPI_CMD_TEST_UNIT_READY   0x00
 #define ATAPI_CMD_REQUEST_SENSE     0x03
-
+#define ATAPI_CMD_START_STOP        0x1B
+#define ATAPI_CMD_PREVENT_ALLOW     0x1E
+#define ATAPI_CMD_READ_SUBCHANNEL   0x42
+#define ATAPI_CMD_READ_TOC          0x43
+#define ATAPI_CMD_PLAY_AUDIO_MSF    0x47
+#define ATAPI_CMD_PAUSE_RESUME      0x4B
+#define ATAPI_CMD_MODE_SELECT       0x55
+#define ATAPI_CMD_MODE_SENSE        0x5A
 #define ATAPI_CMD_READ              0xA8
-#define ATAPI_CMD_EJECT             0x1B
+#define ATAPI_CMD_MEDIA_LOCK        0xDE
 
 /* Feature commands */
 #define ATA_FEAT_ENABLE_WCACHE      0x02  // Enable write caching
@@ -221,8 +227,14 @@ struct parttab_s
     uint16_t end_cylinder;   /**< end cylinder */
     size_t lba;              /**< start Logical Block Address (LBA) */
     size_t total_sectors;    /**< total sectors in partition */
-    struct ata_dev_s *dev;   /**< back pointer to the device to which this
-                                  partition belongs */
+
+    union
+    {
+        struct ata_dev_s *dev;   /**< back pointer to the device to which this
+                                      partition belongs */
+        void *priv;              /**< private pointer for use by other types
+                                      of devices, i.e. not ATA */
+    };
 };
 
 
@@ -343,7 +355,7 @@ void ata_init(struct pci_dev_t *pci);
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int ata_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
+long ata_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
 
 
 /**********************************
@@ -363,7 +375,7 @@ int ata_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
  *
  * @return number of bytes read or written on success, -(errno) on failure
  */
-int ata_strategy(struct disk_req_t *req);
+long ata_strategy(struct disk_req_t *req);
 
 /**
  * @brief Wait on an ATA device.
@@ -379,7 +391,7 @@ int ata_strategy(struct disk_req_t *req);
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int ata_wait(struct ata_dev_s *dev, unsigned char mask, unsigned int timeout);
+long ata_wait(struct ata_dev_s *dev, unsigned char mask, unsigned int timeout);
 
 /**
  * @brief Read sectors from an ATA device.
@@ -394,8 +406,8 @@ int ata_wait(struct ata_dev_s *dev, unsigned char mask, unsigned int timeout);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ata_read_sectors(struct ata_dev_s *dev, unsigned char numsects,
-                     size_t lba, virtual_addr buf);
+long ata_read_sectors(struct ata_dev_s *dev, unsigned char numsects,
+                      size_t lba, virtual_addr buf);
 
 /**
  * @brief Write sectors to an ATA device.
@@ -410,12 +422,8 @@ int ata_read_sectors(struct ata_dev_s *dev, unsigned char numsects,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ata_write_sectors(struct ata_dev_s *dev, unsigned char numsects,
-                      size_t lba, virtual_addr buf);
-
-
-int atapi_test_unit_ready(struct ata_dev_s *dev, virtual_addr addr);
-int atapi_request_sense(struct ata_dev_s *dev, virtual_addr addr);
+long ata_write_sectors(struct ata_dev_s *dev, unsigned char numsects,
+                       size_t lba, virtual_addr buf);
 
 
 /**********************************
@@ -428,7 +436,7 @@ int atapi_request_sense(struct ata_dev_s *dev, virtual_addr addr);
  *
  * The kernel task that handles disk I/O requests.
  */
-extern struct task_t *disk_task;
+extern volatile struct task_t *disk_task;
 
 /**
  * @brief Request an ATA I/O operation.
@@ -452,10 +460,10 @@ extern struct task_t *disk_task;
  *
  * @see     disk_task
  */
-int ata_add_req(struct ata_dev_s *dev,
-                size_t lba, unsigned char numsects,
-                virtual_addr buf, int write,
-                int (*func)(struct ata_dev_s *, virtual_addr));
+long ata_add_req(struct ata_dev_s *dev,
+                 size_t lba, unsigned char numsects,
+                 virtual_addr buf, int write,
+                 long (*func)(struct ata_dev_s *, virtual_addr));
 
 /**
  * @brief Kernel disk task function.
@@ -497,22 +505,20 @@ int ide_wait_irq(void);
 int ide_irq_callback(struct regs *r, int arg);
 
 
-/****************************************
- * Functions defined in dev/blk/cdrom.c
- ****************************************/
+/*********************************************
+ * Internal functions
+ *********************************************/
 
-/**
- * @brief Add a CD-ROM device node.
- *
- * After a CD-ROM device (PATAPI or SATAPI) is identified, this function is
- * called to add a cdrom device node under /dev, e.g. /dev/cdrom0 to identify
- * the first CD-ROM device and so on.
- *
- * @param   dev_id  device id
- * @param   mode    access mode bits
- *
- * @return  nothing.
- */
-void add_cdrom_device(dev_t dev_id, mode_t mode);
+long atapi_read_packet(struct ata_dev_s *dev,
+                       unsigned char *packet, int packetsz,
+                       void *buf, size_t bufsz, int ignore_nomedium);
+
+long atapi_write_packet(struct ata_dev_s *dev,
+                        unsigned char *packet, int packetsz,
+                        void *buf, size_t bufsz, int ignore_nomedium);
+
+long common_ata_ioctl(dev_t devid, struct ata_dev_s *dev, 
+                      struct parttab_s *part, 
+                      unsigned int cmd, char *arg, int kernel);
 
 #endif      /* __ATA_H__ */

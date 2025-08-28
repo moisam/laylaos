@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: hda.h
  *    This file is part of LaylaOS.
@@ -162,6 +162,8 @@
 #define BITS_32                     (4 <<  4)
 
 
+#if 0
+
 /**
  * @struct hda_buf_t
  * @brief The hda_buf_t structure.
@@ -170,11 +172,13 @@
  */
 struct hda_buf_t
 {
-    size_t size;            /**< buffer size in bytes */
-    struct hda_buf_t *next; /**< next buffer in device list */
-    uint8_t *curptr;
+    volatile size_t size;            /**< buffer size in bytes */
+    volatile struct hda_buf_t *next; /**< next buffer in device list */
+    volatile uint8_t *curptr;
     uint8_t buf[];          /**< buffer data */
 };
+
+#endif
 
 
 /**
@@ -200,11 +204,15 @@ struct hda_out_t
 
     int hasdata[BDL_ENTRIES];
     uint32_t curdesc;
-    ssize_t bytes_playing;          /**< count of bytes currently playing */
+    volatile ssize_t bytes_playing; /**< count of bytes currently playing */
+
+    volatile uint32_t bufpos, last_linkpos;
 
     struct hda_out_t *next;         /**< next output for this device */
 };
 
+
+#if 0
 
 /**
  * @struct hda_queue_t
@@ -215,11 +223,13 @@ struct hda_out_t
 struct hda_queue_t
 {
     int queued;                 /**< number of queued entries */
-    size_t bytes;               /**< count of queued bytes in all entries */
-    struct hda_buf_t *head,     /**< pointer to queue head */
-                     *tail;     /**< pointer to queue tail */
-    struct kernel_mutex_t lock; /**< queue lock */
+    volatile size_t bytes;      /**< count of queued bytes in all entries */
+    volatile struct hda_buf_t *head,     /**< pointer to queue head */
+                              *tail;     /**< pointer to queue tail */
+    volatile struct kernel_mutex_t lock; /**< queue lock */
 };
+
+#endif
 
 
 /**
@@ -269,12 +279,14 @@ struct hda_dev_t
     struct hda_bdl_entry_t *bdl;    /**< BDL entries */
     struct hda_out_t *out;      /**< output list */
     struct pci_dev_t *pci;      /**< back pointer to PCI device */
-    struct task_t *task;        /**< IRQ handler kernel task */
-    struct hda_queue_t outq;    /**< output queue */
+    volatile struct task_t *task; /**< IRQ handler kernel task */
+    //struct hda_queue_t outq;    /**< output queue */
     struct hda_dev_t *next;     /**< next HDA device */
 
     uintptr_t pcorb,    /**< CORB physical address */
               prirb;    /**< RIRB physical address */
+
+    size_t bytes_played;        /**< bytes played since playback started */
 
     int eof;            /**< EOF (zero-sized writes) counter */
 };
@@ -430,5 +442,18 @@ int hda_play_stop(struct hda_dev_t *hda, int cmd);
  * @return  dummy device id.
  */
 dev_t create_dummy_hda(void);
+
+/**
+ * @brief Write to HDA.
+ *
+ * Copy the given \a buf into the HDA device's circular buffer for playback.
+ *
+ * @param   hda         Intel HDA device
+ * @param   buf         input buffer
+ * @param   len         length of buffer
+ *
+ * @return  always zero.
+ */
+ssize_t hda_write_buf(struct hda_dev_t *hda, char *buf, size_t len);
 
 #endif      /* __INTEL_HDAUDIO_H__ */

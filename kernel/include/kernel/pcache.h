@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: pcache.h
  *    This file is part of LaylaOS.
@@ -143,21 +143,65 @@ int remove_cached_disk_pages(dev_t dev);
 int remove_cached_node_pages(struct fs_node_t *node);
 
 /**
+ * @brief Remove old cached pages.
+ *
+ * Remove the cached pages that are older than the given time.
+ *
+ * @param   maj                 major number of device whose pages to remove
+ * @param   older_than_ticks    time in ticks
+ *
+ * @return  nothing.
+ */
+void remove_old_cached_pages(int maj, unsigned long long older_than_ticks);
+
+/**
+ * @brief Remove unreferenced cached pages.
+ *
+ * Remove the cached pages that are no longer referenced by any task.
+ *
+ * @param   node        file node
+ *
+ * @return  nothing.
+ */
+void remove_unreferenced_cached_pages(struct fs_node_t *node);
+
+/**
+ * @brief Remove stale cached pages.
+ *
+ * Remove the cached pages that are marked as stale.
+ *
+ * @return  nothing.
+ */
+void remove_stale_cached_pages(void);
+
+/**
  * @brief Get cached page count.
  *
  * Return the count of all the cached pages from all the open files on 
- * the system.
- * That is, get all cached page count minus the value returned by
+ * the system. That is, get all cached page count minus the value returned by
  * get_cached_block_count().
  *
  * @return  number of cached pages.
  *
- * @see     get_cached_block_count()
+ * @see     get_cached_block_count(), get_busy_cached_page_count()
  */
 size_t get_cached_page_count(void);
 
 /**
- * @brief Get cached page count.
+ * @brief Get busy cached page count.
+ *
+ * Return the count of the active cached pages from all the open files on 
+ * the system. Similar to get_cached_page_count() expect the latter returns
+ * the total count, including non-active pages.
+ *
+ * @return  number of cached pages.
+ *
+ * @see     get_cached_page_count()
+ */
+size_t get_busy_cached_page_count(void);
+
+/**
+ * @brief Get cached block count.
  *
  * Return the count of all the cached disk blocks with no file backing.
  * That is, get all cached page count minus the value returned by
@@ -165,8 +209,31 @@ size_t get_cached_page_count(void);
  *
  * @return  number of cached pages.
  *
- * @see     get_cached_page_count()
+ * @see     get_cached_page_count(), get_busy_cached_block_count()
  */
 size_t get_cached_block_count(void);
+
+/**
+ * @brief Get busy cached block count.
+ *
+ * Return the count of all the cached disk blocks with no file backing.
+ * Similar to get_cached_block_count() expect the latter returns the total
+ * count, including non-active pages.
+ *
+ * @return  number of cached pages.
+ *
+ * @see     get_cached_block_count()
+ */
+size_t get_busy_cached_block_count(void);
+
+/**
+ * @brief Get cached page count.
+ *
+ * Return the count of all the cached disk blocks that reference the given 
+ * node.
+ *
+ * @return  number of cached pages.
+ */
+long node_has_cached_pages(struct fs_node_t *node);
 
 #endif      /* __KERNEL_PCACHE_H__ */

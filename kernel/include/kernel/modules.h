@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: modules.h
  *    This file is part of LaylaOS.
@@ -151,7 +151,7 @@ extern struct boot_module_t boot_module[];
  *
  * Lock used to synchronize access to kernel module memory.
  */
-extern struct kernel_mutex_t kmod_mem_mutex;
+extern volatile struct kernel_mutex_t kmod_mem_mutex;
 
 /**
  * @var kmod_list_mutex
@@ -159,7 +159,7 @@ extern struct kernel_mutex_t kmod_mem_mutex;
  *
  * Lock used to synchronize access to kernel module list.
  */
-extern struct kernel_mutex_t kmod_list_mutex;
+extern volatile struct kernel_mutex_t kmod_list_mutex;
 
 /**
  * @var modules_head
@@ -201,8 +201,8 @@ void boot_module_init(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_init_module(void *module_image, unsigned long len,
-                        char *param_values);
+long syscall_init_module(void *module_image, unsigned long len,
+                         char *param_values);
 
 /**
  * @brief Initialize a kernel module.
@@ -216,8 +216,8 @@ int syscall_init_module(void *module_image, unsigned long len,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int init_module_internal(void *module_image, unsigned long len, 
-                         char *param_values, int print_info);
+long init_module_internal(void *module_image, unsigned long len, 
+                          char *param_values, int print_info);
 
 /**
  * @brief Free kernel module object.
@@ -242,7 +242,7 @@ void free_mod_obj(struct kmodule_t *mod);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_delete_module(char *__name, unsigned int flags);
+long syscall_delete_module(char *__name, unsigned int flags);
 
 #endif      /* !MODULE */
 

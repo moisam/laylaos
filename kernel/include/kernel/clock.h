@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: clock.h
  *    This file is part of LaylaOS.
@@ -28,9 +28,14 @@
 #ifndef __KERNEL_CLOCK__
 #define __KERNEL_CLOCK__
 
-#include <sys/types.h>
-#include <kernel/mutex.h>
+/*
+ * We have to first include <sys/types.h> to define things like time_t, then
+ * we can define the now() macro, which requires us to define both
+ * startup_time and monotonic_time, and only then we can safely #include 
+ * <mutex.h> and others.
+ */
 
+#include <sys/types.h>
 #include "bits/timert-def.h"
 
 
@@ -83,6 +88,16 @@ extern time_t startup_time;
 
 
 /**
+ * \def now
+ *
+ * Get current time in seconds
+ */
+#define now()       (startup_time + monotonic_time.tv_sec)
+
+#include <kernel/mutex.h>
+
+
+/**
  * @var waiter_head
  * @brief heads of clock waiter queues.
  *
@@ -92,16 +107,9 @@ extern time_t startup_time;
  */
 extern struct clock_waiter_t waiter_head[];
 
-/**
- * \def now
- *
- * Get current time in seconds
- */
-#define now()       (startup_time + monotonic_time.tv_sec)
 
-
-int clock_wait(struct clock_waiter_t *head, pid_t pid,
-               int64_t delta, ktimer_t timerid);
+long clock_wait(struct clock_waiter_t *head, pid_t pid,
+                int64_t delta, ktimer_t timerid);
 
 
 /**
@@ -133,7 +141,7 @@ void init_clock_waiters(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_clock_getres(clockid_t clock_id, struct timespec *res);
+long syscall_clock_getres(clockid_t clock_id, struct timespec *res);
 
 
 /**
@@ -147,7 +155,7 @@ int syscall_clock_getres(clockid_t clock_id, struct timespec *res);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int  do_clock_gettime(clockid_t clock_id, struct timespec *tp);
+long do_clock_gettime(clockid_t clock_id, struct timespec *tp);
 
 
 /**
@@ -160,7 +168,7 @@ int  do_clock_gettime(clockid_t clock_id, struct timespec *tp);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int  syscall_clock_gettime(clockid_t clock_id, struct timespec *tp);
+long syscall_clock_gettime(clockid_t clock_id, struct timespec *tp);
 
 
 /**
@@ -174,7 +182,7 @@ int  syscall_clock_gettime(clockid_t clock_id, struct timespec *tp);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int  do_clock_settime(clockid_t clock_id, struct timespec *tp);
+long do_clock_settime(clockid_t clock_id, struct timespec *tp);
 
 
 /**
@@ -187,7 +195,7 @@ int  do_clock_settime(clockid_t clock_id, struct timespec *tp);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int  syscall_clock_settime(clockid_t clock_id, struct timespec *tp);
+long syscall_clock_settime(clockid_t clock_id, struct timespec *tp);
 
 
 /**
@@ -220,7 +228,7 @@ void clock_check_waiters(void);
  *
  * @return  pointer to a \a clock_waiter_t on success, NULL on failure.
  */
-struct clock_waiter_t *get_waiter(struct clock_waiter_t *head,
+struct clock_waiter_t *get_waiter(volatile struct clock_waiter_t *head,
                                   pid_t pid, ktimer_t timerid,
                                   int64_t *remaining_ticks, int unlink);
 
@@ -242,9 +250,9 @@ void waiter_free(struct clock_waiter_t *w);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags, 
-                       struct timespec *__rqtp, struct timespec *__rmtp,
-                       ktimer_t timerid);
+long do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags, 
+                        struct timespec *__rqtp, struct timespec *__rmtp,
+                        ktimer_t timerid);
 
 /**
  * @brief Handler for syscall clock_nanosleep().
@@ -259,8 +267,8 @@ int do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_clock_nanosleep(clockid_t clock_id, int flags, 
-                            struct timespec *__rqtp, struct timespec *__rmtp);
+long syscall_clock_nanosleep(clockid_t clock_id, int flags, 
+                             struct timespec *__rqtp, struct timespec *__rmtp);
 
 
 /**
@@ -273,7 +281,7 @@ int syscall_clock_nanosleep(clockid_t clock_id, int flags,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_nanosleep(struct timespec *__rqtp, struct timespec *__rmtp);
+long syscall_nanosleep(struct timespec *__rqtp, struct timespec *__rmtp);
 
 
 /**

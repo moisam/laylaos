@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mouse.h
  *    This file is part of LaylaOS.
@@ -96,7 +96,7 @@ extern unsigned char byte_count;
  *
  * The kernel task that handles incoming mouse input.
  */
-extern struct task_t *mouse_task;
+extern volatile struct task_t *mouse_task;
 
 
 extern int mouse_scaled;

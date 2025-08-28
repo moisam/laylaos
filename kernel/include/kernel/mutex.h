@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mutex.h
  *    This file is part of LaylaOS.
@@ -31,7 +31,6 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define MUTEX_EBUSY   1
 
 /**
  * @struct kernel_mutex_t
@@ -41,50 +40,44 @@
  */
 struct kernel_mutex_t
 {
-    volatile uint32_t lock;     /**< mutex lock */
-    long int wanted;            /**< number of tasks waiting on mutex */
-    volatile pid_t holder;      /**< pid of task holding the mutex */
+    volatile uint32_t lock;       /**< mutex lock */
+    volatile int recursive_count; /**< non-zero if mutex is recuresively locked */
+    volatile struct task_t *holder;    /**< pointer to task holding the mutex */
+    volatile const char *from_func;    /**< name of function that called 
+                                            kernel_mutex_lock() */
+    volatile int from_line;            /**< source line number where 
+                                            kernel_mutex_lock() was called */
 };
+
+
+void init_kernel_mutex(volatile struct kernel_mutex_t *mutex);
+void __kernel_mutex_lock(volatile struct kernel_mutex_t *mutex, const char *func, int line);
+uint32_t __kernel_mutex_trylock(volatile struct kernel_mutex_t *mutex, const char *func, int line);
+void kernel_mutex_unlock(volatile struct kernel_mutex_t *mutex);
+
+#define kernel_mutex_lock(m)     __kernel_mutex_lock(m, __func__, __LINE__)
+#define kernel_mutex_trylock(m)  __kernel_mutex_trylock(m, __func__, __LINE__)
+
+#define kernel_mutex_lock_recursive(lock)                           \
+    if(__kernel_mutex_trylock(lock, __func__, __LINE__)) {          \
+        if(!cur_task || (lock)->holder != cur_task)                 \
+            __kernel_mutex_lock(lock, __func__, __LINE__);          \
+        else (lock)->recursive_count = (lock)->recursive_count + 1; \
+    }
+
+#define kernel_mutex_unlock_recursive(lock)                         \
+    if((lock)->recursive_count != 0)                                \
+        (lock)->recursive_count = (lock)->recursive_count - 1;      \
+    else kernel_mutex_unlock(lock);
 
 
 void scheduler(void);
 
-#ifndef __LOCK_SCHEDULER_DEFINED__
-#define __LOCK_SCHEDULER_DEFINED__
+#include <kernel/smp.h>
+#include "task_prio.h"
+#include "task_locks.h"
 
-extern volatile int IRQ_disable_counter;
-
-/**
- * @brief Lock the scheduler.
- *
- * Lock the scheduler.
- *
- * @return  nothing.
- */
-static inline void lock_scheduler(void)
-{
-    __asm__ __volatile__ ("cli");
-    IRQ_disable_counter++;
-}
-
-/**
- * @brief Unlock the scheduler.
- *
- * Unlock the scheduler.
- *
- * @return  nothing.
- */
-static inline void unlock_scheduler(void)
-{
-    IRQ_disable_counter--;
-
-    if(IRQ_disable_counter == 0)
-    {
-        __asm__ __volatile__ ("sti");
-    }
-}
-
-#endif
+#if 0
 
 /**
  * @brief Initialise a kernel mutex.
@@ -151,5 +144,7 @@ static inline void kernel_mutex_unlock(struct kernel_mutex_t *mutex)
     __sync_lock_release(&mutex->lock);
     mutex->holder = 0;
 }
+
+#endif
 
 #endif      /* __KERNEL_MUTEX_H__ */

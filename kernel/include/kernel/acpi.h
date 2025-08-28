@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: acpi.h
  *    This file is part of LaylaOS.
@@ -76,6 +76,63 @@ struct XSDT
 {
     struct ACPISDTHeader h;
     uint64_t PointerToOtherSDT[];
+} __attribute__ ((packed));
+
+
+/*
+ * EntryType types.
+ * See: https://wiki.osdev.org/MADT
+ */
+#define MADT_ENTRY_PROC_LOCAL_APIC              0
+#define MADT_ENTRY_IOAPIC                       1
+#define MADT_ENTRY_IOAPIC_INT_SRC_OVERRIDE      2
+#define MADT_ENTRY_IOAPIC_NMI_SRC               3
+#define MADT_ENTRY_LOCALAPIC_NMI                4
+#define MADT_ENTRY_LOCALAPIC_ADDR_OVERRIDE      5
+#define MADT_ENTRY_PROC_LOCAL_X2APIC            9
+
+struct MADTEntryHeader
+{
+    uint8_t EntryType;
+    uint8_t RecordLength;
+} __attribute__ ((packed));
+
+
+struct MADT
+{
+    struct ACPISDTHeader h;
+    uint32_t LocalAPICAddress;
+    uint32_t Flags;
+    struct MADTEntryHeader Entries[];
+} __attribute__ ((packed));
+
+
+struct MADT_LAPIC
+{
+    struct MADTEntryHeader h;
+    uint8_t ProcessorID;
+    uint8_t APICID;
+    uint32_t Flags;
+} __attribute__ ((packed));
+
+
+struct MADT_IOAPIC
+{
+    struct MADTEntryHeader h;
+    uint8_t IOAPICID;
+    uint8_t Reserved;
+    uint32_t IOAPICAddress;
+    uint32_t GlobalSysIntBase;
+} __attribute__ ((packed));
+
+
+struct MADT_IOPIC_ISO
+{
+    struct MADTEntryHeader h;
+    uint8_t BusSource;
+    uint8_t IRQSource;
+    uint32_t GlobalSysInt;
+    uint16_t Flags;
 } __attribute__ ((packed));
 
 
@@ -173,9 +230,14 @@ struct FADT
 } __attribute__ ((packed));
 
 
-// function declarations
+/************************************
+ * Function declarations
+ ************************************/
 
-void get_acpi_rsdp(char *p);
 void acpi_init(void);
+void acpi_sleep(int state);
+void acpi_reset(void);
+void *acpi_get_table(char *signature);
+void acpi_parse_madt(void);
 
 #endif      /* KERNEL_ACPI_H */

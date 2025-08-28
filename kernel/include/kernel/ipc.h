@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ipc.h
  *    This file is part of LaylaOS.
@@ -108,7 +108,7 @@ struct ipcq_t
     };
 
     /* for access synchronization */
-    struct kernel_mutex_t lock;         /**< queue lock */
+    volatile struct kernel_mutex_t lock;         /**< queue lock */
 };
 
 
@@ -205,7 +205,7 @@ void ipc_init(void);
  *
  * @return  1 if task has permission, 0 otherwise.
  */
-int ipc_has_perm(struct ipc_perm *perm, struct task_t *task, int what);
+int ipc_has_perm(struct ipc_perm *perm, volatile struct task_t *task, int what);
 
 /**
  * @brief Remove task IPC queues.
@@ -231,7 +231,7 @@ void ipc_killall(struct task_t *task);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_ipc(int call, unsigned long *args);
+long syscall_ipc(int call, unsigned long *args);
 
 
 /**********************************
@@ -258,7 +258,7 @@ void msg_init(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_msgctl(int msqid, int cmd, struct msqid_ds *buf);
+long syscall_msgctl(int msqid, int cmd, struct msqid_ds *buf);
 
 /**
  * @brief Handler for syscall msgget().
@@ -270,7 +270,7 @@ int syscall_msgctl(int msqid, int cmd, struct msqid_ds *buf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_msgget(key_t key, int msgflg);
+long syscall_msgget(key_t key, int msgflg);
 
 /**
  * @brief Handler for syscall msgget().
@@ -284,7 +284,7 @@ int syscall_msgget(key_t key, int msgflg);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_msgsnd(int msqid, void *msgp, size_t msgsz, int msgflg);
+long syscall_msgsnd(int msqid, void *msgp, size_t msgsz, int msgflg);
 
 /**
  * @brief Handler for syscall msgrcv().
@@ -295,7 +295,7 @@ int syscall_msgsnd(int msqid, void *msgp, size_t msgsz, int msgflg);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_msgrcv(struct syscall_args *__args);
+long syscall_msgrcv(struct syscall_args *__args);
 
 /**
  * @brief Remove task message queues.
@@ -350,7 +350,7 @@ void sem_init(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_semctl(int semid, int semnum, int cmd, union semun *arg);
+long syscall_semctl(int semid, int semnum, int cmd, union semun *arg);
 
 /**
  * @brief Handler for syscall semget().
@@ -363,7 +363,7 @@ int syscall_semctl(int semid, int semnum, int cmd, union semun *arg);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_semget(key_t key, int nsems, int semflg);
+long syscall_semget(key_t key, int nsems, int semflg);
 
 /**
  * @brief Handler for syscall semop().
@@ -376,7 +376,7 @@ int syscall_semget(key_t key, int nsems, int semflg);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_semop(int semid, struct sembuf *sops, size_t nsops);
+long syscall_semop(int semid, struct sembuf *sops, size_t nsops);
 
 /**
  * @brief Remove task semaphore queues.
@@ -418,7 +418,7 @@ void shm_init(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_shmctl(int shmid, int cmd, struct shmid_ds *buf);
+long syscall_shmctl(int shmid, int cmd, struct shmid_ds *buf);
 
 /**
  * @brief Handler for syscall shmget().
@@ -431,7 +431,7 @@ int syscall_shmctl(int shmid, int cmd, struct shmid_ds *buf);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_shmget(key_t key, size_t size, int shmflg);
+long syscall_shmget(key_t key, size_t size, int shmflg);
 
 /**
  * @brief Handler for syscall shmat().
@@ -446,7 +446,7 @@ int syscall_shmget(key_t key, size_t size, int shmflg);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_shmat(int shmid, void *shmaddr, int shmflg, volatile void **result);
+long syscall_shmat(int shmid, void *shmaddr, int shmflg, volatile void **result);
 
 /**
  * @brief Attach shared memory region.
@@ -460,8 +460,8 @@ int syscall_shmat(int shmid, void *shmaddr, int shmflg, volatile void **result);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int shmat_internal(struct task_t *task, struct memregion_t *memregion,
-                                        void *shmaddr);
+long shmat_internal(struct task_t *task, struct memregion_t *memregion,
+                                         void *shmaddr);
 
 /**
  * @brief Detach shared memory region.
@@ -475,8 +475,8 @@ int shmat_internal(struct task_t *task, struct memregion_t *memregion,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int shmdt_internal(struct task_t *task, struct memregion_t *memregion,
-                                        void *shmaddr);
+long shmdt_internal(struct task_t *task, struct memregion_t *memregion,
+                                         void *shmaddr);
 
 /**
  * @brief Handler for syscall shmdt().
@@ -487,7 +487,7 @@ int shmdt_internal(struct task_t *task, struct memregion_t *memregion,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_shmdt(void *shmaddr);
+long syscall_shmdt(void *shmaddr);
 
 /**
  * @brief Get shmem id for a given memory region.

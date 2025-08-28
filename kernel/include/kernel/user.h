@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: user.h
  *    This file is part of LaylaOS.
@@ -29,9 +29,14 @@
 #define __USER_H__
 
 #define __USE_XOPEN_EXTENDED
+#include <errno.h>
 #include <signal.h>
+#include <kernel/laylaos.h>
 #include <kernel/ksignal.h>
+#include <kernel/smp.h>
 #include <mm/mmngr_virtual.h>
+
+STATIC_INLINE long add_task_segv_signal(volatile struct task_t *t, int code, void *addr);
 
 /**
  * @brief Userspace address validation.
@@ -41,13 +46,77 @@
  * task's address space and that it falls in the user's, not the kernel's,
  * address space.
  *
- * @param   task        pointer to task
+ * This function is a huge bottleneck as it is called frequently, every time
+ * we are about to copy data to/from user space. At the moment we simply
+ * check the given address range to ensure it does not fall in the kernel
+ * space, and if an address turns out to be unmapped when we perform the copy,
+ * we let the pagefault handler deal with it. Fetching the actual page table
+ * entries would take so long it would cripple the system. Checking the
+ * address against the task's memory regions is done again in the page fault
+ * handler, so doing it here does not seem to add much.
+ *
+ * NOTE: It would probably make more sense to check against the task's (or
+ *       more accurately the thread's) LDT limit. Maybe also check for
+ *       read/write access rights, depending on the requested operation.
+ *
+ * @param   ct          pointer to current task
  * @param   addr        start of address range
  * @param   addr_end    end of address range
  *
  * @return  0 if address range is valid, -(EFAULT) otherwise.
  */
-int valid_addr(struct task_t *task, virtual_addr addr, virtual_addr addr_end);
+STATIC_INLINE int valid_addr(volatile struct task_t *ct, 
+                             virtual_addr addr, virtual_addr addr_end)
+{
+    // kernel tasks and init task can do whatever
+    if(!ct->user || ct->pid == 1)
+    {
+        return 0;
+    }
+
+#if 0
+
+    struct memregion_t *memregion /* = NULL */;
+    virtual_addr memregion_end;
+
+try:
+
+    if(!(memregion = memregion_containing(ct, addr)))
+    {
+        return -EFAULT;
+    }
+    
+    memregion_end = (memregion->addr + (memregion->size * PAGE_SIZE));
+    
+    if(addr_end >= memregion_end)
+    {
+        // If the memregion contains the start address but no the end address
+        // of the requested address range, it could be because the address
+        // range is split across memregions. In this case, we call ourselves
+        // recursively, checking the end of the requested address range,
+        // until we either find a memregion that contains the last part of the
+        // address range, or we return error.
+
+        addr = memregion_end;
+        goto try;
+    }
+
+#endif
+
+    // simple checks for now
+    if(addr >= USER_MEM_END)
+    {
+        return -EFAULT;
+    }
+
+    if(addr_end >= USER_MEM_END)
+    {
+        return -EFAULT;
+    }
+    
+    return 0;
+}
+
 
 /**
  * @brief Copy to userspace.
@@ -64,7 +133,28 @@ int valid_addr(struct task_t *task, virtual_addr addr, virtual_addr addr_end);
  *
  * @see     valid_addr()
  */
-int copy_to_user(void *dest, void *src, size_t len);
+STATIC_INLINE long copy_to_user(void *dest, void *src, size_t len)
+{
+    if(!len || !src || !dest)
+    {
+        add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, src ? src : dest);
+        return -EFAULT;
+    }
+    
+    virtual_addr addr     = (virtual_addr)dest;
+    virtual_addr addr_end = addr + len - 1;
+    
+    if(valid_addr(this_core->cur_task, addr, addr_end) != 0)     /* invalid address */
+    {
+        add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, (void *)addr);
+        return -EFAULT;
+    }
+    
+    A_memcpy(dest, src, len);
+
+    return 0;
+}
+
 
 /**
  * @brief Copy from userspace.
@@ -81,7 +171,28 @@ int copy_to_user(void *dest, void *src, size_t len);
  *
  * @see     valid_addr()
  */
-int copy_from_user(void *dest, void *src, size_t len);
+STATIC_INLINE long copy_from_user(void *dest, void *src, size_t len)
+{
+    if(!len || !src || !dest)
+    {
+        add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, src ? src : dest);
+        return -EFAULT;
+    }
+    
+    virtual_addr addr     = (virtual_addr)src;
+    virtual_addr addr_end = addr + len - 1;
+    
+    if(valid_addr(this_core->cur_task, addr, addr_end) != 0)     /* invalid address */
+    {
+        add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, (void *)addr);
+        return -EFAULT;
+    }
+    
+    A_memcpy(dest, src, len);
+
+    return 0;
+}
+
 
 /**
  * @brief Copy string from userspace.
@@ -96,7 +207,7 @@ int copy_from_user(void *dest, void *src, size_t len);
  *
  * @return  0 if address range is valid, -(EFAULT) otherwise.
  */
-int copy_str_from_user(char *str, char **res, size_t *reslen);
+long copy_str_from_user(char *str, char **res, size_t *reslen);
 
 
 /**************************************
@@ -123,7 +234,7 @@ int copy_str_from_user(char *str, char **res, size_t *reslen);
     }                                                       \
     else                                                    \
     {                                                       \
-        add_task_segv_signal(cur_task, SIGSEGV, SEGV_MAPERR, (void *)uptr); \
+        add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, (void *)uptr); \
         return -EFAULT;                                     \
     }
 
@@ -137,8 +248,10 @@ int copy_str_from_user(char *str, char **res, size_t *reslen);
     }                                                       \
     else                                                    \
     {                                                       \
-        add_task_segv_signal(cur_task, SIGSEGV, SEGV_MAPERR, (void *)uptr); \
+        add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, (void *)uptr); \
         return -EFAULT;                                     \
     }
+
+#include "signal_funcs.h"
 
 #endif      /* __USER_H__ */

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: reboot.h
  *    This file is part of LaylaOS.
@@ -56,7 +56,7 @@
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_reboot(int cmd);
+long syscall_reboot(int cmd);
 
 /**
  * @brief Handler for init exit.

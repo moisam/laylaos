@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: ahci.h
  *    This file is part of LaylaOS.
@@ -37,13 +37,23 @@
  */
 #define MAX_AHCI_DEVICES        256
 
+/* Maximum number of AHCI CD-ROMS we can handle
+ */
+#define MAX_AHCI_CDROMS         26
+
 /*
- * All AHCI devices have a major of 8
+ * All AHCI devices have a major of 8 (/dev/sdX)...
  */
 #define AHCI_DEV_MAJ            8
 
+/*
+ * ...except for CD-ROMs, which have a major of 11 (/dev/scdX).
+ */
+#define AHCI_CDROM_MAJ          11
+
 /* Our master table for AHCI disks and their partitions */
 extern struct ata_dev_s *ahci_disk_dev[MAX_AHCI_DEVICES];
+extern struct ata_dev_s *ahci_cdrom_dev[MAX_AHCI_CDROMS];
 extern struct parttab_s *ahci_disk_part[MAX_AHCI_DEVICES];
 
 
@@ -450,6 +460,28 @@ typedef struct
 
 
 /**
+ * @struct ahci_dev_t
+ * @brief The ahci_dev_t structure.
+ *
+ * A structure to represent an AHCI device.
+ */
+struct ahci_dev_t
+{
+    dev_t devid;                /**< Device ID */
+    uintptr_t iobase,           /**< I/O base address */
+              iosize;           /**< Size of I/O space */
+    uintptr_t port_clb[32];     /**< Virtual addresses for us to write to each
+                                     port's command list base address */
+    uintptr_t port_fb[32];      /**< Same for port's FIS base address */
+    uintptr_t port_ctba[32];    /**< Same for port's command list buffer */
+    volatile struct kernel_mutex_t port_lock[32];    /**< Port lock */
+    struct pci_dev_t *pci;      /**< Pointer to PCI device struct */
+    struct task_t *task;        /**< Pointer to IRQ handler task */
+    struct ahci_dev_t *next;    /**< Next AHCI device */
+};
+
+
+/**
  * @brief General Block Read/Write Operations.
  *
  * This is a swiss-army knife function that handles both read and write
@@ -462,7 +494,7 @@ typedef struct
  *
  * @return number of bytes read or written on success, -(errno) on failure
  */
-int ahci_strategy(struct disk_req_t *req);
+long ahci_strategy(struct disk_req_t *req);
 
 /**
  * @brief General block device control function.
@@ -477,7 +509,7 @@ int ahci_strategy(struct disk_req_t *req);
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int ahci_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
+long ahci_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
 
 /**
  * @brief Initialise AHCI disk devices.
@@ -490,5 +522,18 @@ int ahci_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
  * @return  nothing.
  */
 void ahci_init(struct pci_dev_t *pci);
+
+
+/*********************************************
+ * Internal functions
+ *********************************************/
+
+long achi_satapi_read_packet_virt(struct ata_dev_s *dev,
+                                  uintptr_t virt_buf, size_t bufsz,
+                                  size_t lba, int sectors, unsigned char *packet);
+
+long achi_satapi_write_packet_virt(struct ata_dev_s *dev,
+                                   uintptr_t virt_buf, size_t bufsz,
+                                   size_t lba, int sectors, unsigned char *packet);
 
 #endif      /* AHCI_H */

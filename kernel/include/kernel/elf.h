@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: elf.h
  *    This file is part of LaylaOS.
@@ -54,22 +54,22 @@ enum elf_ident
     EI_PAD          = 9     /**< PADDING */
 };
 
-#define ELFMAG0                    0x7F
-#define ELFMAG1                    'E'
-#define ELFMAG2                    'L'
-#define ELFMAG3                    'F'
+#define ELFMAG0                   0x7F
+#define ELFMAG1                   'E'
+#define ELFMAG2                   'L'
+#define ELFMAG3                   'F'
 
 /*
  * Values for the EI_DATA member of the identification field
  */
-#define ELFDATANONE                0    /**< INVALID ENCODING */
-#define ELFDATA2LSB                1    /**< LITTLE ENDIAN */
-#define ELFDATA2MSB                2    /**< BIG ENDIAN */
+#define ELFDATANONE               0    /**< INVALID ENCODING */
+#define ELFDATA2LSB               1    /**< LITTLE ENDIAN */
+#define ELFDATA2MSB               2    /**< BIG ENDIAN */
 
 /*
  * Values for the EI_CLASS member of the identification field
  */
-#define ELFCLASSNONE            0    /**< INVALID CLASS */
+#define ELFCLASSNONE              0    /**< INVALID CLASS */
 #define ELFCLASS32                1    /**< 32-BIT ARCH */
 #define ELFCLASS64                2    /**< 64-BIT ARCH */
 
@@ -194,9 +194,9 @@ enum elf_type
 #define DT_TEXTREL              22
 #define DT_JMPREL               23
 
-#define DT_INIT_ARRAY            25
-#define DT_INIT_ARRAYSZ            27
-#define DT_ENCODING                32
+#define DT_INIT_ARRAY           25
+#define DT_INIT_ARRAYSZ         27
+#define DT_ENCODING             32
 
 #define DT_LOPROC               0x70000000
 #define DT_HIPROC               0x7FFFFFFF
@@ -322,8 +322,8 @@ enum elf_type
  *
  * @return  zero on success, -(errno) on failure.
  */
-int elf_load_file(struct fs_node_t *node, struct cached_page_t *block0,
-                  size_t *auxv, int flags);
+long elf_load_file(struct fs_node_t *node, struct cached_page_t *block0,
+                   size_t *auxv, int flags);
 
 /**
  * @brief Load the dynamic loader (ldso).
@@ -336,7 +336,7 @@ int elf_load_file(struct fs_node_t *node, struct cached_page_t *block0,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int ldso_load(size_t *auxv);
+long ldso_load(size_t *auxv);
 
 #endif      /* KERNEL */
 

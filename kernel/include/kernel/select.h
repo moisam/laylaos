@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: select.h
  *    This file is part of LaylaOS.
@@ -70,8 +70,8 @@ void init_seltab(void);
  *
  * @return  zero or positive number on success, -(errno) on failure.
  */
-int syscall_select(u_int n, fd_set *readfds, fd_set *writefds,
-                   fd_set *exceptfds, struct timeval *timeout);
+long syscall_select(u_int n, fd_set *readfds, fd_set *writefds,
+                    fd_set *exceptfds, struct timeval *timeout);
 
 /**
  * @brief Handler for syscall pselect().
@@ -82,7 +82,7 @@ int syscall_select(u_int n, fd_set *readfds, fd_set *writefds,
  *
  * @return  zero or positive number on success, -(errno) on failure.
  */
-int syscall_pselect(struct syscall_args *__args);
+long syscall_pselect(struct syscall_args *__args);
 
 /**
  * @brief Record a select request.

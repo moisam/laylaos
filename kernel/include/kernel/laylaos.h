@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: laylaos.h
  *    This file is part of LaylaOS.
@@ -32,9 +32,12 @@
 #define BIT_SET(flags, bit)     ((flags) & (1 << (bit)))
 #define UNUSED(x)               (void)(x)
 
+#undef STATIC_INLINE
+#define STATIC_INLINE           static inline __attribute__((always_inline))
+
 // define some system-wide upper limits
-#define MAX_NR_TASKS            1024
-#define MAX_NR_DISK_BUFFERS     1024
+#define MAX_NR_TASKS            4096
+//#define MAX_NR_DISK_BUFFERS     1024
 
 // for debugging
 #ifdef __DEBUG
@@ -45,9 +48,9 @@
 
 // pointer format specifier we use with printk()
 #ifdef __x86_64__
-# define _XPTR_                 "0x%lx"
+# define _XPTR_                 "0x%016lx"
 #else
-# define _XPTR_                 "0x%x"
+# define _XPTR_                 "0x%08x"
 #endif
 
 
@@ -55,7 +58,7 @@
 #include <stddef.h>                 // size_t
 
 /*
- * Symbols defined in linker.ld.
+ * Symbols defined in kernel/linker.ld.
  */
 extern unsigned int kernel_ro_end;
 extern unsigned int kernel_ro_start;
@@ -63,7 +66,7 @@ extern unsigned int kernel_end;
 extern unsigned int kernel_start;
 
 /*
- * Symbol defined in kernel.c.
+ * Symbol defined in kernel/kernel.c.
  */
 extern size_t kernel_size;
 
@@ -77,6 +80,11 @@ extern char kernel_cmdline[];
 extern unsigned long system_context_switches;
 extern unsigned long system_forks;
 extern struct utsname myname;
+
+/*
+ * Symbol defined in kernel/printk.c.
+ */
+extern char global_printk_buf[4096];
 
 
 /***********************
@@ -118,6 +126,15 @@ int vprintk(const char *fmt, va_list args);
  * @return  never returns.
  */
 void kpanic(const char *s);
+
+/**
+ * @brief Print kernel stack trace.
+ *
+ * Print kernel stack trace when a critical error occurs.
+ *
+ * @return  nothing.
+ */
+void kernel_stack_trace(void);
 
 /**
  * @brief Kernel abort function.
@@ -174,9 +191,10 @@ extern unsigned long simple_strtoul(const char *__restrict nptr,
 #define TMPFS_START             0xFFFF838000000000  /**< tmpfs memory start */
 #define TMPFS_END               0xFFFF858000000000  /**< tmpfs memory end   */
 
-// 2TiB for page tables
+// 2TiB for page tables (actually only 8GiB is used here)
 #define PAGE_TABLE_START        0xFFFF818000000000  /**< page tables start */
-#define PAGE_TABLE_END          0xFFFF838000000000  /**< page tables end   */
+#define PAGE_TABLE_END          0xFFFF818200000000  /**< page tables end   */
+//#define PAGE_TABLE_END          0xFFFF838000000000  /**< page tables end   */
 
 // 1TiB for heap
 #define KHEAP_START             0xFFFF808000000000  /**< kernel heap start */
@@ -246,6 +264,9 @@ extern unsigned long simple_strtoul(const char *__restrict nptr,
 #define STACK_START             0x00007F8000000000  /**< user stack start */
 //#define USER_ADDR_END           0x00007FFFFFFFFFFF
 #define LDSO_MEM_START          0x000000003F000000  /**< ldso start */
+
+
+#define USERSP(r)               ((r)->userrsp)
 
 
 #include <stdint.h>
@@ -378,6 +399,9 @@ static inline void dump_regs(struct regs *r)
 //#define USER_ADDR_END           KERNEL_MEM_START
 #define STACK_START             KERNEL_MEM_START    /**< user stack start */
 #define LDSO_MEM_START          0x3F000000      /**< ldso start */
+
+
+#define USERSP(r)               ((r)->useresp)
 
 
 /**

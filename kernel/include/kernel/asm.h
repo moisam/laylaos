@@ -50,6 +50,66 @@
 #define hlt()           __asm__ __volatile__ ("hlt")
 
 
+/**
+ * \def rdtsc
+ * read the timestamp counter
+ */
+static inline unsigned long long rdtsc(void)
+{
+    unsigned int low, high;
+    unsigned long long val = 0;
+
+    __asm__ __volatile__("rdtsc" : "=a"(low), "=d"(high));
+
+    val |= high;
+    val <<= 32;
+    val |= low;
+
+    return val;
+}
+
+
+static inline void __lock_xchg_byte(volatile void *p, uint8_t v)
+{
+    uint8_t res;
+    uint8_t *p2 = (uint8_t *)p;
+    __asm__ __volatile__("lock xchgb %0, %1":"+m"(*p2),"=a"(res):"1"(v):"cc","memory");
+}
+
+
+static inline void __lock_xchg_word(volatile void *p, uint16_t v)
+{
+    uint16_t res;
+    uint16_t *p2 = (uint16_t *)p;
+    __asm__ __volatile__("lock xchgw %0, %1":"+m"(*p2),"=a"(res):"1"(v):"cc","memory");
+}
+
+
+static inline void __lock_xchg_int(volatile void *p, unsigned int v)
+{
+    unsigned int res;
+    unsigned int *p2 = (unsigned int *)p;
+    __asm__ __volatile__("lock xchgl %0, %1":"+m"(*p2),"=a"(res):"1"(v):"cc","memory");
+}
+
+
+static inline void __lock_xchg_ptr(volatile void *p, uintptr_t v)
+{
+    void *res;
+    uintptr_t *p2 = (uintptr_t *)p;
+    __asm__ __volatile__("lock xchgq %0, %1":"+m"(*p2),"=a"(res):"1"(v):"cc","memory");
+}
+
+
+static inline unsigned int __lock_xchg_int_res(volatile void *p, unsigned int v)
+{
+    unsigned int res;
+    unsigned int *p2 = (unsigned int *)p;
+    __asm__ __volatile__("lock xchgl %0, %1":"+m"(*p2),"=a"(res):"1"(v):"cc","memory");
+    return res;
+}
+
+
 #ifdef __x86_64__
 
 /**
@@ -95,6 +155,15 @@ extern uintptr_t get_rip(void);
  * @return  RSP register value.
  */
 extern uintptr_t get_rsp(void);
+
+/**
+ * @brief Query cpuid.
+ *
+ * Find out whether the cpuid instruction is supported by the current cpu.
+ *
+ * @return  non-zero if cpuid is supported, zero otherwise.
+ */
+extern int has_cpuid(void);
 
 #else       /* !__x86_64__ */
 

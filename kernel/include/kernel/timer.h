@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: timer.h
  *    This file is part of LaylaOS.
@@ -36,8 +36,14 @@
 #include <kernel/clock.h>
 
 #include "bits/timert-def.h"
+#include "bits/posixtimer-def.h"
 
 
+#define ITIMER_REAL_ID          (ktimer_t)1
+#define ITIMER_PROF_ID          (ktimer_t)2
+#define ITIMER_VIRT_ID          (ktimer_t)3
+
+#if 0
 /**
  * @struct itimer_t
  * @brief The itimer_t structure.
@@ -51,28 +57,7 @@ struct itimer_t
     struct task_t *task;        /**< task owning this itimer */
     struct itimer_t *next_real; /* linked list for ITIMER_REAL timers */
 };
-
-/**
- * @struct posix_timer_t
- * @brief The posix_timer_t structure.
- *
- * A structure to represent a POSIX timer.
- */
-struct posix_timer_t
-{
-    ktimer_t timerid;       /**< timer id */
-    clockid_t clockid;      /**< clock id */
-    int flags,              /**< timer flags */
-        cur_overruns,       /**< current value of overruns */
-        saved_overruns;     /**< saved overrun value */
-    //int64_t interval_ticks; /**< interval value in ticks */
-    struct sigevent sigev;  /**< signal to deliver on timer expiration */
-    struct posix_timer_t *next; /**< next timer in task list */
-    struct itimerspec val;      /**< current timer value */
-};
-
-
-//#include <kernel/task.h>
+#endif
 
 
 /**
@@ -92,6 +77,35 @@ extern unsigned long long ticks;
  */
 extern unsigned long long prev_ticks;
 
+/**
+ * @var avenrun
+ * @brief load average.
+ *
+ * System load average for the last 1, 5, and 15 minutes.
+ */
+extern unsigned long avenrun[3];
+
+
+/*
+ * Code to calculate system load average, taken from Linux sources.
+ * The code and a commentary can be found at:
+ *   https://en.wikipedia.org/wiki/Load_(computing)
+ */
+#define FSHIFT      11                      /* nr of bits of precision */
+#define FIXED_1     (1 << FSHIFT)           /* 1.0 as fixed-point */
+#define LOAD_FREQ   (5 * PIT_FREQUENCY + 1) /* 5 sec intervals */
+#define EXP_1       1884                    /* 1/exp(5sec/1min) as fixed-point */
+#define EXP_5       2014                    /* 1/exp(5sec/5min) */
+#define EXP_15      2037                    /* 1/exp(5sec/15min) */
+
+#define LOAD_INT(x)     ((x) >> FSHIFT)
+#define LOAD_FRAC(x)    LOAD_INT(((x) & (FIXED_1 - 1)) * 100)
+
+#define CALC_LOAD(load, exp, n) \
+   load *= exp;                 \
+   load += n * (FIXED_1 - exp); \
+   load >>= FSHIFT;
+
 
 /**
  * \def PIT_FREQUENCY
@@ -109,7 +123,7 @@ extern unsigned long long prev_ticks;
 #define NSEC_PER_MSEC       1000000
 
 
-static inline void ticks_to_timespec(unsigned long n, struct timespec *t)
+static inline void ticks_to_timespec(unsigned long long n, struct timespec *t)
 {
     //t->tv_nsec = n * ntick;
     t->tv_nsec = n * NSECS_PER_TICK;
@@ -123,7 +137,7 @@ static inline void ticks_to_timespec(unsigned long n, struct timespec *t)
 }
 
 
-static inline void ticks_to_timeval(unsigned long n, struct timeval *tv)
+static inline void ticks_to_timeval(unsigned long long n, struct timeval *tv)
 {
     //tv->tv_usec = n * tick;
     tv->tv_usec = n * USECS_PER_TICK;
@@ -137,9 +151,9 @@ static inline void ticks_to_timeval(unsigned long n, struct timeval *tv)
 }
 
 
-static inline unsigned long timeval_to_ticks(struct timeval *tv)
+static inline unsigned long long timeval_to_ticks(struct timeval *tv)
 {
-    unsigned long ticks;
+    unsigned long long ticks;
 
     ticks = tv->tv_sec * PIT_FREQUENCY;
     ticks += (tv->tv_usec * PIT_FREQUENCY) / USEC_PER_SEC;
@@ -153,9 +167,9 @@ static inline unsigned long timeval_to_ticks(struct timeval *tv)
 }
 
 
-static inline unsigned long timespec_to_ticks(struct timespec *ts)
+static inline unsigned long long timespec_to_ticks(struct timespec *ts)
 {
-    unsigned long ticks;
+    unsigned long long ticks;
 
     ticks = ts->tv_sec * PIT_FREQUENCY;
     ticks += (ts->tv_nsec * PIT_FREQUENCY) / NSEC_PER_SEC;
@@ -230,7 +244,7 @@ void dec_itimers(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getitimer(int which, struct itimerval *value);
+long syscall_getitimer(int which, struct itimerval *value);
 
 /**
  * @brief Handler for syscall setitimer().
@@ -243,8 +257,8 @@ int syscall_getitimer(int which, struct itimerval *value);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setitimer(int which, struct itimerval *value, 
-                                 struct itimerval *ovalue);
+long syscall_setitimer(int which, struct itimerval *value, 
+                                  struct itimerval *ovalue);
 
 /**
  * @brief Handler for syscall alarm().
@@ -255,7 +269,7 @@ int syscall_setitimer(int which, struct itimerval *value,
  *
  * @return  remaining seconds in old alarm if there is one, otherwise zero.
  */
-int syscall_alarm(unsigned int seconds);
+long syscall_alarm(unsigned int seconds);
 
 
 /***************************************
@@ -288,9 +302,9 @@ struct posix_timer_t *get_posix_timer(pid_t tgid, ktimer_t timerid);
  *
  * @see     do_clock_nanosleep()
  */
-int syscall_timer_settime(ktimer_t timerid, int flags,
-                          struct itimerspec *new_value,
-                          struct itimerspec *old_value);
+long syscall_timer_settime(ktimer_t timerid, int flags,
+                           struct itimerspec *new_value,
+                           struct itimerspec *old_value);
 
 /**
  * @brief Handler for syscall timer_gettime().
@@ -302,7 +316,7 @@ int syscall_timer_settime(ktimer_t timerid, int flags,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_timer_gettime(ktimer_t timerid, struct itimerspec *curr_value);
+long syscall_timer_gettime(ktimer_t timerid, struct itimerspec *curr_value);
 
 /**
  * @brief Handler for syscall timer_create().
@@ -317,8 +331,8 @@ int syscall_timer_gettime(ktimer_t timerid, struct itimerspec *curr_value);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_timer_create(clockid_t clockid, struct sigevent *sevp,
-                         ktimer_t *timerid);
+long syscall_timer_create(clockid_t clockid, struct sigevent *sevp,
+                          ktimer_t *timerid);
 
 /**
  * @brief Handler for syscall timer_delete().
@@ -329,7 +343,7 @@ int syscall_timer_create(clockid_t clockid, struct sigevent *sevp,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_timer_delete(ktimer_t timerid);
+long syscall_timer_delete(ktimer_t timerid);
 
 /**
  * @brief Handler for syscall timer_getoverrun().
@@ -340,7 +354,7 @@ int syscall_timer_delete(ktimer_t timerid);
  *
  * @return  zero or a positive count on success, -(errno) on failure.
  */
-int syscall_timer_getoverrun(ktimer_t timerid);
+long syscall_timer_getoverrun(ktimer_t timerid);
 
 /**
  * @brief Disarm POSIX timers.
@@ -353,5 +367,11 @@ int syscall_timer_getoverrun(ktimer_t timerid);
  * @return  nothing.
  */
 void disarm_timers(pid_t tgid);
+
+/************************************
+ * Internal helper functions
+ ************************************/
+
+long timer_gettime_internal(ktimer_t timerid, struct itimerspec *curr_value, int kernel);
 
 #endif      /* __TIMER_H__ */

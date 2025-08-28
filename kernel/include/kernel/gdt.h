@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: gdt.h
  *    This file is part of LaylaOS.
@@ -35,7 +35,7 @@
  *
  * Maximum GDT descriptors
  */
-#define MAX_DESCRIPTORS			        1024    // MAX = 8192
+#define MAX_DESCRIPTORS			         32    // MAX = 8192
 
 
 #ifdef __x86_64__
@@ -96,6 +96,7 @@ struct gdtr
  *
  * Set the values of an entry in the GDT descriptor table.
  *
+ * @param   gdt_index   index in GDT array (i.e. current processor id)
  * @param   no          index of table entry
  * @param   base        descriptor base address
  * @param   limit       descriptor limit
@@ -103,7 +104,7 @@ struct gdtr
  *
  * @return  nothing.
  */
-void gdt_add_descriptor(uint32_t no, uint32_t base,
+void gdt_add_descriptor(int gdt_index, uint32_t no, uint32_t base,
                         uint32_t limit, uint8_t type);
 
 //void gdt_clear_descriptor(uint32_t no);
@@ -117,6 +118,30 @@ void gdt_add_descriptor(uint32_t no, uint32_t base,
  * @return  nothing.
  */
 void gdt_init(void);
+
+/**
+ * @brief Copy GDT pointer to trampoline.
+ *
+ * Called during SMP startup to copy processor-specific GDT pointer to the
+ * bootstrap code.
+ *
+ * @param   i           index in GDT array (i.e. current processor id)
+ * @param   p           pointer in trampoline code
+ *
+ * @return  nothing.
+ */
+void gdt_copy_to_trampoline(int i, char *p);
+
+/**
+ * @brief Set GS base.
+ *
+ * Set GS and Kernel GS base pointers.
+ *
+ * @param   base        virtual address
+ *
+ * @return  nothing.
+ */
+void set_gs_base(uintptr_t base);
 
 
 /**
@@ -149,7 +174,7 @@ struct user_desc
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_set_thread_area(struct user_desc *u_info);
+long syscall_set_thread_area(struct user_desc *u_info);
 
 
 /**
@@ -161,6 +186,6 @@ int syscall_set_thread_area(struct user_desc *u_info);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_get_thread_area(struct user_desc *u_info);
+long syscall_get_thread_area(struct user_desc *u_info);
 
 #endif      /* __GDT_H__ */

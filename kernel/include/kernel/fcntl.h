@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: fcntl.h
  *    This file is part of LaylaOS.
@@ -71,7 +71,7 @@ struct file_t;
  *
  * @return  zero on success, -(errno) on failure.
  */
-int fcntl_setlock(struct file_t *fp, int cmd, struct flock *lock);
+long fcntl_setlock(struct file_t *fp, int cmd, struct flock *lock);
 
 
 /*************************************************
@@ -157,6 +157,6 @@ void remove_task_locks(struct task_t *task, struct file_t *fp);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_fcntl(int fd, int cmd, void *arg);
+long syscall_fcntl(int fd, int cmd, void *arg);
 
 #endif      /* __KERNEL_LOCKS_H__ */

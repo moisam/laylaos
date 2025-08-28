@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: fpu.h
  *    This file is part of LaylaOS.
@@ -55,12 +55,12 @@ extern struct handler_t fpu_handler;
 #undef INLINE
 #define INLINE      static inline __attribute__((always_inline))
 
-INLINE void fpu_state_save(struct task_t *task)
+INLINE void fpu_state_save(volatile struct task_t *task)
 {
     __asm__ __volatile__("fxsave (%0)" : : "r"(&task->fpregs));
 }
 
-INLINE void fpu_state_restore(struct task_t *task)
+INLINE void fpu_state_restore(volatile struct task_t *task)
 {
     __asm__ __volatile__("fxrstor (%0)" : : "r"(&task->fpregs));
 }

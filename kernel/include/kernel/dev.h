@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: dev.h
  *    This file is part of LaylaOS.
@@ -42,13 +42,13 @@
  */
 #define NR_DEV                      256
 
-
+#if 0
 /*
  * Values for device ioctl()'s cmd argument.
  */
 #define DEV_IOCTL_GET_BLOCKSIZE     1   /**< ask ioctl() to return disk
                                              block size for I/O operations */
-
+#endif
 
 /**
  * \def NODEV
@@ -73,12 +73,12 @@ struct cdev_ops_t
     ssize_t (*write)(struct file_t *, off_t *, unsigned char *, size_t, int);
                                         /**< device write() function */
 
-    int (*ioctl)(dev_t dev, unsigned int cmd, char *arg, int kernel);
+    long (*ioctl)(dev_t dev, unsigned int cmd, char *arg, int kernel);
                         /**< device ioctl() function */
-    int (*select)(struct file_t *f, int which);     /**< device select()
-                                                         function */
-    int (*poll)(struct file_t *, struct pollfd *);  /**< device poll()
-                                                         function */
+    long (*select)(struct file_t *f, int which);     /**< device select()
+                                                          function */
+    long (*poll)(struct file_t *, struct pollfd *);  /**< device poll()
+                                                          function */
 };
 
 
@@ -90,17 +90,17 @@ struct cdev_ops_t
  */
 struct bdev_ops_t
 {
-    int (*strategy)(struct disk_req_t *);   /**< device strategy (read/
-                                                   write) function */
+    long (*strategy)(struct disk_req_t *);   /**< device strategy (read/
+                                                  write) function */
 
-    int (*open)(dev_t dev);     /**< device open() function */
-    int (*close)(dev_t dev);    /**< device close() function */
-    int (*ioctl)(dev_t dev, unsigned int cmd, char *arg, int kernel);
+    long (*open)(dev_t dev);     /**< device open() function */
+    long (*close)(dev_t dev);    /**< device close() function */
+    long (*ioctl)(dev_t dev, unsigned int cmd, char *arg, int kernel);
                                 /**< device ioctl() function */
-    int (*select)(struct file_t *, int);            /**< device select()
-                                                         function */
-    int (*poll)(struct file_t *, struct pollfd *);  /**< device poll()
-                                                         function */
+    long (*select)(struct file_t *, int);            /**< device select()
+                                                          function */
+    long (*poll)(struct file_t *, struct pollfd *);  /**< device poll()
+                                                          function */
     struct dentry_list_t *dentry_list;  /**< list of dentries representing
                                              files and dirs accessed on this
                                              device */
@@ -161,7 +161,7 @@ extern struct ramdisk_s ramdisk[];
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int syscall_ioctl(int fd, unsigned int cmd, char *arg);
+long syscall_ioctl(int fd, unsigned int cmd, char *arg);
 
 
 /**
@@ -191,6 +191,18 @@ void dev_init(void);
  * @return  zero on success, -(errno) on failure.
  */
 int add_dev_node(char *name, dev_t dev, mode_t mode);
+
+
+/**
+ * @brief Remove device node.
+ *
+ * Remove a device node from under devfs.
+ *
+ * @param   dev     the device devid
+ *
+ * @return  zero on success, -(errno) on failure.
+ */
+int remove_dev_node(dev_t dev);
 
 
 /**
@@ -477,7 +489,7 @@ ssize_t inputdev_write(struct file_t *f, off_t *pos,
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-int inputdev_select(struct file_t *f, int which);
+long inputdev_select(struct file_t *f, int which);
 
 /**
  * @brief Perform a poll operation on an input core device (major = 13).
@@ -493,7 +505,7 @@ int inputdev_select(struct file_t *f, int which);
  *
  * @return  1 if there are pollable events, 0 otherwise.
  */
-int inputdev_poll(struct file_t *f, struct pollfd *pfd);
+long inputdev_poll(struct file_t *f, struct pollfd *pfd);
 
 /**
  * @brief Perform a select operation on a memory core device (major = 1).
@@ -508,7 +520,7 @@ int inputdev_poll(struct file_t *f, struct pollfd *pfd);
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-int memdev_char_select(struct file_t *f, int which);
+long memdev_char_select(struct file_t *f, int which);
 
 /**
  * @brief Perform a poll operation on a memory core device (major = 1).
@@ -524,7 +536,7 @@ int memdev_char_select(struct file_t *f, int which);
  *
  * @return  1 if there are pollable events, 0 otherwise.
  */
-int memdev_char_poll(struct file_t *f, struct pollfd *pfd);
+long memdev_char_poll(struct file_t *f, struct pollfd *pfd);
 
 /**
  * @brief Read from char device /dev/mouse0.
@@ -553,7 +565,7 @@ ssize_t mousedev_read(dev_t dev, unsigned char *buf, size_t count);
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-int mousedev_select(dev_t dev, int which);
+long mousedev_select(dev_t dev, int which);
 
 /**
  * @brief Perform a poll operation on /dev/mouse0.
@@ -569,7 +581,7 @@ int mousedev_select(dev_t dev, int which);
  *
  * @return  1 if there are pollable events, 0 otherwise.
  */
-int mousedev_poll(dev_t dev, struct pollfd *pfd);
+long mousedev_poll(dev_t dev, struct pollfd *pfd);
 
 
 /**
@@ -585,7 +597,7 @@ int mousedev_poll(dev_t dev, struct pollfd *pfd);
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
+long snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
 
 /**
  * @brief Write to a sound device (major = 14).
@@ -634,7 +646,138 @@ ssize_t snddev_read(struct file_t *f, off_t *pos,
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-int snddev_select(struct file_t *f, int which);
+long snddev_select(struct file_t *f, int which);
+
+/**
+ * @brief Perform a poll operation on a sound device (major = 14).
+ *
+ * After opening a sound device, a poll operation
+ * can be performed on the device (accessed via the file struct \a f).
+ * The \a events field of \a pfd contains a combination of requested events
+ * (POLLIN, POLLOUT, ...). The resultant events are returned in the \a revents
+ * member of \a pfd.
+ *
+ * @param   f       open file struct
+ * @param   pfd     poll events
+ *
+ * @return  1 if there are pollable events, 0 otherwise.
+ */
+long snddev_poll(struct file_t *f, struct pollfd *pfd);
+
+
+/**
+ * @brief Read from a miscellaneous device (major = 10).
+ *
+ * Switch function to read bytes from a miscellaneous block device.
+ *
+ * @param   f       open file struct
+ * @param   pos     offset in \a f to read from
+ * @param   buf     buffer to read to
+ * @param   count   number of bytes to read
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
+ *
+ * @return number of bytes read on success, -(errno) on failure
+ */
+ssize_t miscdev_read(struct file_t *f, off_t *pos,
+                     unsigned char *buf, size_t count, int kernel);
+
+/**
+ * @brief Write to a miscellaneous device (major = 10).
+ *
+ * Switch function to write bytes to a miscellaneous block device.
+ *
+ * @param   f       open file struct
+ * @param   pos     offset in \a f to write to
+ * @param   buf     buffer to write from
+ * @param   count   number of bytes to write
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
+ *
+ * @return number of bytes written on success, -(errno) on failure
+ */
+ssize_t miscdev_write(struct file_t *f, off_t *pos,
+                      unsigned char *buf, size_t count, int kernel);
+
+/**
+ * @brief Perform a select operation on a miscellaneous device (major = 10).
+ *
+ * After opening a miscellaneous block device, a select operation
+ * can be performed on the device (accessed via the file struct \a f).
+ * The operation (passed in \a which), can be FREAD, FWRITE, 0, or a 
+ * combination of these.
+ *
+ * @param   f       open file struct
+ * @param   which   the select operation to perform
+ *
+ * @return  1 if there are selectable events, 0 otherwise.
+ */
+long miscdev_select(struct file_t *f, int which);
+
+
+/**
+ * @brief Perform a poll operation on a miscellaneous device (major = 10).
+ *
+ * After opening a miscellaneous block device, a poll operation
+ * can be performed on the device (accessed via the file struct \a f).
+ * The \a events field of \a pfd contains a combination of requested events
+ * (POLLIN, POLLOUT, ...). The resultant events are returned in the \a revents
+ * member of \a pfd.
+ *
+ * @param   f       open file struct
+ * @param   pfd     poll events
+ *
+ * @return  1 if there are pollable events, 0 otherwise.
+ */
+long miscdev_poll(struct file_t *f, struct pollfd *pfd);
+
+
+/**
+ * @brief General device control function.
+ *
+ * Perform ioctl operations on a miscellaneous device (major = 10).
+ *
+ * @param   dev     device id
+ * @param   cmd     ioctl command (device specific)
+ * @param   arg     optional argument (depends on \a cmd)
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
+ *
+ * @return  zero or a positive result on success, -(errno) on failure.
+ */
+long miscdev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
+
+
+/**
+ * @brief General Block Read/Write Operations.
+ *
+ * This is a swiss-army knife function that handles both read and write
+ * operations from disk/media. The buffer specified in \a buf tells the
+ * function everything it needs to know: how many bytes to read or write,
+ * where to read/write the data to/from, which device to use for the
+ * read/write operation, and whether the operation is a read or write.
+ *
+ * @param   req     disk I/O request struct with read/write details
+ *
+ * @return number of bytes read or written on success, -(errno) on failure
+ */
+long lodev_strategy(struct disk_req_t *req);
+
+
+/**
+ * @brief General device control function.
+ *
+ * Perform ioctl operations on a loopback device (block, major = 7).
+ *
+ * @param   dev_id  device id
+ * @param   cmd     ioctl command (device specific)
+ * @param   arg     optional argument (depends on \a cmd)
+ * @param   kernel  non-zero if the caller is a kernel function, zero if
+ *                    it is a syscall from userland
+ *
+ * @return  zero or a positive result on success, -(errno) on failure.
+ */
+long lodev_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
 
 
 /******************************
@@ -693,7 +836,7 @@ ssize_t block_read(struct file_t *f, off_t *pos,
  *
  * @return number of bytes read or written on success, -(errno) on failure
  */
-int ramdev_strategy(struct disk_req_t *req);
+long ramdev_strategy(struct disk_req_t *req);
 
 /**
  * @brief Decompress the initial RAM disk (initrd).
@@ -721,13 +864,23 @@ int ramdisk_init(virtual_addr data_start, virtual_addr data_end);
  *
  * @return  zero or a positive result on success, -(errno) on failure.
  */
-int ramdev_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
+long ramdev_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
 
 
 /**************************************
  * Helper functions
  **************************************/
 
-int syscall_ioctl_internal(int fd, unsigned int cmd, char *arg, int kernel);
+#include "user.h"
+
+long syscall_ioctl_internal(int fd, unsigned int cmd, char *arg, int kernel);
+
+#define RETURN_IOCTL_RES(type, dest, val, kernel) \
+    if(kernel) *(type *)(dest) = (type)(val); \
+    else {  \
+        type tmp = (type)(val); \
+        COPY_VAL_TO_USER(((type *)dest), &tmp);   \
+    }   \
+    return 0;
 
 #endif      /* __DEV_H__ */

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ids.h
  *    This file is part of LaylaOS.
@@ -73,7 +73,7 @@
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setgid(gid_t gid);
+long syscall_setgid(gid_t gid);
 
 /**
  * @brief Handler for syscall getgid().
@@ -82,7 +82,7 @@ int syscall_setgid(gid_t gid);
  *
  * @return  real group id.
  */
-int syscall_getgid(void);
+long syscall_getgid(void);
 
 /**
  * @brief Handler for syscall getegid().
@@ -91,7 +91,7 @@ int syscall_getgid(void);
  *
  * @return  effective group id.
  */
-int syscall_getegid(void);
+long syscall_getegid(void);
 
 /**
  * @brief Handler for syscall setuid().
@@ -102,7 +102,7 @@ int syscall_getegid(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setuid(uid_t uid);
+long syscall_setuid(uid_t uid);
 
 /**
  * @brief Handler for syscall getuid().
@@ -111,7 +111,7 @@ int syscall_setuid(uid_t uid);
  *
  * @return  real user id.
  */
-int syscall_getuid(void);
+long syscall_getuid(void);
 
 /**
  * @brief Handler for syscall geteuid().
@@ -120,7 +120,7 @@ int syscall_getuid(void);
  *
  * @return  effective user id.
  */
-int syscall_geteuid(void);
+long syscall_geteuid(void);
 
 /**
  * @brief Handler for syscall setpgid().
@@ -132,7 +132,7 @@ int syscall_geteuid(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setpgid(pid_t pid, pid_t pgid);
+long syscall_setpgid(pid_t pid, pid_t pgid);
 
 /**
  * @brief Handler for syscall getpgid().
@@ -143,7 +143,7 @@ int syscall_setpgid(pid_t pid, pid_t pgid);
  *
  * @return  process group id.
  */
-int syscall_getpgid(pid_t pid);
+long syscall_getpgid(pid_t pid);
 
 /**
  * @brief Handler for syscall getpgrp().
@@ -152,7 +152,7 @@ int syscall_getpgid(pid_t pid);
  *
  * @return  process group id.
  */
-int syscall_getpgrp(void);
+long syscall_getpgrp(void);
 
 //int syscall_setpgrp(pid_t pid, pid_t pgid);
 
@@ -163,7 +163,7 @@ int syscall_getpgrp(void);
  *
  * @return  process id.
  */
-int syscall_getpid(void);
+long syscall_getpid(void);
 
 /**
  * @brief Handler for syscall getppid().
@@ -172,7 +172,7 @@ int syscall_getpid(void);
  *
  * @return  parent process id.
  */
-int syscall_getppid(void);
+long syscall_getppid(void);
 
 /**
  * @brief Handler for syscall getsid().
@@ -183,7 +183,7 @@ int syscall_getppid(void);
  *
  * @return  session id.
  */
-int syscall_getsid(pid_t pid);
+long syscall_getsid(pid_t pid);
 
 /**
  * @brief Handler for syscall setsid().
@@ -192,7 +192,7 @@ int syscall_getsid(pid_t pid);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setsid(void);
+long syscall_setsid(void);
 
 /**
  * @brief Handler for syscall setreuid().
@@ -204,7 +204,7 @@ int syscall_setsid(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setreuid(uid_t ruid, uid_t euid);
+long syscall_setreuid(uid_t ruid, uid_t euid);
 
 /**
  * @brief Handler for syscall setregid().
@@ -216,7 +216,7 @@ int syscall_setreuid(uid_t ruid, uid_t euid);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setregid(gid_t rgid, gid_t egid);
+long syscall_setregid(gid_t rgid, gid_t egid);
 
 /**
  * @brief Handler for syscall setresuid().
@@ -229,7 +229,7 @@ int syscall_setregid(gid_t rgid, gid_t egid);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setresuid(uid_t newruid, uid_t neweuid, uid_t newsuid);
+long syscall_setresuid(uid_t newruid, uid_t neweuid, uid_t newsuid);
 
 /**
  * @brief Handler for syscall setresgid().
@@ -242,7 +242,7 @@ int syscall_setresuid(uid_t newruid, uid_t neweuid, uid_t newsuid);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setresgid(gid_t newrgid, gid_t newegid, gid_t newsgid);
+long syscall_setresgid(gid_t newrgid, gid_t newegid, gid_t newsgid);
 
 /**
  * @brief Handler for syscall getresuid().
@@ -255,7 +255,7 @@ int syscall_setresgid(gid_t newrgid, gid_t newegid, gid_t newsgid);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid);
+long syscall_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid);
 
 /**
  * @brief Handler for syscall getresgid().
@@ -268,6 +268,6 @@ int syscall_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid);
+long syscall_getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid);
 
 #endif      /* __IDS_H__ */

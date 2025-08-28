@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ksignal.h
  *    This file is part of LaylaOS.
@@ -165,12 +165,13 @@ void check_pending_signals(struct regs *r);
  *
  * Syscall for returning from a user signal handler.
  *
+ * @param   r           current CPU registers
  * @param   user_stack  pointer to the user stack, from which the previous
  *                        task context is restored
  *
  * @return  never returns.
  */
-int syscall_sigreturn(uintptr_t user_stack);
+long syscall_sigreturn(struct regs *r, uintptr_t user_stack);
 
 /**
  * @brief Save task sigmask.
@@ -203,8 +204,8 @@ void restore_sigmask(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_sigaction(int signum,
-                      struct sigaction* newact, struct sigaction* oldact);
+long syscall_sigaction(int signum,
+                       struct sigaction* newact, struct sigaction* oldact);
 
 /**
  * @brief Handler for syscall signal().
@@ -217,7 +218,7 @@ int syscall_sigaction(int signum,
  *
  * @return  -(ENOSYS) always.
  */
-int syscall_signal(int signum, void *handler, void *sa_restorer);
+long syscall_signal(int signum, void *handler, void *sa_restorer);
 
 /**
  * @brief Handler for syscall sigpending().
@@ -228,7 +229,7 @@ int syscall_signal(int signum, void *handler, void *sa_restorer);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_sigpending(sigset_t* set);
+long syscall_sigpending(sigset_t* set);
 
 /**
  * @brief Handler for syscall sigtimedwait().
@@ -241,8 +242,8 @@ int syscall_sigpending(sigset_t* set);
  *
  * @return  signal number on success, -(errno) on failure.
  */
-int syscall_sigtimedwait(sigset_t *set, siginfo_t *info,
-                         struct timespec *ts);
+long syscall_sigtimedwait(sigset_t *set, siginfo_t *info,
+                          struct timespec *ts);
 
 /**
  * @brief Handler for syscall sigprocmask().
@@ -255,18 +256,19 @@ int syscall_sigtimedwait(sigset_t *set, siginfo_t *info,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_sigprocmask(int how, sigset_t *userset, sigset_t *oldset);
+long syscall_sigprocmask(int how, sigset_t *userset, sigset_t *oldset);
 
 /**
  * @brief Handler for syscall sigsuspend().
  *
  * Suspend task signals.
  *
- * @param   set     the signal mask of the signals to suspend
+ * @param   r           current CPU registers
+ * @param   set         the signal mask of the signals to suspend
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_sigsuspend(sigset_t *set);
+long syscall_sigsuspend(struct regs *r, sigset_t *set);
 
 /**
  * @brief Core dump.
@@ -287,7 +289,7 @@ void dump_core(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_signaltstack(stack_t *ss, stack_t *old_ss);
+long syscall_signaltstack(stack_t *ss, stack_t *old_ss);
 
 /**
  * @brief Add a signal to a task.
@@ -303,85 +305,19 @@ int syscall_signaltstack(stack_t *ss, stack_t *old_ss);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int add_task_signal(struct task_t *t, int signum, 
-                    siginfo_t *siginfo, int force);
-
-/**
- * @brief Add a signal to a task from a user task.
- *
- * Signal number \a signum is added to the task's pending signals, and the 
- * task is awakened if it is sleeping. This is a shorthand to calling
- * add_task_signal() with a siginfo containing SI_USER and the calling
- * task's uid and pid.
- *
- * @param   t           task to receive the signal
- * @param   signum      signal number
- * @param   force       if non-zero, the signal is delivered even if the task
- *                        is not owned by the user
- *
- * @return  zero on success, -(errno) on failure.
- */
-int user_add_task_signal(struct task_t *t, int signum, int force);
-
-/**
- * @brief Add a signal to a task from one of its children.
- *
- * Signal number \a signum is added to the task's pending signals, and the 
- * task is awakened if it is sleeping. This is a shorthand to calling
- * add_task_signal() to deliver SIGCHLD, but it also fills the appropriate
- * values for siginfo.
- *
- * @param   t           task to receive the signal
- * @param   code        code number to add to siginfo
- * @param   status      calling task's exit status
- *
- * @return  zero on success, -(errno) on failure.
- */
-int add_task_child_signal(struct task_t *t, int code, int status);
-
-/**
- * @brief Add a timer signal to a task.
- *
- * Signal number \a signum is added to the task's pending signals, and the 
- * task is awakened if it is sleeping. This is a shorthand to calling
- * add_task_signal() with a siginfo containing SI_TIMER and the given timeid.
- *
- * @param   t           task to receive the signal
- * @param   signum      signal number
- * @param   timerid     timer id
- *
- * @return  zero on success, -(errno) on failure.
- */
-int add_task_timer_signal(struct task_t *t, int signum, ktimer_t timerid);
-
-/**
- * @brief Add a SIGSEGV signal to a task.
- *
- * Signal number \a signum is added to the task's pending signals, and the 
- * task is awakened if it is sleeping. This is a shorthand to calling
- * add_task_signal() to deliver SIGSEGV, but it also fills the appropriate
- * values for siginfo.
- *
- * @param   t           task to receive the signal
- * @param   signum      signal number
- * @param   code        code number to add to siginfo
- * @param   addr        the offending address causing this segment
- *                        violation signal
- *
- * @return  zero on success, -(errno) on failure.
- */
-int add_task_segv_signal(struct task_t *t, int signum, int code, void *addr);
+long add_task_signal(struct task_t *t, int signum, 
+                     siginfo_t *siginfo, int force);
 
 
 /***************************
  * Helper functions
  ***************************/
 
-int syscall_sigpending_internal(sigset_t* set, int kernel);
+long syscall_sigpending_internal(sigset_t* set, int kernel);
 
-int syscall_sigprocmask_internal(struct task_t *ct, int how,
-                                 sigset_t* userset,
-                                 sigset_t* oldset, int kernel);
+long syscall_sigprocmask_internal(struct task_t *ct, int how,
+                                  sigset_t* userset,
+                                  sigset_t* oldset, int kernel);
 
 /*
  * Helper function defined in syscall_dispatcher.S

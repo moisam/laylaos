@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: pic.h
  *    This file is part of LaylaOS.
@@ -30,6 +30,7 @@
 
 #include <stdint.h>
 #include <kernel/io.h>
+#include <kernel/apic.h>
 
 /* controller registers */
 /* PIC1&2 register port addresses */
@@ -64,6 +65,12 @@
 
 static inline void pic_send_eoi(unsigned char irq)
 {
+    if(apic_running)
+    {
+        *((volatile uint32_t *)(lapic_virt + LAPIC_REG_EOI)) = 0;
+        return;
+    }
+
     if(irq >= 8)
     {
         outb(PIC2_COMMAND, PIC_EOI);
@@ -78,7 +85,7 @@ static inline void pic_send_eoi(unsigned char irq)
  ***********************/
 
 /**
- * @brief Initialise the PIC.
+ * @brief Initialize the PIC.
  *
  * Initialize the 8259 Programmable Interrupt Controller (PIC).
  *
@@ -88,6 +95,15 @@ static inline void pic_send_eoi(unsigned char irq)
  * @return  nothing.
  */
 void pic_init(int offset0, int offset1);
+
+/**
+ * @brief Disable the PIC.
+ *
+ * Disable the 8259 Programmable Interrupt Controller (PIC).
+ *
+ * @return  nothing.
+ */
+void pic_disable(void);
 
 /**
  * @brief Enable an IRQ.

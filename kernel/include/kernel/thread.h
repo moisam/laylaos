@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: thread.h
  *    This file is part of LaylaOS.
@@ -50,7 +50,7 @@
  *
  * @see: https://man7.org/linux/man-pages/man2/tgkill.2.html
  */
-int syscall_tgkill(pid_t tgid, pid_t tid, int sig);
+long syscall_tgkill(pid_t tgid, pid_t tid, int sig);
 
 /**
  * @brief Handler for syscall gettid().
@@ -59,7 +59,7 @@ int syscall_tgkill(pid_t tgid, pid_t tid, int sig);
  *
  * @return  thread id.
  */
-pid_t syscall_gettid(void);
+long syscall_gettid(void);
 
 /**
  * @brief Check if task's threads are dead.
@@ -71,7 +71,7 @@ pid_t syscall_gettid(void);
  *
  * @return  1 if all other threads are zombies, 0 if at least one is alive.
  */
-int other_threads_dead(struct task_t *task);
+int other_threads_dead(volatile struct task_t *task);
 
 /**
  * @brief Terminate thread group.
@@ -119,6 +119,6 @@ void reap_dead_threads(struct task_t *task);
  *
  * @return  thread group id.
  */
-pid_t get_tgid(struct task_t *task);
+long get_tgid(struct task_t *task);
 
 #endif      /* __THREADS_H__ */

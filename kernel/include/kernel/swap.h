@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: swap.h
  *    This file is part of LaylaOS.
@@ -50,7 +50,7 @@
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_swapon(char *path, int swapflags);
+long syscall_swapon(char *path, int swapflags);
 
 /**
  * @brief Handler for syscall swapoff().
@@ -61,6 +61,6 @@ int syscall_swapon(char *path, int swapflags);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_swapoff(char *path);
+long syscall_swapoff(char *path);
 
 #endif      /* __SWAP_H__ */

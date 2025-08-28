@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: fio.h
  *    This file is part of LaylaOS.
@@ -42,6 +42,7 @@
  *
  * @return  zero on success, -(errno) on failure.
  */
+/*
 static inline int fdnode(int fd, struct task_t *t,
                          struct file_t **f, struct fs_node_t **node)
 {
@@ -61,6 +62,8 @@ static inline int fdnode(int fd, struct task_t *t,
     
     return 0;
 }
+*/
+int fdnode(int fd, volatile struct task_t *t, struct file_t **f, struct fs_node_t **node);
 
 
 /**
@@ -74,7 +77,7 @@ static inline int fdnode(int fd, struct task_t *t,
  *
  * @return  1 on success, 0 on failure.
  */
-static inline int validfd(int fd, struct task_t *ct)
+static inline int validfd(int fd, volatile struct task_t *ct)
 {
 	if(fd < 0 || fd >= NR_OPEN || !ct->ofiles || !ct->ofiles->ofile[fd])
 	{

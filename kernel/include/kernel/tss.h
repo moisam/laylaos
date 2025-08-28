@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: tss.h
  *    This file is part of LaylaOS.
@@ -109,7 +109,7 @@ struct tss_entry_struct
  
 typedef struct tss_entry_struct tss_entry_t;
 
-extern tss_entry_t tss_entry;
+extern tss_entry_t tss_entry[];
 
 
 /************************
@@ -121,12 +121,13 @@ extern tss_entry_t tss_entry;
  *
  * Called during boot to setup and install the TSS.
  *
+ * @param   i           index of tss struct to use
  * @param   kernel_ss   kernel stack segment
  * @param   kernel_esp  kernel stack pointer
  *
  * @return  nothing.
  */
-void tss_install(uint32_t kernel_ss, uintptr_t kernel_esp);
+void tss_install(int i, uint32_t kernel_ss, uintptr_t kernel_esp);
 
 /**
  * @brief Flush the TSS.

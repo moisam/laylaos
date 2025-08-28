@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: idt.h
  *    This file is part of LaylaOS.
@@ -118,5 +118,14 @@ void idt_init(void);
  */
 void install_isr(uint32_t no, uint8_t flags, uint16_t selector,
                  void (*isr_function)());
+
+/**
+ * @brief Install IDT.
+ *
+ * Load the IDT register.
+ *
+ * @return  nothing.
+ */
+void idt_install(void);
 
 #endif      /* __IDT_H__ */

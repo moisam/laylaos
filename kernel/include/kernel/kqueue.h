@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: kqueue.h
  *    This file is part of LaylaOS.
@@ -29,6 +29,7 @@
 #define __KQUEUE_H__
 
 #include <kernel/laylaos.h>
+#include <kernel/select.h>
 
 /**
  * @struct kqueue_t
@@ -38,12 +39,14 @@
  */
 struct kqueue_t
 {
-    void *buf;      /**< pointer to the queue's buffer */
+    volatile void *buf;      /**< pointer to the queue's buffer */
 
-    int head,       /**< index of queue head */
-        tail;       /**< index of queue tail */
+    volatile int head,       /**< index of queue head */
+                 tail;       /**< index of queue tail */
     
-    int extra;      /**< implementation-specific (mainly used by ttys) */
+    volatile int extra;      /**< implementation-specific (mainly used by ttys) */
+
+    struct selinfo sel; /**< select channel for the queue */
 };
 
 

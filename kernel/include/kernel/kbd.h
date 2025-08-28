@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: kbd.h
  *    This file is part of LaylaOS.
@@ -140,7 +140,7 @@ extern struct kqueue_t kbd_queue;
  *
  * The kernel task that handles incoming keyboard input.
  */
-extern struct task_t *kbd_task;
+extern volatile struct task_t *kbd_task;
 
 
 /***************************************

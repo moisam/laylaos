@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ptrace.h
  *    This file is part of LaylaOS.
@@ -49,7 +49,7 @@ void ptrace_kill_tracees(struct task_t *tracer);
  *
  * @return  nothing.
  */
-void ptrace_clear_state(struct task_t *tracee);
+void ptrace_clear_state(volatile struct task_t *tracee);
 
 /**
  * @brief Copy ptrace state.
@@ -76,7 +76,7 @@ void ptrace_copy_state(struct task_t *tracee2, struct task_t *tracee);
  *
  * @return  \a signum.
  */
-int ptrace_signal(int signum, int reason);
+long ptrace_signal(int signum, int reason);
 
 /**
  * @brief Handler for syscall ptrace().
@@ -90,7 +90,7 @@ int ptrace_signal(int signum, int reason);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_ptrace(int request, pid_t pid, void *addr, void *data);
+long syscall_ptrace(int request, pid_t pid, void *addr, void *data);
 
 
 #ifndef SI_KERNEL

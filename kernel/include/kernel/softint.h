@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: softint.h
  *    This file is part of LaylaOS.
@@ -65,11 +65,11 @@ extern volatile int pending_bitmap;
  *
  * The kernel task that handles soft interrupts.
  */
-extern struct task_t *softint_task;
+extern volatile struct task_t *softint_task;
 
-extern struct task_t *softitimer_task;
+extern volatile struct task_t *softitimer_task;
 
-extern struct task_t *softsleep_task;
+extern volatile struct task_t *softsleep_task;
 
 /**********************************
  * Functions defined in softint.c

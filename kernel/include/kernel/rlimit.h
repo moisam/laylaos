@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: rlimit.h
  *    This file is part of LaylaOS.
@@ -65,7 +65,7 @@ extern struct task_rlimit_t default_rlimits[];
  *
  * @return  1 if resouce limit is exceeded, 0 otherwise.
  */
-INLINE int exceeds_rlimit(struct task_t *t, int resource, rlim_t value)
+INLINE int exceeds_rlimit(volatile struct task_t *t, int resource, rlim_t value)
 {
     rlim_t limit;
 
@@ -94,7 +94,7 @@ INLINE int exceeds_rlimit(struct task_t *t, int resource, rlim_t value)
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getrusage(int who, struct rusage *r_usage);
+long syscall_getrusage(int who, struct rusage *r_usage);
 
 /**
  * @brief Handler for syscall getrlimit().
@@ -106,7 +106,7 @@ int syscall_getrusage(int who, struct rusage *r_usage);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getrlimit(int resource, struct rlimit *rlim);
+long syscall_getrlimit(int resource, struct rlimit *rlim);
 
 /**
  * @brief Handler for syscall setrlimit().
@@ -118,7 +118,7 @@ int syscall_getrlimit(int resource, struct rlimit *rlim);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setrlimit(int resource, struct rlimit *rlim);
+long syscall_setrlimit(int resource, struct rlimit *rlim);
 
 /**
  * @brief Handler for syscall prlimit().
@@ -132,8 +132,8 @@ int syscall_setrlimit(int resource, struct rlimit *rlim);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_prlimit(pid_t pid, int resource, 
-                    struct rlimit *new_rlim, struct rlimit *old_rlim);
+long syscall_prlimit(pid_t pid, int resource, 
+                     struct rlimit *new_rlim, struct rlimit *old_rlim);
 
 /**
  * @brief Handler for syscall ulimit().
@@ -146,7 +146,7 @@ int syscall_prlimit(pid_t pid, int resource,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_ulimit(int cmd, long newlimit);
+long syscall_ulimit(int cmd, long newlimit);
 
 
 /*********************

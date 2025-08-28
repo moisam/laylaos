@@ -59,6 +59,14 @@ struct handler_t
  */
 extern struct handler_t *interrupt_handlers[];
 
+struct irq_redir_t
+{
+    uint32_t gsi;
+    uint16_t flags;
+};
+
+extern struct irq_redir_t irq_redir[];
+
 
 /*
  * IRQ entry functions, defined in arch/xx/interrupt.S.
@@ -151,5 +159,8 @@ struct handler_t *irq_handler_alloc(int (*func)(struct regs *, int),
  * @return  nothing.
  */
 void irq_init(void);
+
+
+//uint32_t irq_remap(uint32_t irq);
 
 #endif      /* __IRQ_H__ */

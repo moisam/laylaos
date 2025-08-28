@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: vfs.h
  *    This file is part of LaylaOS.
@@ -34,11 +34,8 @@
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <limits.h>      // OPEN_MAX
-//#include <sys/syslimits.h>      // OPEN_MAX
 #include <sys/mount.h>          // mount flags
-#include <kernel/mutex.h>
-//#include <kernel/bio.h>
-#include <kernel/select.h>
+#include <kernel/laylaos.h>
 
 /*******************************
  * macro definitions
@@ -52,14 +49,14 @@
 #define	LINK_MAX		        32767	/**< max file link count */
 #endif
 
-#define NR_INODE                256     /**< max inodes cached in memory */
+#define NR_INODE                4096    /**< max inodes cached in memory */
 
-#define NR_FILE                 256     /**< max files open on the system */
+#define NR_FILE                 512     /**< max files open on the system */
 
 #define NR_OPEN                 OPEN_MAX    /**< max files open per task 
                                                  (currently 32) */
 
-#define NR_BUFFERS              128     /**< max buffers */
+//#define NR_BUFFERS              128     /**< max buffers */
 
 #define NR_SUPER                32      /**< max superblocks (i.e. mounted
                                              devices) */
@@ -68,6 +65,15 @@
                                              filesystems */
 
 #define NR_RAMDISK              256     /**< max number of ramdisks */
+
+#define NR_LODEV                256     /**< max number of loopback block devices */
+
+/*
+ * We need to include this *after* defining OPEN_MAX, which might either be
+ * defined in limits.h, or in the #ifdef above.
+ */
+#include <kernel/mutex.h>
+#include <kernel/select.h>
 
 /*
  * Flags for bmap() functions
@@ -84,7 +90,7 @@
 #define READ                    04
 
 /*
- * Open_flags for vfs_open_internal() and vfs_open()
+ * Open_flags for vfs_open_internal(), vfs_open() and vfs_linkat()
  */
 #define OPEN_KERNEL_CALLER      0x1
 #define OPEN_USER_CALLER        0x0
@@ -92,6 +98,14 @@
 #define OPEN_NOFOLLOW_SYMLINK   0x0
 #define OPEN_NOFOLLOW_MPOINT    0x4
 #define OPEN_CREATE_DENTRY      0x10
+#define OPEN_RENAME_DIR         0x20
+#define OPEN_RENAME_LINK        0x40
+
+/*
+ * Flags for get_node()
+ */
+#define GETNODE_FOLLOW_MPOINTS  0x01
+#define GETNODE_IGNORE_STALE    0x02
 
 /*
  * MIX and MAX macros
@@ -140,8 +154,57 @@
  */
 #define INC_NODE_REFS(node)             \
     kernel_mutex_lock(&node->lock);     \
-    node->refs++;                       \
+    __sync_fetch_and_add(&node->refs, 1);\
     kernel_mutex_unlock(&node->lock);
+
+/*
+#define INC_NODE_REFS(node)                                 \
+    if(kernel_mutex_trylock(&node->lock)) {                 \
+        if(!cur_task || node->lock.holder != cur_task) {    \
+            kernel_mutex_lock(&node->lock);                 \
+            __sync_fetch_and_add(&node->refs, 1);           \
+            kernel_mutex_unlock(&node->lock);               \
+        } else __sync_fetch_and_add(&node->refs, 1);        \
+    } else {                                                \
+        __sync_fetch_and_add(&node->refs, 1);               \
+        kernel_mutex_unlock(&node->lock);                   \
+    }
+*/
+
+/**
+ * \def MARK_NODE_STALE
+ * Set stale flag on node
+ */
+#define MARK_NODE_STALE(node)           \
+    volatile int remove_stale = 0;      \
+    kernel_mutex_lock(&node->lock);     \
+    if(!(node->flags & FS_NODE_STALE)) {\
+        __sync_or_and_fetch(&node->flags, FS_NODE_STALE);   \
+        remove_stale = 1;               \
+    }                                   \
+    kernel_mutex_unlock(&node->lock);
+
+/**
+ * \def UNMARK_NODE_STALE
+ * Remove stale flag from node
+ */
+#define UNMARK_NODE_STALE(node)         \
+    kernel_mutex_lock(&node->lock);     \
+    if(remove_stale)                    \
+        __sync_and_and_fetch(&node->flags, ~FS_NODE_STALE); \
+    kernel_mutex_unlock(&node->lock);
+
+/**
+ * \def GET_DIRENT_LEN
+ * Get the actual size of a struct dirent, given the length of the d_name
+ * field. We do this because in musl, d_name is an array of 256 chars, while
+ * in newlib it is a dynamic array. But regardless of the C library 
+ * implementation used, we need a sane way of finding struct dirent size. This
+ * macro is taken from FreeBSD's dirent.h, and it gives size rounded up to an
+ * 8-byte boundary
+ */
+#define GET_DIRENT_LEN(namelen)         \
+    ((__builtin_offsetof(struct dirent, d_name) + (namelen) + 1 + 7) & ~7)
 
 
 /***************************************
@@ -185,7 +248,7 @@ extern struct file_t ftab[];
  *
  * The master node table (defined in node.c).
  */
-extern struct fs_node_t node_table[];
+extern struct fs_node_t *node_table[];
 
 /**
  * @var fstab
@@ -210,7 +273,7 @@ extern struct mount_info_t mounttab[];
  * Lock to synchronise access to the master mount filesystem table (defined
  * in mount.c).
  */
-extern struct kernel_mutex_t mount_table_mutex;
+extern volatile struct kernel_mutex_t mount_table_mutex;
 
 /**
  * @var system_root_node
@@ -237,7 +300,7 @@ extern struct fs_node_t *system_root_node;
  *
  * @return  zero on success, -(errno) on failure.
  */
-int falloc(int *_fd, struct file_t **_f);
+long falloc(int *_fd, struct file_t **_f);
 
 /**
  * @brief Close file.
@@ -249,7 +312,7 @@ int falloc(int *_fd, struct file_t **_f);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int closef(struct file_t *f);
+long closef(struct file_t *f);
 
 
 /**********************************
@@ -312,7 +375,7 @@ struct fs_info_t *fs_register(char *name, struct fs_ops_t *ops);
  *
  * @return  zero or positive number on success, -(errno) on failure.
  */
-int syscall_sysfs(int option, uintptr_t fsid, char *buf);
+long syscall_sysfs(int option, uintptr_t fsid, char *buf);
 
 
 /**********************************
@@ -382,7 +445,7 @@ struct mount_info_t *mounttab_first_empty(void);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options);
+long vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options);
 
 /**
  * @brief Unmount the given device.
@@ -395,7 +458,7 @@ int vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_umount(dev_t dev, int flags);
+long vfs_umount(dev_t dev, int flags);
 
 /**
  * @brief Initial mount.
@@ -405,9 +468,9 @@ int vfs_umount(dev_t dev, int flags);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int mountall(void);
+long mountall(void);
 
-int mount_internal(char *module, char *devpath, int boot_mount);
+long mount_internal(char *module, char *devpath, int boot_mount);
 
 /**
  * @brief Path to device id.
@@ -420,7 +483,7 @@ int mount_internal(char *module, char *devpath, int boot_mount);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_path_to_devid(char *source, char *fstype, dev_t *dev);
+long vfs_path_to_devid(char *source, char *fstype, dev_t *dev);
 
 
 /**********************************
@@ -484,11 +547,12 @@ struct fs_node_t *get_empty_node(void);
  *
  * @param   dev             device id
  * @param   n               inode number
- * @param   follow_mpoints  non-zero to follow last mount point
+ * @param   flags           can be 0 or a combination of GETNODE_FOLLOW_MPOINTS 
+ *                            and GETNODE_IGNORE_STALE
  *
  * @return  node pointer on success, NULL on failure.
  */
-struct fs_node_t *get_node(dev_t dev, ino_t n, int follow_mpoints);
+struct fs_node_t *get_node(dev_t dev, ino_t n, int flags);
 
 /**
  * @brief Read file node.
@@ -499,7 +563,7 @@ struct fs_node_t *get_node(dev_t dev, ino_t n, int follow_mpoints);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int read_node(struct fs_node_t *node);
+long read_node(struct fs_node_t *node);
 
 /**
  * @brief Write file node.
@@ -510,7 +574,7 @@ int read_node(struct fs_node_t *node);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int write_node(struct fs_node_t *node);
+long write_node(struct fs_node_t *node);
 
 /**
  * @brief Truncate node.
@@ -523,7 +587,7 @@ int write_node(struct fs_node_t *node);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int truncate_node(struct fs_node_t *node, size_t sz);
+long truncate_node(struct fs_node_t *node, size_t sz);
 
 /**
  * @brief Create a new node.
@@ -549,21 +613,21 @@ struct fs_node_t *new_node(dev_t dev);
  */
 void free_node(struct fs_node_t *node);
 
+/**
+ * @brief Node references.
+ *
+ * Count the number of file table entries that reference the given node.
+ *
+ * @param   node    file node
+ *
+ * @return  reference count.
+ */
+long files_referencing_node(struct fs_node_t *node);
+
 
 /**********************************
  * Functions defined in vfs.c
  **********************************/
-
-/**
- * @brief Update node's atime.
- *
- * Update the node's last access time.
- *
- * @param   node    file node
- *
- * @return  nothing.
- */
-void update_atime(struct fs_node_t *node);
 
 /**
  * @brief Remove trailing slash from path.
@@ -580,7 +644,7 @@ void update_atime(struct fs_node_t *node);
  *
  * @see     get_parent_dir()
  */
-char *path_remove_trailing_slash(char *path, int kernel, int *trailing_slash);
+char *path_remove_trailing_slash(char *path, int kernel, long *trailing_slash);
 
 /**
  * @brief Get parent directory.
@@ -604,8 +668,8 @@ char *path_remove_trailing_slash(char *path, int kernel, int *trailing_slash);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int get_parent_dir(char *pathname, int dirfd, char **filename,
-                   struct fs_node_t **dirnode, int follow_mpoints);
+long get_parent_dir(char *pathname, int dirfd, char **filename,
+                    struct fs_node_t **dirnode, int follow_mpoints);
 
 /**
  * @brief Open a file.
@@ -622,8 +686,8 @@ int get_parent_dir(char *pathname, int dirfd, char **filename,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_open_internal(char *pathname, int dirfd, 
-                      struct fs_node_t **filenode, int open_flags);
+long vfs_open_internal(char *pathname, int dirfd, 
+                       struct fs_node_t **filenode, int open_flags);
 
 /**
  * @brief Open a file.
@@ -641,8 +705,8 @@ int vfs_open_internal(char *pathname, int dirfd,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_open(char *pathname, int flags, mode_t mode, int dirfd, 
-             struct fs_node_t **filenode, int open_flags);
+long vfs_open(char *pathname, int flags, mode_t mode, int dirfd, 
+              struct fs_node_t **filenode, int open_flags);
 
 /**
  * @brief Find a file in a directory.
@@ -663,8 +727,8 @@ int vfs_open(char *pathname, int flags, mode_t mode, int dirfd,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                struct cached_page_t **dbuf, size_t *dbuf_off);
+long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
+                 struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Find an inode in a directory.
@@ -687,9 +751,9 @@ int vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                         struct dirent **entry,
-                         struct cached_page_t **dbuf, size_t *dbuf_off);
+long vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                          struct dirent **entry,
+                          struct cached_page_t **dbuf, size_t *dbuf_off);
 
 /**
  * @brief Add a directory entry.
@@ -698,12 +762,12 @@ int vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  * \a dir node. The new file's inode number is passed as the \n n parameter.
  *
  * @param   dir         the parent directory's node
+ * @param   file        the new file's node (contains the new inode number)
  * @param   filename    the new file name
- * @param   n           the new file inode number
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_addir(struct fs_node_t *dir, char *filename, ino_t n);
+long vfs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename);
 
 /**
  * @brief Generic function to read from a file.
@@ -726,26 +790,6 @@ ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
                       unsigned char *buf, size_t count, int kernel);
 
 /**
- * @brief Generic function to read from a file.
- *
- * Read at most \a count bytes from the given \a file, starting at
- * offset \a pos in the file. The offset is updated with the count of bytes
- * read from the file.
- *
- * @param   file        file struct
- * @param   pos         file offset to start reading from
- * @param   buf         data is copied to this buffer
- * @param   count       number of characters to read
- * @param   kernel      non-zero if the caller is a kernel function
- *
- * @return  number of characters read on success, -(errno) on failure.
- *
- * @see     vfs_read_node()
- */
-ssize_t vfs_read(struct file_t *file, off_t *pos,
-                 unsigned char *buf, size_t count, int kernel);
-
-/**
  * @brief Generic function to write to a file.
  *
  * Write at most \a count bytes to the given file \a node, starting at
@@ -766,26 +810,6 @@ ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
                        unsigned char *buf, size_t count, int kernel);
 
 /**
- * @brief Generic function to write to a file.
- *
- * Write at most \a count bytes to the given \a file, starting at
- * offset \a pos in the file. The offset is updated with the count of bytes
- * written to the file.
- *
- * @param   file        file struct
- * @param   pos         file offset to start writing to
- * @param   buf         data is copied from this buffer
- * @param   count       number of characters to write
- * @param   kernel      non-zero if the caller is a kernel function
- *
- * @return  number of characters written on success, -(errno) on failure.
- *
- * @see     vfs_write_node()
- */
-ssize_t vfs_write(struct file_t *file, off_t *pos,
-                  unsigned char *buf, size_t count, int kernel);
-
-/**
  * @brief Generic linkat function.
  *
  * Make a new name (i.e. hard link) for a file.
@@ -794,13 +818,12 @@ ssize_t vfs_write(struct file_t *file, off_t *pos,
  * @param   oldname     existing file name
  * @param   newdirfd    \a newname is interpreted relative to this directory
  * @param   newname     file name of the new link
- * @param   flags       zero or AT_SYMLINK_NOFOLLOW (the other flag, 
- *                        AT_EMPTY_PATH, is not supported yet)
+ * @param   flags       zero or OPEN_FOLLOW_SYMLINK or OPEN_RENAME_DIR
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_linkat(int olddirfd, char *oldname, 
-               int newdirfd, char *newname, int flags);
+long vfs_linkat(int olddirfd, char *oldname, 
+                int newdirfd, char *newname, int flags);
 
 /**
  * @brief Generic unlinkat function.
@@ -813,7 +836,7 @@ int vfs_linkat(int olddirfd, char *oldname,
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_unlinkat(int dirfd, char *pathname, int flags);
+long vfs_unlinkat(int dirfd, char *pathname, int flags);
 
 /**
  * @brief Generic rmdir function.
@@ -822,10 +845,11 @@ int vfs_unlinkat(int dirfd, char *pathname, int flags);
  *
  * @param   dirfd       \a pathname is interpreted relative to this directory
  * @param   pathname    pathname of directory to remove
+ * @param   flags       zero or OPEN_RENAME_DIR
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_rmdir(int dirfd, char *pathname);
+long vfs_rmdir(int dirfd, char *pathname, int flags);
 
 /**
  * @brief Delete a directory entry.
@@ -834,15 +858,13 @@ int vfs_rmdir(int dirfd, char *pathname);
  *
  * @param   dir         the parent directory's node
  * @param   entry       the entry to delete
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the entry
- * @param   dbuf_off    the offset in dbuf->data at which the entry can be
- *                        found
+ * @param   is_dir      non-zero if entry is a directory and this is the last 
+ *                        hard link, i.e. there is no other filename referring
+ *                        to the directory's inode
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_deldir(struct fs_node_t *dir, struct dirent *entry,
-               struct cached_page_t *dbuf, size_t dbuf_off);
+long vfs_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir);
 
 /**
  * @brief Get dir entries.
@@ -857,7 +879,7 @@ int vfs_deldir(struct fs_node_t *dir, struct dirent *entry,
  *
  * @return  number of bytes read on success, -(errno) on failure.
  */
-int vfs_getdents(struct fs_node_t *dir, off_t *pos, void *dp, int count);
+long vfs_getdents(struct fs_node_t *dir, off_t *pos, void *dp, int count);
 
 /**
  * @brief Generic mknod function.
@@ -875,8 +897,38 @@ int vfs_getdents(struct fs_node_t *dir, off_t *pos, void *dp, int count);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int vfs_mknod(char *pathname, mode_t mode, dev_t dev, int dirfd,
-              int open_flags, struct fs_node_t **res);
+long vfs_mknod(char *pathname, mode_t mode, dev_t dev, int dirfd,
+               int open_flags, struct fs_node_t **res);
+
+/**
+ * @brief Synchronize file data.
+ *
+ * Synchronize a file's in-core state with storage device. 
+ * Unlike vfs_fsync(), this function does not synchronize file metadata.
+ * This function is called from syscall_fdatasync().
+ *
+ * @param   node            file inode
+ *
+ * @return  zero on success, -(errno) on failure.
+ *
+ * @see     vfs_fsync(), syscall_fdatasync()
+ */
+long vfs_fdatasync(struct fs_node_t *node);
+
+/**
+ * @brief Synchronize file data.
+ *
+ * Synchronize a file's in-core state with storage device. 
+ * Unlike vfs_fdatasync(), this function synchronizes file metadata.
+ * This function is called from syscall_fsync().
+ *
+ * @param   fd          file descriptor
+ *
+ * @return  zero on success, -(errno) on failure.
+ *
+ * @see     vfs_fdatasync(), syscall_fsync()
+ */
+long vfs_fsync(struct fs_node_t *node);
 
 
 /**********************************
@@ -892,9 +944,32 @@ int vfs_mknod(char *pathname, mode_t mode, dev_t dev, int dirfd,
  *
  * @return  nothing.
  *
- * @see     sync_super(), sync_nodes(), bflush()
+ * @see     sync_super(), sync_nodes()
  */
 void update(dev_t dev);
+
+/**
+ * @brief Disable disk update.
+ *
+ * Temporarily disable the disk updater task. This should be followed shortly
+ * by a call to disk_updater_enable(), or else disk buffers might get old.
+ *
+ * @return  nothing.
+ *
+ * @see     disk_updater_enable()
+ */
+void disk_updater_disable(void);
+
+/**
+ * @brief Enable disk update.
+ *
+ * Enable the disk updater task.
+ *
+ * @return  nothing.
+ *
+ * @see     disk_updater_disable()
+ */
+void disk_updater_enable(void);
 
 
 /**********************************
@@ -913,7 +988,69 @@ void update(dev_t dev);
 struct fs_node_t *rootfs_init(void);
 
 
-static inline struct mount_info_t *node_mount_info(struct fs_node_t *node)
+/**********************************
+ * Inlined functions
+ **********************************/
+
+/**
+ * @brief Generic function to read from a file.
+ *
+ * Read at most \a count bytes from the given \a file, starting at
+ * offset \a pos in the file. The offset is updated with the count of bytes
+ * read from the file.
+ *
+ * @param   f           file struct
+ * @param   pos         file offset to start reading from
+ * @param   buf         data is copied to this buffer
+ * @param   count       number of characters to read
+ * @param   kernel      non-zero if the caller is a kernel function
+ *
+ * @return  number of characters read on success, -(errno) on failure.
+ *
+ * @see     vfs_read_node()
+ */
+STATIC_INLINE ssize_t vfs_read(struct file_t *f, off_t *pos,
+                               unsigned char *buf, size_t count, int kernel)
+{
+    return vfs_read_node(f->node, pos, buf, count, kernel);
+}
+
+/**
+ * @brief Generic function to write to a file.
+ *
+ * Write at most \a count bytes to the given \a file, starting at
+ * offset \a pos in the file. The offset is updated with the count of bytes
+ * written to the file.
+ *
+ * @param   f           file struct
+ * @param   pos         file offset to start writing to
+ * @param   buf         data is copied from this buffer
+ * @param   count       number of characters to write
+ * @param   kernel      non-zero if the caller is a kernel function
+ *
+ * @return  number of characters written on success, -(errno) on failure.
+ *
+ * @see     vfs_write_node()
+ */
+STATIC_INLINE ssize_t vfs_write(struct file_t *f, off_t *pos,
+                                unsigned char *buf, size_t count, int kernel)
+{
+    return vfs_write_node(f->node, pos, buf, count, kernel);
+}
+
+/**
+ * @brief Get a mounted device's info.
+ *
+ * Unlike get_mount_info(), this function tries to use the mount info cached
+ * in the file node. If this is NULL, it then calls get_mount_info().
+ *
+ * @param   node    file node
+ *
+ * @return  pointer to the device's info struct, NULL if device not found.
+ *
+ * @see     get_mount_info()
+ */
+STATIC_INLINE struct mount_info_t *node_mount_info(struct fs_node_t *node)
 {
     if(node->minfo == NULL)
     {
@@ -921,6 +1058,30 @@ static inline struct mount_info_t *node_mount_info(struct fs_node_t *node)
     }
 
     return node->minfo;
+}
+
+#include "clock.h"      // now()
+
+/**
+ * @brief Update node's atime.
+ *
+ * Update the node's last access time.
+ *
+ * @param   node    file node
+ *
+ * @return  nothing.
+ */
+STATIC_INLINE void update_atime(struct fs_node_t *node)
+{
+    struct mount_info_t *dinfo;
+
+    if((dinfo = node_mount_info(node)) &&
+       !(dinfo->mountflags & MS_NOATIME) &&
+       !(S_ISDIR(node->mode) && (dinfo->mountflags & MS_NODIRATIME)))
+    {
+        node->atime = now();
+        node->flags |= FS_NODE_DIRTY;
+    }
 }
 
 #endif      /* __VFS_H__ */

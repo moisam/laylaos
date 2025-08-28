@@ -28,6 +28,8 @@
 #ifndef __KERNEL_NET_H__
 #define __KERNEL_NET_H__
 
+#define QUEUE_PROCESS_THRESHOLD         8
+
 #include <endian.h>
 
 #ifdef __GNUC__
