@@ -38,6 +38,10 @@ cd ${DOWNLOAD_SRCDIR} && autoreconf
 
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+
+mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+
 mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
 cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
 
@@ -52,7 +56,7 @@ cd ${DOWNLOAD_SRCDIR}/build
 ../configure \
     --host=${BUILD_TARGET} --prefix=/usr --enable-shared=yes --enable-static=yes \
     --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \
-    LDFLAGS="${LDFLAGS} -ltinfo" \
+    LDFLAGS="${LDFLAGS} -ltinfo" CFLAGS="${CFLAGS} -I${CROSSCOMPILE_SYSROOT_PATH}/usr/include/ncurses" \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 # now build!

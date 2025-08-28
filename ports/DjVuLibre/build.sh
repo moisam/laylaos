@@ -10,7 +10,7 @@ PATCH_FILE=${DOWNLOAD_NAME}.diff
 CWD=`pwd`
 
 export CFLAGS="-I${CROSSCOMPILE_SYSROOT_PATH}/usr/include -mstackrealign"
-export CXXFLAGS="-mstackrealign"
+export CXXFLAGS="-mstackrealign -fPIC"
 
 # where the downloaded and extracted source will end up
 DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/DjVuLibre"
@@ -38,6 +38,10 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 mv ${DOWNLOAD_SRCDIR}/config/config.sub ${DOWNLOAD_SRCDIR}/config/config.sub.OLD
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config/config.sub
+
+mv ${DOWNLOAD_SRCDIR}/config/config.guess ${DOWNLOAD_SRCDIR}/config/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config/config.guess
+
 mv ${DOWNLOAD_SRCDIR}/config/libtool.m4 ${DOWNLOAD_SRCDIR}/config/libtool.m4.OLD
 cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/config/libtool.m4
 
@@ -58,6 +62,9 @@ make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to
 
 # Fix usr/local/include/libdjvu/ddjvuapi.h
 cd ${CROSSCOMPILE_SYSROOT_PATH}/usr && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
+
+# Fix libdjvulibre.la for the future generations
+sed -i "s/dependency_libs=.*/dependency_libs='-ljpeg -lstdc++'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libdjvulibre.la
 
 rm -rf ${DOWNLOAD_SRCDIR}
 

@@ -41,6 +41,7 @@ mkdir ${DOWNLOAD_SRCDIR}/build
 cd ${DOWNLOAD_SRCDIR}/build
 
 cmake .. --toolchain ${CWD}/../prep_cross.cmake -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_EXE_LINKER_FLAGS="-lintl" \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"

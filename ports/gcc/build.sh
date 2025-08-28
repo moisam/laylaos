@@ -32,7 +32,11 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/../toolchain/gcc.diff -p0 && cd ${CWD}
+cd ${DOWNLOAD_PORTS_PATH}
+patch -i ${CWD}/../toolchain/gcc.diff -p0
+patch -i ${CWD}/../toolchain/gcc2.diff -p0
+patch -i ${CWD}/../toolchain/gcc3.diff -p0
+cd ${CWD}
 
 cp ${CWD}/../toolchain/extra/laylaos.h \
    ${CWD}/../toolchain/extra/laylaos.opt \
@@ -42,6 +46,9 @@ cp ${CWD}/../toolchain/extra/laylaos.h \
 
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+
+mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
 
 mv ${DOWNLOAD_SRCDIR}/libtool.m4 ${DOWNLOAD_SRCDIR}/libtool.m4.OLD
 cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/libtool.m4
@@ -82,21 +89,32 @@ export RANLIB_FOR_TARGET=$RANLIB
 export STRIP_FOR_TARGET=$STRIP
 export OBJDUMP_FOR_TARGET=$OBJDUMP
 
+# we need to set --build if we are compiling under LaylaOS so configure does
+# not assume we are cross-compiling
+myname=`uname -s`
+if [ "$myname" == "LaylaOS" ]; then
+    CONFIG_BUILD_ARG="--build=${BUILD_TARGET}"
+else
+    CONFIG_BUILD_ARG=""
+fi
+
 ${DOWNLOAD_SRCDIR}/configure --host=${BUILD_TARGET} \
     --enable-languages=c,c++ \
     --with-build-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \
     --enable-shared --enable-host-shared \
-    --enable-threads=yes --enable-libssp --disable-multilib \
+    --enable-threads=yes --enable-libssp --disable-multilib --disable-tls \
     CPPFLAGS="-D__laylaos__ -D__${BUILD_ARCH}__" \
     CXXFLAGS="-I${CXX_INCLUDE_PATH} -I${CXX_INCLUDE_PATH}/${BUILD_ARCH}-laylaos" \
+    ${CONFIG_BUILD_ARG} \
     || exit_failure "$0: failed to configure ported ${DOWNLOAD_NAME}"
 
 make all-gcc || exit_failure "$0: failed to build ported GCC"
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install-gcc || exit_failure "$0: failed to install ported GCC"
 
 
-# move the ligbcc we created earlier when we cross-compiled gcc
+# move the ligbcc and libstdc++ we created earlier when we cross-compiled gcc
 mv ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libgcc_s.so.1 ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libgcc_s.so.1.CROSS
+mv ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libstdc++.so.6 ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libstdc++.so.6.CROSS
 
 
 # Build and install libgcc
@@ -116,6 +134,17 @@ echo " ==>"
 make all-target-libssp CFLAGS_FOR_TARGET='-D_POSIX_THREADS -g -O2 -mcmodel=large -mstackrealign' || exit_failure "$0: failed to build ported libssp"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install-target-libssp || exit_failure "$0: failed to install ported libssp"
+
+# Build and install libstdc++
+echo " ==>"
+echo " ==> Building ported libstdc++"
+echo " ==>"
+
+make all-target-libstdc++-v3 CFLAGS_FOR_TARGET='-D_POSIX_THREADS -g -O2 -mcmodel=large -mstackrealign' CXXFLAGS_FOR_TARGET='-D_POSIX_THREADS -g -O2 -mcmodel=large -mstackrealign' \
+    || exit_failure "$0: failed to build ported libstdc++"
+
+make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install-target-libstdc++-v3 \
+    || exit_failure "$0: failed to install ported libstdc++"
 
 # Clean up
 cd ${CWD}

@@ -1,0 +1,176 @@
+diff -rub ./glib-2.77.3/gio/gcredentials.c ./glib-2.77.3/gio/gcredentials.c
+--- ./glib-2.77.3/gio/gcredentials.c	2023-08-31 11:23:47.000000000 +0100
++++ ./glib-2.77.3/gio/gcredentials.c	2025-06-19 19:37:13.108332931 +0100
+@@ -77,6 +77,10 @@
+  *
+  * Since GLib 2.72, on Windows, the native credentials may contain the PID of a
+  * process. This corresponds to %G_CREDENTIALS_TYPE_WIN32_PID.
++ *
++ * On LaylaOS, the native credential type is a `struct xucred`.
++ * This corresponds to %G_CREDENTIALS_TYPE_LAYLAOS_XUCRED.
++ *
+  */
+ 
+ /**
+@@ -107,6 +111,8 @@
+   ucred_t *native;
+ #elif G_CREDENTIALS_USE_WIN32_PID
+   DWORD native;
++#elif G_CREDENTIALS_USE_LAYLAOS_XUCRED
++  struct xucred native;
+ #else
+   #ifdef __GNUC__
+   #pragma GCC diagnostic push
+@@ -180,6 +186,23 @@
+     credentials->native.cr_groups[i] = -1;
+ 
+   credentials->pid = -1;
++#elif G_CREDENTIALS_USE_LAYLAOS_XUCRED
++  gsize i;
++
++  credentials->native.cr_version = XUCRED_VERSION;
++  credentials->native.cr_uid = geteuid ();
++  credentials->native.cr_ngroups = 1;
++  credentials->native.cr_groups[0] = getegid ();
++  credentials->native.cr_pid = getpid ();
++
++  /* FIXME: In principle this could use getgroups() to fill in the rest
++   * of cr_groups, but then we'd have to handle the case where a process
++   * can have more than NGROUPS groups, if that's even possible. A macOS
++   * user would have to develop and test this.
++   *
++   * For now we fill it with -1 (meaning "no data"). */
++  for (i = 1; i < NGROUPS_MAX; i++)
++    credentials->native.cr_groups[i] = -1;
+ #elif G_CREDENTIALS_USE_FREEBSD_CMSGCRED
+   memset (&credentials->native, 0, sizeof (struct cmsgcred));
+   credentials->native.cmcred_pid  = getpid ();
+@@ -236,7 +259,7 @@
+ g_credentials_to_string (GCredentials *credentials)
+ {
+   GString *ret;
+-#if G_CREDENTIALS_USE_APPLE_XUCRED
++#if G_CREDENTIALS_USE_APPLE_XUCRED || G_CREDENTIALS_USE_LAYLAOS_XUCRED
+   glib_typeof (credentials->native.cr_ngroups) i;
+ #endif
+ 
+@@ -304,6 +327,17 @@
+   }
+ #elif G_CREDENTIALS_USE_WIN32_PID
+   g_string_append_printf (ret, "win32-pid:pid=%lu", credentials->native);
++#elif G_CREDENTIALS_USE_LAYLAOS_XUCRED
++  g_string_append (ret, "laylaos-xucred:");
++  g_string_append_printf (ret, "version=%u,", credentials->native.cr_version);
++  if (credentials->native.cr_pid != (pid_t) -1)
++    g_string_append_printf (ret, "pid=%" G_GINT64_FORMAT ",", (gint64) credentials->native.cr_pid);
++  if (credentials->native.cr_uid != (uid_t) -1)
++    g_string_append_printf (ret, "uid=%" G_GINT64_FORMAT ",", (gint64) credentials->native.cr_uid);
++  for (i = 0; i < credentials->native.cr_ngroups; i++)
++    g_string_append_printf (ret, "gid=%" G_GINT64_FORMAT ",", (gint64) credentials->native.cr_groups[i]);
++  if (ret->str[ret->len - 1] == ',')
++    ret->str[ret->len - 1] = '\0';
+ #else
+   g_string_append (ret, "unknown");
+ #endif
+@@ -374,7 +408,7 @@
+   if (linux_ucred_check_valid (&credentials->native, NULL)
+       && credentials->native.uid == other_credentials->native.uid)
+     ret = TRUE;
+-#elif G_CREDENTIALS_USE_APPLE_XUCRED
++#elif G_CREDENTIALS_USE_APPLE_XUCRED || G_CREDENTIALS_USE_LAYLAOS_XUCRED
+   if (credentials->native.cr_version == other_credentials->native.cr_version &&
+       credentials->native.cr_uid == other_credentials->native.cr_uid)
+     ret = TRUE;
+@@ -539,7 +573,7 @@
+     ret = credentials->native.uid;
+   else
+     ret = -1;
+-#elif G_CREDENTIALS_USE_APPLE_XUCRED
++#elif G_CREDENTIALS_USE_APPLE_XUCRED || G_CREDENTIALS_USE_LAYLAOS_XUCRED
+   if (credentials->native.cr_version == XUCRED_VERSION)
+     {
+       ret = credentials->native.cr_uid;
+@@ -613,6 +647,8 @@
+   ret = ucred_getpid (credentials->native);
+ #elif G_CREDENTIALS_USE_WIN32_PID
+   ret = credentials->native;
++#elif G_CREDENTIALS_USE_LAYLAOS_XUCRED
++  ret = credentials->native.cr_pid;
+ #else
+ 
+ #if G_CREDENTIALS_USE_APPLE_XUCRED
+@@ -663,7 +699,7 @@
+ #if G_CREDENTIALS_USE_LINUX_UCRED
+   credentials->native.uid = uid;
+   ret = TRUE;
+-#elif G_CREDENTIALS_USE_APPLE_XUCRED
++#elif G_CREDENTIALS_USE_APPLE_XUCRED || G_CREDENTIALS_USE_LAYLAOS_XUCRED
+   credentials->native.cr_uid = uid;
+   ret = TRUE;
+ #elif G_CREDENTIALS_USE_FREEBSD_CMSGCRED
+diff -rub ./glib-2.77.3/gio/gcredentialsprivate.h ./glib-2.77.3/gio/gcredentialsprivate.h
+--- ./glib-2.77.3/gio/gcredentialsprivate.h	2023-08-31 11:23:47.000000000 +0100
++++ ./glib-2.77.3/gio/gcredentialsprivate.h	2025-06-19 19:06:58.193149071 +0100
+@@ -43,6 +43,7 @@
+ #undef G_CREDENTIALS_USE_SOLARIS_UCRED
+ #undef G_CREDENTIALS_USE_APPLE_XUCRED
+ #undef G_CREDENTIALS_USE_WIN32_PID
++#undef G_CREDENTIALS_USE_LAYLAOS_XUCRED
+ 
+ /*
+  * G_CREDENTIALS_NATIVE_TYPE:
+@@ -182,6 +183,17 @@
+ #define G_CREDENTIALS_SOCKET_GET_CREDENTIALS_SUPPORTED 1
+ #define G_CREDENTIALS_HAS_PID 1
+ 
++#elif defined(__laylaos__)
++#include <sys/ucred.h>
++#define G_CREDENTIALS_SUPPORTED 1
++#define G_CREDENTIALS_USE_LAYLAOS_XUCRED 1
++#define G_CREDENTIALS_NATIVE_TYPE G_CREDENTIALS_TYPE_LAYLAOS_XUCRED
++#define G_CREDENTIALS_NATIVE_SIZE (sizeof (struct xucred))
++#undef G_CREDENTIALS_UNIX_CREDENTIALS_MESSAGE_SUPPORTED
++#define G_CREDENTIALS_SOCKET_GET_CREDENTIALS_SUPPORTED 1
++#undef G_CREDENTIALS_SPOOFING_SUPPORTED
++#define G_CREDENTIALS_HAS_PID 1
++
+ #endif
+ 
+ #endif /* __G_CREDENTIALS_PRIVATE_H__ */
+diff -rub ./glib-2.77.3/gio/gioenums.h ./glib-2.77.3/gio/gioenums.h
+--- ./glib-2.77.3/gio/gioenums.h	2023-08-31 11:23:47.000000000 +0100
++++ ./glib-2.77.3/gio/gioenums.h	2025-06-19 19:29:58.878479692 +0100
+@@ -1457,6 +1457,7 @@
+  * @G_CREDENTIALS_TYPE_NETBSD_UNPCBID: The native credentials type is a `struct unpcbid`. Added in 2.42.
+  * @G_CREDENTIALS_TYPE_APPLE_XUCRED: The native credentials type is a `struct xucred`. Added in 2.66.
+  * @G_CREDENTIALS_TYPE_WIN32_PID: The native credentials type is a PID `DWORD`. Added in 2.72.
++ * @G_CREDENTIALS_TYPE_LAYLAOS_XUCRED: The native credentials type is a `struct xucred`.
+  *
+  * Enumeration describing different kinds of native credential types.
+  *
+@@ -1472,6 +1473,7 @@
+   G_CREDENTIALS_TYPE_NETBSD_UNPCBID,
+   G_CREDENTIALS_TYPE_APPLE_XUCRED,
+   G_CREDENTIALS_TYPE_WIN32_PID,
++  G_CREDENTIALS_TYPE_LAYLAOS_XUCRED,
+ } GCredentialsType;
+ 
+ /**
+diff -rub ./glib-2.77.3/gio/tests/credentials.c ./glib-2.77.3/gio/tests/credentials.c
+--- ./glib-2.77.3/gio/tests/credentials.c	2023-08-31 11:23:47.000000000 +0100
++++ ./glib-2.77.3/gio/tests/credentials.c	2025-06-19 19:27:16.068121844 +0100
+@@ -163,6 +163,14 @@
+           g_assert_cmpuint (ucred_geteuid (native), ==, geteuid ());
+           g_assert_cmpuint (ucred_getpid (native), ==, getpid ());
+         }
++#elif G_CREDENTIALS_USE_LAYLAOS_XUCRED
++        {
++          struct xucred *native = g_credentials_get_native (creds,
++              G_CREDENTIALS_TYPE_LAYLAOS_XUCRED);
++
++          g_assert_cmpuint (native->cr_version, ==, XUCRED_VERSION);
++          g_assert_cmpuint (native->cr_uid, ==, geteuid ());
++        }
+ #else
+ #error "G_CREDENTIALS_SUPPORTED is set but there is no test for this platform"
+ #endif

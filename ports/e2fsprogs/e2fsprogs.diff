@@ -1,0 +1,27 @@
+diff -rub ./e2fsprogs-1.47.2/lib/blkid/getsize.c ./e2fsprogs-1.47.2/lib/blkid/getsize.c
+--- ./e2fsprogs-1.47.2/lib/blkid/getsize.c	2025-01-01 06:24:42.000000000 +0000
++++ ./e2fsprogs-1.47.2/lib/blkid/getsize.c	2025-06-29 12:41:09.927976938 +0100
+@@ -46,6 +46,9 @@
+ #include <sys/stat.h>
+ #endif
+ 
++#if defined(__laylaos__)
++#include <sys/mount.h>      /* for BLKGETSIZE */
++#endif
+ 
+ #if defined(__linux__) && defined(_IO) && !defined(BLKGETSIZE)
+ #define BLKGETSIZE _IO(0x12,96)	/* return device size */
+diff -rub ./e2fsprogs-1.47.2/lib/ext2fs/getsize.c ./e2fsprogs-1.47.2/lib/ext2fs/getsize.c
+--- ./e2fsprogs-1.47.2/lib/ext2fs/getsize.c	2025-01-01 06:24:42.000000000 +0000
++++ ./e2fsprogs-1.47.2/lib/ext2fs/getsize.c	2025-06-29 12:41:06.499731885 +0100
+@@ -48,6 +48,10 @@
+ #endif
+ #include <ctype.h>
+ 
++#if defined(__laylaos__)
++#include <sys/mount.h>      /* for BLKGETSIZE */
++#endif
++
+ #if defined(__linux__) && defined(_IO) && !defined(BLKGETSIZE)
+ #define BLKGETSIZE _IO(0x12,96)	/* return device size */
+ #endif

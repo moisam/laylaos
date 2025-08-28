@@ -1,0 +1,15 @@
+diff -rub ./dosfstools-4.2/src/blkdev/blkdev.c ./dosfstools-4.2/src/blkdev/blkdev.c
+--- ./dosfstools-4.2/src/blkdev/blkdev.c	2021-01-31 12:26:15.000000000 +0000
++++ ./dosfstools-4.2/src/blkdev/blkdev.c	2025-07-15 22:41:44.605019062 +0100
+@@ -32,6 +32,11 @@
+ # include <sys/disk.h>
+ #endif
+ 
++#if defined(__laylaos__)
++#include <sys/mount.h>      /* for BLKGETSIZE */
++#include <sys/hdreg.h>
++#endif
++
+ #include "blkdev.h"
+ #include "linux_version.h"
+ 

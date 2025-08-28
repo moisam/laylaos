@@ -1,18 +1,16 @@
 #!/bin/bash
 
 #
-# Script to download and build fribidi
+# Script to download and build gdbm
 #
 
-DOWNLOAD_NAME="fribidi"
-DOWNLOAD_VERSION="1.0.13"
-DOWNLOAD_URL="https://github.com/fribidi/fribidi/releases/download/v${DOWNLOAD_VERSION}/"
-DOWNLOAD_PREFIX="fribidi-"
-DOWNLOAD_SUFFIX=".tar.xz"
+DOWNLOAD_NAME="gdbm"
+DOWNLOAD_VERSION="1.24"
+DOWNLOAD_URL="https://ftp.gnu.org/gnu/gdbm/"
+DOWNLOAD_PREFIX="gdbm-"
+DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 CWD=`pwd`
-
-export CFLAGS="-I${CROSSCOMPILE_SYSROOT_PATH}/usr/include -mstackrealign"
 
 # where the downloaded and extracted source will end up
 DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
@@ -21,7 +19,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libfribidi.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libgdbm.so
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -34,28 +32,31 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-cd ${DOWNLOAD_SRCDIR}
-NOCONFIGURE=1 ./autogen.sh
+mv ${DOWNLOAD_SRCDIR}/build-aux/config.sub ${DOWNLOAD_SRCDIR}/build-aux/config.sub.OLD
+cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.sub
 
-mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
-cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
-
-mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
-cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+mv ${DOWNLOAD_SRCDIR}/build-aux/config.guess ${DOWNLOAD_SRCDIR}/build-aux/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.guess
 
 mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
 cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
-autoreconf
 
-mkdir ${DOWNLOAD_SRCDIR}/build
-cd ${DOWNLOAD_SRCDIR}/build
+cd ${DOWNLOAD_SRCDIR} && autoreconf
 
-../configure --host=${BUILD_TARGET} --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --enable-shared || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
+# build
+mkdir ${DOWNLOAD_SRCDIR}/build2
+cd ${DOWNLOAD_SRCDIR}/build2
+
+LDFLAGS="-ltinfo" CFLAGS="$CFLAGS -mstackrealign" ../configure \
+    --host=${BUILD_TARGET} --prefix=/usr --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \
+    --disable-nls \
+    || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
+# Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 

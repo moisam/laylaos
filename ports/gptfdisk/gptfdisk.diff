@@ -1,0 +1,50 @@
+diff -rub ./gptfdisk-1.0.10/diskio-unix.cc ./gptfdisk-1.0.10/diskio-unix.cc
+--- ./gptfdisk-1.0.10/diskio-unix.cc	2024-02-20 00:55:41.000000000 +0000
++++ ./gptfdisk-1.0.10/diskio-unix.cc	2025-05-31 19:38:50.938881003 +0100
+@@ -29,6 +29,10 @@
+ #include "linux/hdreg.h"
+ #endif
+ 
++#ifdef __laylaos__
++#include <sys/mount.h>
++#endif
++
+ #include <iostream>
+ #include <fstream>
+ #include <sstream>
+@@ -37,7 +41,7 @@
+ 
+ using namespace std;
+ 
+-#if defined(__APPLE__) || defined(__linux__)
++#if defined(__APPLE__) || defined(__linux__) || defined(__laylaos__)
+ #define off64_t off_t
+ #define stat64 stat
+ #define fstat64 fstat
+@@ -177,7 +181,7 @@
+ #if defined (__FreeBSD__) || defined (__FreeBSD_kernel__)
+       err = ioctl(fd, DIOCGSECTORSIZE, &blockSize);
+ #endif
+-#ifdef __linux__
++#if defined (__linux__) || defined (__laylaos__)
+       err = ioctl(fd, BLKSSZGET, &blockSize);
+ #endif
+ 
+@@ -290,7 +294,7 @@
+            << "You should reboot or remove the drive.\n";
+       platformFound++;
+ #endif
+-#ifdef __linux__
++#if defined (__linux__) || defined (__laylaos__)
+       sleep(1); // Theoretically unnecessary, but ioctl() fails sometimes if omitted....
+       fsync(fd);
+       i = ioctl(fd, BLKRRPART);
+@@ -466,7 +470,7 @@
+       sectors = bytes / b;
+       platformFound++;
+ #endif
+-#ifdef __linux__
++#if defined (__linux__) || defined (__laylaos__)
+       long sz;
+       long long b;
+       *err = ioctl(fd, BLKGETSIZE, &sz);

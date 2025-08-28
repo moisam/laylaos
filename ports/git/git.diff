@@ -1,0 +1,12 @@
+diff -rub ./git-2.46.2/git-zlib.c ./git-2.46.2/git-zlib.c
+--- ./git-2.46.2/git-zlib.c	2024-09-23 19:31:19.000000000 +0100
++++ ./git-2.46.2/git-zlib.c	2024-11-07 23:34:41.770794730 +0000
+@@ -111,7 +111,7 @@
+ 
+ int git_inflate(git_zstream *strm, int flush)
+ {
+-	int status;
++	volatile int status;
+ 
+ 	for (;;) {
+ 		zlib_pre_call(strm);
