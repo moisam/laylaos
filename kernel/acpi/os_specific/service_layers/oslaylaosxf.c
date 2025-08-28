@@ -202,6 +202,11 @@ extern int acpi_sem_getvalue(acpi_sem_t *__restrict sem, int *__restrict sval);
 
 //struct kernel_mutex_t acpi_lock = { 0, };
 
+ACPI_PHYSICAL_ADDRESS UefiRootPointer = 0;
+
+// defined in kernel.c
+extern uintptr_t rsdp_phys_addr;
+
 
 #undef getchar
 
@@ -416,9 +421,23 @@ AcpiOsGetRootPointer (
     void)
 {
 	ACPI_PHYSICAL_ADDRESS Ret = 0;
+
+    /*
+     * Check if GRUB Multiboot2 passed an RSDP table pointer.
+     */
+    if(UefiRootPointer != 0)
+    {
+        return UefiRootPointer;
+    }
+
+	if(rsdp_phys_addr != 0)
+    {
+        UefiRootPointer = rsdp_phys_addr;
+        return UefiRootPointer;
+    }
+
 	AcpiFindRootPointer(&Ret);
 	return Ret;
-    //return (0);
 }
 #endif
 
@@ -831,12 +850,13 @@ AcpiOsMapMemory (
         kpanic("Insufficient memory in AcpiOsMapMemory()");
         return 0;
     }
-    
+
     /*
-     * TODO: we should check if the requested physical memory is actually
+     * TODO: We should check if the requested physical memory is actually
      *       mapped by another process. If so, return error. Otherwise,
      *       call the physical mem manager to mark the physical frames as used.
      */
+    pmmngr_deinit_region(pstart, sz);
 
     for(i = 0, v = addr;
         i < pages;
@@ -2040,8 +2060,8 @@ ACPI_THREAD_ID
 AcpiOsGetThreadId (
     void)
 {
-    //struct task_t *ct = get_cur_task();
-    struct task_t *ct = cur_task;
+    volatile struct task_t *ct = get_cur_task();
+    //struct task_t *ct = cur_task;
     
     if(!ct)
     {
