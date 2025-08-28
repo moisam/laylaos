@@ -1,18 +1,16 @@
 #!/bin/bash
 
 #
-# Script to download and build xz
+# Script to download and build wget
 #
 
-DOWNLOAD_NAME="xz"
-DOWNLOAD_VERSION="5.4.5"
-DOWNLOAD_URL="https://github.com/tukaani-project/xz/releases/download/v${DOWNLOAD_VERSION}/"
-DOWNLOAD_PREFIX="xz-"
-DOWNLOAD_SUFFIX=".tar.xz"
+DOWNLOAD_NAME="wget"
+DOWNLOAD_VERSION="1.24.5"
+DOWNLOAD_URL="https://ftp.gnu.org/gnu/wget/"
+DOWNLOAD_PREFIX="wget-"
+DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 CWD=`pwd`
-
-export CFLAGS="-I${CROSSCOMPILE_SYSROOT_PATH}/usr/include -mstackrealign"
 
 # where the downloaded and extracted source will end up
 DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
@@ -21,7 +19,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/liblzma.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/wget
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -35,26 +33,28 @@ echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 mv ${DOWNLOAD_SRCDIR}/build-aux/config.sub ${DOWNLOAD_SRCDIR}/build-aux/config.sub.OLD
-cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.sub
+cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.sub
 
 mv ${DOWNLOAD_SRCDIR}/build-aux/config.guess ${DOWNLOAD_SRCDIR}/build-aux/config.guess.OLD
-cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.guess
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.guess
 
-mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
-cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
-
-cd ${DOWNLOAD_SRCDIR}
-autoreconf
-
+# build
 mkdir ${DOWNLOAD_SRCDIR}/build
 cd ${DOWNLOAD_SRCDIR}/build
 
-../configure --host=${BUILD_TARGET} --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --enable-shared || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
+../configure  \
+    --host=${BUILD_TARGET} --prefix=/usr --sysconfdir=/etc \
+    --disable-nls --disable-ipv6 --with-ssl=openssl --with-openssl=yes \
+    || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
+# Tell wget where to find the cert bundle
+echo -e "\n# Certificate file\nca_certificate=/etc/ssl/certs/ca-certificates.crt" >> ${CROSSCOMPILE_SYSROOT_PATH}/etc/wgetrc
+
+# Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 
