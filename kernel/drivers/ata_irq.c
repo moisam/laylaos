@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ata_irq.c
  *    This file is part of LaylaOS.
@@ -43,7 +43,7 @@
 #include <kernel/pic.h>
 #include <kernel/io.h>
 
-#define NR_REQUESTS         32
+#define NR_REQUESTS         64
 
 struct ata_request_t
 {
@@ -52,24 +52,23 @@ struct ata_request_t
     size_t lba;
     unsigned char numsects, irq, active;
     virtual_addr buf;
-    //struct IO_buffer_s *buf;
-    struct ata_request_t *next;
-    int wait_channel;
-    int res;
-    int (*func)(struct ata_dev_s *, virtual_addr);
+    volatile struct ata_request_t *next;
+    //int wait_channel;
+    long res;
+    long (*func)(struct ata_dev_s *, virtual_addr);
                                       /**< if this request is being served by 
                                            a special function, this is a 
                                            pointer to the function */
 };
 
-struct ata_request_t requests[NR_REQUESTS];
+volatile struct ata_request_t requests[NR_REQUESTS];
 volatile struct ata_request_t *cur_request = NULL;
-struct kernel_mutex_t request_lock;
+volatile struct kernel_mutex_t request_lock;
 
 volatile int serving = 0;
 int request_wait_channel;
 int irq_wait_channel;
-struct task_t *disk_task = NULL;
+volatile struct task_t *disk_task = NULL;
 
 //volatile unsigned char ide_irq_invoked = 0;
 
@@ -83,7 +82,7 @@ static inline void init_bufs(void)
     if(!inited)
     {
         inited = 1;
-        memset(requests, 0, sizeof(struct ata_request_t) * NR_REQUESTS);
+        memset((void *)requests, 0, sizeof(struct ata_request_t) * NR_REQUESTS);
         init_kernel_mutex(&request_lock);
     }
 }
@@ -92,14 +91,13 @@ static inline void init_bufs(void)
 /*
  * Request an ATA I/O operation.
  */
-int ata_add_req(struct ata_dev_s *dev,
-                size_t lba, unsigned char numsects,
-                virtual_addr buf, int write,
-                int (*func)(struct ata_dev_s *, virtual_addr))
-                //struct IO_buffer_s *buf)
+long ata_add_req(struct ata_dev_s *dev,
+                 size_t lba, unsigned char numsects,
+                 virtual_addr buf, int write,
+                 long (*func)(struct ata_dev_s *, virtual_addr))
 {
-    KDEBUG("ata_add_req:\n");
-    struct ata_request_t *tmp, *req, *lreq = &requests[NR_REQUESTS];
+    volatile int tries = 0;
+    volatile struct ata_request_t *tmp, *req, *lreq = &requests[NR_REQUESTS];
 
     init_bufs();
     
@@ -132,13 +130,16 @@ loop:
     
     if(req == lreq)
     {
+        if(++tries > 500)
+        {
+            kpanic("ata: waiting too long for request slot\n");
+        }
+
         //block_task(&request_wait_channel, 0);
-        block_task2(&request_wait_channel, 1000);
+        block_task2(&request_wait_channel, 200);
         elevated_priority_relock(&request_lock);
         goto loop;
     }
-
-    KDEBUG("ata_add_req: req @ 0x%x\n", req);
 
     req->active = 1;
     req->buf = buf;
@@ -178,25 +179,12 @@ loop:
 
     //int_on(s);
     elevated_priority_unlock(&request_lock);
-
-    KDEBUG("ata_add_req: serving %d, disk_task 0x%lx\n", serving, disk_task);
-    
-    /*
-    if(buf->flags & IOBUF_FLAG_READ)
-    {
-        req->numsects++;
-    }
-    */
     
     if(!serving)
     {
         serving = 1;
-        KDEBUG("ata_add_req: unblocking disk task @ 0x%lx\n", disk_task);
-        //__asm__ __volatile__("xchg %%bx, %%bx"::);
         unblock_task(disk_task);
     }
-
-    KDEBUG("ata_add_req: 3 - req->wait_channel @ 0x%x\n", &req->wait_channel);
     
     // The disk daemon might have run before us, as it has lower priority than
     // user tasks. Sleep for some time and then wake up and check if the
@@ -207,19 +195,18 @@ loop:
 
     while(active)
     {
-        block_task2(&req->wait_channel, 500);
+        ////block_task2(&req->wait_channel, 200);
+        //block_task2(&request_wait_channel, 20);
+        block_task(&request_wait_channel, 1);
+
         active = req->active;
-        KDEBUG("ata_add_req: active %d\n", active);
     }
     
     res = req->res;
     req->dev = NULL;
     req->numsects = 0;
-
-    KDEBUG("ata_add_req: done\n");
     
-    //return req->res ? -EIO : (int)buf->block_size;
-    return res ? -EIO : (int)(numsects * dev->bytes_per_sector);
+    return res ? -EIO : (long)(numsects * dev->bytes_per_sector);
 }
 
 
@@ -236,7 +223,7 @@ void disk_task_func(void *arg)
     {
         while(!serving)
         {
-            block_task2(&disk_task, 2000);
+            block_task2(&disk_task, 500);
             //block_task(&disk_task, 0);
         }
         
@@ -280,13 +267,12 @@ static void ata_do_request(void)
         }
     }
 
-    volatile struct ata_request_t *tmp = cur_request;
+    //volatile struct ata_request_t *tmp = cur_request;
     cur_request->active = 0;
-    //cur_request->dev = NULL;
     elevated_priority_lock(&request_lock);
     cur_request = cur_request->next;
     elevated_priority_unlock(&request_lock);
-    unblock_tasks((void *)&tmp->wait_channel);
+    //unblock_tasks((void *)&tmp->wait_channel);
     unblock_tasks(&request_wait_channel);
 }
 
@@ -305,7 +291,7 @@ int ide_wait_irq(void)
     }
 
     volatile unsigned char irq = cur_request->irq;
-    volatile int timeout = 500000;
+    volatile int timeout = 800000;
     
     /*
      * There is a small window of time between checking ide_irq_invoked and 
@@ -332,9 +318,7 @@ int ide_wait_irq(void)
         
         KDEBUG("Still waiting!\n");
 
-        lock_scheduler();
         scheduler();
-        unlock_scheduler();
 
         irq = cur_request->irq;
     }
@@ -344,7 +328,7 @@ int ide_wait_irq(void)
         volatile uint8_t status = inb(cur_request->dev->bmide +
                                       ATA_BUS_MASTER_REG_STATUS);
         uint8_t missed_irq = (status & ATA_IRQ_PENDING);
-        printk("!!! status = 0x%x\n", status);
+        printk("!!! status = 0x%x, missed_irq %d, IRQ %d\n", status, missed_irq, cur_request->dev->irq);
         __asm__ __volatile__("xchg %%bx, %%bx"::);
         status = (ATA_DMA_ERROR | ATA_IRQ_PENDING);
         outb(cur_request->dev->bmide + ATA_BUS_MASTER_REG_STATUS, status);

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: kbd.c
  *    This file is part of LaylaOS.
@@ -46,9 +46,8 @@
 uint16_t keybuf[KEY_BUF_SIZE];
 struct kqueue_t kbd_queue;
 
-struct task_t *kbd_task = NULL;
-
-struct kernel_mutex_t kbd_lock = { 0, };
+volatile struct task_t *kbd_task = NULL;
+volatile struct kernel_mutex_t kbd_lock = { 0, };
 
 
 
@@ -148,7 +147,7 @@ void kbd_task_func(void *arg)
         if(kbdbuf_is_empty(&kbd_queue))
         {
             //block_task(&kbd_queue, 0);
-            block_task2(&kbd_queue, 1000);
+            block_task2(&kbd_queue, 500);
         }
     }
 }

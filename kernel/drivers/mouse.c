@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mouse.c
  *    This file is part of LaylaOS.
@@ -49,10 +49,9 @@ int mouse_scaled = 0;
 volatile unsigned char mouse_cycle = 0;
 unsigned char byte_count = 0;        /* bytes in each mouse packet */
 
-struct task_t *mouse_task = NULL;
+volatile struct task_t *mouse_task = NULL;
 struct selinfo mouse_ssel = { 0, };
-
-struct kernel_mutex_t mouse_lock = { 0, };
+volatile struct kernel_mutex_t mouse_lock = { 0, };
 
 mouse_buttons_t cur_button_state = 0;
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ata_rw.c
  *    This file is part of LaylaOS.
@@ -45,33 +45,27 @@ extern struct ata_devtab_s tab2;     // for devices with maj == 22
 
 // function prototypes
 
-static int ata_read_pio(struct ata_dev_s *dev, unsigned char numsects,
-                        size_t lba, virtual_addr buf);
-                        //size_t lba, struct IO_buffer_s *buf);
-static int ata_write_pio(struct ata_dev_s *dev, unsigned char numsects,
+static long ata_read_pio(struct ata_dev_s *dev, unsigned char numsects,
                          size_t lba, virtual_addr buf);
-                         //size_t lba, struct IO_buffer_s *buf);
-static int ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
-                        size_t lba, virtual_addr buf);
-                        //size_t lba, struct IO_buffer_s *buf);
-static int ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
-                         size_t lba, virtual_addr buf);
-                         //size_t lba, struct IO_buffer_s *buf);
-static int atapi_read_pio(struct ata_dev_s *dev, unsigned char numsects,
+static long ata_write_pio(struct ata_dev_s *dev, unsigned char numsects,
                           size_t lba, virtual_addr buf);
-                          //size_t lba, struct IO_buffer_s *buf);
-static int atapi_write_pio(struct ata_dev_s *dev, unsigned char numsects,
+static long ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
+                         size_t lba, virtual_addr buf);
+static long ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
+                          size_t lba, virtual_addr buf);
+static long atapi_read_pio(struct ata_dev_s *dev, unsigned char numsects,
                            size_t lba, virtual_addr buf);
-                           //size_t lba, struct IO_buffer_s *buf);
+static long atapi_write_pio(struct ata_dev_s *dev, unsigned char numsects,
+                            size_t lba, virtual_addr buf);
 static int atapi_read_capacity(struct ata_dev_s *dev);
 
 
 /*
  * General Block Read/Write Operations.
  */
-int ata_strategy(struct disk_req_t *req)
+long ata_strategy(struct disk_req_t *req)
 {
-    uint32_t block;
+    size_t block;
     int sectors_per_block, sectors_to_read;
     int min = MINOR(req->dev);
     struct ata_devtab_s *tab = (MAJOR(req->dev) == 3) ? &tab1 : &tab2;
@@ -127,7 +121,7 @@ void select_drive(struct ata_dev_s *dev)
 /*
  * Wait on an ATA device.
  */
-int ata_wait(struct ata_dev_s *dev, unsigned char mask, unsigned int timeout)
+long ata_wait(struct ata_dev_s *dev, unsigned char mask, unsigned int timeout)
 {
     /* wait for drive to be ready */
     volatile unsigned char res;
@@ -199,14 +193,12 @@ int ata_wait(struct ata_dev_s *dev, unsigned char mask, unsigned int timeout)
             return -ETIMEDOUT;
         }
 
-        lock_scheduler();
         scheduler();
-        unlock_scheduler();
     }
 }
 
 
-int ata_wait_busy(struct ata_dev_s *dev)
+long ata_wait_busy(struct ata_dev_s *dev)
 {
     volatile unsigned char res;
     volatile unsigned int wait = 0;
@@ -225,9 +217,7 @@ int ata_wait_busy(struct ata_dev_s *dev)
             return -ETIMEDOUT;
         }
 
-        lock_scheduler();
         scheduler();
-        unlock_scheduler();
     }
 }
 
@@ -323,12 +313,11 @@ void ata_setup_transfer(struct ata_dev_s *dev, unsigned char numsects,
 /*
  * Read sectors from an ATA device.
  */
-int ata_read_sectors(struct ata_dev_s *dev, unsigned char numsects,
-                     size_t lba, virtual_addr buf)
-                     //size_t lba, struct IO_buffer_s *buf)
+long ata_read_sectors(struct ata_dev_s *dev, unsigned char numsects,
+                      size_t lba, virtual_addr buf)
 {
-    int res = 0;
-    
+    long res = 0;
+
     if(numsects == 0)
     {
         return 0;
@@ -386,11 +375,10 @@ int ata_read_sectors(struct ata_dev_s *dev, unsigned char numsects,
 /*
  * Write sectors to an ATA device.
  */
-int ata_write_sectors(struct ata_dev_s *dev, unsigned char numsects,
-                      size_t lba, virtual_addr buf)
-                      //size_t lba, struct IO_buffer_s *buf)
+long ata_write_sectors(struct ata_dev_s *dev, unsigned char numsects,
+                       size_t lba, virtual_addr buf)
 {
-    int res = 0;
+    long res = 0;
 
     if(numsects == 0)
     {
@@ -443,16 +431,15 @@ int ata_write_sectors(struct ata_dev_s *dev, unsigned char numsects,
 }
 
 
-int ata_read_pio(struct ata_dev_s *dev, unsigned char numsects,
-                 size_t lba, virtual_addr buf)
-                 //size_t lba, struct IO_buffer_s *buf)
+long ata_read_pio(struct ata_dev_s *dev, unsigned char numsects,
+                  size_t lba, virtual_addr buf)
 {
     unsigned char i, lba_mode, head;
     unsigned char cmd = 0;
     unsigned int bps = dev->bytes_per_sector;
     unsigned char lba_io[6];
     void *edi = (void *)buf /* ->data */;
-    int res;
+    long res;
 
     KDEBUG("ata_read_pio: lba 0x%lx, buf 0x%lx\n", lba, buf);
 
@@ -500,16 +487,15 @@ int ata_read_pio(struct ata_dev_s *dev, unsigned char numsects,
 }
 
 
-int ata_write_pio(struct ata_dev_s *dev, unsigned char numsects,
-                  size_t lba, virtual_addr buf)
-                  //size_t lba, struct IO_buffer_s *buf)
+long ata_write_pio(struct ata_dev_s *dev, unsigned char numsects,
+                   size_t lba, virtual_addr buf)
 {
     unsigned char i, lba_mode, head;
     unsigned char cmd = 0;
     unsigned int bps = dev->bytes_per_sector;
     unsigned char lba_io[6];
     void *edi = (void *)buf /* ->data */;
-    int res;
+    long res;
 
     if(ata_wait_busy(dev) != 0)
     {
@@ -559,7 +545,6 @@ int ata_write_pio(struct ata_dev_s *dev, unsigned char numsects,
 
 int ata_setup_dma(struct ata_dev_s *dev, unsigned char numsects,
                   virtual_addr buf, int iswrite)
-                  //struct IO_buffer_s *buf, int iswrite)
 {
     size_t bytes = numsects * dev->bytes_per_sector;
     volatile uint8_t status;
@@ -591,15 +576,14 @@ int ata_setup_dma(struct ata_dev_s *dev, unsigned char numsects,
 }
 
 
-int ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
-                 size_t lba, virtual_addr buf)
-                 //size_t lba, struct IO_buffer_s *buf)
+static long __ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
+                           size_t lba, virtual_addr buf)
 {
     unsigned char lba_mode, head;
     unsigned char cmd = 0;
     unsigned int bps = dev->bytes_per_sector;
     unsigned char lba_io[6];
-    int res;
+    long res;
     volatile uint8_t status;
 
     if(ata_wait_busy(dev) != 0)
@@ -632,39 +616,62 @@ int ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
     if(res != 0)
     {
         printk("ata: DMA read failed\n");
-        //buf->flags |= IOBUF_FLAG_ERROR;
         return -EIO;
     }
 
-    /*
-    if(buf->flags & IOBUF_FLAG_ERROR)
-    {
-        KDEBUG("ide_ata_dma_access - dma error\n");
-        return -EIO;
-    }
-    */
-    
-    A_memcpy((void *)buf /* ->data */, (void *)dev->dma_buf_virt, numsects * bps);
-
-    /*
-    printk("ata_read_dma: dev->dma_buf_virt 0x%lx\n", dev->dma_buf_virt);
-    char *p = buf;
-    for(unsigned int z = 0; z < 60; z++) printk("%x", p[z]);
-    printk("\n");
-    */
+    A_memcpy((void *)buf, (void *)dev->dma_buf_virt, numsects * bps);
 
     return 0;
 }
 
 
-int ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
+long ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
                   size_t lba, virtual_addr buf)
-                  //size_t lba, struct IO_buffer_s *buf)
+{
+    unsigned char sects_per_page = PAGE_SIZE / dev->bytes_per_sector;
+    unsigned char i;
+    long res;
+
+    /*
+     * Our current DMA driver allows a maximum of PAGE_SIZE bytes per transfer.
+     * If the requested number of sectors * bytes_per_sector is < PAGE_SIZE,
+     * go ahead and read them. Otherwise, we need to break down the request
+     * into PAGE_SIZE chunks.
+     *
+     * TODO: fix the DMA driver to allow larger transfers.
+     */
+    if(numsects <= sects_per_page)
+    {
+        return __ata_read_dma(dev, numsects, lba, buf);
+    }
+
+    for(i = 0; i <= numsects - sects_per_page; i += sects_per_page)
+    {
+        if((res = __ata_read_dma(dev, sects_per_page, lba, buf)) != 0)
+        {
+            return res;
+        }
+
+        lba += sects_per_page;
+        buf += PAGE_SIZE;
+    }
+
+    if(i < numsects)
+    {
+        return __ata_read_dma(dev, numsects - i, lba, buf);
+    }
+
+    return 0;
+}
+
+
+static long __ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
+                            size_t lba, virtual_addr buf)
 {
     unsigned char lba_mode, head;
     unsigned char cmd = 0;
     unsigned char lba_io[6];
-    int res;
+    long res;
     volatile uint8_t status;
 
     if(ata_wait_busy(dev) != 0)
@@ -697,29 +704,60 @@ int ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
     if(res != 0)
     {
         printk("ata: DMA write failed");
-        //buf->flags |= IOBUF_FLAG_ERROR;
         return -EIO;
     }
-
-    /*
-    if(buf->flags & IOBUF_FLAG_ERROR)
-    {
-        KDEBUG("ide_ata_dma_access - dma error\n");
-        return -EIO;
-    }
-    */
 
     return 0;
 }
 
 
-static int atapi_read_packet(struct ata_dev_s *dev,
-                      unsigned char *packet, int packetsz,
-                      void *buf, size_t bufsz, int ignore_nomedium)
+long ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
+                   size_t lba, virtual_addr buf)
 {
-    int res;
+    unsigned char sects_per_page = PAGE_SIZE / dev->bytes_per_sector;
+    unsigned char i;
+    long res;
+
+    /*
+     * Our current DMA driver allows a maximum of PAGE_SIZE bytes per transfer.
+     * If the requested number of sectors * bytes_per_sector is < PAGE_SIZE,
+     * go ahead and read them. Otherwise, we need to break down the request
+     * into PAGE_SIZE chunks.
+     *
+     * TODO: fix the DMA driver to allow larger transfers.
+     */
+    if(numsects <= sects_per_page)
+    {
+        return __ata_write_dma(dev, numsects, lba, buf);
+    }
+
+    for(i = 0; i <= numsects - sects_per_page; i += sects_per_page)
+    {
+        if((res = __ata_write_dma(dev, sects_per_page, lba, buf)) != 0)
+        {
+            return res;
+        }
+
+        lba += sects_per_page;
+        buf += PAGE_SIZE;
+    }
+
+    if(i < numsects)
+    {
+        return __ata_write_dma(dev, numsects - i, lba, buf);
+    }
+
+    return 0;
+}
+
+
+long atapi_read_packet(struct ata_dev_s *dev,
+                       unsigned char *packet, int packetsz,
+                       void *buf, size_t bufsz, int ignore_nomedium)
+{
+    long res;
     size_t left = bufsz;
-    
+
     if(ata_wait_busy(dev) != 0)
     {
         return -EBUSY;
@@ -817,13 +855,12 @@ static int atapi_read_packet(struct ata_dev_s *dev,
 }
 
 
-int atapi_read_pio(struct ata_dev_s *dev, unsigned char numsects,
-                   size_t lba, virtual_addr buf)
-                   //size_t lba, struct IO_buffer_s *buf)
+long atapi_read_pio(struct ata_dev_s *dev, unsigned char numsects,
+                    size_t lba, virtual_addr buf)
 {
     unsigned char packet[12];
-    int res;
-    
+    long res;
+
     // make sure we have the device capacity
     if(dev->size == 0)
     {
@@ -861,8 +898,8 @@ int atapi_read_capacity(struct ata_dev_s *dev)
 {
     unsigned char packet[12];
     unsigned char buf[8];
-    int res;
-    
+    long res;
+
     // setup SCSI packet
     memset(packet, 0, 12);
     packet[0 ] = 0x25;    /* READ CAPACITY */
@@ -893,9 +930,23 @@ int atapi_read_capacity(struct ata_dev_s *dev)
 }
 
 
-int atapi_write_pio(struct ata_dev_s *dev, unsigned char numsects,
-                    size_t lba, virtual_addr buf)
-                    //size_t lba, struct IO_buffer_s *buf)
+long atapi_write_packet(struct ata_dev_s *dev,
+                        unsigned char *packet, int packetsz,
+                        void *buf, size_t bufsz, int ignore_nomedium)
+{
+    UNUSED(dev);
+    UNUSED(packet);
+    UNUSED(packetsz);
+    UNUSED(buf);
+    UNUSED(bufsz);
+    UNUSED(ignore_nomedium);
+
+    return -ENOSYS;
+}
+
+
+long atapi_write_pio(struct ata_dev_s *dev, unsigned char numsects,
+                     size_t lba, virtual_addr buf)
 {
     UNUSED(dev);
     UNUSED(numsects);
@@ -903,77 +954,6 @@ int atapi_write_pio(struct ata_dev_s *dev, unsigned char numsects,
     UNUSED(buf);
     
     return -EROFS;
-}
-
-
-/*
- * Send a TEST UNIT READY (0x00) command to the ATAPI device.
- * Parameter addr should point to a 2-byte buffer. The status register
- * will be returned in the first byte and the error register will be
- * returned in the second byte.
- */
-int atapi_test_unit_ready(struct ata_dev_s *dev, virtual_addr addr)
-{
-    unsigned char packet[12];
-    int status, err, res;
-    uint8_t *buf = (uint8_t *)addr;
-    
-    if(!dev)
-    {
-        KDEBUG("atapi_test_unit_ready: invalid device\n");
-        return -ENODEV;
-    }
-
-    if(!(dev->type & 1))     // PATA or SATA
-    {
-        KDEBUG("atapi_test_unit_ready: device is not ATAPI\n");
-        return -ENODEV;
-    }
-
-    // setup SCSI packet
-    memset(packet, 0, 12);
-    packet[0] = ATAPI_CMD_TEST_UNIT_READY;
-
-    res = atapi_read_packet(dev, packet, 12, NULL, 0, 1);
-    /*
-    if((res = atapi_read_packet(dev, packet, 12, NULL, 0)) != 0)
-    {
-        printk("atapi_test_unit_ready: device err %d\n", res);
-        dev->size = 0;
-        dev->bytes_per_sector = ATAPI_SECTOR_SIZE;
-        return res;
-    }
-    */
-
-    status = inb(dev->base + ATA_REG_STATUS);
-    err = inb(dev->base + ATA_REG_ERR);
-
-    KDEBUG("atapi_test_unit_ready: status 0x%x, err 0x%x\n", status, err);
-
-    buf[0] = status;
-    buf[1] = err;
-    //screen_refresh(NULL);
-    //for(;;);
-
-    return res;
-}
-
-
-/*
- * Send a REQUEST SENSE (0x03) command to the ATAPI device.
- * Parameter addr should point to a buffer that is 18 bytes in size.
- * The sense data returned by the device will be stored there.
- */
-int atapi_request_sense(struct ata_dev_s *dev, virtual_addr addr)
-{
-    unsigned char packet[12];
-    
-    // setup SCSI packet
-    memset(packet, 0, 12);
-    packet[0] = ATAPI_CMD_REQUEST_SENSE;
-    packet[4] = 18;
-
-    return atapi_read_packet(dev, packet, 12, (void *)addr, 18, 1);
 }
 
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ata2.c
  *    This file is part of LaylaOS.
@@ -34,6 +34,7 @@
 
 #include <errno.h>
 #include <string.h>
+#include <sys/hdreg.h>
 #include <kernel/laylaos.h>
 #include <kernel/vfs.h>
 #include <kernel/ata.h>
@@ -42,8 +43,13 @@
 #include <kernel/io.h>
 #include <kernel/dev.h>
 #include <kernel/ahci.h>
+#include <kernel/loop.h>
+#include <kernel/loop_internal.h>
+#include <kernel/cdrom.h>
+#include <kernel/syscall.h>
 #include <mm/kheap.h>
 #include <mm/dma.h>
+#include <kernel/gpt_mbr.h>
 #include <fs/procfs.h>
 #include <fs/devfs.h>
 
@@ -548,6 +554,20 @@ static void add_ata_dev(struct ata_dev_s *tmp, struct parttab_s *part,
 }
 
 
+static void remove_ata_dev(int maj, int min)
+{
+    struct ata_devtab_s *tab = (maj == 3) ? &tab1 : &tab2;
+
+    tab->dev[min] = NULL;
+
+    if(tab->part[min])
+    {
+        kfree(tab->part[min]);
+        tab->part[min] = NULL;
+    }
+}
+
+
 void ata_register_dev(struct ata_dev_s *dev, struct parttab_s *part, int n)
 {
     char name[] = { 'h', 'd', '?', '\0', '\0', '\0' };
@@ -595,11 +615,6 @@ void ata_register_dev(struct ata_dev_s *dev, struct parttab_s *part, int n)
 }
 
 
-/* partition table offsets */
-static int mbr_offset[] = { 0x1be, 0x1ce, 0x1de, 0x1ee };
-static uint8_t gpt_hdr_magic[] = "EFI PART";
-
-
 static int read_sector_direct(struct ata_dev_s *dev, uint32_t lba)
 {
     outb(dev->base + ATA_REG_FEATURE, 0x00);
@@ -629,26 +644,14 @@ static int read_sector_direct(struct ata_dev_s *dev, uint32_t lba)
  */
 void ata_read_gpt(struct ata_dev_s *dev)
 {
-    int i, dev_index;
+    int dev_index;
     uint32_t gpthdr_lba = 0, off;
     uint32_t gptent_lba = 0, gptent_count = 0, gptent_sz = 0;
     struct gpt_part_entry_t *ent;
     struct parttab_s *part;
 
     // Sector 0 has already been read for us.
-    for(i = 0; i < 4; i++)
-    {
-        // Check for GPT partition table signature
-        if(ide_buf[mbr_offset[i] + 4] == 0xEE)
-        {
-            // The LBA of the GPT Partition Table Header is found at offset 8,
-            // and is 4 bytes long (ideally should be 0x00000001).
-            gpthdr_lba = get_dword(ide_buf + mbr_offset[i] + 8);
-            break;
-        }
-    }
-
-    if(gpthdr_lba == 0)
+    if((gpthdr_lba = get_gpthdr_lba(ide_buf)) == 0)
     {
         // This shouldn't happen
         return;
@@ -662,16 +665,9 @@ void ata_read_gpt(struct ata_dev_s *dev)
     }
 
     // Verify GPT signature
-    for(i = 0; i < 8; i++)
+    if(!valid_gpt_signature(ide_buf))
     {
-        if(ide_buf[i] != gpt_hdr_magic[i])
-        {
-            printk("  Skipping disk with invalid GPT signature: '");
-            printk("%c%c%c%c%c%c%c%c'\n", ide_buf[0], ide_buf[1], ide_buf[2],
-                                          ide_buf[3], ide_buf[4], ide_buf[5],
-                                          ide_buf[6], ide_buf[7]);
-            return;
-        }
+        return;
     }
 
     // Get partition entry starting lba, entry size and count
@@ -707,50 +703,19 @@ void ata_read_gpt(struct ata_dev_s *dev)
         ent = (struct gpt_part_entry_t *)(ide_buf + off);
 
         // Check for unused entries
-        for(i = 0; i < 16; i++)
-        {
-            if(ent->guid[i] != 0)
-            {
-                break;
-            }
-        }
-
-        if(i == 16)
+        if(unused_gpt_entry(ent))
         {
             KDEBUG("  Skipping unused GPT entry\n");
             off += gptent_sz;
             continue;
         }
 
-        if(!(part = kmalloc(sizeof(struct parttab_s))))
+        if(!(part = part_from_gpt_ent(ent)))
         {
             return;
         }
         
-        /*
-         * NOTE: We do not process the attributes correctly here.
-         *       Of note, the attribs field is 8 bytes long and we only
-         *       store the first byte here.
-         */
-        part->attribs        = ent->attribs & 0xff;
-        part->start_head     = 0;
-        part->start_sector   = 0;
-        part->start_cylinder = 0;
-        part->system_id      = 0;
-        part->end_head       = 0;
-        part->end_sector     = 0;
-        part->end_cylinder   = 0;
-        part->lba            = ent->lba_start;
-        part->total_sectors  = ent->lba_end - ent->lba_start;
         part->dev = dev;
-
-        /*
-        printk("    Partition %d\n", dev_index);
-        printk("      attribs 0x%x\n", part->attribs);
-        printk("      lba %u\n", part->lba);
-        printk("      total_sectors %u\n", part->total_sectors);
-        */
-        
         ata_register_dev(dev, part, dev_index);
         dev_index++;
         off += gptent_sz;
@@ -767,6 +732,7 @@ void ata_read_gpt(struct ata_dev_s *dev)
 void ata_read_mbr(struct ata_dev_s *dev)
 {
     int i;
+    struct parttab_s *part;
 
     /* check it is ATA */
     if(dev->type & 1)
@@ -828,47 +794,13 @@ void ata_read_mbr(struct ata_dev_s *dev)
         {
             continue;
         }
-        
-        struct parttab_s *part = kmalloc(sizeof(struct parttab_s));
 
-        if(!part)
+        if(!(part = part_from_mbr_buf(ide_buf, i)))
         {
             return;
         }
-        
-        part->attribs        = ide_buf[mbr_offset[i] + 0] & 0xff;
-        //part->bootable       = ide_buf[mbr_offset[i] + 0] & 0x80;
-        part->start_head     = ide_buf[mbr_offset[i] + 1] & 0xff;
-        part->start_sector   = ide_buf[mbr_offset[i] + 2] & 0x3f;
-        part->start_cylinder = ide_buf[mbr_offset[i] + 3] |
-                                ((ide_buf[mbr_offset[i] + 2] & 0xc0)<<8);
-        part->system_id      = ide_buf[mbr_offset[i] + 4] & 0xff;
-        part->end_head       = ide_buf[mbr_offset[i] + 5] & 0xff;
-        part->end_sector     = ide_buf[mbr_offset[i] + 6] & 0x3f;
-        part->end_cylinder   = ide_buf[mbr_offset[i] + 7] |
-                                ((ide_buf[mbr_offset[i] + 6] & 0xc0)<<8);
-        part->lba            = get_dword(ide_buf + mbr_offset[i] + 8);
-        part->total_sectors  = get_dword(ide_buf + mbr_offset[i] + 12);
-        part->dev = dev;
 
-        /*
-        printk("    Partition %d\n", i+1);
-        printk("      lba bytes 0x%x 0x%x 0x%x 0x%x\n",
-                ide_buf[offset[i] + 8], ide_buf[offset[i] + 9],
-                ide_buf[offset[i] + 10], ide_buf[offset[i] + 11]);
-        printk("      attribs 0x%x (bootable %d)\n",
-                part->attribs, (part->attribs & 0x80));
-        printk("      start_head %u\n", part->start_head);
-        printk("      start_sector %u\n", part->start_sector);
-        printk("      start_cylinder %u\n", part->start_cylinder);
-        printk("      system_id 0x%x\n", part->system_id);
-        printk("      end_head %u\n", part->end_head);
-        printk("      end_sector %u\n", part->end_sector);
-        printk("      end_cylinder %u\n", part->end_cylinder);
-        printk("      lba %u\n", part->lba);
-        printk("      total_sectors %u\n", part->total_sectors);
-        */
-        
+        part->dev = dev;
         ata_register_dev(dev, part, i + 1);
     }
 
@@ -877,17 +809,64 @@ void ata_read_mbr(struct ata_dev_s *dev)
 }
 
 
+long common_ata_ioctl(dev_t devid, struct ata_dev_s *dev, 
+                      struct parttab_s *part, 
+                      unsigned int cmd, char *arg, int kernel)
+{
+    switch(cmd)
+    {
+        case BLKSSZGET:
+            // get the block size in bytes
+            RETURN_IOCTL_RES(int, arg, dev->bytes_per_sector, kernel);
+
+        case BLKGETSIZE:
+        {
+            // get disk size in 512-blocks
+            long sects = part_or_disk_size(dev, part) / 512;
+            RETURN_IOCTL_RES(long, arg, sects, kernel);
+        }
+
+        case BLKGETSIZE64:
+        {
+            // get disk size in bytes
+            unsigned long long bytes = part_or_disk_size(dev, part);
+            RETURN_IOCTL_RES(unsigned long long, arg, bytes, kernel);
+        }
+
+        case HDIO_GETGEO:
+        {
+            struct hd_geometry hdg;
+
+            hdg.heads = dev->heads;
+            hdg.sectors = dev->sectors;
+            hdg.cylinders = dev->cylinders;
+            hdg.start = part ? part->lba : 0;
+
+            return copy_to_user(arg, &hdg, sizeof(struct hd_geometry));
+        }
+
+        case BLKFLSBUF:
+            syscall_sync();
+            invalidate_dev_dentries(devid);
+            remove_cached_disk_pages(devid);
+            return 0;
+
+        default:
+            return -EINVAL;
+    }
+}
+
+
 /*
  * General block device control function.
  */
-int ata_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
+long ata_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
 {
-    UNUSED(arg);
-    UNUSED(kernel);
-    
-    int i, min = MINOR(dev_id);
-    struct ata_devtab_s *tab = (MAJOR(dev_id) == 3) ? &tab1 : &tab2;
+    int min = MINOR(dev_id);
+    int maj = MAJOR(dev_id);
+    struct ata_devtab_s *tab = (maj == 3) ? &tab1 : &tab2;
     struct ata_dev_s *dev = tab->dev[min];
+    struct parttab_s *part = tab->part[min];
     //printk("ata_ioctl: dev 0x%x\n", dev_id);
     
     if(!dev)
@@ -900,18 +879,75 @@ int ata_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
         return -EINVAL;
     }
     
-    i = (int)dev->bytes_per_sector;
-
     switch(cmd)
     {
-        case DEV_IOCTL_GET_BLOCKSIZE:
-            // get the block size in bytes
-            return i;
-            //return (int)dev->bytes_per_sector;
+        case BLKSSZGET:
+        case BLKGETSIZE:
+        case BLKGETSIZE64:
+        case BLKFLSBUF:
+        case HDIO_GETGEO:
+            return common_ata_ioctl(dev_id, dev, part, cmd, arg, kernel);
+
+        case BLKRRPART:
+        {
+            // force re-reading the partition table
+            // NOTE: NOT TESTED!
+            int dev_index;
+
+            // get the min devid of the parent disk
+            min = (min / 64) * 64;
+
+            // has to be PATA or SATA
+            if(!(dev->type & 1))
+            {
+                return -EINVAL;
+            }
+
+            // first ensure none of the partitions (or the whole disk) is mounted
+            for(dev_index = min; dev_index < min + 64; dev_index++)
+            {
+                if(get_mount_info(TO_DEVID(maj, dev_index)))
+                {
+                    return -EBUSY;
+                }
+            }
+
+            // now remove the partitions and their /dev nodes, but leave the
+            // parent disk intact
+            for(dev_index = min + 1; dev_index < min + 16; dev_index++)
+            {
+                remove_dev_node(TO_DEVID(maj, dev_index));
+                remove_ata_dev(maj, dev_index);
+            }
+
+            // finally read the new partition table
+            ata_read_mbr(dev);
+
+            return 0;
+        }
     }
-    
+
+    // see if this is a CD-ROM ioctl
+    if(dev->type & 1)
+    {
+        return ahci_cdrom_ioctl(dev_id, cmd, arg, kernel);
+    }
+
     return -EINVAL;
 }
+
+
+#define ADD_TO_BUF(tmp, maj, i, kb, name)                           \
+    ksprintf(tmp, 64, "%4d  %4d  %10u   %s\n", maj, i, kb, name);   \
+    kfree(entry);                                                   \
+    len = strlen(tmp);                                              \
+    if(count + len >= bufsz) {                                      \
+        PR_REALLOC(*buf, bufsz, count);                             \
+        p = *buf + count;                                           \
+    }                                                               \
+    count += len;                                                   \
+    strcpy(p, tmp);                                                 \
+    p += len;
 
 
 /*
@@ -930,7 +966,7 @@ size_t get_partitions(char **buf)
     p = *buf;
     *p = '\0';
 
-    ksprintf(p, 64, "major minor  1k blocks   name\n\n");
+    ksprintf(p, 64, "major minor    #blocks   name\n\n");
     len = strlen(p);
     count += len;
     p += len;
@@ -945,65 +981,146 @@ size_t get_partitions(char **buf)
 
         for(i = 0; i < MAX_ATA_DEVICES; i++)
         {
+            entry = NULL;
+            kb = 0;
+
             if(tab->part[i] == NULL)
             {
-                continue;
-            }
-
-            if(devfs_find_deventry(TO_DEVID(maj, i), 1, &entry) == 0)
-            {
-                // get partition size in kilobytes
-                kb = (tab->part[i]->total_sectors *
-                      tab->part[i]->dev->bytes_per_sector) / 1024;
-
-                ksprintf(tmp, 64, "%4d  %4d  %10u   %s\n",
-                              maj, i, kb, entry->d_name);
-                kfree(entry);
-                len = strlen(tmp);
-                
-                if(count + len >= bufsz)
+                // check for a whole disk
+                if(tab->dev[i] == NULL)
                 {
-                    PR_REALLOC(*buf, bufsz, count);
-                    p = *buf + count;
+                    continue;
                 }
 
-                count += len;
-                strcpy(p, tmp);
-                p += len;
+                if(devfs_find_deventry(TO_DEVID(maj, i), 1, &entry) == 0)
+                {
+                    // get disk size in sectors
+                    kb = tab->dev[i]->size ? 
+                                (tab->dev[i]->size /
+                                    tab->dev[i]->bytes_per_sector) :
+                                tab->dev[i]->sectors;
+                }
+            }
+            else if(devfs_find_deventry(TO_DEVID(maj, i), 1, &entry) == 0)
+            {
+                // get partition size in sectors
+                kb = tab->part[i]->total_sectors;
+            }
+
+            if(entry)
+            {
+                ADD_TO_BUF(tmp, maj, i, kb, entry->d_name);
             }
         }
     }
 
     /*
-     * Next check AHCI devices
+     * Next check AHCI disk devices
      */
     for(i = 0; i < MAX_AHCI_DEVICES; i++)
     {
+        entry = NULL;
+        kb = 0;
+
         if(ahci_disk_part[i] == NULL)
+        {
+            // check for a whole disk
+            if(ahci_disk_dev[i] == NULL)
+            {
+                continue;
+            }
+
+            if(devfs_find_deventry(TO_DEVID(AHCI_DEV_MAJ, i), 1, &entry) == 0)
+            {
+                // get disk size in sectors
+                    kb = ahci_disk_dev[i]->size ? 
+                                (ahci_disk_dev[i]->size /
+                                    ahci_disk_dev[i]->bytes_per_sector) :
+                                ahci_disk_dev[i]->sectors;
+            }
+        }
+        else if(devfs_find_deventry(TO_DEVID(AHCI_DEV_MAJ, i), 1, &entry) == 0)
+        {
+            // get partition size in sectors
+            kb = ahci_disk_part[i]->total_sectors;
+        }
+
+        if(entry)
+        {
+            ADD_TO_BUF(tmp, AHCI_DEV_MAJ, i, kb, entry->d_name);
+        }
+    }
+
+    /*
+     * Next check AHCI CD-ROM devices
+     */
+    for(i = 0; i < MAX_AHCI_DEVICES; i++)
+    {
+        entry = NULL;
+        kb = 0;
+
+        if(ahci_cdrom_dev[i] == NULL)
         {
             continue;
         }
 
-        if(devfs_find_deventry(TO_DEVID(AHCI_DEV_MAJ, i), 1, &entry) == 0)
+        if(devfs_find_deventry(TO_DEVID(AHCI_CDROM_MAJ, i), 1, &entry) == 0)
         {
-            // get partition size in kilobytes
-            kb = (ahci_disk_part[i]->total_sectors *
-                  ahci_disk_part[i]->dev->bytes_per_sector) / 1024;
+            // get disk size in sectors
+            kb = ahci_cdrom_dev[i]->size ? 
+                       (ahci_cdrom_dev[i]->size /
+                            ahci_cdrom_dev[i]->bytes_per_sector) :
+                                ahci_cdrom_dev[i]->sectors;
+        }
 
-            ksprintf(tmp, 64, "%4d  %4d  %10u   %s\n",
-                          AHCI_DEV_MAJ, i, kb, entry->d_name);
-            kfree(entry);
-            len = strlen(tmp);
+        if(entry)
+        {
+            ADD_TO_BUF(tmp, AHCI_CDROM_MAJ, i, kb, entry->d_name);
+        }
+    }
 
-            if(count + len >= bufsz)
-            {
-                PR_REALLOC(*buf, bufsz, count);
-                p = *buf + count;
-            }
+    /*
+     * Next check loopback devices
+     */
+    for(i = 0; i < NR_LODEV; i++)
+    {
+        if(lodev[i] == NULL)
+        {
+            continue;
+        }
 
-            count += len;
-            strcpy(p, tmp);
-            p += len;
+        entry = NULL;
+        kb = 0;
+
+        if(devfs_find_deventry(TO_DEVID(LODEV_MAJ, i), 1, &entry) == 0)
+        {
+            // get disk size in sectors
+            kb = lodev[i]->sizelimit ? lodev[i]->sizelimit :
+                    ((lodev[i]->file && lodev[i]->file->node) ? 
+                        lodev[i]->file->node->size : 0);
+            kb /= lodev[i]->blocksz;
+            ADD_TO_BUF(tmp, LODEV_MAJ, i, kb, entry->d_name);
+        }
+    }
+
+    /*
+     * And their partitions (if any)
+     */
+    for(i = 0; i < MAX_LODEV_PARTITIONS; i++)
+    {
+        if(lodev_disk_part[i] == NULL)
+        {
+            continue;
+        }
+
+        entry = NULL;
+        kb = 0;
+
+        if(devfs_find_deventry(TO_DEVID(LODEV_PART_MAJ, i), 1, &entry) == 0)
+        {
+            // get partition size in sectors
+            kb = lodev_disk_part[i]->total_sectors;
+            ADD_TO_BUF(tmp, LODEV_PART_MAJ, i, kb, entry->d_name);
         }
     }
 

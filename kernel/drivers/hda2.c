@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: hda2.c
  *    This file is part of LaylaOS.
@@ -30,48 +30,28 @@
 #include <kernel/pci.h>
 #include <kernel/clock.h>
 #include <kernel/timer.h>
-#include <kernel/io.h>
 #include <kernel/hda.h>
 #include <kernel/pic.h>
 #include <kernel/vfs.h>
 #include <kernel/task.h>
+#include <kernel/pciio.h>
+#include <kernel/asm.h>
 #include <mm/kheap.h>
 #include <mm/kstack.h>
 #include <gui/vbe.h>
-#include <kernel/asm.h>
 
-
-uint8_t __inb(uintptr_t port) { return inb(port); }
-uint16_t __inw(uintptr_t port) { return inw(port); }
-uint32_t __inl(uintptr_t port) { return inl(port); }
-void __outb(uintptr_t port, uint8_t command) { outb(port, command); }
-void __outw(uintptr_t port, uint16_t command) { outw(port, command); }
-void __outl(uintptr_t port, uint32_t command) { outl(port, command); }
-
-#define hda_inb(p)          \
-    ((hda->mmio) ? mmio_inb(hda->iobase + p) : __inb(hda->iobase + p))
-
-#define hda_inw(p)          \
-    ((hda->mmio) ? mmio_inw(hda->iobase + p) : __inw(hda->iobase + p))
-
-#define hda_inl(p)          \
-    ((hda->mmio) ? mmio_inl(hda->iobase + p) : __inl(hda->iobase + p))
-
-#define hda_outb(p, c)      \
-    ((hda->mmio) ? mmio_outb(hda->iobase + p, c) : __outb(hda->iobase + p, c))
-
-#define hda_outw(p, c)      \
-    ((hda->mmio) ? mmio_outw(hda->iobase + p, c) : __outw(hda->iobase + p, c))
-
-#define hda_outl(p, c)      \
-    ((hda->mmio) ? mmio_outl(hda->iobase + p, c) : __outl(hda->iobase + p, c))
-
+#define hda_outb(p, c)      pcidev_outb(hda, p, c)
+#define hda_outw(p, c)      pcidev_outw(hda, p, c)
+#define hda_outl(p, c)      pcidev_outl(hda, p, c)
+#define hda_inb(p)          pcidev_inb(hda, p)
+#define hda_inw(p)          pcidev_inw(hda, p)
+#define hda_inl(p)          pcidev_inl(hda, p)
 
 static int last_unit = 0;
 struct hda_dev_t *first_hda = NULL;
 
 int hda_intr(struct regs *r, int unit);
-void hda_task_func(void *arg);
+//void hda_task_func(void *arg);
 
 // device for dummy output
 static struct hda_dev_t dummy_hda = { 0, };
@@ -468,8 +448,10 @@ int hda_init(struct pci_dev_t *pci)
 
     // register IRQ handler
     ksprintf(buf, 8, "hda%d", pci->unit);
+    /*
     (void)start_kernel_task(buf, hda_task_func, hda, &hda->task,
                                  KERNEL_TASK_ELEVATED_PRIORITY);
+    */
     pci_register_irq_handler(pci, hda_intr, buf);
 
     // reset
@@ -733,7 +715,7 @@ int hda_intr(struct regs *r, int unit)
     struct hda_out_t *out;
     uint32_t isr;
     uint8_t sts;
-    int unblock = 0;
+    //int unblock = 0;
 
     while(hda)
     {
@@ -756,7 +738,6 @@ int hda_intr(struct regs *r, int unit)
     {
         return 0;
     }
-
 
     sts = hda_inb(REG_RIRBSTS);
 
@@ -786,7 +767,32 @@ int hda_intr(struct regs *r, int unit)
         // buffer completed?
         if(outsts & 0x4)
         {
+            // if the read pointer has moved past the last written buffer,
+            // stop playing -- decision is made based on 3 vars: last link
+            // position, new link position, and current circular buffer position
+            uint32_t new_linkpos = hda_inl(out->base_port + REG_OFFSET_OUT_LPIB);
+
+            if((out->last_linkpos < out->bufpos && out->bufpos < new_linkpos) ||
+               (new_linkpos < out->last_linkpos && out->last_linkpos < out->bufpos) ||
+               (out->bufpos < new_linkpos && new_linkpos < out->last_linkpos))
+            {
+                hda_play_stop(hda, 0);
+            }
+
+            out->last_linkpos = new_linkpos;
+
+#if 0
+
             unblock = 1;
+
+            /*
+            volatile ssize_t bytes = __sync_sub_and_fetch(&out->bytes_playing, BDL_BUFSZ);
+
+            if(bytes < 0)
+            {
+                __lock_xchg_ptr(&out->bytes_playing, 0);
+            }
+            */
 
             out->bytes_playing -= BDL_BUFSZ;
 
@@ -795,14 +801,7 @@ int hda_intr(struct regs *r, int unit)
                 out->bytes_playing = 0;
             }
 
-            /*
-            out->hasdata[out->curdesc++] = 0;
-
-            if(out->curdesc == BDL_ENTRIES)
-            {
-                out->curdesc = 0;
-            }
-            */
+#endif
         }
         
         hda_outb(out->base_port + REG_OFFSET_OUT_STS, outsts);
@@ -812,22 +811,102 @@ int hda_intr(struct regs *r, int unit)
     hda_outl(REG_INTSTS, isr);
     pic_send_eoi(hda->pci->irq[0]);
 
+    /*
     if(unblock && hda->task)
     {
         unblock_kernel_task(hda->task);
     }
+    */
 
     return 1;
 }
 
 
+static void wait_for_buffer(struct hda_dev_t *hda, uint32_t bufindex)
+{
+    volatile int playing = (hda->flags & HDA_FLAG_PLAYING);
+    uint32_t read_bufindex;
+
+    while(playing)
+    {
+        hda->out->last_linkpos = hda_inl(hda->out->base_port + REG_OFFSET_OUT_LPIB);
+        read_bufindex = hda->out->last_linkpos / BDL_BUFSZ;
+
+        if(read_bufindex != bufindex)
+        {
+            return;
+        }
+
+        scheduler();
+        playing = (hda->flags & HDA_FLAG_PLAYING);
+    }
+}
+
+
+static long write_into_buffer(struct hda_dev_t *hda, char *buf, size_t len, size_t bufoff)
+{
+    char *dest;
+    long bufindex = hda->out->bufpos / BDL_BUFSZ;
+
+    wait_for_buffer(hda, bufindex);
+
+    if(bufindex >= BDL_ENTRIES)
+    {
+        return -EAGAIN;
+    }
+
+    dest = (char *)(hda->out->vbdl[bufindex] + bufoff);
+    A_memcpy(dest, buf, len);
+
+    hda->out->bufpos += len;
+
+    if(hda->out->bufpos >= (BDL_BUFSZ * BDL_ENTRIES))
+    {
+        hda->out->bufpos = 0;
+    }
+
+    return bufindex;
+}
+
+
+ssize_t hda_write_buf(struct hda_dev_t *hda, char *buf, size_t len)
+{
+    size_t towrite, remaining = len;
+    size_t bufoff;
+    long last_buf_index = 0;
+    char *src = buf;
+
+    while(remaining > 0)
+    {
+        bufoff = hda->out->bufpos % BDL_BUFSZ;
+        towrite = MIN(remaining, BDL_BUFSZ - bufoff);
+        last_buf_index = write_into_buffer(hda, src, towrite, bufoff);
+        src += towrite;
+        remaining -= towrite;
+    }
+
+    // there must be at least 2 valid entries in the buffer descriptor
+    // list before DMA can work
+    if(!(hda->flags & HDA_FLAG_PLAYING) && last_buf_index >= 2)
+    {
+        hda_play_stop(hda, 1);
+    }
+
+    hda->bytes_played += len;
+
+    return len;
+}
+
+
+#if 0
+
 void hda_task_func(void *arg)
 {
     struct hda_dev_t *hda = (struct hda_dev_t *)arg;
-    uint32_t /* lpib, */ curbuf, stopatbuf;
-    struct hda_buf_t *buf;
-    uintptr_t ptr;
-    size_t left;
+    volatile uint32_t lpib, curbuf, stopatbuf;
+    volatile struct hda_buf_t *buf;
+    volatile uintptr_t ptr;
+    volatile size_t left;
     
     if(!hda)
     {
@@ -846,7 +925,8 @@ void hda_task_func(void *arg)
         // check nothing is currently playing
         if(hda->out->bytes_playing)
         {
-            block_task2(hda, PIT_FREQUENCY);
+            //block_task2(hda, PIT_FREQUENCY);
+            scheduler();
             continue;
         }
 
@@ -879,9 +959,12 @@ void hda_task_func(void *arg)
         if(hda->outq.head == NULL)
         {
             kernel_mutex_unlock(&hda->outq.lock);
-            block_task2(hda, PIT_FREQUENCY);
+            //block_task2(hda, PIT_FREQUENCY);
+            scheduler();
             continue;
         }
+
+        //uintptr_t s = int_off();
 
         // get link position in buffer
         /*
@@ -892,17 +975,23 @@ void hda_task_func(void *arg)
         {
             curbuf = 0;
         }
+        switch_tty(1);
+        printk("  lpib %u, curbuf %u\n", lpib, curbuf);
         */
 
+        /*
         for(curbuf = 0; curbuf < BDL_ENTRIES; curbuf += 2)
         {
             A_memset((void *)hda->out->vbdl[curbuf], 0, PAGE_SIZE);
         }
+        */
 
         //stopatbuf = (curbuf == 0 ? BDL_ENTRIES : curbuf) - 1;
         curbuf = 0;
         stopatbuf = BDL_ENTRIES;
+
         hda->out->bytes_playing = 0;
+        //__lock_xchg_ptr(&hda->out->bytes_playing, 0);
 
         while(hda->outq.head)
         {
@@ -922,13 +1011,23 @@ void hda_task_func(void *arg)
                 // leave the rest for the next HDA buffer.
                 if(buf->size > left)
                 {
-                    A_memcpy((void *)ptr, buf->curptr, left);
+                    A_memcpy((void *)ptr, (void *)buf->curptr, left);
+
                     buf->curptr += left;
                     buf->size -= left;
                     ptr += left;
                     hda->outq.bytes -= left;
-                    //hda->out->hasdata[curbuf] = 1;
+                    //hda->outq.bytes_played += left;
+                    ////hda->out->hasdata[curbuf] = 1;
                     hda->out->bytes_playing += left;
+                    /*
+                    __sync_fetch_and_add(&buf->curptr, left);
+                    __sync_fetch_and_sub(&buf->size, left);
+                    __sync_fetch_and_sub(&hda->outq.bytes, left);
+                    __sync_fetch_and_add(&hda->out->bytes_playing, left);
+                    ptr += left;
+                    */
+
                     left = 0;
                     break;
                 }
@@ -942,17 +1041,28 @@ void hda_task_func(void *arg)
 
                 hda->outq.queued--;
                 hda->outq.bytes -= buf->size;
-                //hda->out->hasdata[curbuf] = 1;
+                //hda->outq.bytes_played += buf->size;
+                ////hda->out->hasdata[curbuf] = 1;
                 hda->out->bytes_playing += buf->size;
+                /*
+                __sync_fetch_and_sub(&hda->outq.queued, 1);
+                __sync_fetch_and_sub(&hda->outq.bytes, buf->size);
+                __sync_fetch_and_add(&hda->out->bytes_playing, buf->size);
+                */
 
                 kernel_mutex_unlock(&hda->outq.lock);
 
-                A_memcpy((void *)ptr, buf->curptr, buf->size);
+                A_memcpy((void *)ptr, (void *)buf->curptr, buf->size);
                 ptr += buf->size;
                 left -= buf->size;
-                kfree(buf);
+                kfree((void *)buf);
 
                 kernel_mutex_lock(&hda->outq.lock);
+
+                if(left == 0)
+                {
+                    break;
+                }
             }
 
             /*
@@ -966,13 +1076,16 @@ void hda_task_func(void *arg)
         }
 
         kernel_mutex_unlock(&hda->outq.lock);
+        __asm__ __volatile__("wbinvd":::);
 
         //if(!(hda->flags & HDA_FLAG_PLAYING))
         {
             hda_play_stop(hda, 1);
         }
 
-        block_task2(hda, PIT_FREQUENCY);
+        //int_on(s);
+        //block_task2(hda, PIT_FREQUENCY);
+        scheduler();
 
         /*
         kernel_mutex_lock(&hda->outq.lock);
@@ -1036,6 +1149,8 @@ void hda_task_func(void *arg)
     }
 }
 
+#endif
+
 
 /*
  * Set HDA device volume.
@@ -1046,11 +1161,6 @@ void hda_set_volume(struct hda_dev_t *hda, uint8_t vol, int overwrite)
     int meta = 0xb000;      // output amp, left & right
     uint8_t rvol;
     uint64_t response;
-
-    if(hda->flags & HDA_FLAG_DUMMY)
-    {
-        return;
-    }
 
     while(out)
     {
@@ -1071,9 +1181,12 @@ void hda_set_volume(struct hda_dev_t *hda, uint8_t vol, int overwrite)
             out->vol = vol;
         }
 
-        hda_send_verb(hda, hda_make_verb(out->codec, out->node,
-                                         VERB_SET_AMP_GAIN_MUTE | meta | 127 /* rvol */),
-                      &response);
+        if(!(hda->flags & HDA_FLAG_DUMMY))
+        {
+            hda_send_verb(hda, hda_make_verb(out->codec, out->node,
+                                             VERB_SET_AMP_GAIN_MUTE | meta | 127 /* rvol */),
+                                                  &response);
+        }
 
         out = out->next;
     }
@@ -1086,11 +1199,6 @@ void hda_set_volume(struct hda_dev_t *hda, uint8_t vol, int overwrite)
 int hda_set_channels(struct hda_dev_t *hda, int nchan)
 {
     struct hda_out_t *out = hda->out;
-
-    if(hda->flags & HDA_FLAG_DUMMY)
-    {
-        return 0;
-    }
 
     // nothing to do
     if(nchan == 0)
@@ -1110,7 +1218,11 @@ int hda_set_channels(struct hda_dev_t *hda, int nchan)
         if(out->nchan != nchan)
         {
             out->nchan = nchan;
-            hda_set_output_format(hda, out);
+
+            if(!(hda->flags & HDA_FLAG_DUMMY))
+            {
+                hda_set_output_format(hda, out);
+            }
         }
         
         out = out->next;
@@ -1126,11 +1238,6 @@ int hda_set_channels(struct hda_dev_t *hda, int nchan)
 int hda_set_sample_rate(struct hda_dev_t *hda, unsigned int sample_rate)
 {
     struct hda_out_t *out = hda->out;
-
-    if(hda->flags & HDA_FLAG_DUMMY)
-    {
-        return 0;
-    }
 
     switch(sample_rate)
     {
@@ -1207,7 +1314,11 @@ int hda_set_sample_rate(struct hda_dev_t *hda, unsigned int sample_rate)
         if(out->sample_rate != sample_rate)
         {
             out->sample_rate = sample_rate;
-            hda_set_output_format(hda, out);
+
+            if(!(hda->flags & HDA_FLAG_DUMMY))
+            {
+                hda_set_output_format(hda, out);
+            }
         }
         
         out = out->next;
@@ -1223,11 +1334,6 @@ int hda_set_sample_rate(struct hda_dev_t *hda, unsigned int sample_rate)
 int hda_set_bits_per_sample(struct hda_dev_t *hda, int bits)
 {
     struct hda_out_t *out = hda->out;
-
-    if(hda->flags & HDA_FLAG_DUMMY)
-    {
-        return 0;
-    }
 
     switch(bits)
     {
@@ -1264,7 +1370,11 @@ int hda_set_bits_per_sample(struct hda_dev_t *hda, int bits)
         if(out->sample_format != bits)
         {
             out->sample_format = bits;
-            hda_set_output_format(hda, out);
+
+            if(!(hda->flags & HDA_FLAG_DUMMY))
+            {
+                hda_set_output_format(hda, out);
+            }
         }
         
         out = out->next;
@@ -1306,11 +1416,6 @@ int hda_set_blksz(struct hda_dev_t *hda, unsigned int blksz)
 unsigned int hda_get_sample_rate(struct hda_dev_t *hda)
 {
     struct hda_out_t *out = hda->out;
-
-    if(hda->flags & HDA_FLAG_DUMMY)
-    {
-        return 48000;
-    }
 
     if(!out)
     {
@@ -1377,11 +1482,6 @@ int hda_get_bits_per_sample(struct hda_dev_t *hda)
 {
     struct hda_out_t *out = hda->out;
 
-    if(hda->flags & HDA_FLAG_DUMMY)
-    {
-        return 8;
-    }
-
     if(!out)
     {
         return 0;
@@ -1445,6 +1545,12 @@ int hda_play_stop(struct hda_dev_t *hda, int cmd)
     while(out)
     {
         hda_outw(out->base_port + REG_OFFSET_OUT_CTLL, ctl);
+
+        if(!cmd)
+        {
+            out->bufpos = 0;
+        }
+
         out = out->next;
     }
 
@@ -1455,6 +1561,7 @@ int hda_play_stop(struct hda_dev_t *hda, int cmd)
     else
     {
         hda->flags &= ~HDA_FLAG_PLAYING;
+        hda->bytes_played = 0;
     }
 
     return 0;
@@ -1495,6 +1602,8 @@ dev_t create_dummy_hda(void)
     hda->out = &dummy_out;
     hda->out->nchan = 2;
     hda->out->vol = 255;
+    hda->out->sample_rate = 48000;
+    hda->out->sample_format = BITS_16;
     hda->out->next = NULL;
 
     return devid;

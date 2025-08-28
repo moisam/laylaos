@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: pci.c
  *    This file is part of LaylaOS.
@@ -33,6 +33,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <kernel/net/ne2000.h>
+#include <kernel/net/i8254x.h>
 #include <kernel/laylaos.h>
 #include <kernel/io.h>
 #include <kernel/pci.h>
@@ -493,6 +494,10 @@ static void pci_check_func(uint8_t bus, uint8_t dev, uint8_t function)
         {
             ne2000_init(pci);
         }
+        else if((pci->vendor == 0x8086) && (pci->dev_id == 0x100e))
+        {
+            i8254x_init(pci);
+        }
     }
     // Multimedia Audio device
     else if((base_class == 0x04) && (sub_class == 0x03))
@@ -651,9 +656,9 @@ void pci_register_irq_handler(struct pci_dev_t *pci,
             ;
         }
 
+        printk("pci: registering handler for IRQ %d\n", pci->irq[0]);
         register_irq_handler(pci->irq[0], &pci->irq_handler);
         enable_irq(pci->irq[0]);
-        printk("pci: registering handler for IRQ %d\n", pci->irq[0]);
         //empty_loop();
     }
 }
