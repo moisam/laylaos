@@ -14,7 +14,8 @@ It is **definitely** not a system meant for everyday use (not yet, at least).
 
 The project's features include:
 * 64 bit monolithic multitasking pre-emptive kernel written in C (the 32 bit code is included here but is not fully functional)
-* Network stack (based on [PicoTCP](https://github.com/tass-belgium/picotcp/tree/master))
+* Symmetric Multiprocessing (SMP), supports up to 32 cores
+* Network stack (TCP, UDP, raw and Unix sockets, IPv4)
 * ATA/ATAPI and AHCI support
 * Basic Intel HDA sound support
 * PS2 keyboard and mouse
@@ -22,6 +23,8 @@ The project's features include:
 * Virtual Dynamic Shared Object ([vdso](https://man7.org/linux/man-pages/man7/vdso.7.html))
 * Interprocess Communication (IPC) facilities in the form of shared memory, semaphores and message queues
 * Page cache for demand loading of pages
+* Loopback devices ([loopback](https://man7.org/linux/man-pages/man4/loop.4.html))
+* Builtin filesystem support for Ext2, FAT12/16 and VFAT
 * ACPI support via [ACPICA](https://www.intel.com/content/www/us/en/developer/topic-technology/open/acpica/download.html)
 * C library (currently using [musl](https://wiki.musl-libc.org/))
 * Ports of 3rd party software (GNU coreutiles, inetutils, bash, several image and audio/video decoding libraries, etc.)
@@ -34,18 +37,18 @@ The project's features include:
 # TODO list
 
 This is mostly to keep track of where we are at and what needs to be done next:
+* Add IPv6 support to the network stack
 * More syscalls including POSIX message queues syscalls
 * More GUI functionality (text editor, screenshot facility, paint program, desktop themes, archiver, web browser, etc.)
-* VFAT, ext3, ext4, NFS filesystem support (maybe NTFS at some point)
+* Ext3, Ext4, NFS filesystem support (maybe NTFS at some point)
 * Kernel logging and perhaps a syslogd server
 * Swap support
 * USB support
-* Symmetric Multiprocessing (SMP)
 
 # Prebuilt packages
 
 You can download a prebuilt bootable disk image that includes everything (including the ported software) from the [releases page](https://github.com/moisam/laylaos/releases).
-Be mindful, however, that the unzipped disk image is likely to be big (3+ GiB in size). You can use this image to run LaylaOS under [Bochs](https://bochs.sourceforge.io/) or [QEmu](https://www.qemu.org/).
+Be mindful, however, that the unzipped disk image is likely to be big (6+ GiB in size). You can use this image to run LaylaOS under [Bochs](https://bochs.sourceforge.io/) or [QEmu](https://www.qemu.org/).
 
 If you want to try LaylaOS under [Oracle VM VirtualBox](https://www.virtualbox.org/), you will need to convert the bootable disk image into a VDI image. This can be done by running:
 `VBoxManage convertfromraw bootable_disk.img bootable_disk.vdi`
@@ -73,7 +76,6 @@ To build LaylaOS from source:
 # Licenses
 
 - LaylaOS is released under GPL v3.
-- PicoTCP (upon which our network stack is built) is released under GPL v2 or v3.
 - ACPICA is released under a dual Intel and Unix-compatible licenses.
 - Timidity files (needed for sound in DOOM) are in the public domain (see their `copyright.txt` file).
 - The monospace font used in the system console and the GUI terminal is [Dina font](https://www.dcmembers.com/jibsen/download/61/), which is released under a free license.
