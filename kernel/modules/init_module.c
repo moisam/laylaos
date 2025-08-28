@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: init_module.c
  *    This file is part of LaylaOS.
@@ -54,12 +54,12 @@
 
 
 static struct kmodule_t *alloc_mod_obj(void);
-static int load_module(struct kmodule_t *mod, int print_info);
-static int load_module_sections(struct kmodule_t *mod);
-static int read_module_dyntab(struct kmodule_t *mod);
+static long load_module(struct kmodule_t *mod, int print_info);
+static long load_module_sections(struct kmodule_t *mod);
+static long read_module_dyntab(struct kmodule_t *mod);
 static void get_module_info(struct kmodule_t *mod);
-static int read_module_symbols(struct kmodule_t *mod);
-static int load_module_list(char *depslist, int print_info);
+static long read_module_symbols(struct kmodule_t *mod);
+static long load_module_list(char *depslist, int print_info);
 
 static char *find_module_file(char *name, struct fs_node_t **node);
 static struct kmodule_t *find_loaded_module(char *name);
@@ -79,24 +79,23 @@ void object_relocate(elf_ehdr *hdr, elf_shdr *shdr, elf_sym *symtab,
 /*
  * Handler for syscall init_module().
  */
-int syscall_init_module(void *module_image, unsigned long len, 
-                        char *param_values)
+long syscall_init_module(void *module_image, unsigned long len, 
+                         char *param_values)
 {
     char *params = NULL;
     size_t paramslen = 0;
-    int res;
-    struct task_t *ct = cur_task;
-    
-    if(!suser(ct))
+    long res;
+
+    if(!suser(this_core->cur_task))
     {
         return -EPERM;
     }
 
     // check validity of user addresses first
-    if(!valid_addr(ct, (virtual_addr)module_image,
+    if(!valid_addr(this_core->cur_task, (virtual_addr)module_image,
                    (virtual_addr)module_image + len))
     {
-        add_task_segv_signal(ct, SIGSEGV, SEGV_MAPERR, (void *)module_image);
+        add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, (void *)module_image);
         return -EFAULT;
     }
     
@@ -121,14 +120,14 @@ int syscall_init_module(void *module_image, unsigned long len,
 /*
  * Initialize a kernel module.
  */
-int init_module_internal(void *module_image, unsigned long len, 
-                         char *param_values, int print_info)
+long init_module_internal(void *module_image, unsigned long len, 
+                          char *param_values, int print_info)
 {
     UNUSED(len);
     UNUSED(param_values);
 
     struct kmodule_t *mod;
-    int i;
+    long i;
 
     // alloc a new module object
     if(!(mod = alloc_mod_obj()))
@@ -291,9 +290,9 @@ void free_mod_obj(struct kmodule_t *mod)
 
 #define INFO        if(print_info) printk
 
-static int load_module(struct kmodule_t *mod, int print_info)
+static long load_module(struct kmodule_t *mod, int print_info)
 {
-    int i;
+    long i;
 
     if(!mod)
     {
@@ -404,9 +403,9 @@ static int load_module(struct kmodule_t *mod, int print_info)
 #undef INFO
 
 
-static int load_module_sections(struct kmodule_t *mod)
+static long load_module_sections(struct kmodule_t *mod)
 {
-    int i;
+    long i;
     virtual_addr mempos, memsize, filepos, filesize;
     elf_phdr *phdr = PHDRS(mod);
 
@@ -470,7 +469,7 @@ static int load_module_sections(struct kmodule_t *mod)
 }
 
 
-static int read_module_dyntab(struct kmodule_t *mod)
+static long read_module_dyntab(struct kmodule_t *mod)
 {
     int i, found = 0;
     int count = 0 /* , depcount = 0 */;
@@ -697,7 +696,7 @@ static void get_module_info(struct kmodule_t *mod)
 }
 
 
-static int read_module_symbols(struct kmodule_t *mod)
+static long read_module_symbols(struct kmodule_t *mod)
 {
     size_t i;
     elf_sym *sym;
@@ -740,17 +739,17 @@ static int read_module_symbols(struct kmodule_t *mod)
 }
 
 
-static int load_module_list(char *depslist, int print_info)
+static long load_module_list(char *depslist, int print_info)
 {
     char *p = depslist, *p2;
     size_t len;
     struct fs_node_t *node;
     virtual_addr imageaddr;
     size_t imagesz;
-    int res;
+    long res;
     ssize_t readsz;
     off_t fpos;
-    
+
     if(!depslist || !*depslist)
     {
         return 0;
@@ -857,7 +856,7 @@ next:
 static char *find_module_file(char *name, struct fs_node_t **node)
 {
     char *modpath, *p;
-    int res;
+    long res;
     //struct fs_node_t *node = NULL;
 	int open_flags = OPEN_KERNEL_CALLER | /* OPEN_NO_TRAILING_SLASH | */
 	                 OPEN_FOLLOW_SYMLINK;

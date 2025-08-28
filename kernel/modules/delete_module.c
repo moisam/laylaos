@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: delete_module.c
  *    This file is part of LaylaOS.
@@ -37,16 +37,15 @@
 /*
  * Handler for syscall delete_module().
  */
-int syscall_delete_module(char *__name, unsigned int flags)
+long syscall_delete_module(char *__name, unsigned int flags)
 {
     UNUSED(flags);
     
     struct kmodule_t *mod, *me = NULL;
     char *name = NULL, *s;
     size_t namelen = 0;
-    struct task_t *ct = cur_task;
     
-    if(!suser(ct))
+    if(!suser(this_core->cur_task))
     {
         return -EPERM;
     }
