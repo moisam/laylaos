@@ -36,6 +36,9 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
 
+mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+
 cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 
 # build
@@ -48,7 +51,7 @@ LD=${CROSSCOMPILE_TOOLS_PATH}/bin/${BUILD_ARCH}-laylaos-ld \
     CPPFLAGS="${CPPFLAGS} -I${CROSSCOMPILE_SYSROOT_PATH}/usr/include" \
     LDFLAGS="-L${CROSSCOMPILE_SYSROOT_PATH}/usr/lib" \
     ../configure  \
-    --host=${BUILD_TARGET} --prefix=/usr \
+    --host=${BUILD_TARGET} --prefix=/usr --includedir=/usr/include/ncursesw \
     --with-termlib --with-ticlib --without-tests \
     --enable-xmc-glitch --without-ada --without-cxx-binding \
     --with-shared --without-pkg-config --enable-widec \
@@ -63,8 +66,12 @@ for lib in form menu ncurses panel tinfo tic curses; do
     ln -s "lib${lib}w.so" "${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/lib${lib}.so"
 done
 
-#rm -rf ${CROSSCOMPILE_SYSROOT_PATH}/usr/include/ncurses
-#ln -s ncursesw ${CROSSCOMPILE_SYSROOT_PATH}/usr/include/ncurses
+# make symlink for those who need the old curses
+ln -s "libncursesw.so" "${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libcurses.so"
+
+if [ ! -e ${CROSSCOMPILE_SYSROOT_PATH}/usr/include/ncurses ]; then
+    ln -s ncursesw ${CROSSCOMPILE_SYSROOT_PATH}/usr/include/ncurses
+fi
 
 # Clean up
 cd ${CWD}

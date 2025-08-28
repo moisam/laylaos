@@ -1,15 +1,16 @@
 #!/bin/bash
 
 #
-# Script to download and build opusfile
+# Script to download and build openssh
 #
 
-DOWNLOAD_NAME="opusfile"
-DOWNLOAD_VERSION="0.12"
-DOWNLOAD_URL="https://github.com/xiph/opusfile/releases/download/v0.12/"
-DOWNLOAD_PREFIX="opusfile-"
+DOWNLOAD_NAME="openssh"
+DOWNLOAD_VERSION="9.9p1"
+DOWNLOAD_URL="https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/"
+DOWNLOAD_PREFIX="openssh-"
 DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
+PATCH_FILE=${DOWNLOAD_NAME}.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -19,7 +20,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libopusfile.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/ssh
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -32,41 +33,28 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-cd ${DOWNLOAD_SRCDIR}
-
-autoreconf -if
-
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
 
 mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
 cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
 
-mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
-cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
-
-autoreconf
+cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 
 # build
-mkdir ${DOWNLOAD_SRCDIR}/build2
-cd ${DOWNLOAD_SRCDIR}/build2
+mkdir ${DOWNLOAD_SRCDIR}/build
+cd ${DOWNLOAD_SRCDIR}/build
 
-../configure CFLAGS="-mstackrealign" \
-    --host=${BUILD_TARGET} \
-    --disable-static \
+../configure  \
+    --host=${BUILD_TARGET} --prefix=/usr \
+    --disable-largefile \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
-# Fix opusfile.pc for the future generations
-sed -i "s/Version.*/Version: ${DOWNLOAD_VERSION}/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/pkgconfig/opusfile.pc
-
-# Fix libopus*.la for the future generations
-sed -i "s/dependency_libs=.*/dependency_libs='-logg -lopus -lm'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libopusfile.la
-sed -i "s/dependency_libs=.*/dependency_libs='-lopusfile -logg -lopus -lm -lssl -lcrypto'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libopusurl.la
-
+# Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 

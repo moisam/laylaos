@@ -11,6 +11,7 @@ DOWNLOAD_PREFIX=""
 DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 PATCH_FILE=${DOWNLOAD_NAME}.diff
+PATCH_FILE2=${DOWNLOAD_NAME}2.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -33,7 +34,10 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
+cd ${DOWNLOAD_PORTS_PATH}
+patch -i ${CWD}/${PATCH_FILE} -p0
+patch -i ${CWD}/${PATCH_FILE2} -p0
+cd ${CWD}
 
 # build
 mkdir ${DOWNLOAD_SRCDIR}/build2

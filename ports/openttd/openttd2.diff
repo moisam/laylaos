@@ -1,0 +1,20 @@
+diff -rub ./OpenTTD-13.4/cmake/InstallAndPackage.cmake ./OpenTTD-13.4/cmake/InstallAndPackage.cmake
+--- ./OpenTTD-13.4/cmake/InstallAndPackage.cmake	2024-01-20 10:39:17.554000000 +0000
++++ ./OpenTTD-13.4/cmake/InstallAndPackage.cmake	2025-06-02 02:01:39.304622101 +0100
+@@ -147,6 +147,7 @@
+         COMMAND "${CMAKE_SOURCE_DIR}/os/windows/sign.bat" "$<TARGET_FILE:openttd>" "${WINDOWS_CERTIFICATE_COMMON_NAME}"
+       )
+     endif()
++elseif(LAYLAOS)
+ elseif(UNIX)
+     # With FHS, we can create deb/rpm/... Without it, they would be horribly broken
+     # and not work. The other way around is also true; with FHS they are not
+@@ -203,8 +204,6 @@
+ 
+     set(CPACK_PACKAGE_FILE_NAME "openttd-#CPACK_PACKAGE_VERSION#-linux-${PLATFORM}-${CPACK_SYSTEM_NAME}")
+ 
+-elseif(LAYLAOS)
+-
+ else()
+     message(FATAL_ERROR "Unknown OS found for packaging; please consider creating a Pull Request to add support for this OS.")
+ endif()

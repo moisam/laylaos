@@ -1,0 +1,29 @@
+diff -rub ./openssh-9.9p1/openbsd-compat/bsd-getpeereid.c ./openssh-9.9p1/openbsd-compat/bsd-getpeereid.c
+--- ./openssh-9.9p1/openbsd-compat/bsd-getpeereid.c	2024-09-19 23:20:48.000000000 +0100
++++ ./openssh-9.9p1/openbsd-compat/bsd-getpeereid.c	2024-10-04 17:35:58.347257247 +0100
+@@ -27,6 +27,17 @@
+ int
+ getpeereid(int s, uid_t *euid, gid_t *gid)
+ {
++#ifdef __laylaos__
++	struct xucred cred;
++	socklen_t len = sizeof(cred);
++
++	if (getsockopt(s, SOL_SOCKET, SO_PEERCRED, &cred, &len) < 0)
++		return (-1);
++	*euid = cred.cr_uid;
++	*gid = cred.cr_groups[0];
++
++	return (0);
++#else
+ 	struct ucred cred;
+ 	socklen_t len = sizeof(cred);
+ 
+@@ -36,6 +47,7 @@
+ 	*gid = cred.gid;
+ 
+ 	return (0);
++#endif
+ }
+ #elif defined(HAVE_GETPEERUCRED)
+ 

@@ -1,0 +1,12 @@
+diff -rub ./perl-5.40.0/ext/Errno/Errno_pm.PL ./perl-5.40.0/ext/Errno/Errno_pm.PL
+--- ./perl-5.40.0/ext/Errno/Errno_pm.PL	2024-04-16 18:11:38.000000000 +0100
++++ ./perl-5.40.0/ext/Errno/Errno_pm.PL	2025-04-26 15:18:25.275049337 +0100
+@@ -149,6 +149,8 @@
+     } elsif ($^O eq 'vos') {
+ 	# avoid problem where cpp returns non-POSIX pathnames
+ 	push(@file, '/system/include_library/errno.h');
++    } elsif ($^O eq 'laylaos') {
++	push(@file, "$sysroot/usr/include/errno.h");
+     } else {
+ 	open(CPPI, '>', 'errno.c') or
+ 	    die "Cannot open errno.c";

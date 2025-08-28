@@ -1,13 +1,13 @@
 #!/bin/bash
 
 #
-# Script to download and build opusfile
+# Script to download and build popt
 #
 
-DOWNLOAD_NAME="opusfile"
-DOWNLOAD_VERSION="0.12"
-DOWNLOAD_URL="https://github.com/xiph/opusfile/releases/download/v0.12/"
-DOWNLOAD_PREFIX="opusfile-"
+DOWNLOAD_NAME="popt"
+DOWNLOAD_VERSION="1.19"
+DOWNLOAD_URL="https://ftp.osuosl.org/pub/rpm/popt/releases/popt-1.x/"
+DOWNLOAD_PREFIX="popt-"
 DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 CWD=`pwd`
@@ -19,7 +19,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libopusfile.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libpopt.so
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -32,41 +32,33 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-cd ${DOWNLOAD_SRCDIR}
+mv ${DOWNLOAD_SRCDIR}/build-aux/config.sub ${DOWNLOAD_SRCDIR}/build-aux/config.sub.OLD
+cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.sub
 
-autoreconf -if
-
-mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
-cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
-
-mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
-cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+mv ${DOWNLOAD_SRCDIR}/build-aux/config.guess ${DOWNLOAD_SRCDIR}/build-aux/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.guess
 
 mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
 cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
 
-autoreconf
+cd ${DOWNLOAD_SRCDIR} && autoreconf
 
 # build
 mkdir ${DOWNLOAD_SRCDIR}/build2
 cd ${DOWNLOAD_SRCDIR}/build2
 
-../configure CFLAGS="-mstackrealign" \
-    --host=${BUILD_TARGET} \
-    --disable-static \
+# build
+
+CFLAGS="${CFLAGS} -mstackrealign" \
+    ../configure  \
+    --host=${BUILD_TARGET} --prefix=/usr \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
-# Fix opusfile.pc for the future generations
-sed -i "s/Version.*/Version: ${DOWNLOAD_VERSION}/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/pkgconfig/opusfile.pc
-
-# Fix libopus*.la for the future generations
-sed -i "s/dependency_libs=.*/dependency_libs='-logg -lopus -lm'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libopusfile.la
-sed -i "s/dependency_libs=.*/dependency_libs='-lopusfile -logg -lopus -lm -lssl -lcrypto'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libopusurl.la
-
+# Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 

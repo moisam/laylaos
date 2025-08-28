@@ -1,0 +1,33 @@
+diff -rub ./psutils/Makefile ./psutils/Makefile
+--- ./psutils/Makefile	2024-11-03 01:27:02.141929902 +0000
++++ ./psutils/Makefile	2024-11-01 11:33:29.871919725 +0000
+@@ -24,11 +24,11 @@
+ # Makefile for PSUtils under Unix
+ 
+ OS = UNIX
+-
+-BINDIR = /usr/local/bin
++PREFIX ?= /usr
++BINDIR = $(PREFIX)/bin
+ SCRIPTDIR = $(BINDIR)
+-INCLUDEDIR = /usr/local/share/psutils
+-PERL = /usr/local/bin/perl
++INCLUDEDIR = $(PREFIX)/share/psutils
++PERL = /usr/bin/perl
+ 
+ BINMODE = 0755
+ MANMODE = 0644
+@@ -36,10 +36,10 @@
+ INSTALL = install -c -m $(BINMODE)
+ INSTALLMAN = install -c -m $(MANMODE)
+ MANEXT = 1
+-MANDIR = /usr/local/share/man/man$(MANEXT)
++MANDIR = $(PREFIX)/share/man/man$(MANEXT)
+ 
+-CC = gcc
+-CFLAGS = -DPAPER=\"$(PAPER)\" -DUNIX -O -Wall
++CC ?= gcc
++CFLAGS += -DPAPER=\"$(PAPER)\" -DUNIX -O -Wall
+ 
+ BIN = psbook psselect pstops epsffit psnup \
+ 	psresize
