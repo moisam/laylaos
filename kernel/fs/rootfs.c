@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: rootfs.c
  *    This file is part of LaylaOS.
@@ -50,12 +50,11 @@ dev_t ROOT_DEVID;
 
 
 // forward declarations
-static int rootfs_read_inode(struct fs_node_t *);
-static int rootfs_write_inode(struct fs_node_t *);
-static int rootfs_finddir(struct fs_node_t *, char *, struct dirent **, 
-                          struct cached_page_t **, size_t *);
-                          //struct IO_buffer_s **, size_t *);
-static int rootfs_addir(struct fs_node_t *, char *, ino_t);
+static long rootfs_read_inode(struct fs_node_t *);
+static long rootfs_write_inode(struct fs_node_t *);
+static long rootfs_finddir(struct fs_node_t *, char *, struct dirent **, 
+                           struct cached_page_t **, size_t *);
+static long rootfs_addir(struct fs_node_t *, struct fs_node_t *, char *);
 
 static int mount_initrd(dev_t initrd_dev);
 static int switch_sysroot(dev_t initrd_dev);
@@ -135,10 +134,13 @@ static void rootfs_add_node(char *name, struct fs_node_t *localroot,
     node->ctime = t;
     node->uid = 0;
     node->gid = 0;
-    
+    node->flags = 0 /* FS_NODE_KEEP_INCORE */;
+
     if(localroot)
     {
         static struct mount_info_t *mtab = &mounttab[0];
+        int res;
+
         mtab->dev = localroot->dev;
         mtab->flags = 0;
         mtab->root = localroot;
@@ -153,7 +155,7 @@ static void rootfs_add_node(char *name, struct fs_node_t *localroot,
         {
             if(tmpfs_read_super(mtab->dev, mtab,
                 tmpfs_ioctl(TO_DEVID(TMPFS_DEVID, 1),
-                            DEV_IOCTL_GET_BLOCKSIZE, 0, 1)) < 0)
+                                        BLKSSZGET, (char *)&res, 1)) < 0)
             {
                 kpanic("Failed to mount tmpfs on /mnt\n");
             }
@@ -184,6 +186,7 @@ struct fs_node_t *rootfs_init(void)
     system_root_node->mode = S_IFDIR | 0555;
     system_root_node->links = 1;
     system_root_node->refs = 1;
+    system_root_node->flags = 0 /* FS_NODE_KEEP_INCORE */;
 
     dev_t initrd_dev;
     struct fs_node_t *initrd, *devroot = devfs_create();
@@ -191,13 +194,12 @@ struct fs_node_t *rootfs_init(void)
     struct cached_page_t *dbuf;
     //struct IO_buffer_s *dbuf;
     size_t dbuf_off;
-    struct task_t *ct = cur_task;
     char *path;
     int res;
     
     // we need these before calling vfs_mount()
-    ct->fs->root = system_root_node;
-    ct->fs->cwd = system_root_node;
+    this_core->cur_task->fs->root = system_root_node;
+    this_core->cur_task->fs->cwd = system_root_node;
 
     printk("Looking for initrd..\n");
     //__asm__("xchg %%bx, %%bx"::);
@@ -205,6 +207,7 @@ struct fs_node_t *rootfs_init(void)
     // check for an initrd and if found, mount it as the sysroot
     if(devfs_finddir(devroot, "initrd", &entry, &dbuf, &dbuf_off) != 0)
     {
+        printk("Could not find initrd..\n");
         goto load_default;
     }
 
@@ -244,10 +247,8 @@ struct fs_node_t *rootfs_init(void)
     //__asm__("xchg %%bx, %%bx"::);
 
     // adjust these to point to the mounted sysroot
-    ct->fs->root = system_root_node;
-    ct->fs->cwd = system_root_node;
-
-
+    this_core->cur_task->fs->root = system_root_node;
+    this_core->cur_task->fs->cwd = system_root_node;
 
     printk("Looking for 'root' parameter on kernel cmdline..\n");
     res = -1;
@@ -373,7 +374,7 @@ int mount_initrd(dev_t initrd_dev)
     struct mount_info_t *d;
     struct fs_info_t *fs;
     int flags = MS_RDONLY;
-    int res;
+    int res, blocksz = 0;
 
     // find an empty slot
     if(!(d = mounttab_first_empty()))
@@ -405,8 +406,8 @@ int mount_initrd(dev_t initrd_dev)
     // get the device's block size (bytes per sector)
     if(!bdev_tab[MAJOR(d->dev)].ioctl ||
        (res = bdev_tab[MAJOR(d->dev)].ioctl(d->dev, 
-                                            DEV_IOCTL_GET_BLOCKSIZE, 
-                                            0, 1)) < 0)
+                                            BLKSSZGET, 
+                                            (char *)&blocksz, 1)) < 0)
     {
         d->dev = 0;
         return -ENODEV;
@@ -414,7 +415,7 @@ int mount_initrd(dev_t initrd_dev)
 
     // read the superblock
     if(!fs->ops || !fs->ops->read_super ||
-       (res = fs->ops->read_super(d->dev, d, (size_t)res)) < 0)
+       (res = fs->ops->read_super(d->dev, d, (size_t)blocksz)) < 0)
     {
         d->dev = 0;
         return res;
@@ -436,7 +437,6 @@ int switch_sysroot(dev_t initrd_dev)
     struct fs_node_t *initrd_node, *rootfs_node;
     struct mount_info_t *d;
     int res;
-    //struct task_t *ct = cur_task;
 
     printk("Switching sysroot..\n");
     printk("Looking for /rootfs..\n");
@@ -455,10 +455,15 @@ int switch_sysroot(dev_t initrd_dev)
         return -ENOENT;
     }
 
-    release_node(rootfs_node);      // refs = 1
+    release_node(rootfs_node);      // refs = 1, dev 0x1fa, inode 0xf
     system_root_node = d->mpoint;
-    
+    system_root_node->ptr = d->root;
+    system_root_node->refs++;       // refs = 2, dev /dev/[hs]da, inode 0x2
+    system_root_node->flags |= /* FS_NODE_KEEP_INCORE | */ FS_NODE_MOUNTPOINT;
+    d->root->refs++;
+
     d = get_mount_info(initrd_dev);
+    remove_cached_node_pages(d->mpoint);
     release_node(d->mpoint);        // refs = 0
 
     // adjust these to point to the new sysroot
@@ -485,14 +490,16 @@ int switch_sysroot(dev_t initrd_dev)
                        &initrd_node, OPEN_KERNEL_CALLER|OPEN_NOFOLLOW_MPOINT)) == 0)
     {
         d->mpoint = initrd_node;
-        initrd_node->flags |= FS_NODE_MOUNTPOINT;
+        initrd_node->flags |= FS_NODE_MOUNTPOINT /* | FS_NODE_KEEP_INCORE */;
         initrd_node->ptr = d->root;
+        printk("Found /initrd..\n");
     }
     else
     {
         release_node(d->root);
         d->root = NULL;
         d->dev = 0;
+        printk("Failed to find /initrd..\n");
     }
 
     printk("Switched sysroot..\n");
@@ -501,7 +508,7 @@ int switch_sysroot(dev_t initrd_dev)
 }
 
 
-int rootfs_read_inode(struct fs_node_t *node)
+long rootfs_read_inode(struct fs_node_t *node)
 {
     if(!node)
     {
@@ -535,7 +542,7 @@ int rootfs_read_inode(struct fs_node_t *node)
 }
 
 
-int rootfs_write_inode(struct fs_node_t *node)
+long rootfs_write_inode(struct fs_node_t *node)
 {
     if(!node)
     {
@@ -571,19 +578,17 @@ int rootfs_write_inode(struct fs_node_t *node)
 }
 
 
-static inline struct dirent *entry_to_dirent(int index, int off)
+STATIC_INLINE struct dirent *entry_to_dirent(int index, int off)
 {
-    struct dirent *entry = kmalloc(sizeof(struct dirent));
-    
+    int namelen = strlen(root_tree[index].name);
+    unsigned int reclen = GET_DIRENT_LEN(namelen);
+    struct dirent *entry = kmalloc(reclen);
+
     if(!entry)
     {
         return NULL;
     }
-    
-    int namelen = strlen(root_tree[index].name);
-    unsigned short reclen = sizeof(ino_t) + sizeof(off_t) + 
-                            sizeof(unsigned char) + namelen;
-    
+
     entry->d_ino = index;
     entry->d_off = off;
     entry->d_type = DT_DIR;
@@ -603,8 +608,7 @@ static inline struct dirent *entry_to_dirent(int index, int off)
  *
  * Outputs:
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
- *             dirent struct (by calling ext2_entry_to_dirent() above), and the
- *             result is stored in this field
+ *             dirent struct, and the result is stored in this field
  *    dbuf => the disk buffer representing the disk block containing the found
  *            filename, this is useful if the caller wants to delete the file
  *            after finding it (vfs_unlink(), for example)
@@ -614,10 +618,9 @@ static inline struct dirent *entry_to_dirent(int index, int off)
  * Returns:
  *    0 on success, -errno on failure
  */
-int rootfs_finddir(struct fs_node_t *dir, char *filename, 
-                   struct dirent **entry,
-                   struct cached_page_t **dbuf, size_t *dbuf_off)
-                   //struct IO_buffer_s **dbuf, size_t *dbuf_off)
+long rootfs_finddir(struct fs_node_t *dir, char *filename, 
+                    struct dirent **entry,
+                    struct cached_page_t **dbuf, size_t *dbuf_off)
 {
     if(!dir || !dir->inode || !filename || !*filename)
     {
@@ -653,11 +656,11 @@ int rootfs_finddir(struct fs_node_t *dir, char *filename,
 }
 
 
-int rootfs_addir(struct fs_node_t *dir, char *filename, ino_t inode)
+long rootfs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
 {
     UNUSED(dir);
     UNUSED(filename);
-    UNUSED(inode);
+    UNUSED(file);
 
     return -ENOSYS;
 }

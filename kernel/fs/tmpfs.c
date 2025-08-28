@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: tmpfs.c
  *    This file is part of LaylaOS.
@@ -53,8 +53,17 @@ dev_t TMPFS_DEVID = 241;
 // last used minor device number
 volatile int last_minor = 0;
 
+// root inode
+#define TMPFS_ROOT_INO          2
+
 // max # of tmpfs filesystems
-#define NR_TMPFS            32
+#define NR_TMPFS                32
+
+// number of blocks/inodes per bitmap item
+#define blocks_per_item         (sizeof(size_t) * CHAR_BIT)
+#define inodes_per_item         (sizeof(size_t) * CHAR_BIT)
+
+#define max_items               65536
 
 // defined in ext2fs.c
 extern uint8_t page_of_zeroes[];
@@ -80,7 +89,7 @@ struct fs_ops_t tmpfs_ops =
     //.readdir = tmpfs_readdir,
     .addir = tmpfs_addir,
     .mkdir = tmpfs_mkdir,
-    .deldir = ext2_deldir,
+    .deldir = tmpfs_deldir,
     .dir_empty = tmpfs_dir_empty,
     .getdents = tmpfs_getdents,
 
@@ -100,38 +109,27 @@ struct fs_ops_t tmpfs_ops =
  */
 struct
 {
-    //dev_t dev;
     struct fs_node_t *root, *last_node;
-    size_t inode_count, free_inodes;
-    size_t block_count, free_blocks;
+    volatile size_t inode_count, free_inodes;
+    volatile size_t block_count, free_blocks;
     size_t block_size;
-    size_t last_inode;
     virtual_addr *blocks;
-    size_t *block_bitmap;
-    struct kernel_mutex_t lock;
+    volatile size_t *block_bitmap, *inode_bitmap;
+    volatile struct kernel_mutex_t lock;
 } tmpfs_dev[NR_TMPFS];
 
 
-struct kernel_mutex_t tmpfs_lock;
+volatile struct kernel_mutex_t tmpfs_lock;
 
 /*
  * Internal functions.
  */
 
-static void tmpfs_free_internal(uint32_t block_no,
-                                size_t block_count, size_t *free_blocks,
-                                size_t *block_bitmap,
-                                struct kernel_mutex_t *lock);
-
-static uint32_t tmpfs_alloc_internal(size_t block_count,
-                                     size_t *free_blocks, size_t *block_bitmap,
-                                     struct kernel_mutex_t *lock);
-
 static int tmpfs_options_are_valid(char *module,
                                    size_t block_count, size_t block_size,
                                    size_t max_blocks, int report_errs);
 
-static struct fs_node_t *tmpfs_create_fsnode(void);
+//static struct fs_node_t *tmpfs_create_fsnode(void);
 static void tmpfs_free_fsnode(struct fs_node_t *node);
 static size_t tmpfs_get_frames(virtual_addr *blocks, size_t count);
 static void tmpfs_release_frames(virtual_addr *blocks, size_t count);
@@ -158,7 +156,7 @@ static size_t tmpfs_needed_pages(size_t block_size, size_t block_count);
  * Returns:
  *    0 on success, -errno on failure
  */
-int tmpfs_mount(struct mount_info_t *d, int flags, char *options)
+long tmpfs_mount(struct mount_info_t *d, int flags, char *options)
 {
     UNUSED(flags);
 
@@ -204,14 +202,14 @@ int tmpfs_mount(struct mount_info_t *d, int flags, char *options)
  * This function fills in the mount info struct's block_size, super,
  * and root fields.
  */
-int tmpfs_read_super(dev_t dev, struct mount_info_t *d,
-                     size_t bytes_per_sector)
+long tmpfs_read_super(dev_t dev, struct mount_info_t *d,
+                      size_t bytes_per_sector)
 {
     UNUSED(bytes_per_sector);
     
     size_t min = MINOR(dev) - 1;
-    int res;
-    
+    long res;
+
     if(min >= NR_TMPFS || tmpfs_dev[min].root == NULL)
     {
         return -EINVAL;
@@ -221,12 +219,14 @@ int tmpfs_read_super(dev_t dev, struct mount_info_t *d,
     
     d->block_size = tmpfs_dev[min].block_size;
     d->super = NULL;
-    d->root = tmpfs_dev[min].root;
+    //d->root = tmpfs_dev[min].root;
+    d->root = get_node(dev, TMPFS_ROOT_INO, 0);
 
     kernel_mutex_unlock(&tmpfs_lock);
-    
-    if((res = tmpfs_mkdir(tmpfs_dev[min].root,
-                            tmpfs_dev[min].root->inode)) < 0)
+
+    if((res = tmpfs_mkdir(d->root, d->root)) < 0)
+    //if((res = tmpfs_mkdir(tmpfs_dev[min].root,
+    //                        tmpfs_dev[min].root->inode)) < 0)
     {
         d->root = NULL;
         return res;
@@ -243,7 +243,6 @@ int tmpfs_read_super(dev_t dev, struct mount_info_t *d,
  * Called when unmounting the filesystem.
  */
 void tmpfs_put_super(dev_t dev, struct superblock_t *sb)
-//void tmpfs_put_super(dev_t dev, struct IO_buffer_s *sb)
 {
     UNUSED(sb);
     size_t min = MINOR(dev) - 1;
@@ -261,8 +260,10 @@ void tmpfs_put_super(dev_t dev, struct superblock_t *sb)
     tmpfs_free_fsnode(tmpfs_dev[min].root);
     tmpfs_release_frames(tmpfs_dev[min].blocks, pages);
     kfree(tmpfs_dev[min].blocks);
-    kfree(tmpfs_dev[min].block_bitmap);
+    kfree((void *)tmpfs_dev[min].block_bitmap);
+    kfree((void *)tmpfs_dev[min].inode_bitmap);
     tmpfs_dev[min].block_bitmap = NULL;
+    tmpfs_dev[min].inode_bitmap = NULL;
     tmpfs_dev[min].root = NULL;
     tmpfs_dev[min].last_node = NULL;
     tmpfs_dev[min].blocks = NULL;
@@ -284,10 +285,10 @@ static inline int valid_tmpfs_node(struct fs_node_t *node, size_t min)
 /*
  * Reads inode data structure from disk.
  */
-int tmpfs_read_inode(struct fs_node_t *node)
+long tmpfs_read_inode(struct fs_node_t *node)
 {
     size_t min = MINOR(node->dev) - 1;
-    struct fs_node_t *tmp;
+    volatile struct fs_node_t *tmp;
     
     if(!valid_tmpfs_node(node, min))
     {
@@ -329,10 +330,10 @@ int tmpfs_read_inode(struct fs_node_t *node)
 /*
  * Writes inode data structure to disk.
  */
-int tmpfs_write_inode(struct fs_node_t *node)
+long tmpfs_write_inode(struct fs_node_t *node)
 {
     size_t min = MINOR(node->dev) - 1;
-    struct fs_node_t *tmp;
+    volatile struct fs_node_t *tmp;
     
     if(!valid_tmpfs_node(node, min))
     {
@@ -411,169 +412,367 @@ static void fill_zero_block(struct fs_node_t *node, size_t lblock,
 }
 
 
-static size_t bmap_indirect_block(struct fs_node_t *node, size_t lblock,
-                                  size_t block_size, int flags)
+/*
+ * Helper function called by tmpfs_bmap() to alloc a new block if needed.
+ *
+ * Returns 1 if a new block was allocated, 0 otherwise. This is so that the
+ * caller can zero out the new block before use.
+ */
+STATIC_INLINE void bmap_may_create_block(struct fs_node_t *node,
+                                         volatile uint32_t *block, uint32_t block_size,
+                                         int create)
 {
-    int create = (flags & BMAP_FLAG_CREATE);
-    int free = (flags & BMAP_FLAG_FREE);
-    size_t i, min = MINOR(node->dev) - 1;
-    uint32_t *arr;
-
-    lblock -= 14;
-
-    // check if the indirect block is assigned
-    if(!node->blocks[14])
+    if(create && !*block)
     {
-        // bail out if we are not asked to create a new block
-        if(!create)
+        if((*block = tmpfs_alloc(node->dev)))
         {
-            return 0;
+            fill_zero_block(node, *block, block_size);
         }
-
-        // we need 2 new blocks: one for the indirect block, and one for
-        // the new block itself
-        if(tmpfs_dev[min].free_blocks <= 2)
-        {
-            return 0;
-        }
-
-        // alloc the indirect block first
-        if(!(node->blocks[14] = tmpfs_alloc(node->dev)))
-        {
-            return 0;
-        }
-
-        // then alloc the new block
-        if(!(i = tmpfs_alloc(node->dev)))
-        {
-            // TODO: free the indirect block
-            return 0;
-        }
-
-        // zero them out on "disk"
-        fill_zero_block(node, node->blocks[14], block_size);
-        fill_zero_block(node, i, block_size);
-
-        // set the new block's entry in the indirect block
-        arr = (uint32_t *)block_virtual_address(node->blocks[14], min);
-        arr[lblock] = i;
-        return i;
     }
-
-    // we have an assigned indirect block, get its memory address
-    arr = (uint32_t *)block_virtual_address(node->blocks[14], min);
-
-    // free block if we're shrinking the file
-    if(free)
-    {
-        if(arr[lblock])
-        {
-            tmpfs_free(node->dev, arr[lblock]);
-            arr[lblock] = 0;
-
-            // free the indirect block if it is empty
-            for(i = 0; i < block_size / sizeof(uint32_t); i++)
-            {
-                if(arr[i])
-                {
-                    free = 0;
-                    break;
-                }
-            }
-
-            if(free)
-            {
-                tmpfs_free(node->dev, node->blocks[14]);
-                node->blocks[14] = 0;
-            }
-
-            node->ctime = now();
-            node->flags |= FS_NODE_DIRTY;
-        }
-
-        return 0;
-    }
-
-    // we are neither creating nor freeing blocks, just return the block addr
-    return arr[lblock];
 }
 
 
 /*
- * Map file position to disk block number using inode struct's block pointers.
- *
- * For simplicifty, tmpfs uses the 15 inode block pointers as direct block
- * pointers, which gives a max. file size of 15*block_size (e.g. 30720 bytes if
- * using 2048-byte blocks).
- *
- * Inputs:
- *    node => node struct
- *    lblock => block number we want to map
- *    block_size => filesystem's block size in bytes
- *    flags => BMAP_FLAG_CREATE, BMAP_FLAG_FREE or BMAP_FLAG_NONE which creates
- *             the block if it doesn't exist, frees the block (when shrinking
- *             files), or simply maps, respectively
+ * Helper function called by tmpfs_bmap() to free a block if not needed anymore.
+ */
+STATIC_INLINE void bmap_free_block(struct fs_node_t *node, volatile uint32_t *block)
+{
+    tmpfs_free(node->dev, *block);
+    *block = 0;
+    node->ctime = now();
+    node->flags |= FS_NODE_DIRTY;
+}
+
+
+/*
+ * Check if an indirect block is empty, i.e. all pointers are zeroes.
+ */
+STATIC_INLINE int is_empty_block(volatile uint32_t *buf, unsigned long ptr_per_block)
+{
+    unsigned long i;
+    
+    for(i = 0; i < ptr_per_block; i++)
+    {
+        if(*buf)
+        {
+            return 0;
+        }
+        
+        buf++;
+    }
+    
+    return 1;
+}
+
+
+/*
+ * Helper function called by tmpfs_bmap() to free a block if not needed anymore.
+ * It also frees the single indirect block if it is empty.
  *
  * Returns:
- *    disk block number on success, 0 on failure
+ *    1 if the single indirect block was freed, 0 otherwise
  */
+STATIC_INLINE
+int bmap_may_free_iblock(struct fs_node_t *node, volatile uint32_t *iblockp,
+                         volatile uint32_t *buf, uint32_t block,
+                         unsigned long ptr_per_block)
+{
+    bmap_free_block(node, &(buf[block]));
+    
+    // free the single indirect block itself if it is empty
+    if(is_empty_block(buf, ptr_per_block))
+    {
+        tmpfs_free(node->dev, *iblockp);
+        *iblockp = 0;
+        return 1;
+    }
+
+    return 0;
+}
+
+
+/*
+ * Helper function called by tmpfs_bmap() to free a block if not needed anymore.
+ * It also frees the single and double indirect blocks if they are empty.
+ *
+ * Returns:
+ *    1 if the double indirect block was freed, 0 otherwise
+ */
+STATIC_INLINE
+int bmap_may_free_diblock(struct fs_node_t *node, volatile uint32_t *iblockp,
+                          volatile uint32_t *buf,
+                          volatile uint32_t *buf2,
+                          uint32_t block, uint32_t block2,
+                          unsigned long ptr_per_block)
+{
+    // free the single indirect block if it is empty
+    bmap_may_free_iblock(node, &(buf[block]),
+                         buf2, block2, ptr_per_block);
+
+    // free the double indirect block itself if it is empty
+    if(is_empty_block(buf, ptr_per_block))
+    {
+        tmpfs_free(node->dev, *iblockp);
+        *iblockp = 0;
+        return 1;
+    }
+
+    return 0;
+}
+
+
+/*
+ * Helper function called by tmpfs_bmap() to free a block if not needed
+ * anymore. It also frees the single, double and triple indirect blocks if
+ * they are empty.
+ *
+ * Inputs and return values are similar to the above, with additional pointers
+ * to look into the triple indirect block.
+ */
+STATIC_INLINE
+int bmap_may_free_tiblock(struct fs_node_t *node, volatile uint32_t *iblockp,
+                          volatile uint32_t *buf,
+                          volatile uint32_t *buf2,
+                          volatile uint32_t *buf3,
+                          uint32_t block, uint32_t block2, uint32_t block3,
+                          unsigned long ptr_per_block)
+{
+    // free the single indirect block if it is empty
+    bmap_may_free_diblock(node, &(buf[block]),
+                         buf2, buf3, block2, block3, 
+                         ptr_per_block);
+
+    // free the double indirect block itself if it is empty
+    if(is_empty_block(buf, ptr_per_block))
+    {
+        tmpfs_free(node->dev, *iblockp);
+        *iblockp = 0;
+        return 1;
+    }
+
+    return 0;
+}
+
+
 size_t tmpfs_bmap(struct fs_node_t *node, size_t lblock,
                   size_t block_size, int flags)
 {
-    unsigned long maxptrs = 14 + (block_size / sizeof(uint32_t));
+    volatile uint32_t *buf, *buf2, *buf3;
+    unsigned long ptr_per_block = block_size / sizeof(uint32_t);
+    unsigned long ptr_per_block2 = ptr_per_block * ptr_per_block;
+    unsigned long maxptrs = 12 + ptr_per_block + ptr_per_block2 +
+                                 (ptr_per_block2 * ptr_per_block);
+    size_t i, j, k, l;
+    size_t min = MINOR(node->dev) - 1;
     int create = (flags & BMAP_FLAG_CREATE);
     int free = (flags & BMAP_FLAG_FREE);
-    size_t min = MINOR(node->dev) - 1;
-
-    if(!valid_tmpfs_node(node, min))
-    {
-        return 0;
-    }
+    volatile uint32_t tmp;
 
     if(lblock >= maxptrs)
     {
+        //__asm__ __volatile__("xchg %%bx, %%bx":::);
         return 0;
     }
 
-    if(lblock >= 14)
+    /*
+     * Symlinks less than 60 chars in length are stored in the inode itself.
+     * See:
+     *    http://www.nongnu.org/ext2-doc/ext2.html#def-symbolic-links
+     */
+    if(S_ISLNK(node->mode) && node->size < 60)
     {
-        return bmap_indirect_block(node, lblock, block_size, flags);
-    }
-    
-    KDEBUG("tmpfs_bmap_internal: create %d, free %d\n", create, free);
-    // create block if we're expanding the file
-    if(create && !node->blocks[lblock])
-    {
-        if((node->blocks[lblock] = tmpfs_alloc(node->dev)))
+        if(free)
         {
-            KDEBUG("tmpfs_bmap_internal: blk 0x%x\n", node->blocks[lblock]);
-            fill_zero_block(node, node->blocks[lblock], block_size);
+            for(i = 0; i < 15; i++)
+            {
+                node->blocks[i] = 0;
+            }
         }
+
+        return 0;
     }
 
-    KDEBUG("tmpfs_bmap_internal: 2\n");
-    // free block if we're shrinking the file
-    if(free && node->blocks[lblock])
+    // check direct block pointers
+    if(lblock < 12)
     {
-        tmpfs_free(node->dev, node->blocks[lblock]);
-        node->blocks[lblock] = 0;
-        node->ctime = now();
-        node->flags |= FS_NODE_DIRTY;
+        tmp = node->blocks[lblock];
+        bmap_may_create_block(node, &tmp, block_size, create);
+        node->blocks[lblock] = tmp;
+
+        // free block if we're shrinking the file
+        if(free && node->blocks[lblock])
+        {
+            bmap_free_block(node, &tmp);
+            node->blocks[lblock] = tmp;
+        }
+
+        return node->blocks[lblock];
     }
     
-    KDEBUG("tmpfs_bmap_internal: 3\n");
-    return node->blocks[lblock];
+    // check single indirect block pointer
+    lblock -= 12;
+
+    if(lblock < ptr_per_block)
+    {
+        // read the single indirect block
+        tmp = node->blocks[12];
+        bmap_may_create_block(node, &tmp, block_size, create);
+        
+        if(!(node->blocks[12] = tmp))
+        {
+            return 0;
+        }
+
+        buf = (volatile uint32_t *)block_virtual_address(node->blocks[12], min);
+        
+        // alloc block if needed for the new block
+        bmap_may_create_block(node, &(buf[lblock]), block_size, create);
+        i = buf[lblock];
+
+        // free the block and the indirect block if we're shrinking the file
+        if(free && i)
+        {
+            tmp = node->blocks[12];
+            bmap_may_free_iblock(node, &tmp, buf, lblock, ptr_per_block);
+            node->blocks[12] = tmp;
+            return 0;
+        }
+        
+        return i;
+    }
+
+    // check double indirect block pointer
+    lblock -= ptr_per_block;
+
+    if(lblock < ptr_per_block2)
+    {
+        // read the double indirect block
+        tmp = node->blocks[13];
+        bmap_may_create_block(node, &tmp, block_size, create);
+        
+        if(!(node->blocks[13] = tmp))
+        {
+            return 0;
+        }
+
+        buf = (volatile uint32_t *)block_virtual_address(node->blocks[13], min);
+
+        // find the single indirect block
+        j = lblock / ptr_per_block;
+
+        bmap_may_create_block(node, &(buf[j]), block_size, create);
+        i = buf[j];
+        
+        if(!i)
+        {
+            return 0;
+        }
+
+        buf2 = (volatile uint32_t *)block_virtual_address(i, min);
+
+        // find the block
+        k = lblock % ptr_per_block;
+
+        bmap_may_create_block(node, &(buf2[k]), block_size, create);
+        i = buf2[k];
+
+        // free the block and the indirect blocks if we're shrinking the file
+        if(free && i)
+        {
+            tmp = node->blocks[13];
+            bmap_may_free_diblock(node, &tmp, buf, buf2, j, k, 
+                                  ptr_per_block);
+            node->blocks[13] = tmp;
+            return 0;
+        }
+
+        return i;
+    }
+
+    // check triple indirect block pointer
+    lblock -= ptr_per_block2;
+
+    tmp = node->blocks[14];
+    bmap_may_create_block(node, &tmp, block_size, create);
+    
+    if(!(node->blocks[14] = tmp))
+    {
+        return 0;
+    }
+    
+    buf = (volatile uint32_t *)block_virtual_address(node->blocks[14], min);
+
+    j = lblock / ptr_per_block2;
+    bmap_may_create_block(node, &(buf[j]), block_size, create);
+    i = buf[j];
+
+    if(!i)
+    {
+        return 0;
+    }
+
+    buf2 = (volatile uint32_t *)block_virtual_address(i, min);
+
+    lblock = lblock % ptr_per_block2;
+    k = lblock / ptr_per_block;
+    bmap_may_create_block(node, &(buf2[k]), block_size, create);
+    i = buf2[k];
+
+    if(!i)
+    {
+        return 0;
+    }
+
+    buf3 = (volatile uint32_t *)block_virtual_address(i, min);
+
+    l = lblock % ptr_per_block;
+    bmap_may_create_block(node, &(buf3[l]), block_size, create);
+    i = buf3[l];
+
+    // free the block and the indirect blocks if we're shrinking the file
+    if(free && i)
+    {
+        tmp = node->blocks[14];
+        bmap_may_free_tiblock(node, &tmp, buf, buf2, buf3, j, k, l, 
+                              ptr_per_block);
+        node->blocks[14] = tmp;
+        return 0;
+    }
+
+    return i;
+}
+
+
+STATIC_INLINE void __tmpfs_free_inode(size_t min, uint32_t inode)
+{
+    if(inode > tmpfs_dev[min].inode_count || 
+       tmpfs_dev[min].free_inodes >= tmpfs_dev[min].inode_count)
+    {
+        return;
+    }
+    
+    inode--;
+    tmpfs_dev[min].inode_bitmap[inode / inodes_per_item] &= 
+                                ~((size_t)1 << (inode % inodes_per_item));
+    tmpfs_dev[min].free_inodes = tmpfs_dev[min].free_inodes + 1;
 }
 
 
 /*
  * Free an inode and update inode bitmap on disk.
+ *
+ * MUST write the node to disk if the filesystem supports inode structures
+ * separate to their directory entries (e.g. ext2, tmpfs).
  */
-int tmpfs_free_inode(struct fs_node_t *node)
+long tmpfs_free_inode(struct fs_node_t *node)
 {
     size_t min = MINOR(node->dev) - 1;
     struct fs_node_t *prev, *tmp;
-    
+
+    // write out the node before we free it on disk
+    // TODO: should we check for errors here?
+    tmpfs_write_inode(node);
+
     if(!valid_tmpfs_node(node, min))
     {
         return -EINVAL;
@@ -595,9 +794,9 @@ int tmpfs_free_inode(struct fs_node_t *node)
         {
             tmp = prev->next;
             prev->next = tmp->next;
+            __tmpfs_free_inode(min, node->inode);
             tmpfs_free_fsnode(tmp);
-            tmpfs_dev[min].free_inodes++;
-            
+
             if(tmp == tmpfs_dev[min].last_node)
             {
                 tmpfs_dev[min].last_node = prev;
@@ -613,10 +812,40 @@ int tmpfs_free_inode(struct fs_node_t *node)
 }
 
 
+STATIC_INLINE uint32_t __tmpfs_alloc_inode(size_t min)
+{
+    volatile size_t *inode_bitmap = tmpfs_dev[min].inode_bitmap;
+    size_t bytes = tmpfs_dev[min].inode_count / inodes_per_item;
+    volatile size_t i, j, k;
+
+    if(tmpfs_dev[min].inode_count % inodes_per_item)
+    {
+        bytes++;
+    }
+
+    for(i = 0; i < bytes; i++)
+    {
+        for(j = 0, k = 1; j < inodes_per_item; j++, k <<= 1)
+        {
+            if((inode_bitmap[i] & k) == 0)
+            {
+                inode_bitmap[i] |= k;
+                tmpfs_dev[min].free_inodes = tmpfs_dev[min].free_inodes - 1;
+                i = (i * inodes_per_item) + j;
+
+                return i + 1;
+            }
+        }
+    }
+    
+    return 0;
+}
+
+
 /*
  * Allocate a new inode number and mark it as used in the disk's inode bitmap.
  */
-int tmpfs_alloc_inode(struct fs_node_t *node)
+long tmpfs_alloc_inode(struct fs_node_t *node)
 {
     size_t min = MINOR(node->dev) - 1;
     struct fs_node_t *tmpnode;
@@ -634,10 +863,20 @@ int tmpfs_alloc_inode(struct fs_node_t *node)
         return -ENOSPC;
     }
 
-    tmpfs_dev[min].free_inodes--;
+    if(!(node->inode = __tmpfs_alloc_inode(min)))
+    {
+        /*
+         * This should not happen as we checked the free inode count above.
+         * TODO: should we kpanic here assuming the image is corrupt?
+         */
+        tmpfs_free_fsnode(tmpnode);
+        kernel_mutex_unlock(&tmpfs_dev[min].lock);
+        return -ENOSPC;
+    }
+
     tmpfs_dev[min].last_node->next = tmpnode;
     tmpfs_dev[min].last_node = tmpnode;
-    node->inode = tmpfs_dev[min].last_inode++;
+
     tmpnode->inode = node->inode;
     kernel_mutex_unlock(&tmpfs_dev[min].lock);
 
@@ -659,7 +898,7 @@ int tmpfs_alloc_inode(struct fs_node_t *node)
 /*
  * Helper function to allocate a new node struct and zero its memory.
  */
-static struct fs_node_t *tmpfs_create_fsnode(void)
+struct fs_node_t *tmpfs_create_fsnode(void)
 {
     struct fs_node_t *node = kmalloc(sizeof(struct fs_node_t));
     
@@ -670,6 +909,7 @@ static struct fs_node_t *tmpfs_create_fsnode(void)
     
     A_memset(node, 0, sizeof(struct fs_node_t));
     //node->refs = 1;
+
     return node;
 }
 
@@ -690,40 +930,42 @@ static void tmpfs_free_fsnode(struct fs_node_t *node)
 void tmpfs_free(dev_t dev, uint32_t block_no)
 {
     size_t min = MINOR(dev) - 1;
+    volatile struct kernel_mutex_t *lock;
+    struct cached_page_t *pcache;
+    struct fs_node_header_t tmpnode;
     
     if(min >= NR_TMPFS || tmpfs_dev[min].root == NULL)
     {
         return;
     }
 
-    tmpfs_free_internal(block_no,
-                        tmpfs_dev[min].block_count,
-                        &tmpfs_dev[min].free_blocks,
-                        tmpfs_dev[min].block_bitmap,
-                        &tmpfs_dev[min].lock);
-}
-
-
-static void tmpfs_free_internal(uint32_t block_no,
-                                size_t block_count, size_t *__free_blocks,
-                                size_t *block_bitmap,
-                                struct kernel_mutex_t *lock)
-{
-    static size_t i = sizeof(size_t) * CHAR_BIT;
-    volatile size_t free_blocks = *__free_blocks;
-
+    lock = &tmpfs_dev[min].lock;
     kernel_mutex_lock(lock);
 
-    if(block_no >= block_count || free_blocks >= block_count)
+    if(block_no > tmpfs_dev[min].block_count || 
+       tmpfs_dev[min].free_blocks >= tmpfs_dev[min].block_count)
     {
         kernel_mutex_unlock(lock);
         return;
     }
+
+    // If this block is cached, invalidated the cache as it might end up
+    // overwriting the block if it is re-allocated before the disk update
+    // task runs next
+    tmpnode.dev = dev;
+    tmpnode.inode = PCACHE_NOINODE;
+
+    if((pcache = get_cached_page((struct fs_node_t *)&tmpnode, block_no, 
+                                    PCACHE_PEEK_ONLY | PCACHE_IGNORE_STALE)))
+    {
+        __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_STALE);
+        release_cached_page(pcache);
+    }
     
     block_no--;
-    block_bitmap[block_no / i] &= ~((size_t)1 << (block_no % i));
-    (*__free_blocks) = free_blocks + 1;
-    //(*free_blocks)++;
+    tmpfs_dev[min].block_bitmap[block_no / blocks_per_item] &= 
+                                ~((size_t)1 << (block_no % blocks_per_item));
+    tmpfs_dev[min].free_blocks = tmpfs_dev[min].free_blocks + 1;
 
     kernel_mutex_unlock(lock);
 }
@@ -735,57 +977,44 @@ static void tmpfs_free_internal(uint32_t block_no,
 uint32_t tmpfs_alloc(dev_t dev)
 {
     size_t min = MINOR(dev) - 1;
-    
+    volatile size_t *block_bitmap;
+    volatile struct kernel_mutex_t *lock;
+
     if(min >= NR_TMPFS || tmpfs_dev[min].root == NULL)
     {
         return 0;
     }
 
-    return tmpfs_alloc_internal(tmpfs_dev[min].block_count,
-                                &tmpfs_dev[min].free_blocks,
-                                tmpfs_dev[min].block_bitmap,
-                                &tmpfs_dev[min].lock);
-}
+    block_bitmap = tmpfs_dev[min].block_bitmap;
+    lock = &tmpfs_dev[min].lock;
 
-
-static uint32_t tmpfs_alloc_internal(size_t block_count,
-                                     size_t *__free_blocks,
-                                     size_t *block_bitmap,
-                                     struct kernel_mutex_t *lock)
-{
-    static size_t bits_per_item = sizeof(size_t) * CHAR_BIT;
-    size_t bytes = block_count / bits_per_item;
-    size_t i, j, k;
-    volatile size_t free_blocks = *__free_blocks;
+    size_t bytes = tmpfs_dev[min].block_count / blocks_per_item;
+    volatile size_t i, j, k;
     
-    if(block_count % bits_per_item)
+    if(tmpfs_dev[min].block_count % blocks_per_item)
     {
         bytes++;
     }
 
     kernel_mutex_lock(lock);
 
-    if(free_blocks == 0)
+    if(tmpfs_dev[min].free_blocks == 0)
     {
         kernel_mutex_unlock(lock);
+        __asm__ __volatile__("xchg %%bx, %%bx":::);
         return 0;
     }
 
     for(i = 0; i < bytes; i++)
     {
-        for(j = 0, k = 1; j < bits_per_item; j++, k <<= 1)
+        for(j = 0, k = 1; j < blocks_per_item; j++, k <<= 1)
         {
             if((block_bitmap[i] & k) == 0)
             {
-                KDEBUG("tmpfs_alloc: i %d, k %d\n", i, k);
-                
                 block_bitmap[i] |= k;
-                (*__free_blocks) = free_blocks - 1;
-                //(*free_blocks)--;
+                tmpfs_dev[min].free_blocks = tmpfs_dev[min].free_blocks - 1;
                 kernel_mutex_unlock(lock);
-                i = (i * bits_per_item) + j;
-
-                KDEBUG("tmpfs_alloc: %u\n", i);
+                i = (i * blocks_per_item) + j;
 
                 return i + 1;
             }
@@ -806,8 +1035,7 @@ static uint32_t tmpfs_alloc_internal(size_t block_count,
  *
  * Outputs:
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
- *             dirent struct (by calling ext2_entry_to_dirent() above), and the
- *             result is stored in this field
+ *             dirent struct, and the result is stored in this field
  *    dbuf => the disk buffer representing the disk block containing the found
  *            filename, this is useful if the caller wants to delete the file
  *            after finding it (vfs_unlink(), for example)
@@ -817,8 +1045,8 @@ static uint32_t tmpfs_alloc_internal(size_t block_count,
  * Returns:
  *    0 on success, -errno on failure
  */
-int tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                  struct cached_page_t **dbuf, size_t *dbuf_off)
+long tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
+                   struct cached_page_t **dbuf, size_t *dbuf_off)
 {
     size_t min = MINOR(dir->dev) - 1;
     
@@ -843,8 +1071,7 @@ int tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  *
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
- *             dirent struct (by calling ext2_entry_to_dirent() above), and the
- *             result is stored in this field
+ *             dirent struct, and the result is stored in this field
  *    dbuf => the disk buffer representing the disk block containing the found
  *            filename, this is useful if the caller wants to delete the file
  *            after finding it (vfs_unlink(), for example)
@@ -854,9 +1081,9 @@ int tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  * Returns:
  *    0 on success, -errno on failure
  */
-int tmpfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                           struct dirent **entry,
-                           struct cached_page_t **dbuf, size_t *dbuf_off)
+long tmpfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                            struct dirent **entry,
+                            struct cached_page_t **dbuf, size_t *dbuf_off)
 {
     size_t min = MINOR(dir->dev) - 1;
     
@@ -881,7 +1108,7 @@ int tmpfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  * Returns:
  *    0 on success, -errno on failure
  */
-int tmpfs_addir(struct fs_node_t *dir, char *filename, ino_t n)
+long tmpfs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
 {
     size_t min = MINOR(dir->dev) - 1;
     
@@ -890,7 +1117,7 @@ int tmpfs_addir(struct fs_node_t *dir, char *filename, ino_t n)
         return -EINVAL;
     }
 
-    return ext2_addir_internal(dir, filename, n, 0, tmpfs_dev[min].block_size);
+    return ext2_addir_internal(dir, file, filename, 0, tmpfs_dev[min].block_size);
 }
 
 
@@ -900,7 +1127,7 @@ int tmpfs_addir(struct fs_node_t *dir, char *filename, ino_t n)
  * inodes, respectively.
  *
  * Input:
- *    parent => the parent directory's inode number
+ *    parent => the parent directory
  *    dir => node struct containing the new directory's inode number
  *
  * Output:
@@ -909,7 +1136,7 @@ int tmpfs_addir(struct fs_node_t *dir, char *filename, ino_t n)
  * Returns:
  *    0 on success, -errno on failure
  */
-int tmpfs_mkdir(struct fs_node_t *dir, ino_t parent)
+long tmpfs_mkdir(struct fs_node_t *dir, struct fs_node_t *parent)
 {
     size_t min = MINOR(dir->dev) - 1;
     
@@ -918,14 +1145,37 @@ int tmpfs_mkdir(struct fs_node_t *dir, ino_t parent)
         return -EINVAL;
     }
 
-    return ext2_mkdir_internal(dir, parent);
+    return ext2_mkdir_internal(dir, parent->inode, 0, tmpfs_dev[min].block_size);
+}
+
+
+/*
+ * Remove an entry from the given parent directory.
+ *
+ * Inputs:
+ *    dir => the parent directory's node
+ *    entry => the entry to be removed
+ *    is_dir => non-zero if entry is a directory and this is the last hard
+ *              link, i.e. there is no other filename referring to the 
+ *              directory's inode
+ *
+ * Output:
+ *    the caller is responsible for writing dbuf to disk and calling brelse
+ *
+ * Returns:
+ *    0 always
+ */
+long tmpfs_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir)
+{
+    UNUSED(is_dir);
+    return ext2_deldir_internal(dir, entry, 0);
 }
 
 
 /*
  * Check if the given directory is empty (called from rmdir).
  */
-int tmpfs_dir_empty(struct fs_node_t *dir)
+long tmpfs_dir_empty(struct fs_node_t *dir)
 {
     size_t min = MINOR(dir->dev) - 1;
     
@@ -950,7 +1200,7 @@ int tmpfs_dir_empty(struct fs_node_t *dir)
  * Returns:
  *     number of bytes read on success, -errno on failure
  */
-int tmpfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
+long tmpfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
 {
     size_t min = MINOR(dir->dev) - 1;
     
@@ -966,10 +1216,12 @@ int tmpfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
 /*
  * General Block Read/Write Operations.
  */
-int tmpfs_strategy(struct disk_req_t *buf)
+long tmpfs_strategy(struct disk_req_t *buf)
 {
     size_t min = MINOR(buf->dev) - 1;
-    
+    size_t block_size;
+    long done = 0;
+
     if(min >= NR_TMPFS || tmpfs_dev[min].root == NULL)
     {
         return 0;
@@ -980,48 +1232,49 @@ int tmpfs_strategy(struct disk_req_t *buf)
         return 0;
     }
 
-    // decide how many blocks fit in one memory page
-    size_t blocks_per_page = PAGE_SIZE / tmpfs_dev[min].block_size;
+    block_size = tmpfs_dev[min].block_size;
 
-    // get the index to the block address array
-    size_t index = ((buf->blockno - 1) / blocks_per_page);
-    
-    // get the block's offset in the memory page
-    size_t irem = ((buf->blockno - 1) % blocks_per_page);
-    
-    // get the block's virtual address in memory
-    virtual_addr addr = tmpfs_dev[min].blocks[index] + 
-                        (irem * tmpfs_dev[min].block_size);
-    
-    if(index >= tmpfs_dev[min].block_count)
+    // find out how many "sectors" to read, as the page cache always tries
+    // to fill a whole page, which would contain multiple "sectors", unless
+    // the tmpfs filesystem was formatted with a blocksize that equals the
+    // system's pagesize (currently 4096 bytes)
+    volatile int sectors_to_read = buf->datasz / block_size;
+    uint32_t sect = buf->blockno;
+    virtual_addr addr, userbuf = buf->data;
+
+    kernel_mutex_lock(&tmpfs_dev[min].lock);
+
+    while(sectors_to_read--)
     {
-        return 0;
-    }
-    
-    // now copy the data
-    if(buf->write)
-    {
-        A_memcpy((void *)addr, (void *)buf->data, tmpfs_dev[min].block_size);
-    }
-    else
-    {
-        A_memcpy((void *)buf->data, (void *)addr, tmpfs_dev[min].block_size);
+        addr = block_virtual_address(sect, min);
+
+        // now copy the data
+        if(buf->write)
+        {
+            A_memcpy((void *)addr, (void *)userbuf, block_size);
+        }
+        else
+        {
+            A_memcpy((void *)userbuf, (void *)addr, block_size);
+        }
+
+        userbuf += block_size;
+        done += block_size;
+        sect++;
     }
 
-    return (int)tmpfs_dev[min].block_size;
+    kernel_mutex_unlock(&tmpfs_dev[min].lock);
+
+    return done;
 }
 
 
 /*
  * General block device control function.
  */
-int tmpfs_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
+long tmpfs_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
 {
-    UNUSED(arg);
-    UNUSED(kernel);
-    
     size_t min = MINOR(dev) - 1;
-    int i;
     
     if(min >= NR_TMPFS || tmpfs_dev[min].root == NULL)
     {
@@ -1030,11 +1283,23 @@ int tmpfs_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
     
     switch(cmd)
     {
-        case DEV_IOCTL_GET_BLOCKSIZE:
+        case BLKSSZGET:
             // get the block size in bytes
-            i = (int)tmpfs_dev[min].block_size;
-            return i;
-            //return (int)tmpfs_dev[min].block_size;
+            RETURN_IOCTL_RES(int, arg, tmpfs_dev[min].block_size, kernel);
+
+        case BLKGETSIZE:
+        {
+            // get disk size in 512-blocks
+            long sects = (long)((tmpfs_dev[min].block_count * tmpfs_dev[min].block_size) / 512);
+            RETURN_IOCTL_RES(long, arg, sects, kernel);
+        }
+
+        case BLKGETSIZE64:
+        {
+            // get disk size in bytes
+            unsigned long long bytes = tmpfs_dev[min].block_count * tmpfs_dev[min].block_size;
+            RETURN_IOCTL_RES(unsigned long long, arg, bytes, kernel);
+        }
     }
     
     return -EINVAL;
@@ -1218,13 +1483,13 @@ struct fs_node_t *tmpfs_create(size_t inode_count, size_t block_count,
                                size_t block_size)
 {
 
-#define blocks_per_item         (sizeof(size_t) * CHAR_BIT)
-#define max_blocks              (64 * blocks_per_item)
+#define max_blocks              (max_items * blocks_per_item)
 
     struct fs_node_t *root;
     size_t pages, i;
-    size_t *block_bitmap;
-    
+    size_t *block_bitmap, *inode_bitmap;
+    size_t block_bitmap_sz, inode_bitmap_sz;
+
     /*
      * TODO: we need to reset last_minor if we've reached the maximum number
      *       of tmpfs devices if some of them were released.
@@ -1248,20 +1513,32 @@ struct fs_node_t *tmpfs_create(size_t inode_count, size_t block_count,
         return NULL;
     }
 
-    if(!(block_bitmap =
-            kmalloc(((block_count + blocks_per_item - 1) / 
-                            blocks_per_item) * sizeof(size_t))))
+    block_bitmap_sz = ((block_count + blocks_per_item - 1) / 
+                                    blocks_per_item) * sizeof(size_t);
+
+    inode_bitmap_sz = ((inode_count + inodes_per_item - 1) / 
+                                    inodes_per_item) * sizeof(size_t);
+
+    if(!(block_bitmap = kmalloc(block_bitmap_sz)))
     {
         tmpfs_free_fsnode(root);
         printk("tmpfs: failed to alloc block bitmap for tmpfs!\n");
         return NULL;
     }
 
-    root->inode = 2;
+    if(!(inode_bitmap = kmalloc(inode_bitmap_sz)))
+    {
+        tmpfs_free_fsnode(root);
+        kfree(block_bitmap);
+        printk("tmpfs: failed to alloc inode bitmap for tmpfs!\n");
+        return NULL;
+    }
+
+    root->inode = TMPFS_ROOT_INO;
     root->ops = &tmpfs_ops;
     //root->mode = S_IFDIR | 0555;
     root->mode = S_IFDIR | 0777;
-    root->links = 1;
+    root->links = 2;
     root->atime = now();
     root->mtime = root->atime;
     root->ctime = root->atime;
@@ -1275,13 +1552,21 @@ struct fs_node_t *tmpfs_create(size_t inode_count, size_t block_count,
     tmpfs_dev[last_minor].root = root;
     tmpfs_dev[last_minor].last_node = root;
     tmpfs_dev[last_minor].inode_count = inode_count;
-    tmpfs_dev[last_minor].free_inodes = inode_count - 1;    // -1 for the root
+    tmpfs_dev[last_minor].free_inodes = inode_count - 3;  // -3 for inodes 0-2
     tmpfs_dev[last_minor].block_count = block_count;
     tmpfs_dev[last_minor].free_blocks = block_count;
     tmpfs_dev[last_minor].block_size = block_size;
-    tmpfs_dev[last_minor].last_inode = 3;
+    //tmpfs_dev[last_minor].last_inode = 3;
     tmpfs_dev[last_minor].block_bitmap = block_bitmap;
-    
+    tmpfs_dev[last_minor].inode_bitmap = inode_bitmap;
+
+    // zero out the bitmaps
+    A_memset((void *)tmpfs_dev[last_minor].block_bitmap, 0, block_bitmap_sz);
+    A_memset((void *)tmpfs_dev[last_minor].inode_bitmap, 0, inode_bitmap_sz);
+
+    // mark inodes 0-2 as used
+    tmpfs_dev[last_minor].inode_bitmap[0] = 7;
+
     pages = tmpfs_needed_pages(block_size, block_count);
     i = sizeof(virtual_addr) * pages;
     tmpfs_dev[last_minor].blocks = (virtual_addr *)kmalloc(i);
@@ -1290,7 +1575,9 @@ struct fs_node_t *tmpfs_create(size_t inode_count, size_t block_count,
     {
         tmpfs_free_fsnode(root);
         kfree(block_bitmap);
+        kfree(inode_bitmap);
         tmpfs_dev[last_minor].block_bitmap = NULL;
+        tmpfs_dev[last_minor].inode_bitmap = NULL;
         tmpfs_dev[last_minor].root = NULL;
         tmpfs_dev[last_minor].last_node = NULL;
         kernel_mutex_unlock(&tmpfs_lock);
@@ -1309,7 +1596,9 @@ struct fs_node_t *tmpfs_create(size_t inode_count, size_t block_count,
         tmpfs_release_frames(tmpfs_dev[last_minor].blocks, pages);
         kfree(tmpfs_dev[last_minor].blocks);
         kfree(block_bitmap);
+        kfree(inode_bitmap);
         tmpfs_dev[last_minor].block_bitmap = NULL;
+        tmpfs_dev[last_minor].inode_bitmap = NULL;
         tmpfs_dev[last_minor].root = NULL;
         tmpfs_dev[last_minor].last_node = NULL;
         tmpfs_dev[last_minor].blocks = NULL;
@@ -1327,7 +1616,7 @@ struct fs_node_t *tmpfs_create(size_t inode_count, size_t block_count,
 /*
  * Return filesystem statistics.
  */
-int tmpfs_ustat(struct mount_info_t *d, struct ustat *ubuf)
+long tmpfs_ustat(struct mount_info_t *d, struct ustat *ubuf)
 {
     size_t min = MINOR(d->dev) - 1;
     
@@ -1355,7 +1644,7 @@ int tmpfs_ustat(struct mount_info_t *d, struct ustat *ubuf)
 /*
  * Return detailed filesystem statistics.
  */
-int tmpfs_statfs(struct mount_info_t *d, struct statfs *statbuf)
+long tmpfs_statfs(struct mount_info_t *d, struct statfs *statbuf)
 {
     size_t min = MINOR(d->dev) - 1;
     

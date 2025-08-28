@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: procfs_task_stat.c
  *    This file is part of LaylaOS.
@@ -214,7 +214,7 @@ size_t get_task_stat(struct task_t *task, char **_buf)
     //BUF_SPRINTF("%u %u ", task->r.esp, task->r.eip);
     
 #ifdef __x86_64__
-    if(task == get_cur_task())
+    if(task == this_core->cur_task /* get_cur_task() */)
     {
         BUF_SPRINTF("%lu %lu ", get_rsp(), get_rip());
     }
@@ -224,7 +224,7 @@ size_t get_task_stat(struct task_t *task, char **_buf)
                                 task->saved_context.rip);
     }
 #else
-    if(task == get_cur_task())
+    if(task == this_core->cur_task /* get_cur_task() */)
     {
         BUF_SPRINTF("%lu %lu ", get_esp(), get_eip());
     }

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: mount.c
  *    This file is part of LaylaOS.
@@ -25,7 +25,7 @@
  *  Functions for mounting and unmounting filesystems.
  */
 
-//#define __DEBUG
+#define __DEBUG
 
 #include <errno.h>
 #include <string.h>
@@ -48,7 +48,7 @@
 
 
 struct mount_info_t mounttab[NR_SUPER];
-struct kernel_mutex_t mount_table_mutex;
+volatile struct kernel_mutex_t mount_table_mutex;
 
 
 /*
@@ -75,6 +75,7 @@ void sync_super(dev_t dev)
             continue;
         }
 
+        /*
         if(kernel_mutex_trylock(&d->flock))
         {
             continue;    // locked means busy, ignore it
@@ -88,20 +89,27 @@ void sync_super(dev_t dev)
         }
 
         kernel_mutex_unlock(&d->ilock);
+        */
+
+        kernel_mutex_lock(&d->lock);
 
         if(!(d->flags & FS_SUPER_DIRTY))
         {
+            kernel_mutex_unlock(&d->lock);
             continue;    // update only modified superblocks
         }
 
         if(d->mountflags & MS_RDONLY)
         {
+            kernel_mutex_unlock(&d->lock);
             continue;    // don't update systems mounted as read-only
         }
 
         /* update superblock by writing it to disk */
         d->flags &= ~FS_SUPER_DIRTY;
         d->update_time = tm;
+
+        kernel_mutex_unlock(&d->lock);
 
         /* NOTE: We pass the superblock here because we can't call getfs() 
          *       from within the call to writesuper(). This will f*** up our
@@ -232,6 +240,13 @@ int vfs_remount(struct fs_node_t *mpoint_node,
 }
 
 
+static inline int is_dummyfs(char *fstype)
+{
+    return (strcmp(fstype, "sockfs") == 0 ||
+            strcmp(fstype, "pipefs") == 0);
+}
+
+
 /*
  * Mount the given device on the given path.
  *
@@ -252,20 +267,21 @@ int vfs_remount(struct fs_node_t *mpoint_node,
  * Returns:
  * 0 on success, -errno on failure
  */
-int vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options)
+long vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options)
 {
     struct mount_info_t *d, *oldd;
     struct fs_info_t *fs;
     struct fs_node_t *mpoint_node;
     size_t unused;
-    int res;
+    long res;
+    int blocksz = 0;
     int fremount = (flags & MS_REMOUNT);
     int rdonly = (flags & MS_RDONLY);
     int mounting_sysroot = 0;
 	int open_flags = OPEN_USER_CALLER | OPEN_NOFOLLOW_MPOINT;
-    struct task_t *ct = cur_task;
+	volatile unsigned int refs;
 
-    if(ct->euid != 0)
+    if(this_core->cur_task->euid != 0)
     {
         return -EPERM;
     }
@@ -300,6 +316,8 @@ int vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options)
         
         mounting_sysroot = 1;
     }
+
+    KDEBUG("vfs_mount[%d] - 0 - path %s\n", this_core->cpuid, path);
 
     // get the mount point's node
     if((res = vfs_open(path, rdonly ? O_RDONLY : O_RDWR, 0777, AT_FDCWD, 
@@ -370,6 +388,13 @@ int vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options)
     // mark the device info struct in use
     d->dev = dev;
 
+    // do not mount dummy filesystems
+    if(is_dummyfs(fstype))
+    {
+        res = -EINVAL;
+        goto err;
+    }
+
     // find the fstab module
     if((fs = get_fs_by_name(fstype)) == NULL)
     {
@@ -380,6 +405,8 @@ int vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options)
     // store this as the filesystem's read_super() might need it to read
     // the root inode.
     d->fs = fs;
+
+    KDEBUG("vfs_mount[%d] - 0 - fstype %s, dev 0x%x\n", this_core->cpuid, fstype, dev);
     
     if(fs->ops && fs->ops->mount)
     {
@@ -389,39 +416,68 @@ int vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options)
         }
     }
 
-    KDEBUG("vfs_mount - mpoint_node->mode = 0x%x (0x%x), refs 0x%x\n", mpoint_node->mode, S_ISDIR(mpoint_node->mode), mpoint_node->refs);
+    KDEBUG("vfs_mount[%d] - mpoint_node->mode = 0x%x (0x%x), refs 0x%x\n", this_core->cpuid, mpoint_node->mode, S_ISDIR(mpoint_node->mode), mpoint_node->refs);
 
     // check it's a directory and no one is referencing it (except sysroot,
     // which will have at least 2 refs, the one we got above, and the one that
     // is always resident in rootfs)
     res = mounting_sysroot ? 2 : 1;
     
-    if(!S_ISDIR(mpoint_node->mode) || mpoint_node->refs > res)
+    if(!S_ISDIR(mpoint_node->mode))
     {
-        res = -EBUSY;
+        res = -ENOTDIR;
         goto err;
     }
 
-    KDEBUG("vfs_mount - maj 0x%x, ioctl @ 0x%lx\n", MAJOR(d->dev), bdev_tab[MAJOR(d->dev)].ioctl);
+    refs = mpoint_node->refs;
+
+    if(refs > (unsigned)res)
+    {
+        // node references could be due to open files or cached pages.
+        // here we try to flush the cached pages to see if this removes the
+        // extra references, which would allow us to do the mount.
+        // TODO: do we need this? both cached pages and open files hold their
+        //       own references to the node, which means the node would not
+        //       "disappear" under the new mount and those references will
+        //       still remain valid?
+        if(files_referencing_node(mpoint_node) != mpoint_node->refs)
+        {
+            remove_unreferenced_cached_pages(mpoint_node);
+            refs = mpoint_node->refs;
+
+            if(refs > (unsigned)res)
+            {
+                res = -EBUSY;
+                goto err;
+            }
+        }
+        else
+        {
+            res = -EBUSY;
+            goto err;
+        }
+    }
+
+    KDEBUG("vfs_mount[%d] - maj 0x%x, ioctl @ 0x%lx\n", this_core->cpuid, MAJOR(d->dev), bdev_tab[MAJOR(d->dev)].ioctl);
     res = -EINVAL;
 
     // get the device's block size (bytes per sector)
     if(!bdev_tab[MAJOR(d->dev)].ioctl ||
        (res = bdev_tab[MAJOR(d->dev)].ioctl(d->dev, 
-                                            DEV_IOCTL_GET_BLOCKSIZE, 
-                                            0, 1)) < 0)
+                                            BLKSSZGET, 
+                                            (char *)&blocksz, 1)) < 0)
     {
-        KDEBUG("vfs_mount - 3 - res %d\n", res);
+        KDEBUG("vfs_mount[%d] - 3 - res %d\n", this_core->cpuid, res);
         goto err;
     }
 
-    KDEBUG("vfs_mount - 4 - read_super @ 0x%lx\n", fs->ops ? fs->ops->read_super : 0);
+    KDEBUG("vfs_mount[%d] - 4 - read_super @ 0x%lx\n", this_core->cpuid, fs->ops ? fs->ops->read_super : 0);
 
     // read the superblock
     if(!fs->ops || !fs->ops->read_super ||
-       (res = fs->ops->read_super(d->dev, d, (size_t)res)) < 0)
+       (res = fs->ops->read_super(d->dev, d, (size_t)blocksz)) < 0)
     {
-        KDEBUG("vfs_mount - 4 - res %d\n", res);
+        KDEBUG("vfs_mount[%d] - 4 - res %d\n", this_core->cpuid, res);
         goto err;
     }
 
@@ -429,22 +485,27 @@ int vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options)
        copy_str_from_user(options, &d->mountopts, &unused) != 0)
     {
         res = -EFAULT;
-        KDEBUG("vfs_mount - 5 - res %d\n", res);
+        KDEBUG("vfs_mount[%d] - 5 - res %d\n", this_core->cpuid, res);
         goto err;
     }
 
     // fill in the rest of the structure
     d->mpoint = mpoint_node;
-    d->mountflags = flags;
     mpoint_node->flags |= FS_NODE_MOUNTPOINT;
     mpoint_node->ptr = d->root;
 
-    KDEBUG("vfs_mount - mpoint_node->dev 0x%x, d->root->dev 0x%x\n", mpoint_node->dev, d->root->dev);
+    // preserve d->mountflags as some filesystem's read_super() functions set
+    // up some flags, e.g. iso9660 automatically sets the MS_RDONLY flags as
+    // we don't yet support writing to CD-ROMs
+    d->mountflags |= flags;
+
+    KDEBUG("vfs_mount[%d] - mpoint_node->dev 0x%x, d->root->dev 0x%x\n", this_core->cpuid, mpoint_node->dev, d->root->dev);
 
     // init incore free block/inode locks
-    init_kernel_mutex(&d->flock);
-    init_kernel_mutex(&d->ilock);
-    
+    //init_kernel_mutex(&d->flock);
+    //init_kernel_mutex(&d->ilock);
+    init_kernel_mutex(&d->lock);
+
     return 0;
 
 err:
@@ -467,15 +528,14 @@ err:
  * Returns:
  * 0 on success, -errno on failure
  */
-int vfs_umount(dev_t dev, int flags)
+long vfs_umount(dev_t dev, int flags)
 {
     struct mount_info_t *d;
     struct file_t *f, *lf;
     int fd;
     int force = (flags & MNT_FORCE /* MS_FORCE */);
-    struct task_t *ct = cur_task;
 
-    if(ct->euid != 0)
+    if(this_core->cur_task->euid != 0)
     {
         return -EPERM;
     }
@@ -530,29 +590,49 @@ int vfs_umount(dev_t dev, int flags)
 	    kernel_mutex_unlock(&f->lock);
     }
 
+
+    remove_unreferenced_cached_pages(NULL);
+    remove_stale_cached_pages();
+
+
     // check for outstanding inodes
-    struct fs_node_t *node;
-    struct fs_node_t *llnode = &node_table[NR_INODE];
-    
+    extern volatile struct kernel_mutex_t list_lock;
+    struct fs_node_t **node;
+    struct fs_node_t **llnode = &node_table[NR_INODE];
+
+    kernel_mutex_lock(&list_lock);
+
     for(node = node_table; node < llnode; node++)
     {
-        kernel_mutex_lock(&node->lock);
-        kernel_mutex_unlock(&node->lock);
-
-        if(node->refs &&        // if the node is being used ..
-           node->inode != 0 &&  // and is a valid inode ..
-           node->dev == dev &&  // and is from the same device ..
-           node != d->root)     // and is not the root node, then release it
+        if(!*node)
         {
+            continue;
+        }
+
+        kernel_mutex_lock(&(*node)->lock);
+        kernel_mutex_unlock(&(*node)->lock);
+
+        if((*node) &&
+           (*node)->refs &&        // if the node is being used ..
+           (*node)->inode != 0 &&  // and is a valid inode ..
+           (*node)->dev == dev &&  // and is from the same device ..
+           (*node) != d->root)     // and is not the root node, then release it
+        {
+            kernel_mutex_unlock(&list_lock);
+
             if(!force)
             {
 			    return -EBUSY;
 			}
 			
-			release_node(node);
+			release_node(*node);
+            kernel_mutex_lock(&list_lock);
 	    }
 	}
-    
+
+    kernel_mutex_unlock(&list_lock);
+
+
     invalidate_dev_dentries(dev);
 
     // sync nodes
@@ -610,18 +690,26 @@ int vfs_umount(dev_t dev, int flags)
 
     remove_cached_disk_pages(dev);
 
-    // once again, ensure all refs to this device's mount info is invalidated
+    // once again, ensure all refs to this device's mount info are invalidated
+    kernel_mutex_lock(&list_lock);
+
     for(node = node_table; node < llnode; node++)
     {
-        kernel_mutex_lock(&node->lock);
-        kernel_mutex_unlock(&node->lock);
-
-        if(node->dev == dev)
+        if(*node)
         {
-            node->minfo = NULL;
+            kernel_mutex_lock(&(*node)->lock);
+
+            if((*node)->dev == dev)
+            {
+                (*node)->minfo = NULL;
+    	    }
+
+            kernel_mutex_unlock(&(*node)->lock);
 	    }
 	}
-    
+
+    kernel_mutex_unlock(&list_lock);
+
     return 0;
 }
 
@@ -657,9 +745,9 @@ static char *malloc_str(char *str, size_t len)
  * device we want to mount. If devpath is NULL, everything is mounted (this
  * happens only at boottime, so boot_mount should be non-zero here).
  */
-int mount_internal(char *module, char *devpath, int boot_mount)
+long mount_internal(char *module, char *devpath, int boot_mount)
 {
-    int res = 0;
+    long res = 0;
     dev_t dev;
     struct fs_node_t *fnode;
     off_t fpos = 0;
@@ -670,9 +758,8 @@ int mount_internal(char *module, char *devpath, int boot_mount)
     ssize_t i, j;
     int n;
     int flags = MS_RDONLY;
-    struct task_t *ct = cur_task;
     
-    if(ct->euid != 0)
+    if(this_core->cur_task->euid != 0)
     {
         printk("%s: permission error: not root user\n", module);
         return -EPERM;
@@ -821,15 +908,15 @@ done:
 /*
  * Initial mount.
  */
-int mountall(void)
+long mountall(void)
 {
     return mount_internal("mountall", NULL, 1);
 }
 
 
-int vfs_path_to_devid(char *source, char *fstype, dev_t *dev)
+long vfs_path_to_devid(char *source, char *fstype, dev_t *dev)
 {
-    int res;
+    long res;
     struct fs_node_t *fnode = NULL;
 	int open_flags = OPEN_USER_CALLER | OPEN_FOLLOW_SYMLINK;
 	

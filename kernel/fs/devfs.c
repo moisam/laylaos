@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: devfs.c
  *    This file is part of LaylaOS.
@@ -88,7 +88,7 @@ struct fs_node_t *devfs_root;
 struct devnode_t *dev_list, *last_dev;
 
 // lock to access above tree
-struct kernel_mutex_t dev_lock;
+volatile struct kernel_mutex_t dev_lock;
 
 // last inode # used on the dev filesystem
 static int last_node_num = 2;
@@ -169,8 +169,8 @@ struct fs_node_t *devfs_create(void)
  * This function fills in the mount info struct's block_size, super,
  * and root fields.
  */
-int devfs_read_super(dev_t dev, struct mount_info_t *d,
-                     size_t bytes_per_sector)
+long devfs_read_super(dev_t dev, struct mount_info_t *d,
+                      size_t bytes_per_sector)
 {
     UNUSED(bytes_per_sector);
 
@@ -192,7 +192,6 @@ int devfs_read_super(dev_t dev, struct mount_info_t *d,
  * Called when unmounting the filesystem.
  */
 void devfs_put_super(dev_t dev, struct superblock_t *sb)
-//void devfs_put_super(dev_t dev, struct IO_buffer_s *sb)
 {
     UNUSED(dev);
     UNUSED(sb);
@@ -240,6 +239,42 @@ int add_dev_node(char *name, dev_t dev, mode_t mode)
     kernel_mutex_unlock(&dev_lock);
     
     return 0;
+}
+
+/*
+ * Remove a device node.
+ */
+int remove_dev_node(dev_t dev)
+{
+    kernel_mutex_lock(&dev_lock);
+
+    struct devnode_t *dnode = dev_list, *next;
+    
+    while(dnode->next)
+    {
+        if(dnode->next->dev == dev)
+        {
+            next = dnode->next;
+            dnode->next = next->next;
+
+            if(devfs_root)
+            {
+                devfs_root->links--;
+                devfs_root->size--;
+            }
+
+            kernel_mutex_unlock(&dev_lock);
+            kfree(next);
+
+            return 0;
+        }
+        
+        dnode = dnode->next;
+    }
+
+    kernel_mutex_unlock(&dev_lock);
+
+    return -ENOENT;
 }
 
 
@@ -332,7 +367,7 @@ void devfs_incore_to_inode(struct devnode_t *i, struct fs_node_t *n)
 /*
  * Reads inode data structure.
  */
-int devfs_read_inode(struct fs_node_t *node)
+long devfs_read_inode(struct fs_node_t *node)
 {
     if(!node)
     {
@@ -372,7 +407,7 @@ int devfs_read_inode(struct fs_node_t *node)
 /*
  * Writes inode data structure.
  */
-int devfs_write_inode(struct fs_node_t *node)
+long devfs_write_inode(struct fs_node_t *node)
 {
     if(!node)
     {
@@ -403,14 +438,14 @@ int devfs_write_inode(struct fs_node_t *node)
 }
 
 
-static inline struct dirent *entry_to_dirent(int index,
+STATIC_INLINE struct dirent *entry_to_dirent(int index,
                                              struct devnode_t *dnode)
 {
     int namelen = strlen(dnode->name);
-    unsigned short reclen = sizeof(struct dirent) + namelen + 1;
-    
-    struct dirent *entry = (struct dirent *)kmalloc(reclen);
-    
+    unsigned int reclen = GET_DIRENT_LEN(namelen);
+
+    struct dirent *entry = kmalloc(reclen);
+
     if(!entry)
     {
         return NULL;
@@ -427,7 +462,7 @@ static inline struct dirent *entry_to_dirent(int index,
 }
 
 
-static inline struct dirent *fs_node_to_dirent(int index, char *name,
+STATIC_INLINE struct dirent *fs_node_to_dirent(int index, char *name,
                                                struct fs_node_t *dnode)
 {
     struct devnode_t tmp;
@@ -462,8 +497,8 @@ static inline struct dirent *fs_node_to_dirent(int index, char *name,
  * Returns:
  *    0 on success, -errno on failure
  */
-int devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                  struct cached_page_t **dbuf, size_t *dbuf_off)
+long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
+                   struct cached_page_t **dbuf, size_t *dbuf_off)
 {
     if(!dir)
     {
@@ -528,9 +563,9 @@ int devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  * Returns:
  *    0 on success, -errno on failure
  */
-int devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                           struct dirent **entry,
-                           struct cached_page_t **dbuf, size_t *dbuf_off)
+long devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                            struct dirent **entry,
+                            struct cached_page_t **dbuf, size_t *dbuf_off)
 {
     if(!dir || !devfs_root || dir->inode != devfs_root->inode || !node)
     {
@@ -583,7 +618,7 @@ int devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  * Returns:
  *     number of bytes read on success, -errno on failure
  */
-int devfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
+long devfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
 {
     size_t i, offset, count = 0;
     size_t reclen, namelen;
@@ -653,10 +688,10 @@ int devfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
         namelen = strlen(ent->name);
 
         // calc dirent record length
-        reclen = sizeof(struct dirent) + namelen + 1;
+        reclen = GET_DIRENT_LEN(namelen);
 
         // make it 4-byte aligned
-        ALIGN_WORD(reclen);
+        //ALIGN_WORD(reclen);
         
         // check the buffer has enough space for this entry
         if((count + reclen) > (size_t)bufsz)

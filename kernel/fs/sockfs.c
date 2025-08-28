@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: sockfs.c
  *    This file is part of LaylaOS.
@@ -90,8 +90,16 @@ ssize_t sockfs_read(struct file_t *f, off_t *pos,
 	struct msghdr msg;
 	struct iovec aiov;
     struct socket_t *so;
+    long res;
 
     so = (struct socket_t *)f->node->data;
+
+    // User has called shutdown() specifying SHUT_RDWR or SHUT_RD
+    if(so->flags & SOCKET_FLAG_SHUT_REMOTE)
+    {
+        so->err = -ENOTCONN;
+        return so->err;
+    }
 
 	msg.msg_namelen = 0;
 	msg.msg_name = 0;
@@ -101,8 +109,18 @@ ssize_t sockfs_read(struct file_t *f, off_t *pos,
 	aiov.iov_len = count;
 	msg.msg_control = 0;
 	msg.msg_flags = 0;
-	
-	return so->proto->sockops->recvmsg(so, &msg, 0);
+
+    SOCKET_LOCK(so);
+    res = so->proto->sockops->read(so, &msg, 0);
+
+    if(res < 0)
+    {
+        so->err = res;
+    }
+
+    SOCKET_UNLOCK(so);
+
+	return res;
 }
 
 
@@ -118,13 +136,11 @@ ssize_t sockfs_write(struct file_t *f, off_t *pos,
 	struct msghdr msg;
 	struct iovec aiov;
 	struct socket_t *so;
-	char dest_namebuf[128];
-	char src_namebuf[128];
-	int res;
+	long res;
 
     so = (struct socket_t *)f->node->data;
 
-    if((res = sendto_pre_checks(so, NULL, 0, src_namebuf, dest_namebuf)) != 0)
+    if((res = sendto_pre_checks(so, NULL, 0)) != 0)
     {
 		return res;
     }
@@ -137,14 +153,24 @@ ssize_t sockfs_write(struct file_t *f, off_t *pos,
 	aiov.iov_base = (char *)buf;
 	aiov.iov_len = count;
 
-    return do_sendto(so, &msg, src_namebuf, dest_namebuf, 0, 0);
+    SOCKET_LOCK(so);
+    res = so->proto->sockops->write(so, &msg, kernel);
+
+    if(res < 0)
+    {
+        so->err = res;
+    }
+
+    SOCKET_UNLOCK(so);
+
+    return res;
 }
 
 
 /*
  * General block device control function.
  */
-int sockfs_ioctl(struct file_t *f, int cmd, char *data, int kernel)
+long sockfs_ioctl(struct file_t *f, int cmd, char *data, int kernel)
 {
 	struct socket_t *so;
 	int tmp;
@@ -217,14 +243,11 @@ int sockfs_ioctl(struct file_t *f, int cmd, char *data, int kernel)
 /*
  * Perform a select operation on a socket.
  */
-int sockfs_select(struct file_t *f, int which)
+long sockfs_select(struct file_t *f, int which)
 {
-    KDEBUG("sockfs_select:\n");
-
 	struct socket_t *so;
-	int res;
 
-    if(/* !f || !f->node || */ !f->node->data)
+    if(!f->node->data)
     {
         return -EINVAL;
     }
@@ -239,45 +262,29 @@ int sockfs_select(struct file_t *f, int which)
 	switch(which)
 	{
     	case FREAD:
-            kernel_mutex_lock(&so->inq.lock);
-            res = (so->inq.head != NULL);
-            kernel_mutex_unlock(&so->inq.lock);
-
-            if(res)
+            if(so->poll_events & POLLIN)
             {
                 return 1;
             }
     		
-    		selrecord(&so->recvsel);
+    		selrecord(&so->selrecv);
     		break;
 
     	case FWRITE:
-        	if((socket_check(so) == 0) &&
-        	   (so->state & SOCKET_STATE_CONNECTED))
-        	{
+            if(so->poll_events & POLLOUT)
+            {
                 return 1;
-        	}
+            }
 
-    		selrecord(&so->sendsel);
+    		//selrecord(&so->sendsel);
     		break;
 
     	case 0:
-        	KDEBUG("sockfs_select: so->state 0x%x\n", so->state);
-
-            if(!(so->state & SOCKET_STATE_CONNECTED))
+            if(so->poll_events & (POLLHUP | POLLERR | POLLNVAL))
             {
                 return 1;
             }
 
-            if(so->state & (SOCKET_STATE_SHUT_LOCAL | 
-                            SOCKET_STATE_SHUT_REMOTE |
-                            SOCKET_STATE_CLOSING | 
-                            SOCKET_STATE_CLOSED))
-            {
-                return 1;
-            }
-
-    		//selrecord(&so->recvsel);
     		break;
 	}
 
@@ -288,9 +295,9 @@ int sockfs_select(struct file_t *f, int which)
 /*
  * Perform a poll operation on a socket.
  */
-int sockfs_poll(struct file_t *f, struct pollfd *pfd)
+long sockfs_poll(struct file_t *f, struct pollfd *pfd)
 {
-    int res = 0;
+    long res = 0;
 
 	struct socket_t *so;
 
@@ -308,55 +315,15 @@ int sockfs_poll(struct file_t *f, struct pollfd *pfd)
         return 0;
     }
 
-    if(pfd->events & POLLIN)
+    pfd->revents = (so->poll_events & (pfd->events | POLLHUP | POLLERR | POLLNVAL));
+
+    if((pfd->events & POLLIN) && !(so->poll_events & POLLIN))
     {
-        int res2;
-
-        kernel_mutex_lock(&so->inq.lock);
-        res2 = (so->inq.head != NULL);
-        kernel_mutex_unlock(&so->inq.lock);
-
-        if(res2)
-        {
-            KDEBUG("sockfs_poll: POLLIN yes\n");
-            pfd->revents |= POLLIN;
-            res = 1;
-        }
-        else
-        {
-            KDEBUG("sockfs_poll: POLLIN no\n");
-            selrecord(&so->recvsel);
-        }
+        selrecord(&so->selrecv);
     }
 
-    if(pfd->events & POLLOUT)
+    if(pfd->revents > 0)
     {
-        if((socket_check(so) == 0) &&
-           (so->state & SOCKET_STATE_CONNECTED))
-        {
-            KDEBUG("sockfs_poll: POLLOUT yes\n");
-            pfd->revents |= POLLOUT;
-            res = 1;
-        }
-        else
-        {
-            KDEBUG("sockfs_poll: POLLOUT no\n");
-    		selrecord(&so->sendsel);
-        }
-    }
-    
-    if(!(so->state & SOCKET_STATE_CONNECTED))
-    {
-        KDEBUG("sockfs_poll: POLLHUP\n");
-        pfd->revents |= POLLHUP;
-        res = 1;
-    }
-
-    if(so->state & (SOCKET_STATE_SHUT_LOCAL | SOCKET_STATE_SHUT_REMOTE |
-                    SOCKET_STATE_CLOSING | SOCKET_STATE_CLOSED))
-    {
-        KDEBUG("sockfs_poll: POLLERR\n");
-        pfd->revents |= POLLERR;
         res = 1;
     }
     

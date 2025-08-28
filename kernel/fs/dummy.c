@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: dummy.c
  *    This file is part of LaylaOS.
@@ -31,20 +31,30 @@
 #include <kernel/dev.h>
 #include <fs/dummy.h>
 
+struct fs_ops_t dummyfs_ops = { 0, };
+
 /*
  * General block device control function.
  */
-int dummyfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
+long dummyfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
 {
     UNUSED(dev_id);
-    UNUSED(arg);
-    UNUSED(kernel);
 
     switch(cmd)
     {
-        case DEV_IOCTL_GET_BLOCKSIZE:
+        case BLKSSZGET:
             // get the block size in bytes
-            return 0;
+            RETURN_IOCTL_RES(int, arg, 0, kernel);
+
+        case BLKGETSIZE:
+            // get disk size in 512-blocks
+            RETURN_IOCTL_RES(long, arg, 0, kernel);
+
+        case BLKGETSIZE64:
+        {
+            // get disk size in bytes
+            RETURN_IOCTL_RES(unsigned long long, arg, 0, kernel);
+        }
     }
     
     return -EINVAL;
@@ -54,7 +64,7 @@ int dummyfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
 /*
  * Perform a dummy select operation.
  */
-int dummyfs_select(struct file_t *f, int which)
+long dummyfs_select(struct file_t *f, int which)
 {
     UNUSED(f);
     UNUSED(which);
@@ -66,7 +76,7 @@ int dummyfs_select(struct file_t *f, int which)
 /*
  * Perform a dummy poll operation.
  */
-int dummyfs_poll(struct file_t *f, struct pollfd *pfd)
+long dummyfs_poll(struct file_t *f, struct pollfd *pfd)
 {
     UNUSED(f);
     //UNUSED(pfd);
@@ -94,7 +104,7 @@ ssize_t dummyfs_read(struct file_t *f, off_t *pos,
     UNUSED(count);
     UNUSED(kernel);
 
-    return -ENODEV;
+    return -EBADF;
 }
 
 
@@ -107,6 +117,6 @@ ssize_t dummyfs_write(struct file_t *f, off_t *pos,
     UNUSED(count);
     UNUSED(kernel);
 
-    return -ENODEV;
+    return -EBADF;
 }
 

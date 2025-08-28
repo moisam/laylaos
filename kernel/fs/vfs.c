@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: vfs.c
  *    This file is part of LaylaOS.
@@ -52,42 +52,6 @@ struct file_t ftab[NR_FILE];
 
 
 /*
- * Update node's atime.
- */
-void update_atime(struct fs_node_t *node)
-{
-    struct mount_info_t *dinfo;
-    time_t t = now();
-    
-    if(!node)
-    {
-        return;
-    }
-    
-    if(!(dinfo = node_mount_info(node)))
-    //if(!(dinfo = get_mount_info(node->dev)))
-    {
-        node->atime = t;
-        node->flags |= FS_NODE_DIRTY;
-        return;
-    }
-
-    if((dinfo->mountflags & MS_NOATIME))
-    {
-        return;
-    }
-
-    if(S_ISDIR(node->mode) && (dinfo->mountflags & MS_NODIRATIME))
-    {
-        return;
-    }
-
-    node->atime = t;
-    node->flags |= FS_NODE_DIRTY;
-}
-
-
-/*
  * Get a kalloc()'d copy of the path and remove any trailing'/'s.
  * Used to sanitize pathnames we pass to get_parent_dir().
  *
@@ -96,7 +60,7 @@ void update_atime(struct fs_node_t *node)
  *     - trailing_slash is set to 1 if the path ends in a slash and
  *       trailing_slash is non-NULL.
  */
-char *path_remove_trailing_slash(char *path, int kernel, int *trailing_slash)
+char *path_remove_trailing_slash(char *path, int kernel, long *trailing_slash)
 {
     //printk("path_remove_trailing_slash: path %s\n", path);
 
@@ -113,17 +77,17 @@ char *path_remove_trailing_slash(char *path, int kernel, int *trailing_slash)
      */
     
     if(!kernel && 
-       valid_addr(cur_task, (virtual_addr)path, (virtual_addr)path + 1) != 0)
+       valid_addr(this_core->cur_task, (virtual_addr)path, (virtual_addr)path + 1) != 0)
     {
-        add_task_segv_signal(cur_task, SIGSEGV, SEGV_MAPERR, (void *)path);
+        add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, (void *)path);
         return NULL;
     }
 
     size_t pathlen = strlen(path);
     char *p2 = (char *)kmalloc(pathlen + 1);
     char *p3;
-    int tmp = 0;
-    
+    long tmp = 0;
+
     if(!p2)
     {
         return NULL;
@@ -175,26 +139,25 @@ char *path_remove_trailing_slash(char *path, int kernel, int *trailing_slash)
  * filename: pointer to the first char in the basename of the requested path
  * dirnode: pointer to the parent directory's node
  */
-int get_parent_dir(char *pathname, int dirfd, char **filename,
-                   struct fs_node_t **dirnode, int follow_mpoints)
+long get_parent_dir(char *pathname, int dirfd, char **filename,
+                    struct fs_node_t **dirnode, int follow_mpoints)
 {
     char *fname, *tmp;
     struct fs_node_t *node, *node2, *parent;
-    int len, res;
+    long len, res;
     dev_t dev;
     ino_t n;
     struct dirent *entry;
     struct cached_page_t *dbuf;
     size_t dbuf_off;
     int symlinks = 0;
-    struct task_t *ct = cur_task;
     
     if(!pathname || !*pathname)
     {
         return -EINVAL;
     }
     
-    if(!ct)
+    if(!this_core->cur_task)
     {
         return -EINVAL;
     }
@@ -202,16 +165,19 @@ int get_parent_dir(char *pathname, int dirfd, char **filename,
     // for safety
     *filename = NULL;
     *dirnode = NULL;
+    follow_mpoints = !!follow_mpoints;
     
     if(*pathname == '/')
     {
-        if(!ct->fs || !ct->fs->root || ct->fs->root->refs == 0)
+        if(!this_core->cur_task->fs || 
+           !this_core->cur_task->fs->root ||
+           this_core->cur_task->fs->root->refs == 0)
         {
             // Kernel tasks do not have valid cwd or root entries, and they
             // should not usually be accessing files/dirs except in some 
             // cases, e.g. when the CD-ROM task is trying to auto-mount a
             // removable disk
-            if(ct->user)
+            if(this_core->cur_task->user)
             {
                 printk("vfs: current task has no root directory!\n");
                 return -EINVAL;
@@ -221,16 +187,16 @@ int get_parent_dir(char *pathname, int dirfd, char **filename,
         }
         else
         {
-            node = ct->fs->root;
+            node = this_core->cur_task->fs->root;
         }
 
         pathname++;
     }
     else if(dirfd != AT_FDCWD)
     {
-        if(!ct->ofiles || dirfd < 0 || dirfd >= NR_OPEN ||
-           ct->ofiles->ofile[dirfd] == NULL ||
-           (node = ct->ofiles->ofile[dirfd]->node) == NULL)
+        if(!this_core->cur_task->ofiles || dirfd < 0 || dirfd >= NR_OPEN ||
+           this_core->cur_task->ofiles->ofile[dirfd] == NULL ||
+           (node = this_core->cur_task->ofiles->ofile[dirfd]->node) == NULL)
         {
             return -EBADF;
         }
@@ -242,13 +208,15 @@ int get_parent_dir(char *pathname, int dirfd, char **filename,
     }
     else
     {
-        if(!ct->fs || !ct->fs->cwd || ct->fs->cwd->refs == 0)
+        if(!this_core->cur_task->fs ||
+           !this_core->cur_task->fs->cwd ||
+           this_core->cur_task->fs->cwd->refs == 0)
         {
             printk("vfs: current task has no cwd!\n");
             return -EINVAL;
         }
 
-        node = ct->fs->cwd;
+        node = this_core->cur_task->fs->cwd;
     }
     
     if(!(node = get_node(node->dev, node->inode, follow_mpoints)))
@@ -260,7 +228,6 @@ int get_parent_dir(char *pathname, int dirfd, char **filename,
 
     parent = node;
 
-    KDEBUG("get_parent_dir: dev 0x%x, ino 0x%x\n", node->dev, node->inode);
 
     INC_NODE_REFS(node);
     
@@ -305,7 +272,14 @@ int get_parent_dir(char *pathname, int dirfd, char **filename,
 
         KDEBUG("get_parent_dir: fname = %s\n", fname);
         
-        if(!S_ISDIR(node->mode) || has_access(node, EXECUTE, 0) != 0)
+        if(!S_ISDIR(node->mode))
+        {
+            release_node(node);
+            release_node(parent);
+            return -ENOENT;
+        }
+
+        if(has_access(node, EXECUTE, 0) != 0)
         {
             release_node(node);
             release_node(parent);
@@ -340,7 +314,7 @@ int get_parent_dir(char *pathname, int dirfd, char **filename,
         tmp[len] = '\0';
 
         KDEBUG("get_parent_dir: tmp = %s\n", tmp);
-        
+
         // find this path segment in the current directory
         if((res = vfs_finddir(node, tmp, &entry, &dbuf, &dbuf_off)) < 0)
         {
@@ -363,6 +337,7 @@ int get_parent_dir(char *pathname, int dirfd, char **filename,
         // get the node
         if(!(node = get_node(dev, n, follow_mpoints)))
         {
+            release_node(parent);
             return -ENOENT;
         }
     }
@@ -372,7 +347,7 @@ int get_parent_dir(char *pathname, int dirfd, char **filename,
 /*
  * Set the node's select() function according to the file type.
  */
-static void set_select_func(struct fs_node_t *node)
+static void set_select_func(struct fs_node_t *node, int flags)
 {
     dev_t dev;
     int major;
@@ -382,8 +357,15 @@ static void set_select_func(struct fs_node_t *node)
     node->poll = NULL;
     node->read = NULL;
     node->write = NULL;
-    
-    if(IS_PIPE(node))
+
+    if(flags & O_PATH)
+    {
+        node->select = dummyfs_select;
+        node->poll = dummyfs_poll;
+        node->read = dummyfs_read;
+        node->write = dummyfs_write;
+    }
+    else if(IS_PIPE(node))
     {
         node->select = pipefs_select;
         node->poll = pipefs_poll;
@@ -406,10 +388,10 @@ static void set_select_func(struct fs_node_t *node)
     
         if(major < NR_DEV)
         {
-            int (*select)(struct file_t *, int) =
+            long (*select)(struct file_t *, int) =
                             S_ISCHR(mode) ? cdev_tab[major].select :
                                             bdev_tab[major].select;
-            int (*poll)(struct file_t *, struct pollfd *) =
+            long (*poll)(struct file_t *, struct pollfd *) =
                             S_ISCHR(mode) ? cdev_tab[major].poll :
                                             bdev_tab[major].poll;
 
@@ -455,10 +437,10 @@ static void set_select_func(struct fs_node_t *node)
 }
 
 
-int vfs_open_internal(char *path, int dirfd, 
-                      struct fs_node_t **filenode, int open_flags)
+long vfs_open_internal(char *path, int dirfd, 
+                       struct fs_node_t **filenode, int open_flags)
 {
-    int res, trailing_slash;
+    long res, trailing_slash;
     int followlink = (open_flags & OPEN_FOLLOW_SYMLINK);
     int kernel = (open_flags & OPEN_KERNEL_CALLER);
     struct fs_node_t *node, *node2, *parent;
@@ -476,7 +458,40 @@ int vfs_open_internal(char *path, int dirfd,
     {
         return -ENOMEM;
     }
-    
+
+    // handle the special case of an empty path with a dirfd that was opened
+    // using O_PATH
+    if(!*p2)
+    {
+        kfree(p2);
+
+        if(dirfd == AT_FDCWD)
+        {
+            return -EINVAL;
+        }
+
+    	if(dirfd < 0 || dirfd >= NR_OPEN || 
+    	   !this_core->cur_task->ofiles ||
+    	   !this_core->cur_task->ofiles->ofile[dirfd])
+    	{
+            return -EINVAL;
+    	}
+
+        // only accept an empty path if dirfd was opened using O_PATH
+        if(!(this_core->cur_task->ofiles->ofile[dirfd]->flags & O_PATH))
+    	{
+            return -EINVAL;
+    	}
+
+        *filenode = this_core->cur_task->ofiles->ofile[dirfd]->node;
+        INC_NODE_REFS((*filenode));
+        update_atime(*filenode);
+        (*filenode)->flags |= FS_NODE_DIRTY;
+
+        return 0;
+    }
+
+    // handle all the other cases
     if((res = get_parent_dir(p2, dirfd, &filename, &node, 1)) < 0)
     {
         kfree(p2);
@@ -512,7 +527,7 @@ int vfs_open_internal(char *path, int dirfd,
     KDEBUG("vfs_open_internal - 5 (path '%s', dev 0x%x, n 0x%x)\n", path, dev, n);
 
     // get the node
-    if(!(node = get_node(dev, n, 1)))
+    if(!(node = get_node(dev, n, GETNODE_FOLLOW_MPOINTS)))
     {
         kfree(p2);
         release_node(parent);
@@ -561,10 +576,11 @@ int vfs_open_internal(char *path, int dirfd,
     kfree(p2);
     
     update_atime(node);
+    node->flags |= FS_NODE_DIRTY;
 
     *filenode = node;
-    set_select_func(node);
-    
+    set_select_func(node, 0);
+
     return 0;
 }
 
@@ -576,10 +592,10 @@ int vfs_open_internal(char *path, int dirfd,
  *     0 on success, -errno on failure
  *     filenode: pointer to the file/dir's node
  */
-int vfs_open(char *path, int flags, mode_t mode, int dirfd,
-             struct fs_node_t **filenode, int open_flags)
+long vfs_open(char *path, int flags, mode_t mode, int dirfd,
+              struct fs_node_t **filenode, int open_flags)
 {
-    int res;
+    long res;
     char *filename;
     dev_t dev;
     ino_t n;
@@ -589,7 +605,6 @@ int vfs_open(char *path, int flags, mode_t mode, int dirfd,
     size_t dbuf_off;
     int follow_mpoints, rootdir;
     int kernel = (open_flags & OPEN_KERNEL_CALLER);
-    struct task_t *ct = cur_task;
 
     *filenode = NULL;
     
@@ -598,13 +613,13 @@ int vfs_open(char *path, int flags, mode_t mode, int dirfd,
     {
         flags |= O_WRONLY;
     }
-    
+
     // OPEN_NOFOLLOW_MPOINT is only set when vfs_mount() calls us, to ensure we
     // open the actual path and not follow the mountpoint to the mounted
     // filesystem's root node
     follow_mpoints = !(open_flags & OPEN_NOFOLLOW_MPOINT);
     
-    mode = (mode & S_IFMT) | (mode & 0777 & ~ct->fs->umask);
+    mode = (mode & S_IFMT) | (mode & 0777 & ~this_core->cur_task->fs->umask);
 
     // if the file type == 0, it is a regular file
     if(!(mode & S_IFMT))
@@ -677,20 +692,27 @@ int vfs_open(char *path, int flags, mode_t mode, int dirfd,
             // TODO: we should check O_PATH as well
             if(flags & O_NOFOLLOW)
             {
-                release_node(dnode);
-                kfree(p2);
-                return -ELOOP;
+                if(!(flags & O_PATH))
+                {
+                    release_node(fnode);
+                    release_node(dnode);
+                    kfree(p2);
+                    return -ELOOP;
+                }
             }
-        
-            if((res = follow_symlink(fnode, dnode, flags, &fnode2)) < 0)
+            else
             {
-                release_node(dnode);
-                kfree(p2);
-                return res;
+                if((res = follow_symlink(fnode, dnode, flags, &fnode2)) < 0)
+                {
+                    release_node(fnode);
+                    release_node(dnode);
+                    kfree(p2);
+                    return res;
+                }
+
+                release_node(fnode);
+                fnode = fnode2;
             }
-        
-            release_node(fnode);
-            fnode = fnode2;
         }
 
         // request for exclusive opening fails if file exists
@@ -710,17 +732,20 @@ int vfs_open(char *path, int flags, mode_t mode, int dirfd,
             kfree(p2);
             return -ENOTDIR;
         }
-        
-        // do we have access permission to the file?
-        int perm = (flags & O_RDWR) ? (WRITE | READ) :
-                   (flags & O_WRONLY) ? WRITE : READ;
-        
-        if(has_access(fnode, perm, 0) != 0)
+
+        if(!(flags & O_PATH))
         {
-            release_node(dnode);
-            release_node(fnode);
-            kfree(p2);
-            return -EPERM;
+            // do we have access permission to the file?
+            int perm = (flags & O_RDWR) ? (WRITE | READ) :
+                       (flags & O_WRONLY) ? WRITE : READ;
+
+            if(has_access(fnode, perm, 0) != 0)
+            {
+                release_node(dnode);
+                release_node(fnode);
+                kfree(p2);
+                return -EPERM;
+            }
         }
         
         // continue after the if-else block
@@ -751,24 +776,27 @@ int vfs_open(char *path, int flags, mode_t mode, int dirfd,
             kfree(p2);
             return -ENOSPC;
         }
-        
+
         // mark it dirty, so that we'll update the disk even if we fail
         fnode->mode = mode;
-        fnode->flags |= FS_NODE_DIRTY;
-        
+
         // add the filename to the parent directory
-        if((res = vfs_addir(dnode, filename, fnode->inode)) == 0)
+        if((res = vfs_addir(dnode, fnode, filename)) == 0)
         {
             // make sure we don't call truncate on a new, empty file!
             flags &= ~O_TRUNC;
 
-            dnode->links++;
+            if(S_ISDIR(fnode->mode))
+            {
+                dnode->links++;
+            }
         
             // continue after the if-else block
         }
         else
         {
             fnode->links = 0;
+            fnode->flags |= FS_NODE_DIRTY;
             release_node(dnode);
             release_node(fnode);
             return res;
@@ -800,17 +828,22 @@ int vfs_open(char *path, int flags, mode_t mode, int dirfd,
     // update the dir and file's access time
     update_atime(dnode);
     update_atime(fnode);
+
+    fnode->flags |= FS_NODE_DIRTY;
+    dnode->flags |= FS_NODE_DIRTY;
     
     release_node(dnode);
     
     // truncate file if needed
     if(flags & O_TRUNC)
     {
+        MARK_NODE_STALE(fnode);
         truncate_node(fnode, 0);
+        UNMARK_NODE_STALE(fnode);
     }
     
     *filenode = fnode;
-    set_select_func(fnode);
+    set_select_func(fnode, flags);
 
     KDEBUG("vfs_open: done\n");
 
@@ -838,11 +871,11 @@ int vfs_open(char *path, int flags, mode_t mode, int dirfd,
  * Returns:
  *    0 on success, -errno on failure
  */
-int vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                struct cached_page_t **dbuf, size_t *dbuf_off)
+long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
+                 struct cached_page_t **dbuf, size_t *dbuf_off)
 {
-    int res = -EINVAL;
-    
+    long res = -EINVAL;
+
     if(!dir || !filename)
     {
         return res;
@@ -880,8 +913,7 @@ int vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  *
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
- *             dirent struct (by calling ext2_entry_to_dirent() above), and 
- *             the result is stored in this field
+ *             dirent struct, and the result is stored in this field
  *    dbuf => the disk buffer representing the disk block containing the found
  *            filename, this is useful if the caller wants to delete the file
  *            after finding it (vfs_unlink(), for example)
@@ -891,11 +923,11 @@ int vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  * Returns:
  *    0 on success, -errno on failure
  */
-int vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                         struct dirent **entry,
-                         struct cached_page_t **dbuf, size_t *dbuf_off)
+long vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                          struct dirent **entry,
+                          struct cached_page_t **dbuf, size_t *dbuf_off)
 {
-    int res = -EINVAL;
+    long res = -EINVAL;
 
     if(!dir || !node)
     {
@@ -930,9 +962,9 @@ int vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  * Returns:
  *     0 on success, -errno on failure
  */
-int vfs_addir(struct fs_node_t *dir, char *filename, ino_t n)
+long vfs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
 {
-    int res = -EINVAL;
+    long res = -EINVAL;
 
     if(!dir || !filename)
     {
@@ -947,7 +979,7 @@ int vfs_addir(struct fs_node_t *dir, char *filename, ino_t n)
     
     if(dir->ops && dir->ops->addir)
     {
-        res = dir->ops->addir(dir, filename, n);
+        res = dir->ops->addir(dir, file, filename);
         dir->mtime = now();
         //dir->atime = dir->mtime;
         update_atime(dir);
@@ -966,26 +998,29 @@ int vfs_addir(struct fs_node_t *dir, char *filename, ino_t n)
 ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
                       unsigned char *buf, size_t count, int kernel)
 {
-    size_t left;
-    size_t offset, i, j;
+    volatile size_t left;
+    volatile size_t offset, i, j;
     struct cached_page_t *dbuf;
     char *p;
-    
-    //printk("vfs_read: count %d\n", count);
 
     if(!node || !pos || !buf)
     {
         return 0;
     }
-    
+
     // adjust reading pointer if the file is not on procfs as those
     // files usually have a size of 0 despite having content
     if((count + (*pos) > node->size) && (node->dev != PROCFS_DEVID))
     {
+        if(node->size == 0 || (size_t)(*pos) >= node->size)
+        {
+            return 0;
+        }
+
         count = node->size - (*pos);
     }
-        
-    if(count <= 0)
+
+    if(count == 0)
     {
         return 0;
     }
@@ -1037,7 +1072,7 @@ ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
     }
     
     // read() syscall updates the access time, so we only do this if we are
-    // being calling from within the kernel
+    // being called from within the kernel
     if(kernel)
     {
         update_atime(node);
@@ -1048,12 +1083,6 @@ ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
     return count - left;
 }
 
-ssize_t vfs_read(struct file_t *f, off_t *pos,
-                 unsigned char *buf, size_t count, int kernel)
-{
-    return vfs_read_node(f->node, pos, buf, count, kernel);
-}
-
 
 /*
  * Generic function to write to a file.
@@ -1061,13 +1090,10 @@ ssize_t vfs_read(struct file_t *f, off_t *pos,
 ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
                        unsigned char *buf, size_t count, int kernel)
 {
-    size_t done = 0;
-    size_t offset, i, k;
+    volatile size_t done = 0;
+    volatile size_t offset, i, k;
     struct cached_page_t *dbuf;
     char *p;
-    struct task_t *ct = cur_task;
-
-    //printk("vfs_write: count %d\n", count);
 
     if(!node || !pos || !buf)
     {
@@ -1076,9 +1102,9 @@ ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
     
     i = *pos;
 
-    if(exceeds_rlimit(ct, RLIMIT_FSIZE, (i + count)))
+    if(exceeds_rlimit(this_core->cur_task, RLIMIT_FSIZE, (i + count)))
     {
-        user_add_task_signal((struct task_t *)ct, SIGXFSZ, 1);
+        user_add_task_signal(this_core->cur_task, SIGXFSZ, 1);
         return -EFBIG;
     }
 
@@ -1088,11 +1114,11 @@ ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
         //offset = i / PAGE_SIZE;
         offset = i & ~(PAGE_SIZE - 1);
         
-        if(!(dbuf = get_cached_page(node, offset, PCACHE_AUTO_ALLOC)))
+        if(!(dbuf = get_cached_page(node, offset, 0 /* PCACHE_AUTO_ALLOC */)))
         {
             break;
         }
-        
+
         k = i % PAGE_SIZE;
         p = (char *)(dbuf->virt + k);
         k = PAGE_SIZE - k;
@@ -1121,7 +1147,10 @@ ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
             copy_from_user(p, buf, k);
         }
 
+        __sync_or_and_fetch(&dbuf->flags, PCACHE_FLAG_DIRTY);
+        //dbuf->flags |= PCACHE_FLAG_DIRTY;
         release_cached_page(dbuf);
+        buf += k;
     }
 
     *pos = i;
@@ -1132,17 +1161,11 @@ ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
     return done ? (ssize_t)done : -EIO;
 }
 
-ssize_t vfs_write(struct file_t *f, off_t *pos,
-                  unsigned char *buf, size_t count, int kernel)
-{
-    return vfs_write_node(f->node, pos, buf, count, kernel);
-}
 
-
-int vfs_linkat(int olddirfd, char *oldname, 
-               int newdirfd, char *newname, int flags)
+long vfs_linkat(int olddirfd, char *oldname, 
+                int newdirfd, char *newname, int flags)
 {
-    int res;
+    long res;
     struct fs_node_t *oldnode = NULL;
     char *filename = NULL;
     struct fs_node_t *dnode = NULL;
@@ -1150,7 +1173,7 @@ int vfs_linkat(int olddirfd, char *oldname,
     struct cached_page_t *dbuf = NULL;
     size_t dbuf_off;
     char *name2;
-    int followlink = (flags & AT_SYMLINK_FOLLOW);
+    int followlink = (flags & OPEN_FOLLOW_SYMLINK /* AT_SYMLINK_FOLLOW */);
     int open_flags = OPEN_USER_CALLER |
                    (followlink ? OPEN_FOLLOW_SYMLINK : OPEN_NOFOLLOW_SYMLINK);
 
@@ -1165,11 +1188,30 @@ int vfs_linkat(int olddirfd, char *oldname,
         return -ENOENT;
     }
     
-    // ensure it is a regular file
+    // ensure it is a regular file, unless we are called by syscall_renameat()
     if(!S_ISREG(oldnode->mode))
     {
-        release_node(oldnode);
-        return -EPERM;
+        if(S_ISDIR(oldnode->mode))
+        {
+            if(!(flags & OPEN_RENAME_DIR))
+            {
+                release_node(oldnode);
+                return -EPERM;
+            }
+        }
+        else if(S_ISLNK(oldnode->mode))
+        {
+            if(!(flags & OPEN_RENAME_LINK))
+            {
+                release_node(oldnode);
+                return -EPERM;
+            }
+        }
+        else
+        {
+            release_node(oldnode);
+            return -EPERM;
+        }
     }
 
     if(!(name2 = path_remove_trailing_slash(newname, 0, NULL)))
@@ -1206,6 +1248,13 @@ int vfs_linkat(int olddirfd, char *oldname,
         goto error;
     }
 
+    // ensure we don't exceed the maximum link count
+    if(S_ISDIR(oldnode->mode) && dnode->links >= LINK_MAX)
+    {
+        res = -EMLINK;
+        goto error;
+    }
+
     // check if the new file already exists
     if(vfs_finddir(dnode, filename, &entry, &dbuf, &dbuf_off) == 0)
     {
@@ -1217,7 +1266,7 @@ int vfs_linkat(int olddirfd, char *oldname,
     }
 
     // add the new file entry
-    if((res = vfs_addir(dnode, filename, oldnode->inode)) < 0)
+    if((res = vfs_addir(dnode, oldnode, filename)) < 0)
     {
         goto error;
     }
@@ -1227,7 +1276,11 @@ int vfs_linkat(int olddirfd, char *oldname,
     oldnode->ctime = t;
     oldnode->flags |= FS_NODE_DIRTY;
 
-    dnode->links++;
+    if(S_ISDIR(oldnode->mode))
+    {
+        dnode->links++;
+    }
+
     //dnode->atime = t;
     dnode->mtime = t;
     dnode->flags |= FS_NODE_DIRTY;
@@ -1246,9 +1299,9 @@ error:
 }
 
 
-int vfs_unlinkat(int dirfd, char *name, int flags)
+long vfs_unlinkat(int dirfd, char *name, int flags)
 {
-    int res;
+    long res;
     char *filename = NULL;
     struct fs_node_t *dnode = NULL, *fnode = NULL;
     struct dirent *entry = NULL;
@@ -1264,7 +1317,7 @@ int vfs_unlinkat(int dirfd, char *name, int flags)
     
     if(flags & AT_REMOVEDIR)
     {
-        return vfs_rmdir(dirfd, name);
+        return vfs_rmdir(dirfd, name, 0);
     }
     
     name2 = path_remove_trailing_slash(name, 0, NULL);
@@ -1299,15 +1352,22 @@ int vfs_unlinkat(int dirfd, char *name, int flags)
     {
         goto error;
     }
-    
-    // and the file's node
-    if(!(fnode = get_node(dnode->dev, entry->d_ino, 1)))
+
+    // unfortunately, we cannot hold the disk buffer for long, as we did in
+    // kernel ver < 0.0.3, because some filesystem drivers, e.g. FAT, might 
+    // need to read the node's metadata from the disk buffer in the call to
+    // get_node() below
+    release_cached_page(dbuf);
+    dbuf = NULL;
+
+    // get the file's node
+    if(!(fnode = get_node(dnode->dev, entry->d_ino, GETNODE_FOLLOW_MPOINTS)))
     {
         kfree(entry);
         res = -ENOENT;
         goto error;
     }
-    
+
     // check it is not a directory
     if(S_ISDIR(fnode->mode))
     //if(!S_ISREG(fnode->mode))
@@ -1318,35 +1378,32 @@ int vfs_unlinkat(int dirfd, char *name, int flags)
         res = -EISDIR;
         goto error;
     }
-
-    // check we're not removing an already deleted file
-    if(!fnode->links)
-    {
-        // we'll decrement this to zero below
-        fnode->links = 1;
-    }
-    else
-    {
-        dnode->links--;
-        dnode->atime = t;
-        //dnode->mtime = t;
-        dnode->flags |= FS_NODE_DIRTY;
-        update_atime(dnode);
-    }
     
     // and remove the entry from the parent dir
-    if((res = vfs_deldir(dnode, entry, dbuf, dbuf_off)) < 0)
+    if((res = vfs_deldir(dnode, entry, 0)) < 0)
     {
         kfree(entry);
         release_node(fnode);
         goto error;
     }
 
-    release_cached_page(dbuf);
     kfree(name2);
     kfree(entry);
 
-    fnode->links--;
+    // check we're not removing an already deleted file
+    if(fnode->links)
+    {
+        fnode->links--;
+    }
+
+    // we don't need to decrement dir's link count as we know we are
+    // deleting a file, not a directory (we checked above)
+    //dnode->links--;
+    dnode->atime = t;
+    //dnode->mtime = t;
+    dnode->flags |= FS_NODE_DIRTY;
+    update_atime(dnode);
+
     fnode->flags |= FS_NODE_DIRTY;
     fnode->ctime = t;
 
@@ -1367,16 +1424,15 @@ error:
 }
 
 
-int vfs_rmdir(int dirfd, char *pathname)
+long vfs_rmdir(int dirfd, char *pathname, int flags)
 {
-    int res;
+    long res;
     char *filename = NULL;
     struct fs_node_t *dnode = NULL, *fnode = NULL;
     struct dirent *entry = NULL;
     struct cached_page_t *dbuf = NULL;
     size_t dbuf_off;
     char *name2 = path_remove_trailing_slash(pathname, 0, NULL);
-    struct task_t *ct = cur_task;
     struct mount_info_t *dinfo;
     
     if(!name2)
@@ -1412,7 +1468,7 @@ int vfs_rmdir(int dirfd, char *pathname)
         goto error;
     }
 
-    // can't mkdir if the filesystem was mount readonly
+    // can't rmdir if the filesystem was mount readonly
     if((dinfo = node_mount_info(dnode)) && (dinfo->mountflags & MS_RDONLY))
     //if((dinfo = get_mount_info(dnode->dev)) && (dinfo->mountflags & MS_RDONLY))
     {
@@ -1421,21 +1477,37 @@ int vfs_rmdir(int dirfd, char *pathname)
         goto error;
     }
 
+    // unfortunately, we cannot hold the disk buffer for long, as we did in
+    // kernel ver < 0.0.3, because some filesystem drivers, e.g. FAT, might 
+    // need to read the node's metadata from the disk buffer in the call to
+    // get_node() below
+    release_cached_page(dbuf);
+    dbuf = NULL;
+
     // get the file's node
-    if(!(fnode = get_node(dnode->dev, entry->d_ino, 1)))
+    if(!(fnode = get_node(dnode->dev, entry->d_ino, GETNODE_FOLLOW_MPOINTS)))
     {
         kfree(entry);
         res = -ENOENT;
         goto error;
     }
     
-    // can't rmdir '.'
+    // can't rmdir '.' or '..'
     if(fnode->inode == dnode->inode)
     {
         res = -EPERM;
         goto error2;
     }
 
+    if(entry->d_name[0] == '.' &&
+       (entry->d_name[1] == '\0' ||
+        (entry->d_name[1] == '.' && entry->d_name[2] == '\0')))
+    {
+        res = -EPERM;
+        goto error2;
+    }
+
+    // rmdir can only remove directories
     if(!S_ISDIR(fnode->mode))
     {
         res = -ENOTDIR;
@@ -1449,37 +1521,54 @@ int vfs_rmdir(int dirfd, char *pathname)
         goto error2;
     }
 
-    if(dnode->ops && dnode->ops->dir_empty)
+    // check the dir is empty only if we are not renaming it
+    if(!(flags & OPEN_RENAME_DIR))
     {
-        if(!dnode->ops->dir_empty(fnode))
+        if(dnode->ops && dnode->ops->dir_empty)
         {
-            res = -ENOTEMPTY;
+            if(!dnode->ops->dir_empty(fnode))
+            {
+                res = -ENOTEMPTY;
+                goto error2;
+            }
+        }
+        else
+        {
+            res = -EPERM;
             goto error2;
         }
     }
+    
+    if((dnode->mode & S_ISVTX) && 
+       !suser(this_core->cur_task) &&
+       (this_core->cur_task->euid != fnode->uid) &&
+       (this_core->cur_task->euid != dnode->uid))
+    {
+        res = -EPERM;
+        goto error2;
+    }
+
+    // Remove the entry from the parent directory. Ext2 driver uses the last
+    // argument to decide whether to decrement the dir count for the inode
+    // group if the argument is non-zero. Normally, this is what we want.
+    // If we are renaming a directory, we don't want this as we are not 
+    // actually deleting the inode or moving it to another group, so we pass 0
+    // in this case.
+    if((res = vfs_deldir(dnode, entry, !(flags & OPEN_RENAME_DIR))) < 0)
+    {
+        goto error2;
+    }
+
+    //truncate_node(fnode, 0);
+    if(flags & OPEN_RENAME_DIR)
+    {
+        fnode->links--;
+    }
     else
     {
-        res = -EPERM;
-        goto error2;
-    }
-    
-    if((dnode->mode & S_ISVTX) && !suser(ct) &&
-       (ct->euid != fnode->uid) && (ct->euid != dnode->uid))
-    {
-        res = -EPERM;
-        goto error2;
+        fnode->links = 0;
     }
 
-    // remove the entry from the parent directory
-    if((res = vfs_deldir(dnode, entry, dbuf, dbuf_off)) < 0)
-    {
-        goto error2;
-    }
-
-    release_cached_page(dbuf);
-    truncate_node(fnode, 0);
-
-    fnode->links = 0;
     fnode->flags |= FS_NODE_DIRTY;
 
     dnode->links--;
@@ -1512,11 +1601,10 @@ error:
 /*
  * Remove an entry from a parent directory.
  */
-int vfs_deldir(struct fs_node_t *dir, struct dirent *entry,
-               struct cached_page_t *dbuf, size_t dbuf_off)
+long vfs_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir)
 {
-    int res = -EINVAL;
-    
+    long res = -EINVAL;
+
     if(!dir)
     {
         return res;
@@ -1530,7 +1618,7 @@ int vfs_deldir(struct fs_node_t *dir, struct dirent *entry,
     
     if(dir->ops && dir->ops->deldir)
     {
-        res = dir->ops->deldir(dir, entry, dbuf, dbuf_off);
+        res = dir->ops->deldir(dir, entry, is_dir);
         dir->mtime = now();
         //dir->atime = dir->mtime;
         dir->flags |= FS_NODE_DIRTY;
@@ -1554,9 +1642,9 @@ int vfs_deldir(struct fs_node_t *dir, struct dirent *entry,
  * Returns:
  *     number of bytes read on success, -errno on failure
  */
-int vfs_getdents(struct fs_node_t *dir, off_t *pos, void *dp, int count)
+long vfs_getdents(struct fs_node_t *dir, off_t *pos, void *dp, int count)
 {
-    int res = -EINVAL;
+    long res = -EINVAL;
 
     if(!dir || !pos || !dp)
     {
@@ -1584,12 +1672,12 @@ int vfs_getdents(struct fs_node_t *dir, off_t *pos, void *dp, int count)
  *
  * See: https://man7.org/linux/man-pages/man2/mknod.2.html
  */
-int vfs_mknod(char *pathname, mode_t mode, dev_t dev, int dirfd,
-              int open_flags, struct fs_node_t **res)
+long vfs_mknod(char *pathname, mode_t mode, dev_t dev, int dirfd,
+               int open_flags, struct fs_node_t **res)
 {
     struct fs_node_t *node = NULL;
-    int error;
-    
+    long error;
+
     if(!pathname || !res)
     {
         return -EINVAL;
@@ -1608,7 +1696,7 @@ int vfs_mknod(char *pathname, mode_t mode, dev_t dev, int dirfd,
     if(S_ISCHR(mode) || S_ISBLK(mode))
     {
         if(MAJOR(dev) == 0 || MAJOR(dev) >= NR_DEV ||
-           MINOR(dev) == 0 || MINOR(dev) >= NR_DEV)
+           /* MINOR(dev) == 0 || */ MINOR(dev) >= NR_DEV)
         {
             return -EINVAL;
         }
@@ -1653,10 +1741,57 @@ int vfs_mknod(char *pathname, mode_t mode, dev_t dev, int dirfd,
     {
         //node->mode &= ~S_IFREG;
         //node->mode |= S_IFSOCK;
-        node->flags |= FS_NODE_SOCKET;
+        node->flags |= (FS_NODE_SOCKET | FS_NODE_SOCKET_ONDISK);
     }
     
     *res = node;
     return 0;
+}
+
+
+long vfs_fdatasync(struct fs_node_t *node)
+{
+    struct cached_page_t *buf;
+    size_t i, j;
+    long res = 0;
+
+    j = node->size;
+    i = 0;
+
+    // try to bmap each block from the file, check to see if the block has
+    // already been read by someone (i.e. the block should be available in
+    // the block cache), then write the block out to disk
+    while(i < j)
+    {
+        if((buf = get_cached_page(node, i, PCACHE_PEEK_ONLY)))
+        {
+            if(sync_cached_page(buf) < 0)
+            {
+                res = -EIO;
+            }
+
+            release_cached_page(buf);
+        }
+
+        i += PAGE_SIZE;
+    }
+    
+    return res;
+}
+
+
+long vfs_fsync(struct fs_node_t *node)
+{
+    long res, res2;
+
+    // sync data
+    res = vfs_fdatasync(node);
+
+    // then metadata
+    kernel_mutex_lock(&node->lock);
+    res2 = write_node(node);
+    kernel_mutex_unlock(&node->lock);
+
+    return res ? res : res2;
 }
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: fio.c
  *    This file is part of LaylaOS.
@@ -29,15 +29,36 @@
 #include <kernel/vfs.h>
 #include <kernel/task.h>
 //#include <fs/sockfs.h>
+#include <kernel/loop_internal.h>
 #include <fs/devpts.h>
 #include <mm/kheap.h>
 #include <kernel/net/socket.h>
 
 
-static int fdalloc(int *res)
+long fdnode(int fd, struct task_t *t, struct file_t **f, struct fs_node_t **node)
+{
+    *f = NULL;
+    *node = NULL;
+
+    if(!t || !t->ofiles)
+    {
+        return -EBADF;
+    }
+
+    if(fd < 0 || fd >= NR_OPEN ||
+       !(*f = t->ofiles->ofile[fd]) || !(*node = (*f)->node))
+    {
+        return -EBADF;
+    }
+    
+    return 0;
+}
+
+
+static long fdalloc(int *res)
 {
     int fd;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
     
     *res = -1;
     
@@ -69,11 +90,11 @@ static int fdalloc(int *res)
  * Returns:
  *    0 on success, -errno on failure.
  */
-int falloc(int *_fd, struct file_t **_f)
+long falloc(int *_fd, struct file_t **_f)
 {
 	struct file_t *f, *lf;
 	int fd;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
 	*_f = NULL;
 	*_fd = -1;
@@ -94,7 +115,8 @@ int falloc(int *_fd, struct file_t **_f)
     	kernel_mutex_lock(&f->lock);
 		if(!f->refs)
 		{
-        	f->refs++;
+        	//f->refs++;
+            __sync_fetch_and_add(&(f->refs), 1);
         	kernel_mutex_unlock(&f->lock);
 		    break;
 		}
@@ -115,7 +137,7 @@ int falloc(int *_fd, struct file_t **_f)
 }
 
 
-int closef(struct file_t *f)
+long closef(struct file_t *f)
 {
     if(!f)
     {
@@ -127,32 +149,45 @@ int closef(struct file_t *f)
 		printk("vfs: closing a file with 0 refs\n");
 		return -EINVAL;
 	}
-	
-	if(--f->refs)
+
+    __sync_fetch_and_sub(&(f->refs), 1);
+
+	if(f->refs)
+	//if(--f->refs)
 	{
+	    // last close of a loopback device
+	    if(f->refs == 1 && f->node && (f->node->flags & FS_NODE_LOOP_BACKING))
+	    {
+	        lodev_release(f);
+	    }
+
 		return 0;
 	}
 	
 	if(f->node)
 	{
-	    if(IS_SOCKET(f->node))
+        struct fs_node_t *node = f->node;
+
+        f->node = NULL;
+
+	    if(IS_SOCKET(node))
     	{
     	    //sockfs_close(f);
-    	    socket_close(f->node->data);
-            f->node->data = 0;
-            f->node->links = 0;
+    	    socket_close(node->data);
+            node->data = 0;
+            node->links = 0;
 	    }
-	    else if(S_ISCHR(f->node->mode))
+	    else if(S_ISCHR(node->mode))
 	    {
-            if(MAJOR(f->node->blocks[0]) == PTY_SLAVE_MAJ)
+            if(MAJOR(node->blocks[0]) == PTY_SLAVE_MAJ)
     	    {
-    	        pty_slave_close(f->node);
+    	        pty_slave_close(node);
     	    }
-    	    else if(MAJOR(f->node->blocks[0]) == PTY_MASTER_MAJ)
+    	    else if(MAJOR(node->blocks[0]) == PTY_MASTER_MAJ)
     	    {
     	        // instead of calling release_node(), free the node here as
     	        // it was independently alloc'd by pty_master_create()
-    	        pty_master_close(f->node);
+    	        pty_master_close(node);
     	    }
 
 #if 0
@@ -168,10 +203,19 @@ int closef(struct file_t *f)
 #endif
 
 	    }
+	    else
+	    {
+            // if this is the last close of a file referencing this node, and the
+            // node's links == 0 (i.e. marked for deletion), remove any hanging
+            // cache pages so the node can finally be deleted
+            if(node->links == 0 && files_referencing_node(node) == 0)
+            {
+                remove_unreferenced_cached_pages(node);
+            }
+	    }
+
+    	release_node(node);
 	}
-	
-	release_node(f->node);
-	f->node = NULL;
 	
 	return 0;
 }

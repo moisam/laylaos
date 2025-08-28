@@ -56,7 +56,7 @@ int copy_task_dirpath(dev_t dev, ino_t ino,
     struct dentry_t *dent = NULL;
     struct fs_node_t *dir = NULL;
 
-    if((dir = get_node(dev, ino, 1)) == NULL)
+    if((dir = get_node(dev, ino, GETNODE_FOLLOW_MPOINTS)) == NULL)
     {
         return -ENOENT;
     }
@@ -527,7 +527,7 @@ size_t get_task_mmaps(struct task_t *task, char **_buf)
         }
         else if(node)
         {
-            if((node = get_node(node->dev, node->inode, 1)) != NULL)
+            if((node = get_node(node->dev, node->inode, GETNODE_FOLLOW_MPOINTS)) != NULL)
             {
                 dent = NULL;
                 

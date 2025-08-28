@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: procfs.c
  *    This file is part of LaylaOS.
@@ -196,38 +196,40 @@ struct procfs_entry_t procfs_root_entries[] =
 #define PROC_CMDLINE        7
     { "cmdline"         , PROCFS_FILE_MODE, 0, 0, 0, NULL, },
 #define PROC_CPUINFO        8
-    { "cpuinfo"         , PROCFS_FILE_MODE, 0, 0, 0, NULL, },
+    { "cpuinfo"         , PROCFS_FILE_MODE, 0, 0, 0, detect_cpu, },
 #define PROC_DEVICES        9
     { "devices"         , PROCFS_FILE_MODE, 0, 0, 0, get_device_list, },
 #define PROC_FILESYSTEMS    10
     { "filesystems"     , PROCFS_FILE_MODE, 0, 0, 0, get_fs_list, },
 #define PROC_INTERRUPTS     11
     { "interrupts"      , PROCFS_FILE_MODE, 0, 0, 0, get_interrupt_info, },
-#define PROC_MEMINFO        12
+#define PROC_LOADAVG        12
+    { "loadavg"         , PROCFS_FILE_MODE, 0, 0, 0, get_loadavg, },
+#define PROC_MEMINFO        13
     { "meminfo"         , PROCFS_FILE_MODE, 0, 0, 0, get_meminfo, },
-#define PROC_MODULES        13
+#define PROC_MODULES        14
     { "modules"         , PROCFS_FILE_MODE, 0, 0, 0, get_modules, },
-#define PROC_MOUNTS         14
+#define PROC_MOUNTS         15
     { "mounts"          , PROCFS_FILE_MODE, 0, 0, 0, get_mounts, },
-#define PROC_PARTITIONS     15
+#define PROC_PARTITIONS     16
     { "partitions"      , PROCFS_FILE_MODE, 0, 0, 0, get_partitions, },
-#define PROC_STAT           16
+#define PROC_STAT           17
     { "stat"            , PROCFS_FILE_MODE, 0, 0, 0, get_sysstat, },
-#define PROC_TIMER_LIST     17
+#define PROC_TIMER_LIST     18
     { "timer_list"      , PROCFS_FILE_MODE, 0, 0, 0, NULL, },
-#define PROC_UPTIME         18
+#define PROC_UPTIME         19
     { "uptime"          , PROCFS_FILE_MODE, 0, 0, 0, get_uptime, },
-#define PROC_VERSION        19
+#define PROC_VERSION        20
     { "version"         , PROCFS_FILE_MODE, 0, 0, 0, get_version, },
-#define PROC_VMSTAT         20
+#define PROC_VMSTAT         21
     { "vmstat"          , PROCFS_FILE_MODE, 0, 0, 0, get_vmstat, },
-#define PROC_KSYMS          21
+#define PROC_KSYMS          22
     { "ksyms"           , PROCFS_FILE_MODE, 0, 0, 0, get_ksyms, },
-#define PROC_SYSCALLS       22
+#define PROC_SYSCALLS       23
     { "syscalls"        , PROCFS_FILE_MODE, 0, 0, 0, get_syscalls, },
-#define PROC_SELF           23
+#define PROC_SELF           24
     { "self"            , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
-#define PROC_THREAD_SELF    24
+#define PROC_THREAD_SELF    25
     { "thread-self"     , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
 };
 
@@ -273,6 +275,16 @@ struct procfs_entry_t procfs_net_entries[] =
 };
 
 #define procfs_net_entry_count      arr_count(procfs_net_entries)
+
+struct procfs_entry_t procfs_tty_entries[] =
+{
+    { "."               , PROCFS_DIR_MODE , 0, 0, 0, NULL, },
+    { ".."              , PROCFS_DIR_MODE , 0, 0, 0, NULL, },
+#define PROC_TTY_DRIVERS        2
+    { "drivers"         , PROCFS_FILE_MODE, 0, 0, 0, get_tty_driver_list, },
+};
+
+#define procfs_tty_entry_count      arr_count(procfs_tty_entries)
 
 struct procfs_pid_entry_t procfs_pid_entries[] =
 {
@@ -414,7 +426,7 @@ struct fs_node_t *procfs_create(void)
  * Returns:
  *    0 on success, -errno on failure
  */
-int procfs_mount(struct mount_info_t *d, int flags, char *options)
+long procfs_mount(struct mount_info_t *d, int flags, char *options)
 {
     UNUSED(flags);
     UNUSED(options);
@@ -436,8 +448,8 @@ int procfs_mount(struct mount_info_t *d, int flags, char *options)
  * This function fills in the mount info struct's block_size, super,
  * and root fields.
  */
-int procfs_read_super(dev_t dev, struct mount_info_t *d,
-                      size_t bytes_per_sector)
+long procfs_read_super(dev_t dev, struct mount_info_t *d,
+                       size_t bytes_per_sector)
 {
     UNUSED(bytes_per_sector);
     
@@ -496,7 +508,7 @@ void copy_root_node_attribs(struct fs_node_t *node,
 }
 
 void copy_pid_node_attribs(struct fs_node_t *node,
-                           struct task_t *task, mode_t mode)
+                           volatile struct task_t *task, mode_t mode)
 {
     time_t t = startup_time + (task->start_time / PIT_FREQUENCY);
     node->mode = mode;
@@ -509,7 +521,7 @@ void copy_pid_node_attribs(struct fs_node_t *node,
     node->links = S_ISDIR(node->mode) ? 2 : 1;
 }
 
-struct task_t *get_task_by_index(int i)
+volatile struct task_t *get_task_by_index(int i)
 {
     if(i < 0 || i >= NR_TASKS)
     {
@@ -519,7 +531,7 @@ struct task_t *get_task_by_index(int i)
     return task_table[i];
 }
 
-int get_index_for_task(struct task_t *task)
+int get_index_for_task(volatile struct task_t *task)
 {
     for_each_taskptr(t)
     {
@@ -591,13 +603,13 @@ ino_t procfs_bus_entry_inode(int offset)
 }
 
 
-ino_t procfs_net_entry_inode(int offset)
+ino_t procfs_nettty_entry_inode(int dir, int offset)
 {
     ino_t ino;
 
     if(offset == 0)
     {
-        ino = MAKE_PROCFS_INODE(DIR_NET, 0, 0);
+        ino = MAKE_PROCFS_INODE(dir, 0, 0);
     }
     else if(offset == 1)
     {
@@ -605,7 +617,7 @@ ino_t procfs_net_entry_inode(int offset)
     }
     else
     {
-        ino = MAKE_PROCFS_INODE(DIR_NET, 0, offset);
+        ino = MAKE_PROCFS_INODE(dir, 0, offset);
     }
     
     return ino;
@@ -685,7 +697,7 @@ struct pci_dev_t *dev_from_number(struct pci_bus_t *bus, int n)
 /*
  * Reads inode data structure from disk.
  */
-int procfs_read_inode(struct fs_node_t *node)
+long procfs_read_inode(struct fs_node_t *node)
 {
     if(!valid_procfs_node(node))
     {
@@ -695,7 +707,7 @@ int procfs_read_inode(struct fs_node_t *node)
     int dir = INODE_DIR_BITS(node->inode);
     int subdir = INODE_SUBDIR_BITS(node->inode);
     int file = INODE_FILE_BITS(node->inode);
-    struct task_t *task, *task2;
+    volatile struct task_t *task, *task2;
     
     KDEBUG("procfs_read_inode: dir %d, subdir %d, file %d\n", dir, subdir, file);
     
@@ -818,8 +830,13 @@ int procfs_read_inode(struct fs_node_t *node)
             copy_root_node_attribs(node, procfs_net_entries, file);
             return 0;
 
-        case DIR_SYS:
         case DIR_TTY:
+            assert_not_bigger_than(subdir, 1, ENOENT);  // XXX - for now
+            assert_not_bigger_than(file, procfs_tty_entry_count, ENOENT);
+            copy_root_node_attribs(node, procfs_tty_entries, file);
+            return 0;
+
+        case DIR_SYS:
             copy_root_node_attribs(node, procfs_root_entries, 0);
             return 0;
     }
@@ -831,7 +848,7 @@ int procfs_read_inode(struct fs_node_t *node)
 /*
  * Writes inode data structure to disk.
  */
-int procfs_write_inode(struct fs_node_t *node)
+long procfs_write_inode(struct fs_node_t *node)
 {
     if(!valid_procfs_node(node))
     {
@@ -842,14 +859,15 @@ int procfs_write_inode(struct fs_node_t *node)
 }
 
 
-struct dirent *procfs_entry_to_dirent(struct dirent *__ent, ino_t ino,
+STATIC_INLINE 
+struct dirent *procfs_entry_to_dirent(ino_t ino,
                                       mode_t mode, char *name, int off)
 {
     int namelen = strlen(name);
-    unsigned short reclen = sizeof(struct dirent) + namelen + 1;
-    
-    struct dirent *entry = __ent ? __ent : kmalloc(reclen);
-    
+    unsigned int reclen = GET_DIRENT_LEN(namelen);
+
+    struct dirent *entry = kmalloc(reclen);
+
     if(!entry)
     {
         return NULL;
@@ -881,8 +899,7 @@ struct dirent *procfs_entry_to_dirent(struct dirent *__ent, ino_t ino,
  *
  * Outputs:
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
- *             dirent struct (by calling ext2_entry_to_dirent() above), and the
- *             result is stored in this field
+ *             dirent struct, and the result is stored in this field
  *    dbuf => the disk buffer representing the disk block containing the found
  *            filename, this is useful if the caller wants to delete the file
  *            after finding it (vfs_unlink(), for example)
@@ -892,9 +909,9 @@ struct dirent *procfs_entry_to_dirent(struct dirent *__ent, ino_t ino,
  * Returns:
  *    0 on success, -errno on failure
  */
-int procfs_finddir(struct fs_node_t *dirnode, char *filename,
-                   struct dirent **entry,
-                   struct cached_page_t **dbuf, size_t *dbuf_off)
+long procfs_finddir(struct fs_node_t *dirnode, char *filename,
+                    struct dirent **entry,
+                    struct cached_page_t **dbuf, size_t *dbuf_off)
 {
     if(!valid_procfs_node(dirnode))
     {
@@ -913,7 +930,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
     volatile ino_t ino;
     volatile mode_t mode;
     char tmp[16];
-    struct task_t *task, *thread;
+    volatile struct task_t *task, *thread;
 
     KDEBUG("%s: d %d, s %d, f %d\n", __func__, dir, subdir, file);
     
@@ -929,7 +946,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
                 if(strcmp(procfs_root_entries[i].name, filename) == 0)
                 {
                     ino = procfs_root_entry_inode(i);
-                    *entry = procfs_entry_to_dirent(NULL, ino,
+                    *entry = procfs_entry_to_dirent(ino,
                                             procfs_root_entries[i].mode,
                                             procfs_root_entries[i].name, i);
                     return *entry ? 0 : -ENOMEM;
@@ -941,7 +958,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
             {
                 i = atoi(filename);
                 
-                if(i < 0 || i >= NR_TASKS)
+                if(i <= 0 /* || i >= NR_TASKS */)
                 {
                     return -ENOENT;
                 }
@@ -954,7 +971,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
                         ino = MAKE_PROCFS_INODE(DIR_PID, t - task_table, 0);
                         //sprintf(tmp, "%d", tgid(*t));
                         ksprintf(tmp, sizeof(tmp), "%d", tgid(*t));
-                        *entry = procfs_entry_to_dirent(NULL, ino,
+                        *entry = procfs_entry_to_dirent(ino,
                                         PROCFS_DIR_MODE,
                                         tmp, procfs_root_entry_count + 
                                                 (t - task_table));
@@ -974,7 +991,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
                 if(strcmp(procfs_bus_entries[i].name, filename) == 0)
                 {
                     ino = procfs_bus_entry_inode(i);
-                    *entry = procfs_entry_to_dirent(NULL, ino,
+                    *entry = procfs_entry_to_dirent(ino,
                                             procfs_bus_entries[i].mode,
                                             procfs_bus_entries[i].name, i);
                     return *entry ? 0 : -ENOMEM;
@@ -1039,7 +1056,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
                 }
 
                 kfree(buses);
-                *entry = procfs_entry_to_dirent(NULL, ino, mode,
+                *entry = procfs_entry_to_dirent(ino, mode,
                                                 filename, i);
                 return *entry ? 0 : -ENOMEM;
             }
@@ -1088,7 +1105,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
                         break;
                     }
 
-                    *entry = procfs_entry_to_dirent(NULL, ino, mode,
+                    *entry = procfs_entry_to_dirent(ino, mode,
                                                     filename, i);
                     return *entry ? 0 : -ENOMEM;
                 }
@@ -1110,7 +1127,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
                 {
                     ino = procfs_pid_entry_inode(subdir, i);
 
-                    *entry = procfs_entry_to_dirent(NULL, ino,
+                    *entry = procfs_entry_to_dirent(ino,
                                             procfs_pid_entries[i].mode,
                                             procfs_pid_entries[i].name, i);
                     return *entry ? 0 : -ENOMEM;
@@ -1168,7 +1185,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
                 }
             }
 
-            *entry = procfs_entry_to_dirent(NULL, ino, mode, filename, i);
+            *entry = procfs_entry_to_dirent(ino, mode, filename, i);
             return *entry ? 0 : -ENOMEM;
 
         case DIR_PID_TASK:
@@ -1215,7 +1232,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
             }
 
             kernel_mutex_unlock(&(task->threads->mutex));
-            *entry = procfs_entry_to_dirent(NULL, ino, PROCFS_DIR_MODE,
+            *entry = procfs_entry_to_dirent(ino, PROCFS_DIR_MODE,
                                             filename, i);
             return *entry ? 0 : -ENOMEM;
 
@@ -1227,8 +1244,8 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
             {
                 if(strcmp(procfs_net_entries[i].name, filename) == 0)
                 {
-                    ino = procfs_net_entry_inode(i);
-                    *entry = procfs_entry_to_dirent(NULL, ino,
+                    ino = procfs_nettty_entry_inode(DIR_NET, i);
+                    *entry = procfs_entry_to_dirent(ino,
                                             procfs_net_entries[i].mode,
                                             procfs_net_entries[i].name, i);
                     return *entry ? 0 : -ENOMEM;
@@ -1237,8 +1254,25 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
 
             break;
 
-        case DIR_SYS:
         case DIR_TTY:
+            assert_not_bigger_than(subdir, 1, ENOENT);
+            assert_not_bigger_than(file, 1, ENOTDIR);
+
+            for(i = 0; i < procfs_tty_entry_count; i++)
+            {
+                if(strcmp(procfs_tty_entries[i].name, filename) == 0)
+                {
+                    ino = procfs_nettty_entry_inode(DIR_TTY, i);
+                    *entry = procfs_entry_to_dirent(ino,
+                                            procfs_tty_entries[i].mode,
+                                            procfs_tty_entries[i].name, i);
+                    return *entry ? 0 : -ENOMEM;
+                }
+            }
+
+            break;
+
+        case DIR_SYS:
         default:
             break;
     }
@@ -1258,8 +1292,7 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
  *
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
- *             dirent struct (by calling ext2_entry_to_dirent() above), and the
- *             result is stored in this field
+ *             dirent struct, and the result is stored in this field
  *    dbuf => the disk buffer representing the disk block containing the found
  *            filename, this is useful if the caller wants to delete the file
  *            after finding it (vfs_unlink(), for example)
@@ -1269,9 +1302,9 @@ int procfs_finddir(struct fs_node_t *dirnode, char *filename,
  * Returns:
  *    0 on success, -errno on failure
  */
-int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
-                            struct dirent **entry,
-                            struct cached_page_t **dbuf, size_t *dbuf_off)
+long procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
+                             struct dirent **entry,
+                             struct cached_page_t **dbuf, size_t *dbuf_off)
 {
     if(!valid_procfs_node(dirnode))
     {
@@ -1290,7 +1323,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
     volatile int i;
     //volatile ino_t ino;
     char tmp[16];
-    struct task_t *task, *thread;
+    volatile struct task_t *task, *thread;
 
     child_dir = INODE_DIR_BITS(node->inode);
     child_subdir = INODE_SUBDIR_BITS(node->inode);
@@ -1317,7 +1350,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
                     //sprintf(tmp, "%d", tgid(task_table[i]));
                     ksprintf(tmp, sizeof(tmp), "%d",
                                 tgid(task_table[child_subdir]));
-                    *entry = procfs_entry_to_dirent(NULL, node->inode,
+                    *entry = procfs_entry_to_dirent(node->inode,
                                                     PROCFS_DIR_MODE, tmp,
                                                     procfs_root_entry_count + 
                                                             child_subdir);
@@ -1365,7 +1398,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
                 break;
             }
 
-            *entry = procfs_entry_to_dirent(NULL, node->inode,
+            *entry = procfs_entry_to_dirent(node->inode,
                                             procfs_root_entries[i].mode,
                                             procfs_root_entries[i].name, i);
             return *entry ? 0 : -ENOMEM;
@@ -1385,7 +1418,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
                 break;
             }
 
-            *entry = procfs_entry_to_dirent(NULL, node->inode,
+            *entry = procfs_entry_to_dirent(node->inode,
                                             procfs_bus_entries[i].mode,
                                             procfs_bus_entries[i].name, i);
             return *entry ? 0 : -ENOMEM;
@@ -1408,7 +1441,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
                     if(child_file == 0 || child_file == 2)
                     {
                         i = child_file;
-                        *entry = procfs_entry_to_dirent(NULL, node->inode,
+                        *entry = procfs_entry_to_dirent(node->inode,
                                             procfs_bus_pci_entries[i].mode,
                                             procfs_bus_pci_entries[i].name, i);
                         return *entry ? 0 : -ENOMEM;
@@ -1428,7 +1461,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
                     ksprintf(tmp, sizeof(tmp), "%02x",
                                 buses[child_subdir - 1]);
                     kfree(buses);
-                    *entry = procfs_entry_to_dirent(NULL, node->inode,
+                    *entry = procfs_entry_to_dirent(node->inode,
                                                     PROCFS_DIR_MODE,
                                                     tmp, child_subdir);
                     return *entry ? 0 : -ENOMEM;
@@ -1449,7 +1482,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
 
                 if(child_file == 0)
                 {
-                    *entry = procfs_entry_to_dirent(NULL, node->inode,
+                    *entry = procfs_entry_to_dirent(node->inode,
                                                     PROCFS_DIR_MODE,
                                                     ".", 0);
                     return *entry ? 0 : -ENOMEM;
@@ -1460,7 +1493,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
                     //sprintf(tmp, "%02x.%02x", pci->dev, pci->function);
                     ksprintf(tmp, sizeof(tmp), "%02x.%02x",
                                 pci->dev, pci->function);
-                    *entry = procfs_entry_to_dirent(NULL, node->inode,
+                    *entry = procfs_entry_to_dirent(node->inode,
                                                     PROCFS_FILE_MODE,
                                                     tmp, child_file);
                     return *entry ? 0 : -ENOMEM;
@@ -1506,7 +1539,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
                 break;
             }
 
-            *entry = procfs_entry_to_dirent(NULL, node->inode,
+            *entry = procfs_entry_to_dirent(node->inode,
                                             procfs_pid_entries[i].mode,
                                             procfs_pid_entries[i].name, i);
             return *entry ? 0 : -ENOMEM;
@@ -1527,7 +1560,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
             
             if(i == 0)
             {
-                *entry = procfs_entry_to_dirent(NULL, node->inode,
+                *entry = procfs_entry_to_dirent(node->inode,
                                                 PROCFS_DIR_MODE,
                                                 ".", i);
                 return *entry ? 0 : -ENOMEM;
@@ -1545,7 +1578,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
 
             //sprintf(tmp, "%d", i - 1);
             ksprintf(tmp, sizeof(tmp), "%d", i - 1);
-            *entry = procfs_entry_to_dirent(NULL, node->inode,
+            *entry = procfs_entry_to_dirent(node->inode,
                                             PROCFS_LINK_MODE, tmp, i);
             return *entry ? 0 : -ENOMEM;
 
@@ -1596,7 +1629,7 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
                 break;
             }
 
-            *entry = procfs_entry_to_dirent(NULL, node->inode,
+            *entry = procfs_entry_to_dirent(node->inode,
                                             PROCFS_DIR_MODE, tmp, i);
             return *entry ? 0 : -ENOMEM;
 
@@ -1615,13 +1648,32 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
                 break;
             }
 
-            *entry = procfs_entry_to_dirent(NULL, node->inode,
+            *entry = procfs_entry_to_dirent(node->inode,
                                             procfs_net_entries[i].mode,
                                             procfs_net_entries[i].name, i);
             return *entry ? 0 : -ENOMEM;
 
-        case DIR_SYS:
         case DIR_TTY:
+            assert_not_bigger_than(subdir, 1, ENOENT);
+            assert_not_bigger_than(file, 1, ENOTDIR);
+            i = child_file;
+            
+            if(child_dir != dir || child_subdir != 0)
+            {
+                break;
+            }
+            
+            if(i < 0 || i >= (int)procfs_tty_entry_count)
+            {
+                break;
+            }
+
+            *entry = procfs_entry_to_dirent(node->inode,
+                                            procfs_tty_entries[i].mode,
+                                            procfs_tty_entries[i].name, i);
+            return *entry ? 0 : -ENOMEM;
+
+        case DIR_SYS:
         default:
             break;
     }
@@ -1633,8 +1685,8 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
 #define copy_dent(name)                                 \
 {                                                       \
     namelen = strlen((char *)name);                     \
-    reclen = sizeof(struct dirent) + namelen + 1;       \
-    ALIGN_WORD(reclen);                                 \
+    reclen = GET_DIRENT_LEN(namelen);                   \
+    /* ALIGN_WORD(reclen); */                           \
     if((count + reclen) > (size_t)bufsz) break;         \
     dent = (struct dirent *)b;                          \
     dent->d_ino = ino;                                  \
@@ -1660,8 +1712,8 @@ int procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
  * Returns:
  *     number of bytes read on success, -errno on failure
  */
-int procfs_getdents(struct fs_node_t *dirnode, off_t *pos,
-                    void *buf, int bufsz)
+long procfs_getdents(struct fs_node_t *dirnode, off_t *pos,
+                     void *buf, int bufsz)
 {
     if(!valid_procfs_node(dirnode))
     {
@@ -1682,7 +1734,7 @@ int procfs_getdents(struct fs_node_t *dirnode, off_t *pos,
     volatile mode_t mode;
     volatile ino_t ino;
     volatile struct dirent *dent;
-    struct task_t *task, *thread;
+    volatile struct task_t *task, *thread;
     char tmp[16];
 
     offset = *pos;
@@ -1999,7 +2051,7 @@ int procfs_getdents(struct fs_node_t *dirnode, off_t *pos,
 
             while(offset < procfs_net_entry_count)
             {
-                ino = procfs_net_entry_inode(offset);
+                ino = procfs_nettty_entry_inode(DIR_NET, offset);
                 name = procfs_net_entries[offset].name;
                 mode = procfs_net_entries[offset].mode;
                 copy_dent(name);
@@ -2009,8 +2061,23 @@ int procfs_getdents(struct fs_node_t *dirnode, off_t *pos,
             *pos = offset;
             return count;
 
-        case DIR_SYS:
         case DIR_TTY:
+            assert_not_bigger_than(subdir, 1, ENOENT);
+            assert_not_bigger_than(file, 1, ENOTDIR);
+
+            while(offset < procfs_tty_entry_count)
+            {
+                ino = procfs_nettty_entry_inode(DIR_TTY, offset);
+                name = procfs_tty_entries[offset].name;
+                mode = procfs_tty_entries[offset].mode;
+                copy_dent(name);
+                offset++;
+            }
+
+            *pos = offset;
+            return count;
+
+        case DIR_SYS:
         default:
             return -ENOENT;
     }
@@ -2020,11 +2087,8 @@ int procfs_getdents(struct fs_node_t *dirnode, off_t *pos,
 /*
  * General block device control function.
  */
-int procfs_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
+long procfs_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
 {
-    UNUSED(arg);
-    UNUSED(kernel);
-    
     if(dev != PROCFS_DEVID)
     {
         return 0;
@@ -2032,9 +2096,19 @@ int procfs_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
     
     switch(cmd)
     {
-        case DEV_IOCTL_GET_BLOCKSIZE:
+        case BLKSSZGET:
             // get the block size in bytes
-            return PROCFS_BLOCK_SIZE;
+            RETURN_IOCTL_RES(int, arg, PROCFS_BLOCK_SIZE, kernel);
+
+        case BLKGETSIZE:
+            // get disk size in 512-blocks
+            RETURN_IOCTL_RES(long, arg, 0, kernel);
+
+        case BLKGETSIZE64:
+        {
+            // get disk size in bytes
+            RETURN_IOCTL_RES(unsigned long long, arg, 0, kernel);
+        }
     }
     
     return -EINVAL;
@@ -2044,7 +2118,7 @@ int procfs_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
 /*
  * Return filesystem statistics.
  */
-int procfs_ustat(struct mount_info_t *d, struct ustat *ubuf)
+long procfs_ustat(struct mount_info_t *d, struct ustat *ubuf)
 {
     if(!d || d->dev != PROCFS_DEVID)
     {
@@ -2070,7 +2144,7 @@ int procfs_ustat(struct mount_info_t *d, struct ustat *ubuf)
 /*
  * Return detailed filesystem statistics.
  */
-int procfs_statfs(struct mount_info_t *d, struct statfs *statbuf)
+long procfs_statfs(struct mount_info_t *d, struct statfs *statbuf)
 {
     if(!d || d->dev != PROCFS_DEVID)
     {
@@ -2102,17 +2176,17 @@ int procfs_statfs(struct mount_info_t *d, struct statfs *statbuf)
 }
 
 
-int copy_string_internal(char *dest, char *src, size_t destsz, int kernel)
+long copy_string_internal(char *dest, char *src, size_t destsz, int kernel)
 {
     return copy_internal(dest, src, destsz, strlen(src) + 1, kernel);
 }
 
 
-int copy_internal(char *__dest, char *__src, size_t destsz,
-                  size_t srcsz, int kernel)
+long copy_internal(char *__dest, char *__src, size_t destsz,
+                   size_t srcsz, int kernel)
 {
     size_t i;
-    int res;
+    long res;
     void *dest, *src;
 
     dest = (void *)__dest;
@@ -2134,7 +2208,7 @@ int copy_internal(char *__dest, char *__src, size_t destsz,
     res = copy_to_user(dest, src, i);
 
     // copy_to_user() returns 0 on success, -errno on failure
-    return res ? res : (int)i;
+    return res ? res : (long)i;
 }
 
 
@@ -2154,8 +2228,8 @@ int copy_internal(char *__dest, char *__src, size_t destsz,
  * Returns:
  *    number of chars read on success, -errno on failure
  */
-int procfs_read_symlink(struct fs_node_t *link, char *buf,
-                        size_t bufsz, int kernel)
+long procfs_read_symlink(struct fs_node_t *link, char *buf,
+                         size_t bufsz, int kernel)
 {
     if(!valid_procfs_node(link))
     {
@@ -2171,8 +2245,7 @@ int procfs_read_symlink(struct fs_node_t *link, char *buf,
     int subdir = INODE_SUBDIR_BITS(link->inode);
     int file = INODE_FILE_BITS(link->inode);
 
-    register struct task_t *ct = get_cur_task();
-    struct task_t *task;
+    volatile struct task_t *task;
     struct fs_node_t *node;
     struct file_t *f;
     char *p = NULL;
@@ -2192,7 +2265,7 @@ int procfs_read_symlink(struct fs_node_t *link, char *buf,
                         return -ENOMEM;
                     }
 
-                    ksprintf(p, 32, "/proc/%u", tgid(ct));
+                    ksprintf(p, 32, "/proc/%u", tgid(this_core->cur_task));
                     res = copy_string_internal(buf, p, bufsz, kernel);
                     kfree(p);
                     return res;
@@ -2203,7 +2276,8 @@ int procfs_read_symlink(struct fs_node_t *link, char *buf,
                         return -ENOMEM;
                     }
 
-                    ksprintf(p, 32, "/proc/%u/task/%u", tgid(ct), ct->pid);
+                    ksprintf(p, 32, "/proc/%u/task/%u", 
+                            tgid(this_core->cur_task), this_core->cur_task->pid);
                     res = copy_string_internal(buf, p, bufsz, kernel);
                     kfree(p);
                     return res;
@@ -2313,19 +2387,21 @@ int procfs_read_symlink(struct fs_node_t *link, char *buf,
                 /*
                  * TODO: fix this to return a link to the proper /dev/ptmx.
                  */
-                ksprintf(buf, bufsz, "ptmx");
+                ksprintf(buf, bufsz, "/dev/ptmx");
                 return strlen(buf);
             }
 
-            if((node = get_node(node->dev, node->inode, 1)) == NULL)
+            if((node = get_node(node->dev, node->inode, GETNODE_FOLLOW_MPOINTS)) == NULL)
             {
-                KDEBUG("%s: no node\n", __func__);
+                __asm__ __volatile__("xchg %%bx, %%bx":::);
+                KDEBUG("%s: no node %d\n", __func__, 1);
                 return -EINVAL;
             }
 
             if((res = get_dentry(node, &dent)) < 0)
             {
-                KDEBUG("%s: no dent\n", __func__);
+                __asm__ __volatile__("xchg %%bx, %%bx":::);
+                KDEBUG("%s: no dent %d\n", __func__, 2);
                 release_node(node);
                 return res;
             }
@@ -2334,7 +2410,8 @@ int procfs_read_symlink(struct fs_node_t *link, char *buf,
 
             if(!dent->path)
             {
-                KDEBUG("%s: no path\n", __func__);
+                __asm__ __volatile__("xchg %%bx, %%bx":::);
+                KDEBUG("%s: no path %d\n", __func__, 3);
                 release_dentry(dent);
                 release_node(node);
                 return -ENOENT;
@@ -2399,7 +2476,7 @@ size_t procfs_write_symlink(struct fs_node_t *link, char *target,
  * Read /proc/[pid]/cmdline
  *      /proc/[pid]/environ
  */
-static size_t procfs_get_task_args(struct task_t *task, int which, char **buf)
+static size_t procfs_get_task_args(volatile struct task_t *task, int which, char **buf)
 {
     virtual_addr memstart = (virtual_addr)((which == PROC_PID_CMDLINE) ?
                                                 task->arg_start :
@@ -2410,7 +2487,7 @@ static size_t procfs_get_task_args(struct task_t *task, int which, char **buf)
 
     size_t count = memend - memstart;
     PR_MALLOC(*buf, count);
-    return read_other_taskmem(task, 0, memstart, memend, *buf, count);
+    return read_other_taskmem((struct task_t *)task, 0, memstart, memend, *buf, count);
 }
 
 
@@ -2436,8 +2513,7 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
     int file = INODE_FILE_BITS(node->inode);
     size_t buflen = 0, j, i = *pos;
     char *procbuf = NULL;
-    struct task_t *task;
-    struct task_t *ct = get_cur_task();
+    volatile struct task_t *task;
     
     //KDEBUG("procfs_read_file: pid 0x%x, file 0x%x\n", pid, file);
     KDEBUG("procfs_read_inode: dir %d, subdir %d, file %d\n", dir, subdir, file);
@@ -2457,16 +2533,13 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                     buflen = strlen(procbuf);
                     break;
 
-                case PROC_CPUINFO    :   /* /proc/cpuinfo */
-                    detect_cpu(&procbuf);
-                    buflen = strlen(procbuf);
-                    break;
-
+                case PROC_CPUINFO    :   /* /proc/cpuinfo     */
                 case PROC_BUFFERS    :   /* /proc/buffers     */
                 case PROC_DEVICES    :   /* /proc/devices     */
                 case PROC_FILESYSTEMS:   /* /proc/filesystems */
                 case PROC_KSYMS      :   /* /proc/ksyms       */
                 case PROC_INTERRUPTS :   /* /proc/interrupts  */
+                case PROC_LOADAVG    :   /* /proc/loadavg     */
                 case PROC_MEMINFO    :   /* /proc/meminfo     */
                 case PROC_MODULES    :   /* /proc/modules     */
                 case PROC_MOUNTS     :   /* /proc/mounts      */
@@ -2488,7 +2561,7 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                 case PROC_SELF       :   /* /proc/self */
                     PR_MALLOC(procbuf, 16);
                     //sprintf(procbuf, "/proc/%u", tgid(ct));
-                    ksprintf(procbuf, 16, "/proc/%u", tgid(ct));
+                    ksprintf(procbuf, 16, "/proc/%u", tgid(this_core->cur_task));
                     buflen = strlen(procbuf);
                     break;
 
@@ -2496,7 +2569,7 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                     PR_MALLOC(procbuf, 32);
                     //sprintf(procbuf, "/proc/%u/task/%u", tgid(ct), ct->pid);
                     ksprintf(procbuf, 32, "/proc/%u/task/%u",
-                                tgid(ct), ct->pid);
+                                tgid(this_core->cur_task), this_core->cur_task->pid);
                     buflen = strlen(procbuf);
                     break;
 
@@ -2571,9 +2644,9 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                     break;
 
                 case PROC_PID_COMM      :   /* /proc/[pid]/comm */
-                    PR_MALLOC(procbuf, strlen(task->command) + 2);
+                    PR_MALLOC(procbuf, strlen((char *)task->command) + 2);
                     //sprintf(procbuf, "%s\n", task->command);
-                    ksprintf(procbuf, strlen(task->command) + 2, "%s\n",
+                    ksprintf(procbuf, strlen((char *)task->command) + 2, "%s\n",
                                 task->command);
                     buflen = strlen(procbuf);
                     break;
@@ -2601,7 +2674,7 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                 case PROC_PID_STATM     :   /* /proc/[pid]/statm */
                 case PROC_PID_STATUS    :   /* /proc/[pid]/status */
                 case PROC_PID_TIMERS    :   /* /proc/[pid]/timers */
-                    buflen = procfs_pid_entries[file].read_file(task, &procbuf);
+                    buflen = procfs_pid_entries[file].read_file((struct task_t *)task, &procbuf);
                     break;
 
                 case PROC_PID_MEM       :   /* /proc/[pid]/mem */
@@ -2661,10 +2734,24 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
 
             break;
 
+        case DIR_TTY:
+            if(subdir == 0)
+            {
+                //assert_not_bigger_than(subdir, 1, ENOENT);
+
+                switch(file)
+                {
+                    case PROC_TTY_DRIVERS:  /* /proc/tty/drivers */
+                        buflen = procfs_tty_entries[file].read_file(&procbuf);
+                        break;
+                }
+            }
+
+            break;
+
         case DIR_PID_FD:
         case DIR_PID_TASK:
         case DIR_SYS:
-        case DIR_TTY:
         default:
             break;
     }

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: fstab.c
  *    This file is part of LaylaOS.
@@ -39,12 +39,14 @@
 #include <fs/procfs.h>
 #include <fs/iso9660fs.h>
 #include <fs/devpts.h>
+#include <fs/fatfs.h>
+#include <fs/dentry.h>
 #include <mm/kheap.h>
 
 
 struct fs_info_t fstab[NR_FILESYSTEMS];
 
-struct task_t *update_task = NULL;
+volatile struct task_t *update_task = NULL;
 
 
 static void update_function(void *arg)
@@ -56,6 +58,7 @@ static void update_function(void *arg)
         // schedule a disk update every 30 secs
         block_task2(&update_task, PIT_FREQUENCY * 30);
         update(NODEV);
+        remove_old_dentries(TWO_MINUTES);
     }
 }
 
@@ -67,7 +70,7 @@ void init_fstab(void)
 {
     memset(fstab, 0, sizeof(fstab));
     memset(mounttab, 0, sizeof(struct mount_info_t) * NR_SUPER);
-    memset(node_table, 0, sizeof(struct fs_node_t) * NR_INODE);
+    memset(node_table, 0, sizeof(struct fs_node_t *) * NR_INODE);
     memset(ftab, 0, sizeof(struct file_t) * NR_FILE);
     
     // we need to register this first in order to read initrd
@@ -87,9 +90,16 @@ void init_fstab(void)
 
     printk("Initializing ISO9660..\n");
     iso9660fs_init();
+
+    printk("Initializing fatfs..\n");
+    fatfs_init();
     
     printk("Initializing devpts..\n");
     devpts_init();
+
+    printk("Adding other filesystems..\n");
+    fs_register("sockfs", &dummyfs_ops);
+    fs_register("pipefs", &dummyfs_ops);
 
     // init rootfs last
     printk("Mounting root file system..\n");
@@ -203,7 +213,7 @@ struct fs_info_t *fs_register(char *name, struct fs_ops_t *ops)
  * Return information about the filesystem types currently present in the
  * kernel, depending on the given 'option'.
  */
-int syscall_sysfs(int option, uintptr_t fsid, char *buf)
+long syscall_sysfs(int option, uintptr_t fsid, char *buf)
 {
     struct fs_info_t *fs;
     char *name = NULL;

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: procfs_bufinfo.c
  *    This file is part of LaylaOS.
@@ -26,10 +26,12 @@
  */
 
 #include <string.h>
+#include <netinet/in.h>
 #include <kernel/laylaos.h>
 #include <kernel/vfs.h>
 #include <kernel/task.h>
 #include <kernel/dev.h>
+#include <kernel/net/protocol.h>
 #include <kernel/net/socket.h>
 #include <kernel/net/tcp.h>
 #include <kernel/net/raw.h>
@@ -40,10 +42,7 @@
 
 static void inodeentry_getinfo(int i);
 static void taskentry_getinfo(int i);
-static void tcpsock_getinfo(int i);
-static void udpsock_getinfo(int i);
-static void unixsock_getinfo(int i);
-static void rawsock_getinfo(int i);
+static void sock_getinfo(int i);
 static void pcache_getinfo(int i);
 static void superblocks_getinfo(int i);
 static void dentries_getinfo(int i);
@@ -58,10 +57,10 @@ struct
 {
     { "inode_entry", 0, 0, 0, 0, inodeentry_getinfo, },
     { "task_entry", 0, 0, 0, 0, taskentry_getinfo, },
-    { "tcp_socks", 0, 0, 0, 0, tcpsock_getinfo, },
-    { "udp_socks", 0, 0, 0, 0, udpsock_getinfo, },
-    { "unix_socks", 0, 0, 0, 0, unixsock_getinfo, },
-    { "raw_socks", 0, 0, 0, 0, rawsock_getinfo, },
+    { "tcp_socks", 0, 0, 0, 0, sock_getinfo, },
+    { "udp_socks", 0, 0, 0, 0, NULL, },
+    { "unix_socks", 0, 0, 0, 0, NULL, },
+    { "raw_socks", 0, 0, 0, 0, NULL, },
     { "page_cache", 0, 0, 0, 0, pcache_getinfo, },
     { "superblocks", 0, 0, 0, 0, superblocks_getinfo },
     { "dentry", 0, 0, 0, 0, dentries_getinfo },
@@ -71,21 +70,26 @@ struct
 
 static void inodeentry_getinfo(int i)
 {
-    struct fs_node_t *node;
-    struct fs_node_t *lnode = &node_table[NR_INODE];
+    struct fs_node_t **node;
+    struct fs_node_t **lnode = &node_table[NR_INODE];
+    extern volatile struct kernel_mutex_t list_lock;
 
     //proc_bufinfo[i].active = 0;
     proc_bufinfo[i].num = NR_INODE;
     proc_bufinfo[i].itemsz = sizeof(struct fs_node_t);
     proc_bufinfo[i].totalsz = NR_INODE * sizeof(struct fs_node_t);
 
+    kernel_mutex_lock(&list_lock);
+
     for(node = node_table; node < lnode; node++)
     {
-        if(node->refs)
+        if(*node && (*node)->refs)
         {
             proc_bufinfo[i].active++;
         }
     }
+
+    kernel_mutex_unlock(&list_lock);
 }
 
 
@@ -107,101 +111,61 @@ static void taskentry_getinfo(int i)
 }
 
 
-static void tcp_udp_sock_getinfo(int i, struct sockport_t *ports)
+static void sock_getinfo(int i)
 {
-    struct sockport_t *sp;
     struct socket_t *so;
 
-    kernel_mutex_lock(&sockport_lock);
+    kernel_mutex_lock(&sock_lock);
 
-    for(sp = ports; sp != NULL; sp = sp->next)
+    for(so = sock_head.next; so != NULL; so = so->next)
     {
-        for(so = sp->sockets; so != NULL; so = so->next)
+        if(SOCK_PROTO(so) == IPPROTO_TCP)
         {
             proc_bufinfo[i].active++;
         }
+        else if(SOCK_PROTO(so) == IPPROTO_UDP)
+        {
+            proc_bufinfo[i + 1].active++;
+        }
+        else if(so->domain == AF_INET)
+        {
+            proc_bufinfo[i + 2].active++;
+        }
+        else
+        {
+            proc_bufinfo[i + 3].active++;
+        }
     }
 
-    kernel_mutex_unlock(&sockport_lock);
+    kernel_mutex_unlock(&sock_lock);
 
     /*
      * NOTE: The calculated number of active sockets is not correct.
      * TODO: Maybe only count connected sockets?
      */
     proc_bufinfo[i].num = proc_bufinfo[i].active;
-}
-
-
-static void tcpsock_getinfo(int i)
-{
-    tcp_udp_sock_getinfo(i, tcp_ports);
+    proc_bufinfo[i + 1].num = proc_bufinfo[i + 1].active;
+    proc_bufinfo[i + 2].num = proc_bufinfo[i + 2].active;
+    proc_bufinfo[i + 3].num = proc_bufinfo[i + 3].active;
 
     proc_bufinfo[i].itemsz = sizeof(struct socket_tcp_t);
     proc_bufinfo[i].totalsz = proc_bufinfo[i].num * sizeof(struct socket_tcp_t);
-}
 
+    proc_bufinfo[i + 1].itemsz = sizeof(struct socket_t);
+    proc_bufinfo[i + 1].totalsz = proc_bufinfo[i + 1].num * sizeof(struct socket_t);
 
-static void udpsock_getinfo(int i)
-{
-    tcp_udp_sock_getinfo(i, udp_ports);
+    proc_bufinfo[i + 2].itemsz = sizeof(struct socket_t);
+    proc_bufinfo[i + 2].totalsz = proc_bufinfo[i + 2].num * sizeof(struct socket_t);
 
-    proc_bufinfo[i].itemsz = sizeof(struct socket_t);
-    proc_bufinfo[i].totalsz = proc_bufinfo[i].num * sizeof(struct socket_t);
-}
-
-
-static void unixsock_getinfo(int i)
-{
-    struct socket_t *so;
-
-    kernel_mutex_lock(&sockunix_lock);
-
-    for(so = unix_socks; so != NULL; so = so->next, i++)
-    {
-        proc_bufinfo[i].active++;
-    }
-
-    kernel_mutex_unlock(&sockunix_lock);
-
-    /*
-     * NOTE: The calculated number of active sockets is not correct.
-     * TODO: Maybe only count connected sockets?
-     */
-    proc_bufinfo[i].num = proc_bufinfo[i].active;
-
-    proc_bufinfo[i].itemsz = sizeof(struct socket_t);
-    proc_bufinfo[i].totalsz = proc_bufinfo[i].num * sizeof(struct socket_t);
-}
-
-
-static void rawsock_getinfo(int i)
-{
-    struct socket_t *so;
-
-    kernel_mutex_lock(&sockraw_lock);
-
-    for(so = raw_socks; so != NULL; so = so->next, i++)
-    {
-        proc_bufinfo[i].active++;
-    }
-
-    kernel_mutex_unlock(&sockraw_lock);
-
-    /*
-     * NOTE: The calculated number of active sockets is not correct.
-     * TODO: Maybe only count connected sockets?
-     */
-    proc_bufinfo[i].num = proc_bufinfo[i].active;
-
-    proc_bufinfo[i].itemsz = sizeof(struct socket_raw_t);
-    proc_bufinfo[i].totalsz = proc_bufinfo[i].num * sizeof(struct socket_raw_t);
+    proc_bufinfo[i + 3].itemsz = sizeof(struct socket_t);
+    proc_bufinfo[i + 3].totalsz = proc_bufinfo[i + 3].num * sizeof(struct socket_t);
 }
 
 
 static void pcache_getinfo(int i)
 {
-    proc_bufinfo[i].active = get_cached_page_count() + get_cached_block_count();
-    proc_bufinfo[i].num = proc_bufinfo[i].active;
+    proc_bufinfo[i].active = get_busy_cached_page_count() + get_busy_cached_block_count();
+    proc_bufinfo[i].num = get_cached_page_count() + get_cached_block_count();
     proc_bufinfo[i].itemsz = PAGE_SIZE;
     proc_bufinfo[i].totalsz = proc_bufinfo[i].num * PAGE_SIZE;
 }
@@ -280,7 +244,7 @@ size_t get_buffer_info(char **buf)
     p = *buf;
     *p = '\0';
 
-    ksprintf(p, 256, "name             active  num itemsz totalsz\n");
+    ksprintf(p, 256, "name             active    num itemsz   totalsz\n");
     len = strlen(p);
     count += len;
     p += len;
@@ -292,13 +256,20 @@ size_t get_buffer_info(char **buf)
         proc_bufinfo[i].num = 0;
         proc_bufinfo[i].itemsz = 0;
         proc_bufinfo[i].totalsz = 0;
-        proc_bufinfo[i].getinfo(i);
+    }
+
+    for(i = 0; proc_bufinfo[i].name != NULL; i++)
+    {
+        if(proc_bufinfo[i].getinfo != NULL)
+        {
+            proc_bufinfo[i].getinfo(i);
+        }
     }
 
     // then print to the buffer
     for(i = 0; proc_bufinfo[i].name != NULL; i++)
     {
-        ksprintf(tmp, 64, "%-16s %6d %4d %6d %7d\n",
+        ksprintf(tmp, 64, "%-16s %6d %6d %6d %9d\n",
                           proc_bufinfo[i].name, proc_bufinfo[i].active,
                           proc_bufinfo[i].num, proc_bufinfo[i].itemsz,
                           proc_bufinfo[i].totalsz);

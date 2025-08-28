@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: procfs_file.c
  *    This file is part of LaylaOS.
@@ -55,6 +55,8 @@
 #include <fs/procfs.h>
 #include <fs/devfs.h>
 #include <fs/tmpfs.h>
+
+#include "../kernel/task_funcs.c"
 
 #define PAGES_TO_KBS(x)         ((x) * PAGE_SIZE / 1024)
 
@@ -175,9 +177,11 @@ size_t get_fs_list(char **_buf)
 {
     struct fs_info_t *f = fstab;
     struct fs_info_t *lf = &fstab[NR_FILESYSTEMS];
-    //size_t len, count = 0;
-    char tmp[16];         // max fs name is 8 chars
-    size_t len, count = 0, bufsz = (8 + 2) * NR_FILESYSTEMS;
+    struct mount_info_t *d;
+    struct mount_info_t *ld = &mounttab[NR_SUPER];
+    size_t len, count = 0;
+    // max fs name is 8 chars, plus 8 for the 'nodev' prefix and spaces
+    size_t bufsz = (16 + 2) * NR_FILESYSTEMS;
     char *buf, *p;
 
     PR_MALLOC(buf, bufsz);
@@ -191,19 +195,22 @@ size_t get_fs_list(char **_buf)
             continue;
         }
 
-        //sprintf(tmp, "%s\n", f->name);
-        ksprintf(tmp, sizeof(tmp), "%s\n", f->name);
-        len = strlen(tmp);
-        count += len;
-        
-        /*
-        if(count >= PAGE_SIZE)
+        // check to see if there is at least one mount for this filesystem
+        kernel_mutex_lock(&mount_table_mutex);
+
+        for(d = mounttab; d < ld; d++)
         {
-            break;
+            if(d->dev && d->fs == f)
+            {
+                break;
+            }
         }
-        */
-        
-        strcpy(p, tmp);
+
+        kernel_mutex_unlock(&mount_table_mutex);
+
+        ksprintf(p, bufsz, "%s   %s\n", (d == ld) ? "nodev" : "     ", f->name);
+        len = strlen(p);
+        count += len;
         p += len;
     }
     
@@ -217,9 +224,19 @@ size_t get_fs_list(char **_buf)
  */
 size_t get_uptime(char **buf)
 {
-    register struct task_t *idle_task = get_idle_task();
+    volatile struct task_t *idle_task;
     time_t uptime = monotonic_time.tv_sec;  // now();
-    time_t idle = (idle_task->user_time + idle_task->sys_time) / PIT_FREQUENCY;
+    time_t idle = 0;
+    int i;
+
+    for(i = 0; i < processor_count; i++)
+    {
+        if(processor_local_data[i].idle_task)
+        {
+            idle_task = processor_local_data[i].idle_task;
+            idle += (idle_task->user_time + idle_task->sys_time) / PIT_FREQUENCY;
+        }
+    }
 
     PR_MALLOC(*buf, 32);
     ksprintf(*buf, 32, "%ld %ld\n", (long int)uptime, (long int)idle);
@@ -258,6 +275,37 @@ size_t get_vmstat(char **buf)
                   memfree, ptables, kstacks, shms);
 
     return strlen(*buf);
+}
+
+
+/*
+ * Read /proc/loadavg.
+ */
+size_t get_loadavg(char **buf)
+{
+    char *p;
+    int running = get_running_task_count();
+    int total = total_tasks /* get_total_task_count() */;
+    unsigned long avg[3];
+
+    PR_MALLOC(*buf, 256);
+    p = *buf;
+
+    avg[0] = avenrun[0] + (FIXED_1 / 200);
+    avg[1] = avenrun[1] + (FIXED_1 / 200);
+    avg[2] = avenrun[2] + (FIXED_1 / 200);
+
+    ksprintf(p, 256, "%d.%d ", LOAD_INT(avg[0]), LOAD_FRAC(avg[0]));
+    p += strlen(p);
+    ksprintf(p, 256, "%d.%d ", LOAD_INT(avg[1]), LOAD_FRAC(avg[1]));
+    p += strlen(p);
+    ksprintf(p, 256, "%d.%d ", LOAD_INT(avg[2]), LOAD_FRAC(avg[2]));
+    p += strlen(p);
+
+    ksprintf(p, 256, "%d/%d %u\n", running, total, next_pid);
+    p += strlen(p);
+
+    return (p - *buf);
 }
 
 
@@ -353,13 +401,22 @@ size_t get_modules(char **buf)
 
     for(mod = modules_head.next; mod != NULL; mod = mod->next)
     {
+        ksprintf(tmp, 512, "%s\t%u\t%s\t%s\t" _XPTR_ "\n",
+                            mod->modinfo.name,
+                            mod->memsz,
+                            mod->modinfo.deps ? mod->modinfo.deps : "-",
+                            (mod->state & MODULE_STATE_LOADED) ?
+                                "Loaded" : "Unloaded",
+                            mod->mempos - KERNEL_MEM_START);
+        /*
         ksprintf(tmp, 512, "%s\t%s\t%s\t%s\n", mod->modinfo.name,
                                          mod->modinfo.author,
                                          mod->modinfo.desc,
                                          mod->modinfo.deps ?
                                             mod->modinfo.deps : "[NULL]");
+        */
         len = strlen(tmp);
-        
+
         if(count + len >= bufsz)
         {
             PR_REALLOC(*buf, bufsz, count);
@@ -529,7 +586,7 @@ cont:
  */
 size_t get_sysstat(char **buf)
 {
-    struct task_t *idle_task = get_idle_task();
+    //struct task_t *idle_task = get_idle_task();
     unsigned long user = 0, sys = 0, idle = 0;
     unsigned long irq_hits = 0, irq_ticks = 0, softirq = 0;
     unsigned int running = 0, blocked = 0;
@@ -564,12 +621,12 @@ size_t get_sysstat(char **buf)
             blocked++;
         }
 
-        if(*t == idle_task)
+        if((*t)->properties & PROPERTY_IDLE)
+        //if(*t == idle_task)
         {
             idle += (*t)->user_time + (*t)->children_user_time;
         }
-        else if(*t == softsleep_task || *t == softitimer_task)
-        //else if(*t == softint_task)
+        else if(*t == softsleep_task /* || *t == softitimer_task */)
         {
             softirq += (*t)->user_time + (*t)->children_user_time;
         }
@@ -718,7 +775,7 @@ size_t get_pci_device_config_space(struct pci_dev_t *pci, char **_buf)
  */
 size_t get_dns_list(char **buf)
 {
-    struct dhcp_client_cookie_t *dhcpc;
+    struct dhcp_binding_t *binding;
     size_t len, count = 0, bufsz = 1024;
     char tmp[64];
     char *p;
@@ -735,22 +792,20 @@ size_t get_dns_list(char **buf)
     len = strlen(p);
     count += len;
     p += len;
-    
-    //kernel_mutex_lock(&dhcp_cookie_lock);
 
 #define ADDR_BYTE(addr, shift)      (((addr) >> (shift)) & 0xff)
 
-    for(dhcpc = dhcp_cookies; dhcpc != NULL; dhcpc = dhcpc->next)
+    for(binding = dhcp_bindings; binding != NULL; binding = binding->next)
     {
         for(i = 0; i < 2; i++)
         {
-            if(dhcpc->dns[i].s_addr)
+            if(binding->dns[i])
             {
                 ksprintf(tmp, 64, "nameserver %u.%u.%u.%u\n",
-                              ADDR_BYTE(dhcpc->dns[i].s_addr, 0 ),
-                              ADDR_BYTE(dhcpc->dns[i].s_addr, 8 ),
-                              ADDR_BYTE(dhcpc->dns[i].s_addr, 16),
-                              ADDR_BYTE(dhcpc->dns[i].s_addr, 24));
+                              ADDR_BYTE(binding->dns[i], 0 ),
+                              ADDR_BYTE(binding->dns[i], 8 ),
+                              ADDR_BYTE(binding->dns[i], 16),
+                              ADDR_BYTE(binding->dns[i], 24));
                 len = strlen(tmp);
                 
                 if(count + len >= bufsz)
@@ -767,8 +822,6 @@ size_t get_dns_list(char **buf)
     }
 
 #undef ADDR_BYTE
-
-    //kernel_mutex_unlock(&dhcp_cookie_lock);
 
     return count;
 }

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: ext2fs.c
  *    This file is part of LaylaOS.
@@ -47,14 +47,16 @@
 #include <fs/magic.h>
 #include <fs/procfs.h>
 #include <mm/kheap.h>
+#include <mm/mmap.h>
 
+#define EXT2_SUPPORTED_INCOMPAT_FEATURES        (EXT2_FEATURE_INCOMPAT_FILETYPE)
+#define EXT2_SUPPORTED_RO_COMPAT_FEATURES       \
+        (EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER | EXT2_FEATURE_RO_COMPAT_LARGE_FILE)
 
-#define FREE_BLOCKS         1
-#define SET_BLOCKS          2
-#define FREE_INODE          1
-#define SET_INODE           2
 
 static inline int is_empty_block(uint32_t *buf, unsigned long ptr_per_block);
+//static void recalc_unalloced_blocks(dev_t dev, struct superblock_t *super);
+//static void recalc_unalloced_inodes(dev_t dev, struct superblock_t *super);
 
 uint8_t page_of_zeroes[PAGE_SIZE] = { 0, };
 
@@ -97,10 +99,47 @@ struct fs_ops_t ext2fs_ops =
 /*
  * Does dir entries contain a type field insted of filelength MSB?
  */
-inline int is_ext_dir_type(volatile struct ext2_superblock_t *super)
+STATIC_INLINE int is_ext_dir_type(volatile struct ext2_superblock_t *super)
 {
     return (super->version_major >= 1 &&
             (super->required_features & EXT2_FEATURE_INCOMPAT_FILETYPE));
+}
+
+
+STATIC_INLINE size_t get_group_count(volatile struct ext2_superblock_t *super)
+{
+    size_t bgcount = super->total_blocks / super->blocks_per_group;
+
+    if(super->total_blocks % super->blocks_per_group)
+    {
+        bgcount++;
+    }
+
+    return bgcount;
+}
+
+
+STATIC_INLINE uint16_t inode_size(volatile struct ext2_superblock_t *super)
+{
+    return (super->version_major < 1) ? 128 : super->inode_size;
+}
+
+
+STATIC_INLINE size_t get_bgd_size(volatile struct ext2_superblock_t *super)
+{
+    size_t block_size, bgd_size;
+    size_t bgcount = get_group_count(super);
+
+    block_size = 1024 << super->log2_block_size;
+    bgd_size = sizeof(struct block_group_desc_t) * bgcount;
+
+    if(bgd_size % block_size)
+    {
+        bgd_size &= ~(block_size - 1);
+        bgd_size += block_size;
+    }
+
+    return bgd_size;
 }
 
 
@@ -109,13 +148,15 @@ inline int is_ext_dir_type(volatile struct ext2_superblock_t *super)
  * This function fills in the mount info struct's block_size, super,
  * and root fields.
  */
-int ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
+long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
 {
     struct superblock_t *super;
     struct ext2_superblock_t *psuper;
     struct disk_req_t req;
     physical_addr ignored;
     int maj = MAJOR(dev);
+    uint32_t bgcount[2];
+    size_t bgd_size, bgd_block;
 
     if(maj >= NR_DEV || !bdev_tab[maj].strategy)
     {
@@ -145,18 +186,21 @@ int ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
         // we use block 1 instead of 2 as we pass a block size of 1024, which will
         // cause the device strategy function to divide 1024 by 512, leading to the
         // wrong block offset
-        super->blockno = 1;
-        super->blocksz = 1024;
+        super->blockno = 2;
+        //super->blocksz = 1024;
+        req.datasz = 1024;
     }
     else if(bytes_per_sector == 1024)
     {
         super->blockno = 1;
-        super->blocksz = 1024;
+        //super->blocksz = 1024;
+        req.datasz = 1024;
     }
     else if(bytes_per_sector == 2048 || bytes_per_sector == 4096)
     {
         super->blockno = 0;
-        super->blocksz = bytes_per_sector;
+        //super->blocksz = bytes_per_sector;
+        req.datasz = bytes_per_sector;
     }
     else
     {
@@ -164,18 +208,18 @@ int ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
         kpanic("Failed to read ext2 superblock!\n");
     }
 
+    super->blocksz = bytes_per_sector;
     super->dev = dev;
+
     req.dev = dev;
     req.data = super->data;
-
-    //req.blocksz = super->blocksz;
-    req.datasz = super->blocksz;
+    //req.datasz = super->blocksz;
     req.fs_blocksz = super->blocksz;
 
     req.blockno = super->blockno;
     req.write = 0;
 
-    printk("ext2: reading superblock\n");
+    printk("ext2: reading superblock (dev 0x%x)\n", dev);
 
 #define BAIL_OUT(err)   \
         vmmngr_free_page(get_page_entry((void *)super->data));  \
@@ -185,6 +229,7 @@ int ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
 
     if(bdev_tab[maj].strategy(&req) < 0)
     {
+        printk("ext2: failed to read from disk -- aborting mount\n");
         BAIL_OUT(-EIO);
     }
 
@@ -212,46 +257,213 @@ int ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
 
         kfree(buf);
     }
-    
-    psuper = (struct ext2_superblock_t *)(super->data);
 
-    printk("ext2: superblock signature 0x%x\n", psuper->signature);
-    printk("      total_inodes %x, total_blocks %x, reserved_blocks %x\n",
-            psuper->total_inodes, psuper->total_blocks, psuper->reserved_blocks);
-    printk("      unalloc_blocks %x, unalloc_inodes %x, superblock_block %x\n",
-            psuper->unalloc_blocks, psuper->unalloc_inodes, psuper->superblock_block);
-    printk("      log2_block_size %x\n", psuper->log2_block_size);
+    psuper = (struct ext2_superblock_t *)(super->data);
 
     /* check boot sector signature */
     if(psuper->signature != EXT2_SUPER_MAGIC)
     {
+        printk("ext2: invalid signature -- aborting mount\n");
         BAIL_OUT(-EINVAL);
     }
 
-#undef BAIL_OUT
+    if((psuper->required_features & ~EXT2_SUPPORTED_INCOMPAT_FEATURES) ||
+       (psuper->readonly_features & ~EXT2_SUPPORTED_RO_COMPAT_FEATURES))
+    {
+        printk("ext2: unsupported features (req 0x%x, ro 0x%x) -- aborting mount\n",
+                psuper->required_features, psuper->readonly_features);
+        BAIL_OUT(-EINVAL);
+    }
+
+    if(psuper->filesystem_state != EXT2_VALID_FS)
+    {
+        /*
+         * TODO: we should run fsck here.
+         */
+        printk("ext2: filesystem not clean -- aborting mount\n");
+        BAIL_OUT(-EINVAL);
+    }
+
+    /* validate block group count */
+    bgcount[0] = psuper->total_inodes / psuper->inodes_per_group;
+    bgcount[1] = psuper->total_blocks / psuper->blocks_per_group;
+
+    if(psuper->total_inodes % psuper->inodes_per_group)
+    {
+        bgcount[0]++;
+    }
+
+    if(psuper->total_blocks % psuper->blocks_per_group)
+    {
+        bgcount[1]++;
+    }
+
+    if(bgcount[0] != bgcount[1])
+    {
+        printk("ext2: block group count mismatch -- aborting mount\n");
+        BAIL_OUT(-EINVAL);
+    }
+
+    printk("ext2: superblock signature 0x%x\n", psuper->signature);
+    printk("      total_inodes %u, total_blocks %u, reserved_blocks %u\n",
+            psuper->total_inodes, psuper->total_blocks, psuper->reserved_blocks);
+    printk("      unalloc_blocks %u, unalloc_inodes %u, superblock_block %u\n",
+            psuper->unalloc_blocks, psuper->unalloc_inodes, psuper->superblock_block);
+    printk("      block_size %u\n", (1024 << psuper->log2_block_size));
   
     /* inode size */
+    /*
     if(psuper->version_major < 1)
     {
         psuper->inode_size = 128;
         psuper->first_nonreserved_inode = 11;
     }
+    */
     
     d->block_size = 1024 << psuper->log2_block_size;
     d->super = super;
+
+    /*
+     * Now read the block group descriptor table into memory.
+     * This table will be accessed every single time an inode or a block
+     * is requested, so keep a copy in memory for quick access.
+     *
+     * Of course, this means we need to sync the table to disk regularly,
+     * which we do when the update task calls us to write the superblock.
+     */
+    bgd_block = (d->block_size <= 1024) ? 2 : 1;
+    bgd_size = get_bgd_size(psuper);
+
+    if(!(super->privdata = 
+            vmmngr_alloc_and_map(align_up(bgd_size), 0, PTE_FLAGS_PW, NULL, REGION_DMA)))
+    {
+        printk("ext2: insufficient memory to load block group descriptor table\n");
+        BAIL_OUT(-ENOMEM);
+    }
+
+    A_memset((void *)super->privdata, 0, bgd_size);
+    req.dev = dev;
+    req.data = super->privdata;
+    req.datasz = bgd_size;
+    req.fs_blocksz = d->block_size;
+    req.blockno = bgd_block;
+    req.write = 0;
+
+    printk("ext2: reading block group descriptor table\n");
+
+    if(bdev_tab[maj].strategy(&req) < 0)
+    {
+        printk("ext2: failed to read from disk -- aborting mount\n");
+        vmmngr_free_pages(super->privdata, super->privdata + align_up(bgd_size));
+        BAIL_OUT(-EIO);
+    }
+
+#undef BAIL_OUT
+
+
+    /*
+    struct block_group_desc_t *tab = (struct block_group_desc_t *)super->privdata;
+
+    for(int x = 0; x < 20; x++)
+    {
+        printk("[%d] %d, %d, %d, %d, %d, %d\n", x,
+            tab[x].block_bitmap_addr,
+            tab[x].inode_bitmap_addr,
+            tab[x].inode_table_addr,
+            tab[x].unalloc_blocks,
+            tab[x].unalloc_inodes,
+            tab[x].dir_count);
+    }
+
+    if(dev != 0x1fa) for(;;);
+    */
+
+
+    printk("ext2: reading root node\n");
     d->root = get_node(dev, EXT2_ROOT_INO, 0);
+    psuper->last_mount_time = now();
+    psuper->mounts_since_last_check++;
+
+    /*
+     * Documentation says (https://cscie28.dce.harvard.edu/lectures/lect04/6_Extras/ext2-struct.html):
+     *
+     * 	  When the file system is mounted, state is set to EXT2_ERROR_FS.
+     *    After the file system was cleanly unmounted, set to EXT2_VALID_FS.
+     */
+    psuper->filesystem_state = EXT2_ERROR_FS;
+
+    printk("ext2: mounting done\n");
 
     return 0;
 }
 
 
 /*
+ * TODO: update superblock backups.
+ *
+ * Documentation says (https://cscie28.dce.harvard.edu/lectures/lect04/6_Extras/ext2-struct.html):
+ *
+ *    	With the introduction of revision 1 and the sparse superblock 
+ *      feature in Ext2, only specific block groups contain copies of the 
+ *      superblock and block group descriptor table. All block groups still
+ *      contain the block bitmap, inode bitmap, inode table, and data 
+ *      blocks. The shadow copies of the superblock can be located in
+ *      block groups 0, 1 and powers of 3, 5 and 7.
+ */
+static int __ext2_write_super(/* struct ext2_superblock_t *super, */
+                              struct disk_req_t *req, 
+                              dev_t dev /* , size_t block_size */)
+{
+    return bdev_tab[MAJOR(dev)].strategy(req);
+    /*
+    int res;
+    int off = !!(block_size == 1024);
+
+    // write the superblock
+    if((res = bdev_tab[MAJOR(dev)].strategy(req)) < 0)
+    {
+        return res;
+    }
+
+    // write shadow copy at group #1
+    req->blockno = super->blocks_per_group + off;
+
+    return (req->blockno < super->total_blocks) ?
+            bdev_tab[MAJOR(dev)].strategy(req) : 0;
+    */
+}
+
+static int __ext2_write_bgd(/* struct ext2_superblock_t *super, */
+                            struct disk_req_t *req, 
+                            dev_t dev /* , size_t block_size */)
+{
+    return bdev_tab[MAJOR(dev)].strategy(req);
+    /*
+    int res;
+    int off = !!(block_size == 1024);
+
+    // write the block group descriptor
+    if((res = bdev_tab[MAJOR(dev)].strategy(req)) < 0)
+    {
+        return res;
+    }
+
+    // write shadow copy at group #1
+    req->blockno = super->blocks_per_group + off + 1;
+
+    return (req->blockno < super->total_blocks) ?
+            bdev_tab[MAJOR(dev)].strategy(req) : 0;
+    */
+}
+
+/*
  * Write the filesystem's superblock to disk.
  */
-int ext2_write_super(dev_t dev, struct superblock_t *super)
+long ext2_write_super(dev_t dev, struct superblock_t *super)
 {
-    UNUSED(dev);
     int res;
+    size_t bgd_size, bgd_block, block_size;
+    struct ext2_superblock_t *psuper;
     struct disk_req_t req;
     
     if(!super)
@@ -259,13 +471,19 @@ int ext2_write_super(dev_t dev, struct superblock_t *super)
         return -EINVAL;
     }
 
+    psuper = (struct ext2_superblock_t *)(super->data);
+    psuper->last_written_time = now();
+
+    //recalc_unalloced_blocks(dev, super);
+    //recalc_unalloced_inodes(dev, super);
+
+    block_size = 1024 << psuper->log2_block_size;
+
     req.dev = dev;
     req.data = super->data;
-
-    //req.blocksz = super->blocksz;
-    req.datasz = super->blocksz;
+    //req.datasz = super->blocksz;
+    req.datasz = (super->blocksz <= 1024) ? 1024 : super->blocksz;
     req.fs_blocksz = super->blocksz;
-
     req.blockno = super->blockno;
     req.write = 1;
 
@@ -289,7 +507,7 @@ int ext2_write_super(dev_t dev, struct superblock_t *super)
         A_memcpy((void *)(super->data + 1024), (void *)super->data, 1024);
         A_memcpy((void *)super->data, (void *)buf, 1024);
 
-        res = bdev_tab[MAJOR(super->dev)].strategy(&req);
+        res = __ext2_write_super(/* psuper, */ &req, dev /* , block_size */);
 
         A_memcpy((void *)buf, (void *)super->data, 1024);
         A_memcpy((void *)super->data, (void *)(super->data + 1024), 1024);
@@ -299,8 +517,29 @@ int ext2_write_super(dev_t dev, struct superblock_t *super)
     }
     else
     {
-        res = bdev_tab[MAJOR(super->dev)].strategy(&req);
+        res = __ext2_write_super(/* psuper, */ &req, dev /* , block_size */);
     }
+
+    if(!super->privdata || res < 0)
+    {
+        return (res < 0) ? -EIO : 0;
+    }
+
+    /*
+     * Now write the block group descriptor table.
+     */
+    bgd_size = get_bgd_size(psuper);
+    bgd_block = (block_size <= 1024) ? 2 : 1;
+
+    req.dev = dev;
+    req.data = super->privdata;
+    req.datasz = bgd_size;
+    //req.fs_blocksz = super->blocksz;
+    req.fs_blocksz = block_size;
+    req.blockno = bgd_block;
+    req.write = 1;
+    res = __ext2_write_bgd(/* psuper, */ &req, dev /* , block_size */);
+    __asm__ __volatile__("":::"memory");
 
     return (res < 0) ? -EIO : 0;
 }
@@ -312,10 +551,33 @@ int ext2_write_super(dev_t dev, struct superblock_t *super)
  */
 void ext2_put_super(dev_t dev, struct superblock_t *super)
 {
-    UNUSED(dev);
+    struct ext2_superblock_t *psuper;
+
+    if(!super || !super->data)
+    {
+        return;
+    }
+
+    /*
+     * Documentation says (https://cscie28.dce.harvard.edu/lectures/lect04/6_Extras/ext2-struct.html):
+     *
+     * 	  When the file system is mounted, state is set to EXT2_ERROR_FS.
+     *    After the file system was cleanly unmounted, set to EXT2_VALID_FS.
+     */
+    psuper = (struct ext2_superblock_t *)(super->data);
+    psuper->filesystem_state = EXT2_VALID_FS;
+    ext2_write_super(dev, super);
+
+    if(super->privdata)
+    {
+        size_t bgd_size = get_bgd_size((struct ext2_superblock_t *)(super->data));
+        vmmngr_free_pages(super->privdata, super->privdata + align_up(bgd_size));
+        super->privdata = 0;
+    }
 
     vmmngr_free_page(get_page_entry((void *)super->data));
     vmmngr_flush_tlb_entry(super->data);
+
     kfree(super);
 }
 
@@ -354,6 +616,8 @@ void inode_to_incore(struct fs_node_t *n, struct inode_data_t *i)
     n->blocks[j++] = i->single_indirect_pointer;
     n->blocks[j++] = i->double_indirect_pointer;
     n->blocks[j++] = i->triple_indirect_pointer;
+    n->disk_sectors = i->disk_sectors;
+    __asm__ __volatile__("":::"memory");
 }
 
 
@@ -364,7 +628,7 @@ void inode_to_incore(struct fs_node_t *n, struct inode_data_t *i)
 void incore_to_inode(struct inode_data_t *i, struct fs_node_t *n)
 {
     int j;
-    
+
     i->permissions = n->mode;
     i->user_id = n->uid;
     i->last_modification_time = (uint32_t)n->mtime;
@@ -393,14 +657,16 @@ void incore_to_inode(struct inode_data_t *i, struct fs_node_t *n)
     i->single_indirect_pointer = n->blocks[j++];
     i->double_indirect_pointer = n->blocks[j++];
     i->triple_indirect_pointer = n->blocks[j++];
+    i->disk_sectors = n->disk_sectors;
+    __asm__ __volatile__("":::"memory");
 }
 
 
 /*
  * Helper function that returns the filesystem's superblock struct.
  */
-static inline int get_super(dev_t dev, struct mount_info_t **d,
-                                       struct ext2_superblock_t **super)
+STATIC_INLINE int get_super(dev_t dev, struct mount_info_t **d,
+                                       volatile struct ext2_superblock_t **super)
 {
     if((*d = get_mount_info(dev)) == NULL || !((*d)->super))
     {
@@ -416,149 +682,124 @@ static inline int get_super(dev_t dev, struct mount_info_t **d,
  * Helper function to read a block group descriptor table.
  *
  * Input:
- *    dev      => device id
- *    n        => number of the inode/block for which we want to find the
- *                  group descriptor table
- *    is_inode => 1 if n is an inode number, 0 if it is a block number
+ *    dev         => device id
  *
  * Output:
- *    index       => index of the inode entry in the table
- *    block_group => pointer to the block group
- *    list_offset => offset of the inode entry in the block group descriptor
- *                     table
- *    super       => pointer to the superblock
- *    bgd_table   => pointer to the buffer containing the block group
- *                     descriptor table
+ *    bgd         => pointer to the buffer containing the block group
+ *                     descriptor table and superblock
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 struct bgd_table_info_t
 {
-    dev_t dev;
-    uint32_t n;
-    int is_inode;
-    uint32_t index;
-    uint32_t block_group;
-    struct ext2_superblock_t *super;
-    struct cached_page_t *bgd_table;
-    //size_t cached_page_offset;
+    struct mount_info_t *d;
+    volatile struct ext2_superblock_t *super;
+    volatile struct block_group_desc_t *bgd_table;
 };
 
-static inline int get_bgd_table(struct bgd_table_info_t *bgd)
+STATIC_INLINE int get_bgd_table(dev_t dev, struct bgd_table_info_t *bgd)
 {
-    struct mount_info_t *d;
-    struct fs_node_header_t tmp;
-    uint32_t block_size, bgd_block, off, blockno;
-    uint32_t list_offset;
-    
-    if(get_super(bgd->dev, &d, &bgd->super) < 0)
+    if(get_super(dev, &bgd->d, &bgd->super) < 0)
     {
         return -EINVAL;
     }
 
-    block_size = 1024 << bgd->super->log2_block_size;
-    bgd_block = (block_size <= 1024) ? 2 : 1;
-    
-    /* read directory at requested inode/block */
-    if(bgd->is_inode)
+    if(!(bgd->bgd_table = (struct block_group_desc_t *)bgd->d->super->privdata))
     {
-        bgd->block_group = (bgd->n - 1) / bgd->super->inodes_per_group;
-        bgd->index = (bgd->n - 1) % bgd->super->inodes_per_group;
-
-        //printk("get_bgd_table: n 0x%x, block_group 0x%x, ipg 0x%x\n", bgd->n, bgd->block_group, bgd->super->inodes_per_group);
-    }
-    else
-    {
-        bgd->block_group = bgd->n / bgd->super->blocks_per_group;
-        bgd->index = bgd->n % bgd->super->blocks_per_group;
-
-        //printk("get_bgd_table: n 0x%x, block_group 0x%x, bpg 0x%x\n", bgd->n, bgd->block_group, bgd->super->blocks_per_group);
-    }
-    
-    off = bgd->block_group * sizeof(struct block_group_desc_t);
-    list_offset = off / block_size;
-    blockno = bgd_block + list_offset;
-
-    if(list_offset)
-    {
-        bgd->block_group = (off % block_size) / sizeof(struct block_group_desc_t);
-    }
-    
-    /* read the block group descriptor table */
-    tmp.inode = PCACHE_NOINODE;
-    tmp.dev = bgd->dev;
-
-    //printk("get_bgd_table: blockno 0x%x, off 0x%x\n", blockno, off);
-    //__asm__("xchg %%bx, %%bx"::);
-
-    if(!(bgd->bgd_table = get_cached_page((struct fs_node_t *)&tmp, blockno, 0)))
-    {
-        return -EIO;
+        return -EINVAL;
     }
     
     return 0;
 }
 
 
+STATIC_INLINE uint32_t inode_group(volatile struct ext2_superblock_t *super, uint32_t n)
+{
+    return (n - 1) / super->inodes_per_group;
+}
+
+
+STATIC_INLINE uint32_t inode_index(volatile struct ext2_superblock_t *super, uint32_t n)
+{
+    return (n - 1) % super->inodes_per_group;
+}
+
+
+/*
+ * The documentation clearly states that blocks are zero-based and inodes
+ * are one-based. However, having wasted a few days trying to find out why
+ * any new file I create in an ext2 disk ends up overlapping with another
+ * file's blocks, I concluded that blocks should be treated as one-based when
+ * accessing the block bitmap (at least on ext2 with block size of 1k).
+ * I assume other block sizes should still be zero-based, but I have not
+ * tested this theory yet.
+ */
+STATIC_INLINE uint32_t block_group(volatile struct ext2_superblock_t *super, uint32_t n)
+{
+    return (n - super->superblock_block) / super->blocks_per_group;
+}
+
+
+STATIC_INLINE uint32_t block_index(volatile struct ext2_superblock_t *super, uint32_t n)
+{
+    return (n - super->superblock_block) % super->blocks_per_group;
+}
+
+
 /*
  * Helper function to read a block table.
  *
- * Input & Output similar to the above. Additionally:
- *    inode => if not null, pointer to the searched inode struct
+ * Input:
+ *    n           => number of the inode/block for which we want to find the
+ *                     group descriptor table
+ *    dev         => device id
+ *    bgd         => pointer to the buffer containing the block group
+ *                     descriptor table and superblock
+ *
+ * Output:
+ *    inode       => if not null, pointer to the searched inode struct
  *    block_table => pointer to the buffer containing the block table
  *
  * Returns:
  *    0 on success, -errno on failure
  */
-int get_block_table(struct bgd_table_info_t *bgd,
-                    struct inode_data_t **inode,
-                    struct cached_page_t **block_table)
+STATIC_INLINE int get_block_table(struct bgd_table_info_t *bgd,
+                                  struct inode_data_t **inode,
+                                  struct cached_page_t **block_table,
+                                  dev_t dev, uint32_t n)
 {
-    struct block_group_desc_t *table;
     struct fs_node_header_t tmp;
-    uint32_t block_size, table_block, off0, off1;
-    int res;
+    size_t block_size, table_block, off0, off1, off2;
 
-    bgd->is_inode = 1;
-    
-    if((res = get_bgd_table(bgd)) < 0)
-    {
-        return res;
-    }
-    
-    table = (struct block_group_desc_t *)bgd->bgd_table->virt;
     block_size = 1024 << bgd->super->log2_block_size;
-    table_block = table[bgd->block_group].inode_table_addr;
-    off0 = (bgd->index * bgd->super->inode_size);
+    table_block = bgd->bgd_table[inode_group(bgd->super, n)].inode_table_addr;
+    off0 = (inode_index(bgd->super, n) * inode_size(bgd->super));
     off1 = off0 / block_size;
-
+    off2 = off0 % block_size;
     table_block += off1;
 
     tmp.inode = PCACHE_NOINODE;
-    tmp.dev = bgd->dev;
-
-    //printk("get_block_table: table_block 0x%x, inode_size 0x%x\n", table_block, bgd->super->inode_size);
+    tmp.dev = dev;
 
     if(table_block == 0)
     {
-        printk("ext2: invalid table_block 0x%x (in get_block_table())\n", table_block);
+        switch_tty(1);
+        printk("ext2: in get_block_table():\n");
+        printk("ext2: dev 0x%x, n 0x%x\n", dev, n);
+        printk("ext2: off0 0x%lx, off1 0x%lx, off2 0x%lx\n", off0, off1, off2);
+        printk("ext2: invalid table_block: 0x%lx\n", table_block);
         kpanic("Invalid/corrupt disk\n");
     }
 
     if(!(*block_table = get_cached_page((struct fs_node_t *)&tmp, table_block, 0)))
     {
-        release_cached_page(bgd->bgd_table);
         return -EIO;
     }
 
-    if(inode)
-    {
-        uint32_t off2 = off0 % block_size;
+    *inode = (struct inode_data_t *)((*block_table)->virt + off2);
+    __asm__ __volatile__("":::"memory");
 
-        *inode = (struct inode_data_t *)((*block_table)->virt + off2);
-    }
-    
     return 0;
 }
 
@@ -572,55 +813,157 @@ int get_block_table(struct bgd_table_info_t *bgd,
  *    0 on success, -errno on failure
  */
 int get_block_bitmap(struct bgd_table_info_t *bgd,
-                     struct cached_page_t **block_bitmap)
+                     struct cached_page_t **block_bitmap,
+                     dev_t dev, uint32_t group, int is_inode)
 {
-    struct block_group_desc_t *table;
     struct fs_node_header_t tmp;
-    uint32_t table_block;
-    int res;
-    
-    if((res = get_bgd_table(bgd)) < 0)
-    {
-        return res;
-    }
-    
-    table = (struct block_group_desc_t *)bgd->bgd_table->virt;
-    table_block = bgd->is_inode ? table[bgd->block_group].inode_bitmap_addr :
-                                  table[bgd->block_group].block_bitmap_addr;
-    
+    size_t table_block;
+
+    table_block = is_inode ? bgd->bgd_table[group].inode_bitmap_addr :
+                             bgd->bgd_table[group].block_bitmap_addr;
+
     tmp.inode = PCACHE_NOINODE;
-    tmp.dev = bgd->dev;
+    tmp.dev = dev;
+
+    if(table_block == 0)
+    {
+        kpanic("ext2: illegal bitmap address in get_block_bitmap()\n");
+    }
 
     if(!(*block_bitmap = get_cached_page((struct fs_node_t *)&tmp, table_block, 0)))
     {
-        release_cached_page(bgd->bgd_table);
         return -EIO;
     }
+
+    __asm__ __volatile__("":::"memory");
     
     return 0;
 }
 
 
+#if 0
+
+static void recalc_unalloced_blocks(dev_t dev, struct superblock_t *super)
+{
+    volatile uint8_t *bitmap;
+    volatile uint32_t i, j, k;
+    uint32_t blocks_per_group, unalloced, total_unalloced = 0;
+    size_t bgcount;
+    struct cached_page_t *block_bitmap;
+    struct ext2_superblock_t *psuper;
+    struct bgd_table_info_t bgd;
+
+    if(!(bgd.bgd_table = (struct block_group_desc_t *)super->privdata))
+    {
+        return;
+    }
+
+    psuper = (struct ext2_superblock_t *)(super->data);
+    bgcount = get_group_count(psuper);
+    blocks_per_group = psuper->blocks_per_group;
+
+    for(i = 0; i < bgcount; i++)
+    {
+        if(get_block_bitmap(&bgd, &block_bitmap, dev, i, 0) < 0)
+        {
+            continue;
+        }
+
+        bitmap = (volatile uint8_t *)block_bitmap->virt;
+        unalloced = 0;
+
+        for(j = 0; j < blocks_per_group / 8; j++)
+        {
+            for(k = 0; k < 8; k++)
+            {
+                if((bitmap[j] & (1 << k)) == 0)
+                {
+                    unalloced++;
+                }
+            }
+        }
+
+        bgd.bgd_table[i].unalloc_blocks = unalloced;
+        total_unalloced += unalloced;
+        release_cached_page(block_bitmap);
+    }
+
+    psuper->unalloc_blocks = total_unalloced;
+}
+
+
+static void recalc_unalloced_inodes(dev_t dev, struct superblock_t *super)
+{
+    volatile uint8_t *bitmap;
+    volatile uint32_t i, j, k;
+    uint32_t inodes_per_group, unalloced, total_unalloced = 0;
+    size_t bgcount;
+    struct cached_page_t *block_bitmap;
+    struct ext2_superblock_t *psuper;
+    struct bgd_table_info_t bgd;
+
+    if(!(bgd.bgd_table = (struct block_group_desc_t *)super->privdata))
+    {
+        return;
+    }
+
+    psuper = (struct ext2_superblock_t *)(super->data);
+    bgcount = get_group_count(psuper);
+    inodes_per_group = psuper->inodes_per_group;
+
+    for(i = 0; i < bgcount; i++)
+    {
+        if(get_block_bitmap(&bgd, &block_bitmap, dev, i, 1) < 0)
+        {
+            continue;
+        }
+
+        bitmap = (volatile uint8_t *)block_bitmap->virt;
+        unalloced = 0;
+
+        for(j = 0; j < inodes_per_group / 8; j++)
+        {
+            for(k = 0; k < 8; k++)
+            {
+                if((bitmap[j] & (1 << k)) == 0)
+                {
+                    unalloced++;
+                }
+            }
+        }
+
+        bgd.bgd_table[i].unalloc_inodes = unalloced;
+        total_unalloced += unalloced;
+        release_cached_page(block_bitmap);
+    }
+
+    psuper->unalloc_inodes = total_unalloced;
+}
+
+#endif
+
+
 /*
  * Reads inode data structure from disk.
  */
-int ext2_read_inode(struct fs_node_t *node)
+long ext2_read_inode(struct fs_node_t *node)
 {
     struct cached_page_t *block_table;
     struct inode_data_t *inode;
     struct bgd_table_info_t bgd;
-    int res;
+    long res;
 
-    bgd.dev = node->dev;
-    bgd.n = node->inode;
+    if((res = get_bgd_table(node->dev, &bgd)) < 0)
+    {
+        return res;
+    }
 
-    if((res = get_block_table(&bgd, &inode, &block_table)) < 0)
+    if((res = get_block_table(&bgd, &inode, &block_table, node->dev, node->inode)) < 0)
     {
         return res;
     }
 
     inode_to_incore(node, inode);
-    release_cached_page(bgd.bgd_table);
     release_cached_page(block_table);
 
     return 0;
@@ -630,27 +973,52 @@ int ext2_read_inode(struct fs_node_t *node)
 /*
  * Writes inode data structure to disk.
  */
-int ext2_write_inode(struct fs_node_t *node)
+long ext2_write_inode(struct fs_node_t *node)
 {
     struct cached_page_t *block_table;
     struct inode_data_t *inode;
     struct bgd_table_info_t bgd;
-    int res;
-    
-    bgd.dev = node->dev;
-    bgd.n = node->inode;
+    long res;
 
-    if((res = get_block_table(&bgd, &inode, &block_table)) < 0)
+    if((res = get_bgd_table(node->dev, &bgd)) < 0)
+    {
+        return res;
+    }
+
+    if((res = get_block_table(&bgd, &inode, &block_table, node->dev, node->inode)) < 0)
     {
         return res;
     }
     
     incore_to_inode(inode, node);
 
-    release_cached_page(bgd.bgd_table);
+    /*
+     * Clear the htree index flag if this is a directory and we have written
+     * to it.
+     *
+     * TODO: remove this when we have support for indexed directories.
+     */
+    if(S_ISDIR(node->mode) && (node->flags & FS_NODE_DIRTY))
+    {
+        inode->flags &= ~EXT2_INDEX_FL;
+    }
+
+    __sync_or_and_fetch(&block_table->flags, PCACHE_FLAG_DIRTY);
     release_cached_page(block_table);
 
     return 0;
+}
+
+
+STATIC_INLINE void inc_node_disk_blocks(struct fs_node_t *node, uint32_t block_size)
+{
+    node->disk_sectors += block_size / 512;
+}
+
+
+STATIC_INLINE void dec_node_disk_blocks(struct fs_node_t *node, uint32_t block_size)
+{
+    node->disk_sectors -= block_size / 512;
 }
 
 
@@ -660,8 +1028,8 @@ int ext2_write_inode(struct fs_node_t *node)
  * Returns 1 if a new block was allocated, 0 otherwise. This is so that the
  * caller can zero out the new block before use.
  */
-static inline void bmap_may_create_block(struct fs_node_t *node,
-                                         uint32_t *block, uint32_t block_size,
+STATIC_INLINE void bmap_may_create_block(struct fs_node_t *node,
+                                         volatile uint32_t *block, uint32_t block_size,
                                          int create)
 {
     if(create && !*block)
@@ -680,7 +1048,8 @@ static inline void bmap_may_create_block(struct fs_node_t *node,
             req.write = 1;
 
             bdev_tab[MAJOR(node->dev)].strategy(&req);
-            
+
+            inc_node_disk_blocks(node, block_size);
             node->ctime = now();
             node->flags |= FS_NODE_DIRTY;
         }
@@ -691,10 +1060,17 @@ static inline void bmap_may_create_block(struct fs_node_t *node,
 /*
  * Helper function called by ext2_bmap() to free a block if not needed anymore.
  */
-inline void bmap_free_block(struct fs_node_t *node, uint32_t *block)
+STATIC_INLINE void bmap_free_block(struct fs_node_t *node, 
+                                   volatile uint32_t *block, uint32_t block_size)
 {
     ext2_free(node->dev, *block);
     *block = 0;
+    dec_node_disk_blocks(node, block_size);
+}
+
+
+STATIC_INLINE void mark_node_dirty(struct fs_node_t *node)
+{
     node->ctime = now();
     node->flags |= FS_NODE_DIRTY;
 }
@@ -717,11 +1093,13 @@ inline void bmap_free_block(struct fs_node_t *node, uint32_t *block)
  * Returns:
  *    1 if the single indirect block was freed, 0 otherwise
  */
-int bmap_may_free_iblock(struct fs_node_t *node, uint32_t *iblockp,
+STATIC_INLINE
+int bmap_may_free_iblock(struct fs_node_t *node, volatile uint32_t *iblockp,
                          struct cached_page_t *pcache, uint32_t block,
-                         unsigned long ptr_per_block)
+                         uint32_t block_size, unsigned long ptr_per_block)
 {
-    bmap_free_block(node, &(((uint32_t *)pcache->virt)[block]));
+    bmap_free_block(node, &(((uint32_t *)pcache->virt)[block]), block_size);
+    __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_DIRTY);
     
     // free the single indirect block itself if it is empty
     if(is_empty_block((uint32_t *)pcache->virt, ptr_per_block))
@@ -729,10 +1107,13 @@ int bmap_may_free_iblock(struct fs_node_t *node, uint32_t *iblockp,
         release_cached_page(pcache);
         ext2_free(node->dev, *iblockp);
         *iblockp = 0;
+        dec_node_disk_blocks(node, block_size);
+        mark_node_dirty(node);
         return 1;
     }
 
     release_cached_page(pcache);
+    mark_node_dirty(node);
     return 0;
 }
 
@@ -757,15 +1138,17 @@ int bmap_may_free_iblock(struct fs_node_t *node, uint32_t *iblockp,
  * Returns:
  *    1 if the double indirect block was freed, 0 otherwise
  */
-int bmap_may_free_diblock(struct fs_node_t *node, uint32_t *iblockp,
+STATIC_INLINE
+int bmap_may_free_diblock(struct fs_node_t *node, volatile uint32_t *iblockp,
                           struct cached_page_t *pcache,
                           struct cached_page_t *pcache2,
                           uint32_t block, uint32_t block2,
-                          unsigned long ptr_per_block)
+                          uint32_t block_size, unsigned long ptr_per_block)
 {
     // free the single indirect block if it is empty
     bmap_may_free_iblock(node, &(((uint32_t *)pcache->virt)[block]),
-                         pcache2, block2, ptr_per_block);
+                         pcache2, block2, block_size, ptr_per_block);
+    __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_DIRTY);
 
     // free the double indirect block itself if it is empty
     if(is_empty_block((uint32_t *)pcache->virt, ptr_per_block))
@@ -773,6 +1156,8 @@ int bmap_may_free_diblock(struct fs_node_t *node, uint32_t *iblockp,
         release_cached_page(pcache);
         ext2_free(node->dev, *iblockp);
         *iblockp = 0;
+        dec_node_disk_blocks(node, block_size);
+        mark_node_dirty(node);
         return 1;
     }
 
@@ -789,16 +1174,19 @@ int bmap_may_free_diblock(struct fs_node_t *node, uint32_t *iblockp,
  * Inputs and return values are similar to the above, with additional pointers
  * to look into the triple indirect block.
  */
+STATIC_INLINE
 int bmap_may_free_tiblock(struct fs_node_t *node, uint32_t *iblockp,
                           struct cached_page_t *pcache,
                           struct cached_page_t *pcache2,
                           struct cached_page_t *pcache3,
                           uint32_t block, uint32_t block2, uint32_t block3,
-                          unsigned long ptr_per_block)
+                          uint32_t block_size, unsigned long ptr_per_block)
 {
     // free the single indirect block if it is empty
     bmap_may_free_diblock(node, &(((uint32_t *)pcache->virt)[block]),
-                         pcache2, pcache3, block2, block3, ptr_per_block);
+                         pcache2, pcache3, block2, block3, 
+                         block_size, ptr_per_block);
+    __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_DIRTY);
 
     // free the double indirect block itself if it is empty
     if(is_empty_block((uint32_t *)pcache->virt, ptr_per_block))
@@ -806,6 +1194,8 @@ int bmap_may_free_tiblock(struct fs_node_t *node, uint32_t *iblockp,
         release_cached_page(pcache);
         ext2_free(node->dev, *iblockp);
         *iblockp = 0;
+        dec_node_disk_blocks(node, block_size);
+        mark_node_dirty(node);
         return 1;
     }
 
@@ -817,7 +1207,7 @@ int bmap_may_free_tiblock(struct fs_node_t *node, uint32_t *iblockp,
 /*
  * Check if an indirect block is empty, i.e. all pointers are zeroes.
  */
-static inline int is_empty_block(uint32_t *buf, unsigned long ptr_per_block)
+STATIC_INLINE int is_empty_block(uint32_t *buf, unsigned long ptr_per_block)
 {
     unsigned long i;
     
@@ -861,28 +1251,47 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
     size_t i, j, k, l;
     int create = (flags & BMAP_FLAG_CREATE);
     int free = (flags & BMAP_FLAG_FREE);
+    volatile uint32_t tmp;
     
     if(lblock >= maxptrs)
     {
         return 0;
     }
 
+    /*
+     * Symlinks less than 60 chars in length are stored in the inode itself.
+     * See:
+     *    http://www.nongnu.org/ext2-doc/ext2.html#def-symbolic-links
+     */
+    if(S_ISLNK(node->mode) && node->size < 60)
+    {
+        if(free)
+        {
+            for(i = 0; i < 15; i++)
+            {
+                node->blocks[i] = 0;
+            }
+        }
+
+        return 0;
+    }
+
     tmpnode.dev = node->dev;
     tmpnode.inode = PCACHE_NOINODE;
-    
+
     // check direct block pointers
     if(lblock < 12)
     {
-        uint32_t tmp = node->blocks[lblock];
-
+        tmp = node->blocks[lblock];
         bmap_may_create_block(node, &tmp, block_size, create);
         node->blocks[lblock] = tmp;
 
         // free block if we're shrinking the file
         if(free && node->blocks[lblock])
         {
-            bmap_free_block(node, &tmp);
+            bmap_free_block(node, &tmp, block_size);
             node->blocks[lblock] = tmp;
+            mark_node_dirty(node);
         }
 
         return node->blocks[lblock];
@@ -893,9 +1302,8 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
 
     if(lblock < ptr_per_block)
     {
-        uint32_t tmp = node->blocks[12];
-
         // read the single indirect block
+        tmp = node->blocks[12];
         bmap_may_create_block(node, &tmp, block_size, create);
         
         if(!(node->blocks[12] = tmp))
@@ -912,12 +1320,13 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
         bmap_may_create_block(node, &(((uint32_t *)buf->virt)[lblock]), 
                               block_size, create);
         i = ((uint32_t *)buf->virt)[lblock];
+        __sync_or_and_fetch(&buf->flags, PCACHE_FLAG_DIRTY);
         
         // free the block and the indirect block if we're shrinking the file
         if(free && i)
         {
             tmp = node->blocks[12];
-            bmap_may_free_iblock(node, &tmp, buf, lblock, ptr_per_block);
+            bmap_may_free_iblock(node, &tmp, buf, lblock, block_size, ptr_per_block);
             node->blocks[12] = tmp;
             return 0;
         }
@@ -932,9 +1341,8 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
 
     if(lblock < ptr_per_block2)
     {
-        uint32_t tmp = node->blocks[13];
-
         // read the double indirect block
+        tmp = node->blocks[13];
         bmap_may_create_block(node, &tmp, block_size, create);
         
         if(!(node->blocks[13] = tmp))
@@ -953,6 +1361,7 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
         bmap_may_create_block(node, &(((uint32_t *)buf->virt)[j]), 
                                     block_size, create);
         i = ((uint32_t *)buf->virt)[j];
+        __sync_or_and_fetch(&buf->flags, PCACHE_FLAG_DIRTY);
         
         if(!i)
         {
@@ -972,12 +1381,14 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
         bmap_may_create_block(node, &(((uint32_t *)buf2->virt)[k]), 
                               block_size, create);
         i = ((uint32_t *)buf2->virt)[k];
+        __sync_or_and_fetch(&buf2->flags, PCACHE_FLAG_DIRTY);
 
         // free the block and the indirect blocks if we're shrinking the file
         if(free && i)
         {
             tmp = node->blocks[13];
-            bmap_may_free_diblock(node, &tmp, buf, buf2, j, k, ptr_per_block);
+            bmap_may_free_diblock(node, &tmp, buf, buf2, j, k, 
+                                  block_size, ptr_per_block);
             node->blocks[13] = tmp;
             return 0;
         }
@@ -991,7 +1402,7 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
     // check triple indirect block pointer
     lblock -= ptr_per_block2;
 
-    uint32_t tmp = node->blocks[14];
+    tmp = node->blocks[14];
     bmap_may_create_block(node, &tmp, block_size, create);
     
     if(!(node->blocks[14] = tmp))
@@ -1008,6 +1419,7 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
     bmap_may_create_block(node, &(((uint32_t *)buf->virt)[j]), 
                                 block_size, create);
     i = ((uint32_t *)buf->virt)[j];
+    __sync_or_and_fetch(&buf->flags, PCACHE_FLAG_DIRTY);
     
     if(!i)
     {
@@ -1025,6 +1437,7 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
     k = lblock / ptr_per_block;
     bmap_may_create_block(node, &(((uint32_t *)buf2->virt)[k]), block_size, create);
     i = ((uint32_t *)buf2->virt)[k];
+    __sync_or_and_fetch(&buf2->flags, PCACHE_FLAG_DIRTY);
     
     if(!i)
     {
@@ -1043,12 +1456,14 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
     l = lblock % ptr_per_block;
     bmap_may_create_block(node, &(((uint32_t *)buf3->virt)[l]), block_size, create);
     i = ((uint32_t *)buf3->virt)[l];
+    __sync_or_and_fetch(&buf3->flags, PCACHE_FLAG_DIRTY);
 
     // free the block and the indirect blocks if we're shrinking the file
     if(free && i)
     {
         uint32_t tmp = node->blocks[14];
-        bmap_may_free_tiblock(node, &tmp, buf, buf2, buf3, j, k, l, ptr_per_block);
+        bmap_may_free_tiblock(node, &tmp, buf, buf2, buf3, j, k, l, 
+                              block_size, ptr_per_block);
         node->blocks[14] = tmp;
         return 0;
     }
@@ -1063,39 +1478,50 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
 
 /*
  * Free an inode and update inode bitmap on disk.
+ *
+ * MUST write the node to disk if the filesystem supports inode structures
+ * separate to their directory entries (e.g. ext2, tmpfs).
  */
-int ext2_free_inode(struct fs_node_t *node)
+long ext2_free_inode(struct fs_node_t *node)
 {
-    struct mount_info_t *d;
-    struct ext2_superblock_t *super;
-    
-    if(get_super(node->dev, &d, &super) < 0)
+    volatile uint8_t *bitmap;
+    volatile uint32_t index, group;
+    struct cached_page_t *block_bitmap;
+    struct bgd_table_info_t bgd;
+
+    // write out the node before we free it on disk
+    // TODO: should we check for errors here?
+    ext2_write_inode(node);
+
+    if(get_bgd_table(node->dev, &bgd) < 0)
     {
         return -EINVAL;
     }
     
-    if(node->inode < 1 || node->inode > super->total_inodes)
+    if(node->inode < 1 || node->inode > bgd.super->total_inodes)
     {
         return -EINVAL;
     }
-    
-    uint32_t tmp[] = { node->inode, 0 };
 
-    update_inode_bitmap(1, tmp, node->dev, FREE_INODE);
-    super->unalloc_inodes++;
+    index = inode_index(bgd.super, node->inode);
+    group = inode_group(bgd.super, node->inode);
 
-    /* add to the free inode cache pool */
-    kernel_mutex_lock(&d->ilock);
-
-    if(d->ninode < NR_FREE_CACHE)
+    if(get_block_bitmap(&bgd, &block_bitmap, node->dev, group, 1) < 0)
     {
-        d->inode[d->ninode++] = node->inode;
+        return -EINVAL;
     }
 
-    kernel_mutex_unlock(&d->ilock);
+    bitmap = (volatile uint8_t *)block_bitmap->virt;
+    bitmap[index / 8] &= ~(1 << (index % 8));
+    __sync_or_and_fetch(&block_bitmap->flags, PCACHE_FLAG_DIRTY);
+    __asm__ __volatile__("":::"memory");
+    release_cached_page(block_bitmap);
 
-    d->flags |= FS_SUPER_DIRTY;
-    //d->update_time = now();
+    kernel_mutex_lock(&(bgd.d->lock));
+    bgd.bgd_table[group].unalloc_inodes++;
+    bgd.super->unalloc_inodes++;
+    bgd.d->flags |= FS_SUPER_DIRTY;
+    kernel_mutex_unlock(&(bgd.d->lock));
 
     return 0;
 }
@@ -1114,94 +1540,139 @@ int ext2_free_inode(struct fs_node_t *node)
  * Returns:
  *    0 on success, -errno on failure
  */
-int ext2_alloc_inode(struct fs_node_t *new_node)
+long ext2_alloc_inode(struct fs_node_t *new_node)
 {
-    ino_t inode_no = 0;
-    int i;
-    struct mount_info_t *d;
-    struct ext2_superblock_t *super;
-    volatile int ninode;
-    
-    if(get_super(new_node->dev, &d, &super) < 0)
+    volatile uint8_t *bitmap;
+    volatile uint32_t i, j, k, b;
+    uint32_t total_inodes, inodes_per_group;
+    uint32_t min_inode;
+    size_t bgcount;
+    long res;
+    struct cached_page_t *block_bitmap;
+    struct bgd_table_info_t bgd;
+
+    if((res = get_bgd_table(new_node->dev, &bgd)) < 0)
     {
-        return -EINVAL;
+        return res;
     }
 
     /* no need to hustle if there are no free inodes on disk */
-    if(super->unalloc_inodes == 0)
+    if(bgd.super->unalloc_inodes == 0)
     {
-        d->ninode = 0;
         return -ENOSPC;
     }
-    
-loop:
 
-    kernel_mutex_lock(&d->ilock);
-    ninode = d->ninode;
+    bgcount = get_group_count(bgd.super);
+    total_inodes = bgd.super->total_inodes;
+    inodes_per_group = bgd.super->inodes_per_group;
+    min_inode = (bgd.super->version_major >= 1) ?
+                        (bgd.super->first_nonreserved_inode ?
+                            bgd.super->first_nonreserved_inode : 11) : 11;
 
-    if(ninode > 0)
+    for(i = 0; i < bgcount; i++)
     {
-        inode_no = d->inode[--d->ninode];
-        new_node->inode = inode_no;
-        kernel_mutex_unlock(&d->ilock);
-        
-        for(i = 0; i < 15; i++)
+        if(bgd.bgd_table[i].unalloc_inodes == 0)
         {
-            new_node->blocks[i] = 0;
+            continue;
         }
 
-        /* update the block bitmap to indicate the inode is now occupied */
-        uint32_t tmp[] = { inode_no, 0 };
-
-        if((i = update_inode_bitmap(1, tmp, new_node->dev, SET_INODE)) != 0)
+        if(get_block_bitmap(&bgd, &block_bitmap, new_node->dev, i, 1) < 0)
         {
-            kernel_mutex_lock(&d->ilock);
-            d->ninode++;
-            new_node->inode = 0;
-            kernel_mutex_unlock(&d->ilock);
-
-            printk("ext2: failed to update inode bitmap on dev 0x%x\n",
-                   new_node->dev);
-            //__asm__ __volatile__("xchg %%bx, %%bx"::);
-
-            return i;
+            continue;
         }
-        
-        super->unalloc_inodes--;
-        kernel_mutex_lock(&d->ilock);
-    }
 
-    /* replenish the free inode cache pool */
-    if(ninode <= 0)
-    {
-        /* NOTE: the idea is to read NR_FREE_CACHE new entries of the
-         *       free inode list on disk and save it incore.
-         */
-        A_memset((void *)&d->inode, 0, sizeof(ino_t) * NR_FREE_CACHE);
+        bitmap = (volatile uint8_t *)block_bitmap->virt;
 
-        if((d->ninode = find_free_inodes(new_node->dev,
-                                         NR_FREE_CACHE, d->inode)) != 0)
+        for(j = 0; j < inodes_per_group / 8; j++)
         {
-            if(inode_no == 0)
+            if(bitmap[j] == 0xff)
             {
-                kernel_mutex_unlock(&d->ilock);
-                goto loop;
+                continue;
+            }
+
+            for(k = 0; k < 8; k++)
+            {
+                if((bitmap[j] & (1 << k)) == 0)
+                {
+                    b = (i * inodes_per_group) + (j * 8) + k + 1;
+
+                    if(b >= total_inodes)
+                    {
+                        break;
+                    }
+
+                    /*
+                     * for inodes, check the inode is not used incore,
+                     * and not lower than the first non-reserved inode
+                     */
+                    if(node_is_incore(new_node->dev, b) || b < min_inode)
+                    {
+                        continue;
+                    }
+
+                    bitmap[j] |= (1 << k);
+                    __sync_or_and_fetch(&block_bitmap->flags, PCACHE_FLAG_DIRTY);
+                    __asm__ __volatile__("":::"memory");
+                    release_cached_page(block_bitmap);
+
+                    kernel_mutex_lock(&(bgd.d->lock));
+                    bgd.bgd_table[i].unalloc_inodes--;
+                    bgd.super->unalloc_inodes--;
+                    bgd.d->flags |= FS_SUPER_DIRTY;
+                    kernel_mutex_unlock(&(bgd.d->lock));
+
+                    new_node->inode = b;
+
+                    for(i = 0; i < 15; i++)
+                    {
+                        new_node->blocks[i] = 0;
+                    }
+
+                    return 0;
+                }
             }
         }
-        else if(inode_no == 0)
-        {
-            //d->ninode = 0;
-            kernel_mutex_unlock(&d->ilock);
-            return -ENOSPC;
-        }
+
+        release_cached_page(block_bitmap);
     }
 
-    kernel_mutex_unlock(&d->ilock);
+    return -ENOSPC;
+}
 
-    d->flags |= FS_SUPER_DIRTY;
-    //d->update_time = now();
 
-    return 0;
+/*
+const int bit_count[256] =
+{
+    0,1,1,2,1,2,2,3,  1,2,2,3,2,3,3,4,  1,2,2,3,2,3,3,4,  2,3,3,4,3,4,4,5,
+    1,2,2,3,2,3,3,4,  2,3,3,4,3,4,4,5,  2,3,3,4,3,4,4,5,  3,4,4,5,4,5,5,6,
+    1,2,2,3,2,3,3,4,  2,3,3,4,3,4,4,5,  2,3,3,4,3,4,4,5,  3,4,4,5,4,5,5,6,
+    2,3,3,4,3,4,4,5,  3,4,4,5,4,5,5,6,  3,4,4,5,4,5,5,6,  4,5,5,6,5,6,6,7,
+    1,2,2,3,2,3,3,4,  2,3,3,4,3,4,4,5,  2,3,3,4,3,4,4,5,  3,4,4,5,4,5,5,6,
+    2,3,3,4,3,4,4,5,  3,4,4,5,4,5,5,6,  3,4,4,5,4,5,5,6,  4,5,5,6,5,6,6,7,
+    2,3,3,4,3,4,4,5,  3,4,4,5,4,5,5,6,  3,4,4,5,4,5,5,6,  4,5,5,6,5,6,6,7,
+    3,4,4,5,4,5,5,6,  4,5,5,6,5,6,6,7,  4,5,5,6,5,6,6,7,  5,6,6,7,6,7,7,8
+};
+*/
+
+
+static uint32_t calc_unalloc_blocks(volatile uint8_t *bitmap, uint32_t blocks_per_group)
+{
+    volatile uint32_t j, count = 0;
+
+    for(j = 0; j < blocks_per_group / 8; j++)
+    {
+        int i;
+        __asm__ __volatile__("popcnt %1, %0" : "=r"(i) : "r"(bitmap[j]) : "cc");
+        count += i;
+        //count += bit_count[bitmap[j]];
+    }
+
+    if(count > blocks_per_group)
+    {
+        count = blocks_per_group;
+    }
+
+    return blocks_per_group - count;
 }
 
 
@@ -1210,35 +1681,58 @@ loop:
  */
 void ext2_free(dev_t dev, uint32_t block_no)
 {
-    uint32_t tmp[] = { block_no, 0 };
-    struct mount_info_t *d;
-    struct ext2_superblock_t *super;
+    volatile uint8_t *bitmap;
+    volatile uint32_t index, /* index_in_group, */ group;
+    struct cached_page_t *block_bitmap, *pcache;
+    struct bgd_table_info_t bgd;
+    struct fs_node_header_t tmpnode;
 
-    if(get_super(dev, &d, &super) < 0)
+    if(get_bgd_table(dev, &bgd) < 0)
     {
         return;
     }
 
-    if(block_no < 2 || block_no >= super->total_blocks)
+    if(block_no < 2 || block_no >= bgd.super->total_blocks)
     {
         return;
     }
 
-    update_block_bitmap(1, tmp, dev, FREE_BLOCKS);
-    super->unalloc_blocks++;
+    // Get the block bitmap
+    index = block_index(bgd.super, block_no);
+    group = block_group(bgd.super, block_no);
+    //index_in_group = (block_no - bgd.super->superblock_block) - (group * bgd.super->blocks_per_group);
 
-    /* add to the free block cache pool */
-    kernel_mutex_lock(&d->flock);
-
-    if(d->nfree < NR_FREE_CACHE)
+    if(get_block_bitmap(&bgd, &block_bitmap, dev, group, 0) < 0)
     {
-        d->free[d->nfree++] = block_no;
+        return;
     }
 
-    kernel_mutex_unlock(&d->flock);
+    // If this block is cached, invalidated the cache as it might end up
+    // overwriting the block if it is re-allocated before the disk update
+    // task runs next
+    tmpnode.dev = dev;
+    tmpnode.inode = PCACHE_NOINODE;
 
-    d->flags |= FS_SUPER_DIRTY;
-    //d->update_time = now();
+    if((pcache = get_cached_page((struct fs_node_t *)&tmpnode, block_no, 
+                                    PCACHE_PEEK_ONLY | PCACHE_IGNORE_STALE)))
+    {
+        __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_STALE);
+        release_cached_page(pcache);
+    }
+
+    bitmap = (volatile uint8_t *)block_bitmap->virt;
+    bitmap[index / 8] &= ~(1 << (index % 8));
+    //bitmap[index_in_group / 8] &= ~(1 << (index_in_group % 8));
+    __sync_or_and_fetch(&block_bitmap->flags, PCACHE_FLAG_DIRTY);
+    __asm__ __volatile__("":::"memory");
+    release_cached_page(block_bitmap);
+
+    kernel_mutex_lock(&(bgd.d->lock));
+    bgd.bgd_table[group].unalloc_blocks++;
+    bgd.super->unalloc_blocks++;
+    bgd.d->flags |= FS_SUPER_DIRTY;
+
+    kernel_mutex_unlock(&(bgd.d->lock));
 }
 
 
@@ -1257,321 +1751,112 @@ void ext2_free(dev_t dev, uint32_t block_no)
  */
 uint32_t ext2_alloc(dev_t dev)
 {
-    struct ext2_superblock_t *super;
-    struct mount_info_t *d;
-    uint32_t block_no;
+    volatile uint8_t *bitmap;
+    volatile uint32_t i, j, k, b;
+    uint32_t block_size, first_block;
+    uint32_t total_blocks, blocks_per_group, inode_table_blocks;
+    size_t bgcount;
+    struct cached_page_t *block_bitmap;
+    struct bgd_table_info_t bgd;
 
-    if(get_super(dev, &d, &super) < 0)
+    if(get_bgd_table(dev, &bgd) < 0)
     {
         return 0;
     }
 
     /* no need to hustle if there is no free blocks on disk */
-    if(super->unalloc_blocks == 0)
+    if(bgd.super->unalloc_blocks == 0)
     {
-        d->nfree = 0;
         return 0;
     }
-    
-loop:
 
-    kernel_mutex_lock(&d->flock);
+    bgcount = get_group_count(bgd.super);
+    total_blocks = bgd.super->total_blocks;
+    blocks_per_group = bgd.super->blocks_per_group;
 
-    do
+    block_size = 1024 << bgd.super->log2_block_size;
+    inode_table_blocks = bgd.super->inodes_per_group * inode_size(bgd.super);
+    first_block = bgd.super->superblock_block;
+
+    if(inode_table_blocks % block_size)
     {
-        block_no = 0;
-
-        if(d->nfree <= 0)
-        {
-            break;
-        }
-
-        block_no = d->free[--d->nfree];
-    } while(block_no < 2 || block_no >= super->total_blocks);
-
-    kernel_mutex_unlock(&d->flock);
-    
-    if(block_no)
-    {
-        /*
-         * Update the block bitmap to indicate the block is now occupied.
-         * We use a temporary array as update_block_bitmap modifies the
-         * passed array.
-         */
-        uint32_t tmp[] = { block_no, 0 };
-
-        update_block_bitmap(1, tmp, dev, SET_BLOCKS);
-        super->unalloc_blocks--;
-    }
-
-    kernel_mutex_lock(&d->flock);
-
-    if(d->nfree <= 0)
-    {
-        /* NOTE: the idea is to read NR_FREE_CACHE new entries of the
-         *       free block list on disk and save it incore.
-         */
-        A_memset((void *)&d->free, 0, sizeof(ino_t) * NR_FREE_CACHE);
-
-        if((d->nfree = find_free_blocks(dev, NR_FREE_CACHE, d->free)) != 0)
-        {
-            if(block_no == 0)
-            {
-                kernel_mutex_unlock(&d->flock);
-                goto loop;
-            }
-        }
-        else if(block_no == 0)
-        {
-            //d->nfree = 0;
-            kernel_mutex_unlock(&d->flock);
-            return 0;
-        }
-    }
-
-    kernel_mutex_unlock(&d->flock);
-
-    d->flags |= FS_SUPER_DIRTY;
-    //d->update_time = now();
-
-    return block_no;
-}
-
-
-/*
- * Find free blocks or inodes on the filesystem.
- *
- * Inputs:
- *    dev => device id
- *    n => count of needed blocks or inodes
- *    is_inode => 1 if we want inodes, 0 if we want blocks
- *
- * Output:
- *    arr => block or inode numbers are stored in this array, which should
- *           be large enough to hold n items
- *
- * Returns:
- *    number of found blocks/inodes, 0 on failure
- */
-int find_free(dev_t dev, int n, ino_t *arr, int is_inode)
-{
-    int found = 0;
-    uint32_t i, j;
-    uint32_t block = is_inode ? 1 : 0;
-    uint32_t nitems, titems, base;
-    uint8_t *bitmap;
-    struct cached_page_t *block_bitmap;
-    struct bgd_table_info_t bgd;
-
-    bgd.dev = dev;
-    bgd.is_inode = is_inode;
-    
-loop:
-
-    bgd.n = block;
-
-    if(get_block_bitmap(&bgd, &block_bitmap) < 0)
-    {
-        return found;
-    }
-
-    /* search for a free inode */
-    bitmap = (uint8_t *)block_bitmap->virt;
-    
-    if(is_inode)
-    {
-        nitems = bgd.super->inodes_per_group;
-        titems = bgd.super->total_inodes;
-        base = (bgd.block_group * nitems) + 1;
+        inode_table_blocks = (inode_table_blocks / block_size) + 1;
     }
     else
     {
-        nitems = bgd.super->blocks_per_group;
-        titems = bgd.super->total_blocks;
-        base = (bgd.block_group * nitems);
+        inode_table_blocks = (inode_table_blocks / block_size);
     }
 
-    for(i = 0; i < nitems / 8; i++)
+    for(i = 0; i < bgcount; i++)
     {
-        if(bitmap[i] == 0xff)
+        if(bgd.bgd_table[i].unalloc_blocks == 0)
         {
             continue;
         }
 
-        for(j = 0; j < 8; j++)
+        if(get_block_bitmap(&bgd, &block_bitmap, dev, i, 0) < 0)
         {
-            if((bitmap[i] & (1 << j)) == 0)
+            continue;
+        }
+
+        bitmap = (volatile uint8_t *)block_bitmap->virt;
+
+        for(j = 0; j < blocks_per_group / 8; j++)
+        {
+            if(bitmap[j] == 0xff)
             {
-                uint32_t free_block = (i * 8) + j + base;
-                
-                /* if looking for inodes, check it's not used incore */
-                if(is_inode)
+                continue;
+            }
+
+            for(k = 0; k < 8; k++)
+            {
+                if((bitmap[j] & (1 << k)) == 0)
                 {
-                    if(node_is_incore(dev, free_block))
+                    b = (i * blocks_per_group) + (j * 8) + k + first_block;
+
+                    if(b < 2)
                     {
                         continue;
                     }
+
+                    if(b >= total_blocks)
+                    {
+                        break;
+                    }
+
+                    if(b == bgd.bgd_table[i].inode_bitmap_addr ||
+                       b == bgd.bgd_table[i].block_bitmap_addr ||
+                       (b >= bgd.bgd_table[i].inode_table_addr &&
+                        b < bgd.bgd_table[i].inode_table_addr + inode_table_blocks))
+                    {
+                        /*
+                        switch_tty(1);
+                        printk("ext2: dev 0x%x, block %d\n", dev, b);
+                        kpanic("ext2: unalloced block overlaps with fs metadata!");
+                        */
+                        continue;
+                    }
+
+                    bitmap[j] |= (1 << k);
+                    __sync_or_and_fetch(&block_bitmap->flags, PCACHE_FLAG_DIRTY);
+                    __asm__ __volatile__("":::"memory");
+                    release_cached_page(block_bitmap);
+
+                    kernel_mutex_lock(&(bgd.d->lock));
+                    bgd.bgd_table[i].unalloc_blocks--;
+                    bgd.super->unalloc_blocks--;
+                    bgd.d->flags |= FS_SUPER_DIRTY;
+                    kernel_mutex_unlock(&(bgd.d->lock));
+
+                    return b;
                 }
-                
-                arr[found++] = (ino_t)free_block;
-
-                if(found == n)
-                {
-                    break;
-                }
             }
         }
-        
-        if(found == n)
-        {
-            break;
-        }
-    }
-    
-    release_cached_page(bgd.bgd_table);
-    release_cached_page(block_bitmap);
-    
-    if(found < n)
-    {
-        block += nitems;
 
-        if(block < titems)
-        {
-            goto loop;
-        }
+        release_cached_page(block_bitmap);
     }
 
-    return found;
-}
-
-
-int find_free_blocks(dev_t dev, int n, ino_t *needed_blocks)
-{
-    return find_free(dev, n, needed_blocks, 0);
-}
-
-
-int find_free_inodes(dev_t dev, int n, ino_t *needed_inodes)
-{
-    return find_free(dev, n, needed_inodes, 1);
-}
-
-
-/*
- * Update block or inode bitmap on disk.
- *
- * Inputs:
- *    n => count of blocks or inodes to update on disk
- *    arr => block or inode numbers which we want to update on disk
- *    dev => device id
- *    op => operation to perform: 1 to free inodes/blocks, 2 to set them
- *    is_inode => 1 if we are working on inodes, 0 for blocks
- *
- * Output:
- *    arr => updated inode/block numbers are zeroed out as they are updated,
- *           so the caller shouldn't rely on this array's contents after this
- *           call!
- *
- * Returns:
- *    0 on success, -1 on failure
- */
-int update_bitmap(int n, uint32_t *arr, dev_t dev,
-                  char op, int is_inode)
-{
-    int i = 0, j;
-    uint32_t nitems, block_group2;
-    uint8_t *bitmap;
-    struct block_group_desc_t *table;
-    struct cached_page_t *block_bitmap;
-    struct bgd_table_info_t bgd;
-
-    bgd.dev = dev;
-    bgd.is_inode = is_inode;
-    
-loop:
-
-    bgd.n = arr[i];
-
-    if(get_block_bitmap(&bgd, &block_bitmap) < 0)
-    {
-        return -1;
-    }
-
-    table = (struct block_group_desc_t *)bgd.bgd_table->virt;
-    bitmap = (uint8_t *)block_bitmap->virt;
-    nitems = is_inode ? bgd.super->inodes_per_group :
-                        bgd.super->blocks_per_group;
-
-    for(i = 0; i < n; i++)
-    {
-        if(arr[i] == 0)
-        {
-            continue;
-        }
-        
-        block_group2 = (arr[i] - !!is_inode) / nitems;
-
-        if(block_group2 != bgd.block_group)
-        {
-            continue;
-        }
-        
-        j = bgd.block_group * nitems;
-        bgd.index = arr[i] - j - !!is_inode;
-        arr[i] = 0;
-
-        if(op == SET_BLOCKS)        /* mark as used */
-        {
-            bitmap[bgd.index / 8] |=  (1 << (bgd.index % 8));
-            
-            if(is_inode)
-            {
-                table[bgd.block_group].unalloc_inodes--;
-            }
-            else
-            {
-                table[bgd.block_group].unalloc_blocks--;
-            }
-        }
-        else                        /* mark as free/unused */
-        {
-            bitmap[bgd.index / 8] &= ~(1 << (bgd.index % 8));
-
-            if(is_inode)
-            {
-                table[bgd.block_group].unalloc_inodes++;
-            }
-            else
-            {
-                table[bgd.block_group].unalloc_blocks++;
-            }
-        }
-    }
-
-    release_cached_page(bgd.bgd_table);
-    release_cached_page(block_bitmap);
-
-    for(i = 0; i < n; i++)
-    {
-        if(arr[i] != 0)
-        {
-            goto loop;
-        }
-    }
-    
     return 0;
-}
-
-
-int update_block_bitmap(int n, uint32_t *arr, dev_t dev, char op)
-{
-    return update_bitmap(n, arr, dev, op, 0);
-}
-
-
-int update_inode_bitmap(int n, uint32_t *arr, dev_t dev, char op)
-{
-    return update_bitmap(n, arr, dev, op, 1);
 }
 
 
@@ -1595,7 +1880,7 @@ struct dirent *ext2_entry_to_dirent(struct ext2_dirent_t *ext2_ent,
                                     char *name, int namelen, int off,
                                     int ext_dir_type)
 {
-    unsigned short reclen = sizeof(struct dirent) + namelen + 1;
+    unsigned int reclen = GET_DIRENT_LEN(namelen);
     unsigned char d_type = DT_UNKNOWN;
     
     struct dirent *entry = __ent ? __ent : kmalloc(reclen);
@@ -1691,10 +1976,10 @@ static inline size_t ext2_entsz(struct ext2_dirent_t *ent, int ext_dir_type)
  * Returns:
  *    0 on success, -errno on failure
  */
-int ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                 struct cached_page_t **dbuf, size_t *dbuf_off)
+long ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
+                  struct cached_page_t **dbuf, size_t *dbuf_off)
 {
-    struct ext2_superblock_t *super;
+    volatile struct ext2_superblock_t *super;
     struct mount_info_t *d;
     int ext_dir_type = 0;
     
@@ -1710,9 +1995,9 @@ int ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
 }
 
 
-int ext2_finddir_internal(struct fs_node_t *dir, char *filename,
-                          struct dirent **entry, struct cached_page_t **dbuf,
-                          size_t *dbuf_off, int ext_dir_type)
+long ext2_finddir_internal(struct fs_node_t *dir, char *filename,
+                           struct dirent **entry, struct cached_page_t **dbuf,
+                           size_t *dbuf_off, int ext_dir_type)
 {
     struct cached_page_t *buf;
     struct ext2_dirent_t *ent;
@@ -1824,11 +2109,11 @@ int ext2_finddir_internal(struct fs_node_t *dir, char *filename,
  * Returns:
  *    0 on success, -errno on failure
  */
-int ext2_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                          struct dirent **entry,
-                          struct cached_page_t **dbuf, size_t *dbuf_off)
+long ext2_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                           struct dirent **entry,
+                           struct cached_page_t **dbuf, size_t *dbuf_off)
 {
-    struct ext2_superblock_t *super;
+    volatile struct ext2_superblock_t *super;
     struct mount_info_t *d;
     int ext_dir_type = 0;
     
@@ -1869,11 +2154,11 @@ int matching_node(dev_t dev, ino_t ino, struct fs_node_t *node)
 }
 
 
-int ext2_finddir_by_inode_internal(struct fs_node_t *dir,
-                                   struct fs_node_t *node,
-                                   struct dirent **entry,
-                                   struct cached_page_t **dbuf,
-                                   size_t *dbuf_off, int ext_dir_type)
+long ext2_finddir_by_inode_internal(struct fs_node_t *dir,
+                                    struct fs_node_t *node,
+                                    struct dirent **entry,
+                                    struct cached_page_t **dbuf,
+                                    size_t *dbuf_off, int ext_dir_type)
 {
     struct cached_page_t *buf;
     struct ext2_dirent_t *ent;
@@ -1960,6 +2245,43 @@ int ext2_finddir_by_inode_internal(struct fs_node_t *dir,
 }
 
 
+STATIC_INLINE uint8_t mode_to_ext2_type(mode_t mode)
+{
+    if(S_ISCHR(mode))
+    {
+        return EXT2_FT_CHRDEV;
+    }
+    else if(S_ISBLK(mode))
+    {
+        return EXT2_FT_BLKDEV;
+    }
+    else if(S_ISFIFO(mode))
+    {
+        return EXT2_FT_FIFO;
+    }
+    else if(S_ISSOCK(mode))
+    {
+        return EXT2_FT_SOCK;
+    }
+    else if(S_ISLNK(mode))
+    {
+        return EXT2_FT_SYMLINK;
+    }
+    else if(S_ISDIR(mode))
+    {
+        return EXT2_FT_DIR;
+    }
+    else if(S_ISREG(mode))
+    {
+        return EXT2_FT_REG_FILE;
+    }
+    else
+    {
+        return EXT2_FT_UNKNOWN;
+    }
+}
+
+
 /*
  * Add the given file as an entry in the given parent directory.
  *
@@ -1971,25 +2293,39 @@ int ext2_finddir_by_inode_internal(struct fs_node_t *dir,
  * Returns:
  *    0 on success, -errno on failure
  */
-int ext2_addir(struct fs_node_t *dir, char *filename, ino_t n)
+long ext2_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
 {
-    struct ext2_superblock_t *super;
-    struct mount_info_t *d;
-    int ext_dir_type = 0;
+    struct bgd_table_info_t bgd;
+    int res, ext_dir_type = 0;
 
-    if(get_super(dir->dev, &d, &super) < 0)
+    if(get_bgd_table(dir->dev, &bgd) < 0)
     {
         return -EINVAL;
     }
     
-    ext_dir_type = is_ext_dir_type(super);
+    ext_dir_type = is_ext_dir_type(bgd.super);
 
-    return ext2_addir_internal(dir, filename, n, ext_dir_type, d->block_size);
+    if((res = ext2_addir_internal(dir, file, filename, ext_dir_type, bgd.d->block_size)) == 0)
+    {
+        /*
+        if(S_ISDIR(file->mode))
+        {
+            uint32_t group = inode_group(bgd.super, file->inode);
+
+            kernel_mutex_lock(&(bgd.d->lock));
+            bgd.bgd_table[group].dir_count++;
+            bgd.d->flags |= FS_SUPER_DIRTY;
+            kernel_mutex_unlock(&(bgd.d->lock));
+        }
+        */
+    }
+
+    return res;
 }
 
 
-int ext2_addir_internal(struct fs_node_t *dir, char *filename,
-                        ino_t n, int ext_dir_type, size_t block_size)
+long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
+                         char *filename, int ext_dir_type, size_t block_size)
 {
     size_t sz, offset = 0;
     size_t fnamelen = strlen(filename);
@@ -2024,7 +2360,7 @@ int ext2_addir_internal(struct fs_node_t *dir, char *filename,
 
     while(1)
     {
-        if(!(buf = get_cached_page(dir, offset, PCACHE_AUTO_ALLOC)))
+        if(!(buf = get_cached_page(dir, offset, 0 /* PCACHE_AUTO_ALLOC */)))
         {
             return -EIO;
         }
@@ -2071,15 +2407,28 @@ int ext2_addir_internal(struct fs_node_t *dir, char *filename,
                 {
                     // mark this as a deleted entry
                     ent->inode = 0;
+                    __sync_or_and_fetch(&buf->flags, PCACHE_FLAG_DIRTY);
                 }
 
                 break;
             }
             
             // 2 - Check for deleted entries and if that entry is large enough
-            //     to fit us
+            //     to fit us. A corrupt (but valid still) directory might have
+            //     '.' and '..' entries with 0 inode numbers. Avoid overwriting
+            //     these entries.
             if(ent->inode == 0)
             {
+                namebuf = (char *)((unsigned char *)ent + sizeof(struct ext2_dirent_t));
+
+                if(namebuf[0] == '.' && 
+                    (ent->name_length_lsb == 1 ||
+                        (namebuf[1] == '.' && ent->name_length_lsb == 2)))
+                {
+                    blk += ent->entry_size;
+                    continue;
+                }
+
                 if(ent->entry_size >= (fnamelen +
                                         sizeof(struct ext2_dirent_t)))
                 {
@@ -2140,10 +2489,22 @@ int ext2_addir_internal(struct fs_node_t *dir, char *filename,
     }
     else
     {
-        ent->type_indicator = 0;
+        ent->type_indicator = mode_to_ext2_type(file->mode);
     }
-    
-    ent->inode = n;
+
+    ent->inode = file->inode;
+
+    // Ensure all blocks have valid empty entries until the end of the page
+    for(sz = block_size; sz < PAGE_SIZE; sz += block_size)
+    {
+        ent = (struct ext2_dirent_t *)(buf->virt + sz);
+
+        if(ent->entry_size == 0)
+        {
+            ent->inode = 0;
+            ent->entry_size = block_size;
+        }
+    }
 
     dir->mtime = now();
     dir->flags |= FS_NODE_DIRTY;
@@ -2154,6 +2515,7 @@ int ext2_addir_internal(struct fs_node_t *dir, char *filename,
         dir->ctime = dir->mtime;
     }
 
+    __sync_or_and_fetch(&buf->flags, PCACHE_FLAG_DIRTY);
     release_cached_page(buf);
 
     return 0;
@@ -2166,7 +2528,7 @@ int ext2_addir_internal(struct fs_node_t *dir, char *filename,
  * inodes, respectively.
  *
  * Input:
- *    parent => the parent directory's inode number
+ *    parent => the parent directory
  *    dir => node struct containing the new directory's inode number
  *
  * Output:
@@ -2175,34 +2537,44 @@ int ext2_addir_internal(struct fs_node_t *dir, char *filename,
  * Returns:
  *    0 on success, -errno on failure
  */
-int ext2_mkdir(struct fs_node_t *dir, ino_t parent)
+long ext2_mkdir(struct fs_node_t *dir, struct fs_node_t *parent)
 {
-    struct mount_info_t *d;
-    struct ext2_superblock_t *super;
+    struct bgd_table_info_t bgd;
+    int res, ext_dir_type = 0;
 
-    if(get_super(dir->dev, &d, &super) < 0)
+    if(get_bgd_table(dir->dev, &bgd) < 0)
     {
         return -EINVAL;
     }
 
-    return ext2_mkdir_internal(dir, parent);
+    ext_dir_type = is_ext_dir_type(bgd.super);
+
+    if((res = ext2_mkdir_internal(dir, parent->inode, ext_dir_type, bgd.d->block_size)) == 0)
+    {
+        uint32_t group = inode_group(bgd.super, dir->inode);
+
+        kernel_mutex_lock(&(bgd.d->lock));
+        bgd.bgd_table[group].dir_count++;
+        bgd.d->flags |= FS_SUPER_DIRTY;
+        kernel_mutex_unlock(&(bgd.d->lock));
+    }
+
+    return res;
 }
 
 
-int ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent)
+long ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent, 
+                         int ext_dir_type, size_t block_size)
 {
     size_t sz;
     char *p;
     struct cached_page_t *buf;
-    struct ext2_dirent_t *ent;
-    //time_t t = now();
+    volatile struct ext2_dirent_t *ent;
 
     dir->flags |= FS_NODE_DIRTY;
     dir->size = PAGE_SIZE;
-    //dir->mtime = t;
-    //dir->atime = t;
     
-    if(!(buf = get_cached_page(dir, 0, PCACHE_AUTO_ALLOC)))
+    if(!(buf = get_cached_page(dir, 0, 0 /* PCACHE_AUTO_ALLOC */)))
     {
         dir->ctime = now();
         dir->flags |= FS_NODE_DIRTY;
@@ -2213,7 +2585,7 @@ int ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent)
     ent = (struct ext2_dirent_t *)buf->virt;
     ent->entry_size = sz + 4;
     ent->name_length_lsb = 1;
-    ent->type_indicator = 0;
+    ent->type_indicator = ext_dir_type ? EXT2_FT_DIR : 0;
     ent->inode = dir->inode;
     p = (char *)(buf->virt + sz);
     p[0] = '.';
@@ -2223,7 +2595,7 @@ int ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent)
     ent->inode = parent;
     ent->entry_size = sz + 4;
     ent->name_length_lsb = 2;
-    ent->type_indicator = 0;
+    ent->type_indicator = ext_dir_type ? EXT2_FT_DIR : 0;
     p = (char *)(ent) + sz;
     p[0] = '.';
     p[1] = '.';
@@ -2232,8 +2604,18 @@ int ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent)
 
     ent = (struct ext2_dirent_t *)(buf->virt + (sz * 2) + 8);
     ent->inode = 0;
-    ent->entry_size = 0;
+    ent->entry_size = block_size - ((sz * 2) + 8);
 
+    // We filled the first block. Now fill the other blocks until the end
+    // of the page
+    for(sz = block_size; sz < PAGE_SIZE; sz += block_size)
+    {
+        ent = (struct ext2_dirent_t *)(buf->virt + sz);
+        ent->inode = 0;
+        ent->entry_size = block_size;
+    }
+
+    __sync_or_and_fetch(&buf->flags, PCACHE_FLAG_DIRTY);
     release_cached_page(buf);
 
     return 0;
@@ -2246,10 +2628,9 @@ int ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent)
  * Inputs:
  *    dir => the parent directory's node
  *    entry => the entry to be removed
- *    dbuf => the disk buffer representing the disk block containing the entry
- *            we want to remove (we get this from an earlier call to finddir)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                entry to be removed
+ *    is_dir => non-zero if entry is a directory and this is the last hard
+ *              link, i.e. there is no other filename referring to the 
+ *              directory's inode
  *
  * Output:
  *    the caller is responsible for writing dbuf to disk and calling brelse
@@ -2257,14 +2638,58 @@ int ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent)
  * Returns:
  *    0 always
  */
-int ext2_deldir(struct fs_node_t *dir, struct dirent *entry,
-                struct cached_page_t *dbuf, size_t dbuf_off)
+long ext2_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir)
 {
-    UNUSED(dir);
-    UNUSED(entry);
-    unsigned char *blk = (unsigned char *)dbuf->virt;
-    struct ext2_dirent_t *ent = (struct ext2_dirent_t *)(blk + dbuf_off);
+    struct bgd_table_info_t bgd;
+    uint32_t inode = entry->d_ino;
+    long res;
+
+    if(get_bgd_table(dir->dev, &bgd) < 0)
+    {
+        return -EINVAL;
+    }
+
+    if((res = ext2_deldir_internal(dir, entry, is_ext_dir_type(bgd.super))) < 0)
+    {
+        return res;
+    }
+
+    if(inode && is_dir)
+    {
+        uint32_t group = inode_group(bgd.super, inode);
+
+        kernel_mutex_lock(&(bgd.d->lock));
+        bgd.bgd_table[group].dir_count--;
+        bgd.d->flags |= FS_SUPER_DIRTY;
+        kernel_mutex_unlock(&(bgd.d->lock));
+    }
+
+    return 0;
+}
+
+
+long ext2_deldir_internal(struct fs_node_t *dir, struct dirent *entry, int ext_dir_type)
+{
+    struct dirent *entry2;
+    struct cached_page_t *dbuf;
+    unsigned char *blk;
+    volatile struct ext2_dirent_t *ent;
+    size_t dbuf_off;
+    long res;
+
+    if((res = ext2_finddir_internal(dir, entry->d_name, &entry2, &dbuf,
+                                      &dbuf_off, ext_dir_type)) < 0)
+    {
+        return res;
+    }
+
+    blk = (unsigned char *)dbuf->virt;
+    ent = (volatile struct ext2_dirent_t *)(blk + dbuf_off);
     ent->inode = 0;
+    __sync_or_and_fetch(&dbuf->flags, PCACHE_FLAG_DIRTY);
+    release_cached_page(dbuf);
+    kfree(entry2);
+
     return 0;
 }
 
@@ -2278,10 +2703,10 @@ int ext2_deldir(struct fs_node_t *dir, struct dirent *entry,
  * Returns:
  *    1 if dir is empty, 0 if it is not
  */
-int ext2_dir_empty(struct fs_node_t *dir)
+long ext2_dir_empty(struct fs_node_t *dir)
 {
     struct mount_info_t *d;
-    struct ext2_superblock_t *super;
+    volatile struct ext2_superblock_t *super;
 
     if(get_super(dir->dev, &d, &super) < 0)
     {
@@ -2292,7 +2717,7 @@ int ext2_dir_empty(struct fs_node_t *dir)
 }
 
 
-int ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
+long ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
 {
     char *p;
     unsigned char *blk, *end;
@@ -2303,16 +2728,24 @@ int ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
     
     if(!dir->size || !dir->blocks[0] || !(buf = get_cached_page(dir, 0, 0)))
     {
+        // not ideal, but treat this as an empty directory
         printk("%s: bad directory inode at 0x%x:0x%x\n",
                module, dir->dev, dir->inode);
-        return 0;
+        return 1;
     }
 
     // check '.'
     ent = (struct ext2_dirent_t *)buf->virt;
     p = (char *)(buf->virt + sz);
-    
-    if(!ent->entry_size || ent->inode != dir->inode ||
+
+    if(!ent->entry_size)
+    {
+        // not ideal, but treat this as an empty directory
+        release_cached_page(buf);
+        return 1;
+    }
+
+    if(ent->inode != dir->inode ||
        ent->name_length_lsb != 1 || strncmp(p, ".", 1))
     {
         release_cached_page(buf);
@@ -2325,7 +2758,14 @@ int ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
     ent = (struct ext2_dirent_t *)(buf->virt + ent->entry_size);
     p = (char *)(ent) + sz;
 
-    if(!ent->entry_size || !ent->inode ||
+    if(!ent->entry_size)
+    {
+        // not ideal, but treat this as an empty directory
+        release_cached_page(buf);
+        return 1;
+    }
+
+    if(!ent->inode ||
        ent->name_length_lsb != 2 || strncmp(p, "..", 2))
     {
         release_cached_page(buf);
@@ -2361,6 +2801,7 @@ int ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
         }
         
         release_cached_page(buf);
+        buf = NULL;
         offset += PAGE_SIZE;
 
         if(offset >= dir->size)
@@ -2385,7 +2826,10 @@ int ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
         }
     }
 
-    release_cached_page(buf);
+    if(buf)
+    {
+        release_cached_page(buf);
+    }
 
     return 1;
 }
@@ -2403,9 +2847,9 @@ int ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
  * Returns:
  *     number of bytes read on success, -errno on failure
  */
-int ext2_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
+long ext2_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
 {
-    struct ext2_superblock_t *super;
+    volatile struct ext2_superblock_t *super;
     struct mount_info_t *d;
     int ext_dir_type = 0;
 
@@ -2420,8 +2864,8 @@ int ext2_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
 }
 
 
-int ext2_getdents_internal(struct fs_node_t *dir, off_t *pos, void *buf,
-                           int bufsz, int ext_dir_type)
+long ext2_getdents_internal(struct fs_node_t *dir, off_t *pos, void *buf,
+                            int bufsz, int ext_dir_type)
 {
     size_t i, count = 0;
     size_t reclen, namelen;
@@ -2484,10 +2928,10 @@ int ext2_getdents_internal(struct fs_node_t *dir, off_t *pos, void *buf,
             KDEBUG("ext2_getdents_internal: namelen 0x%x\n", namelen);
 
             // calc dirent record length
-            reclen = sizeof(struct dirent) + namelen + 1;
+            reclen = GET_DIRENT_LEN(namelen);
 
             // make it 4-byte aligned
-            ALIGN_WORD(reclen);
+            //ALIGN_WORD(reclen);
             KDEBUG("ext2_getdents_internal: reclen 0x%x\n", reclen);
             
             // check the buffer has enough space for this entry
@@ -2514,7 +2958,7 @@ int ext2_getdents_internal(struct fs_node_t *dir, off_t *pos, void *buf,
 
 
 
-            ext2_entry_to_dirent(ent, (struct dirent *)dent, n, namelen,
+            ext2_entry_to_dirent(ent, dent, n, namelen,
                                  (*pos) + ent->entry_size,
                                  ext_dir_type);
 
@@ -2539,7 +2983,7 @@ int ext2_getdents_internal(struct fs_node_t *dir, off_t *pos, void *buf,
 /*
  * Return filesystem statistics.
  */
-int ext2_ustat(struct mount_info_t *d, struct ustat *ubuf)
+long ext2_ustat(struct mount_info_t *d, struct ustat *ubuf)
 {
     volatile struct ext2_superblock_t *super;
 
@@ -2569,7 +3013,7 @@ int ext2_ustat(struct mount_info_t *d, struct ustat *ubuf)
 /*
  * Return detailed filesystem statistics.
  */
-int ext2_statfs(struct mount_info_t *d, struct statfs *statbuf)
+long ext2_statfs(struct mount_info_t *d, struct statfs *statbuf)
 {
     volatile struct ext2_superblock_t *super;
 
@@ -2621,36 +3065,33 @@ int ext2_statfs(struct mount_info_t *d, struct statfs *statbuf)
  * Returns:
  *    number of chars read on success, -errno on failure
  */
-int ext2_read_symlink(struct fs_node_t *link, char *buf,
-                      size_t bufsz, int kernel)
+long ext2_read_symlink(struct fs_node_t *link, char *buf,
+                       size_t bufsz, int kernel)
 {
     off_t fpos = 0;
     size_t i;
-    int res;
-    
+    long res;
+
     /*
      * Symlinks less than 60 chars in length are stored in the inode itself.
      * See:
      *    http://www.nongnu.org/ext2-doc/ext2.html#def-symbolic-links
      */
-    if(link->size <= 60)
+    if(link->size < 60)
     {
         i = (bufsz < link->size) ? bufsz : link->size;
-        
-#ifdef __x86_64__
 
-        char p[60];
-        
-        for(res = 0; res < 15; res++)
+        char p[64], *p2 = p;
+
+        A_memset(p, 0, 64);
+
+        for(res = 0; res < 15; res++, p2 += 4)
         {
-            ((uint32_t *)p)[res] = (uint32_t)link->blocks[res];
+            p2[0] = link->blocks[res] & 0xff;
+            p2[1] = (link->blocks[res] >> 8) & 0xff;
+            p2[2] = (link->blocks[res] >> 16) & 0xff;
+            p2[3] = (link->blocks[res] >> 24) & 0xff;
         }
-
-#else
-
-        char *p = (char *)&(link->blocks[0]);
-
-#endif
 
         if(kernel)
         {
@@ -2687,7 +3128,7 @@ int ext2_read_symlink(struct fs_node_t *link, char *buf,
 size_t ext2_write_symlink(struct fs_node_t *link, char *target,
                           size_t len, int kernel)
 {
-    int res;
+    long res;
     off_t fpos = 0;
 
     /*
@@ -2695,12 +3136,20 @@ size_t ext2_write_symlink(struct fs_node_t *link, char *target,
      * See:
      *    http://www.nongnu.org/ext2-doc/ext2.html#def-symbolic-links
      */
-    if(len <= 60)
+    if(len < 60)
     {
+        /*
+         * TODO: should we raise an error here?
+         */
+        if(!S_ISLNK(link->mode))
+        {
+            link->mode &= ~S_IFMT;
+            link->mode |= S_IFLNK;
+        }
 
-        char p[60];
-        
-        A_memset(p, 0, 60);
+        char p[64], *p2 = p;
+
+        A_memset(p, 0, 64);
 
         if(kernel)
         {
@@ -2712,13 +3161,25 @@ size_t ext2_write_symlink(struct fs_node_t *link, char *target,
             return res;
         }
 
-        for(res = 0; res < 15; res++)
+        for(res = 0; res < 15; res++, p2 += 4)
         {
-            link->blocks[res] = ((uint32_t *)p)[res];
+            link->blocks[res] = p2[0] | (p2[1] << 8) | (p2[2] << 16) | (p2[3] << 24);
         }
 
         link->size = len;
         return len;
+    }
+
+    // if we are rewriting a symlink and the old link target is < 60 chars,
+    // it would be stored in the inode itself, and so we need to clean this up
+    if(link->size < 60)
+    {
+        for(res = 0; res < 15; res++)
+        {
+            link->blocks[res] = 0;
+        }
+
+        link->size = 0;
     }
 
     return vfs_write_node(link, &fpos, (unsigned char *)target, len, kernel);

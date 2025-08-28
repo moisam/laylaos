@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: devpts.c
  *    This file is part of LaylaOS.
@@ -77,7 +77,7 @@ dev_t PTMX_DEVID = TO_DEVID(5, 2);
 struct pty_t *pty_slaves[MAX_PTY_DEVICES];
 
 // and the lock to access the above list
-struct kernel_mutex_t pty_lock;
+volatile struct kernel_mutex_t pty_lock;
 
 // devpts root -> /dev/pts
 struct fs_node_t *devpts_root;
@@ -162,8 +162,8 @@ void devpts_init(void)
  * This function fills in the mount info struct's block_size, super,
  * and root fields.
  */
-int devpts_read_super(dev_t dev, struct mount_info_t *d,
-                      size_t bytes_per_sector)
+long devpts_read_super(dev_t dev, struct mount_info_t *d,
+                       size_t bytes_per_sector)
 {
     UNUSED(bytes_per_sector);
 
@@ -199,9 +199,9 @@ static void devpts_free_inode_internal(struct pty_t **ptyptr)
 
     if(pty)
     {
-        kfree(&pty->tty.read_q);
-        kfree(&pty->tty.write_q);
-        kfree(&pty->tty.secondary);
+        kfree((void *)pty->tty.read_q.buf);
+        kfree((void *)pty->tty.write_q.buf);
+        kfree((void *)pty->tty.secondary.buf);
         kfree(pty);
         *ptyptr = NULL;
 
@@ -306,7 +306,7 @@ int pty_slave_index(dev_t dev)
 /*
  * Perform a select operation on a master pty device.
  */
-int pty_master_select(struct file_t *f, int which)
+long pty_master_select(struct file_t *f, int which)
 {
     struct tty_t *tty;
     dev_t dev;
@@ -338,7 +338,8 @@ int pty_master_select(struct file_t *f, int which)
     	case FREAD:
             if(ttybuf_is_empty(&tty->write_q))
             {
-        		selrecord(&tty->wsel);
+        		//selrecord(&tty->wsel);
+        		selrecord(&tty->write_q.sel);
                 return 0;
             }
             return 1;
@@ -346,7 +347,8 @@ int pty_master_select(struct file_t *f, int which)
     	case FWRITE:
     	    if(ttybuf_is_full(&tty->read_q))
     	    {
-        		selrecord(&tty->rsel);
+        		//selrecord(&tty->rsel);
+        		selrecord(&tty->read_q.sel);
                 return 0;
             }
             return 1;
@@ -363,9 +365,9 @@ int pty_master_select(struct file_t *f, int which)
 /*
  * Perform a poll operation on a master pty device.
  */
-int pty_master_poll(struct file_t *f, struct pollfd *pfd)
+long pty_master_poll(struct file_t *f, struct pollfd *pfd)
 {
-    int res = 0;
+    long res = 0;
     struct tty_t *tty;
     dev_t dev;
 
@@ -393,7 +395,8 @@ int pty_master_poll(struct file_t *f, struct pollfd *pfd)
     {
         if(ttybuf_is_empty(&tty->write_q))
         {
-            selrecord(&tty->wsel);
+            //selrecord(&tty->wsel);
+            selrecord(&tty->write_q.sel);
         }
         else
         {
@@ -406,7 +409,8 @@ int pty_master_poll(struct file_t *f, struct pollfd *pfd)
     {
         if(ttybuf_is_full(&tty->read_q))
         {
-            selrecord(&tty->rsel);
+            //selrecord(&tty->rsel);
+            selrecord(&tty->read_q.sel);
         }
         else
         {
@@ -422,12 +426,11 @@ int pty_master_poll(struct file_t *f, struct pollfd *pfd)
 /*
  * Create a new master pty device.
  */
-int pty_master_create(struct fs_node_t **master)
+long pty_master_create(struct fs_node_t **master)
 {
     struct fs_node_t *m;
     struct pty_t **n, **ln = LAST_PTY;
     struct pty_t *slave;
-    struct task_t *ct = cur_task;
     char *rbuf = NULL, *wbuf = NULL, *sbuf = NULL;
 
     *master = NULL;
@@ -436,7 +439,7 @@ int pty_master_create(struct fs_node_t **master)
     {
         return -ENOMEM;
     }
-    
+
     // alloc a new node to represent pseudoterminal's slave device
     if(!(slave = kmalloc(sizeof(struct pty_t))))
     {
@@ -448,7 +451,7 @@ int pty_master_create(struct fs_node_t **master)
     // See: https://man7.org/linux/man-pages/man3/grantpt.3.html
 
     memset(slave, 0, sizeof(struct pty_t));
-    slave->uid = ct->uid;
+    slave->uid = this_core->cur_task->uid;
     slave->gid = get_kgroup(KGROUP_TTY);
     slave->mode = S_IFCHR | 0620;   // crw--w----
 
@@ -466,7 +469,7 @@ int pty_master_create(struct fs_node_t **master)
     ttybuf_init(&slave->tty.secondary, sbuf /*, TTY_BUF_SIZE */);
 
     tty_set_defaults(&slave->tty);
-    slave->tty.write = dummy_write;
+    slave->tty.write = NULL /* dummy_write */;
 
     // keep the slave pty locked until someone calls unlockpt()
     slave->tty.flags |= TTY_FLAG_LOCKED;
@@ -480,8 +483,8 @@ int pty_master_create(struct fs_node_t **master)
     
     //m->read = chr_read;
     //m->write = chr_write;
-    m->read = pty_master_read;
-    m->write = pty_master_write;
+    m->read = ttyx_read /* pty_master_read */;
+    m->write = ttyx_write /* pty_master_write */;
     
     kernel_mutex_lock(&pty_lock);
     
@@ -618,7 +621,7 @@ void pty_slave_close(struct fs_node_t *node)
 /*
  * Open a slave pty device.
  */
-int pty_slave_open(struct fs_node_t *node)
+long pty_slave_open(struct fs_node_t *node)
 {
     int minor, major;
     struct pty_t *slave;
@@ -658,6 +661,8 @@ int pty_slave_open(struct fs_node_t *node)
     return 0;
 }
 
+
+#if 0
 
 /*
  * Read data from a master pseudoterminal device. This is handled separate from
@@ -880,6 +885,8 @@ ssize_t pty_master_write(struct file_t *f, off_t *pos,
     return (ssize_t)(p - buf);
 }
 
+#endif
+
 
 /*
  * Helper function that copies info from a devpts node to an incore
@@ -941,7 +948,7 @@ void devpts_incore_to_inode(struct pty_t *i, struct fs_node_t *n)
 /*
  * Reads inode data structure.
  */
-int devpts_read_inode(struct fs_node_t *node)
+long devpts_read_inode(struct fs_node_t *node)
 {
     ino_t ino;
     int index;
@@ -982,7 +989,7 @@ int devpts_read_inode(struct fs_node_t *node)
 /*
  * Writes inode data structure.
  */
-int devpts_write_inode(struct fs_node_t *node)
+long devpts_write_inode(struct fs_node_t *node)
 {
     ino_t ino;
     int index;
@@ -1020,19 +1027,19 @@ int devpts_write_inode(struct fs_node_t *node)
 }
 
 
-static inline struct dirent *entry_to_dirent(int index, struct pty_t *pty)
+STATIC_INLINE struct dirent *entry_to_dirent(int index, struct pty_t *pty)
 {
     // should be enough for device names, which should be '0' to '64', or
     // whatever MAX_PTY_DEVICES is set to.
     int namelen = 4;
-    unsigned short reclen = sizeof(struct dirent) + namelen + 1;
-    struct dirent *entry = (struct dirent *)kmalloc(reclen);
-    
+    unsigned int reclen = GET_DIRENT_LEN(namelen);
+    struct dirent *entry = kmalloc(reclen);
+
     if(!entry)
     {
         return NULL;
     }
-    
+
     entry->d_ino = pty->index + FIRST_INODE;
     entry->d_off = index;
     entry->d_type = DT_CHR;
@@ -1111,8 +1118,7 @@ static inline int root_dirent(char *filename, struct dirent **entry)
  *
  * Outputs:
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
- *             dirent struct (by calling ext2_entry_to_dirent() above), and the
- *             result is stored in this field
+ *             dirent struct, and the result is stored in this field
  *    dbuf => the disk buffer representing the disk block containing the found
  *            filename, this is useful if the caller wants to delete the file
  *            after finding it (vfs_unlink(), for example)
@@ -1122,9 +1128,9 @@ static inline int root_dirent(char *filename, struct dirent **entry)
  * Returns:
  *    0 on success, -errno on failure
  */
-int devpts_finddir(struct fs_node_t *dir, char *filename,
-                   struct dirent **entry,
-                   struct cached_page_t **dbuf, size_t *dbuf_off)
+long devpts_finddir(struct fs_node_t *dir, char *filename,
+                    struct dirent **entry,
+                    struct cached_page_t **dbuf, size_t *dbuf_off)
 {
     int i;
     
@@ -1189,8 +1195,7 @@ int devpts_finddir(struct fs_node_t *dir, char *filename,
  *
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
- *             dirent struct (by calling ext2_entry_to_dirent() above), and the
- *             result is stored in this field
+ *             dirent struct, and the result is stored in this field
  *    dbuf => the disk buffer representing the disk block containing the found
  *            filename, this is useful if the caller wants to delete the file
  *            after finding it (vfs_unlink(), for example)
@@ -1200,9 +1205,9 @@ int devpts_finddir(struct fs_node_t *dir, char *filename,
  * Returns:
  *    0 on success, -errno on failure
  */
-int devpts_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                            struct dirent **entry,
-                            struct cached_page_t **dbuf, size_t *dbuf_off)
+long devpts_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                             struct dirent **entry,
+                             struct cached_page_t **dbuf, size_t *dbuf_off)
 {
     int i;
 
@@ -1258,7 +1263,7 @@ int devpts_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  * Returns:
  *     number of bytes read on success, -errno on failure
  */
-int devpts_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
+long devpts_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
 {
     size_t offset, count = 0;
     size_t dirsz = MAX_PTY_DEVICES + 2;

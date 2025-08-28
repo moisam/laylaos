@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: iso9660fs.c
  *    This file is part of LaylaOS.
@@ -47,7 +47,7 @@
 #include <fs/magic.h>
 #include <mm/kheap.h>
 
-extern time_t timegm(struct tm* tm);
+extern time_t timegm(struct tm *tm);
 
 /*
  * See: https://wiki.osdev.org/ISO_9660
@@ -89,7 +89,7 @@ struct lba_cache_t
 {
     dev_t dev;
     struct lba_cacheent_t lba_cache_head;
-    struct kernel_mutex_t lock;
+    volatile struct kernel_mutex_t lock;
 } lba_cache[MAX_ISO9660_DEVICES];
 
 
@@ -145,7 +145,7 @@ static uint32_t iso9660_timedate_to_posix_time(unsigned char *date)
 }
 
 
-void set_node_flags(struct fs_node_t *node, struct iso9660_dirent_t *dent)
+static void set_node_flags(struct fs_node_t *node, struct iso9660_dirent_t *dent)
 {
     node->mode = 0;
     
@@ -181,7 +181,7 @@ void set_node_flags(struct fs_node_t *node, struct iso9660_dirent_t *dent)
 }
 
 
-struct lba_cacheent_t *get_cacheent(dev_t dev, uint32_t lba)
+static struct lba_cacheent_t *get_cacheent(dev_t dev, uint32_t lba)
 {
     struct lba_cache_t *c;
     struct lba_cacheent_t *cent;
@@ -215,8 +215,8 @@ struct lba_cacheent_t *get_cacheent(dev_t dev, uint32_t lba)
 }
 
 
-struct lba_cacheent_t *alloc_cacheent(uint32_t lba, uint32_t lba_parent,
-                                      uint32_t llba_parent)
+static struct lba_cacheent_t *alloc_cacheent(uint32_t lba, uint32_t lba_parent,
+                                             uint32_t llba_parent)
 {
     struct lba_cacheent_t *cent;
 
@@ -234,7 +234,7 @@ struct lba_cacheent_t *alloc_cacheent(uint32_t lba, uint32_t lba_parent,
 }
 
 
-int add_cacheent(struct fs_node_t *dir, uint32_t lba, uint32_t block_size)
+static int add_cacheent(struct fs_node_t *dir, uint32_t lba, uint32_t block_size)
 {
     struct lba_cache_t *c;
     struct lba_cacheent_t *cent;
@@ -318,7 +318,7 @@ int add_cacheent(struct fs_node_t *dir, uint32_t lba, uint32_t block_size)
  * converting uppercase letters to lowercase and ignoring the file ID number,
  * including the semicolon.
  */
-void iso9660_strncpy(char *dest, char *src, size_t len, int isdir)
+static void iso9660_strncpy(char *dest, char *src, size_t len, int isdir)
 {
     KDEBUG("iso9600_strncpy: src '%s'\n", src);
     
@@ -374,7 +374,7 @@ void iso9660_strncpy(char *dest, char *src, size_t len, int isdir)
  * Returns:
  *    0 if the names as the same, non-zero otherwise.
  */
-int iso9660_strncmp(char *cdname, char *origname, size_t len, int isdir)
+static int iso9660_strncmp(char *cdname, char *origname, size_t len, int isdir)
 {
     KDEBUG("iso9600_strncpy: cdname '%s', origname '%s'\n", cdname, origname);
 
@@ -408,8 +408,8 @@ void iso9660fs_init(void)
  * This function fills in the mount info struct's block_size, super,
  * and root fields.
  */
-int iso9660fs_read_super(dev_t dev, struct mount_info_t *d,
-                         size_t bytes_per_sector)
+long iso9660fs_read_super(dev_t dev, struct mount_info_t *d,
+                          size_t bytes_per_sector)
 {
     struct superblock_t *super;
     struct disk_req_t req;
@@ -566,7 +566,7 @@ void iso9660fs_put_super(dev_t dev, struct superblock_t *super)
 /*
  * Reads inode data structure from disk.
  */
-int iso9660fs_read_inode(struct fs_node_t *node)
+long iso9660fs_read_inode(struct fs_node_t *node)
 {
     struct mount_info_t *d;
     char *buf, *lbuf;
@@ -685,7 +685,7 @@ size_t iso9660fs_bmap(struct fs_node_t *node, size_t lblock,
 /*
  * Free an inode and update inode bitmap on disk.
  */
-int iso9660fs_free_inode(struct fs_node_t *node)
+long iso9660fs_free_inode(struct fs_node_t *node)
 {
     UNUSED(node);
     
@@ -696,7 +696,7 @@ int iso9660fs_free_inode(struct fs_node_t *node)
 /*
  * Allocate a new inode number and mark it as used in the disk's inode bitmap.
  */
-int iso9660fs_alloc_inode(struct fs_node_t *node)
+long iso9660fs_alloc_inode(struct fs_node_t *node)
 {
     UNUSED(node);
     
@@ -735,11 +735,12 @@ uint32_t iso9660fs_alloc(dev_t dev)
 }
 
 
+STATIC_INLINE
 struct dirent *iso9660_entry_to_dirent(struct dirent *__ent, ino_t inode,
                                        char *name, uint8_t namelen,
                                        int off, uint8_t flags)
 {
-    unsigned short reclen = sizeof(struct dirent) + namelen + 1;
+    unsigned short reclen = GET_DIRENT_LEN(namelen);
     unsigned char d_type = DT_UNKNOWN;
     
     // account for special entries '\0' and '\1', which stand for '.' and '..'
@@ -748,13 +749,13 @@ struct dirent *iso9660_entry_to_dirent(struct dirent *__ent, ino_t inode,
         namelen++;
     }
     
-    struct dirent *entry = __ent ? __ent : (struct dirent *)kmalloc(reclen);
-    
+    struct dirent *entry = __ent ? __ent : kmalloc(reclen);
+
     if(!entry)
     {
         return NULL;
     }
-    
+
     if(IS_ISO9660_DIR(flags))
     {
         d_type = DT_DIR;
@@ -801,8 +802,7 @@ struct dirent *iso9660_entry_to_dirent(struct dirent *__ent, ino_t inode,
  *
  * Outputs:
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
- *             dirent struct (by calling ext2_entry_to_dirent() above), and the
- *             result is stored in this field
+ *             dirent struct, and the result is stored in this field
  *    dbuf => the disk buffer representing the disk block containing the found
  *            filename, this is useful if the caller wants to delete the file
  *            after finding it (vfs_unlink(), for example)
@@ -812,9 +812,9 @@ struct dirent *iso9660_entry_to_dirent(struct dirent *__ent, ino_t inode,
  * Returns:
  *    0 on success, -errno on failure
  */
-int iso9660fs_finddir(struct fs_node_t *dir, char *filename,
-                      struct dirent **entry, struct cached_page_t **dbuf,
-                      size_t *dbuf_off)
+long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
+                       struct dirent **entry, struct cached_page_t **dbuf,
+                       size_t *dbuf_off)
 {
     size_t offset = 0;
     size_t fnamelen;
@@ -921,8 +921,7 @@ int iso9660fs_finddir(struct fs_node_t *dir, char *filename,
  *
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
- *             dirent struct (by calling ext2_entry_to_dirent() above), and the
- *             result is stored in this field
+ *             dirent struct, and the result is stored in this field
  *    dbuf => the disk buffer representing the disk block containing the found
  *            filename, this is useful if the caller wants to delete the file
  *            after finding it (vfs_unlink(), for example)
@@ -932,9 +931,9 @@ int iso9660fs_finddir(struct fs_node_t *dir, char *filename,
  * Returns:
  *    0 on success, -errno on failure
  */
-int iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                               struct dirent **entry,
-                               struct cached_page_t **dbuf, size_t *dbuf_off)
+long iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
+                                struct dirent **entry,
+                                struct cached_page_t **dbuf, size_t *dbuf_off)
 {
     size_t offset = 0;
     uint32_t lba;
@@ -1017,12 +1016,12 @@ int iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
 /*
  * Add the given file as an entry in the given parent directory.
  */
-int iso9660fs_addir(struct fs_node_t *dir, char *filename, ino_t n)
+long iso9660fs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
 {
     UNUSED(dir);
     UNUSED(filename);
-    UNUSED(n);
-    
+    UNUSED(file);
+
     return -EROFS;
 }
 
@@ -1032,7 +1031,7 @@ int iso9660fs_addir(struct fs_node_t *dir, char *filename, ino_t n)
  * the '.' and '..' entries to point to the current and parent directory
  * inodes, respectively.
  */
-int iso9660fs_mkdir(struct fs_node_t *dir, ino_t parent)
+long iso9660fs_mkdir(struct fs_node_t *dir, struct fs_node_t *parent)
 {
     UNUSED(dir);
     UNUSED(parent);
@@ -1044,14 +1043,11 @@ int iso9660fs_mkdir(struct fs_node_t *dir, ino_t parent)
 /*
  * Remove an entry from the given parent directory.
  */
-int iso9660fs_deldir(struct fs_node_t *dir, struct dirent *entry,
-                     struct cached_page_t *dbuf, size_t dbuf_off)
-                     //struct IO_buffer_s *dbuf, size_t dbuf_off)
+long iso9660fs_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir)
 {
     UNUSED(dir);
     UNUSED(entry);
-    UNUSED(dbuf);
-    UNUSED(dbuf_off);
+    UNUSED(is_dir);
 
     return -EROFS;
 }
@@ -1060,7 +1056,7 @@ int iso9660fs_deldir(struct fs_node_t *dir, struct dirent *entry,
 /*
  * Check if the given directory is empty (called from rmdir).
  */
-int iso9660fs_dir_empty(struct fs_node_t *dir)
+long iso9660fs_dir_empty(struct fs_node_t *dir)
 {
     char *p;
     struct cached_page_t *buf;
@@ -1184,8 +1180,8 @@ int iso9660fs_dir_empty(struct fs_node_t *dir)
  * Returns:
  *     number of bytes read on success, -errno on failure
  */
-int iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
-                       void *buf, int bufsz)
+long iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
+                        void *buf, int bufsz)
 {
     size_t i, count = 0;
     size_t reclen;
@@ -1251,12 +1247,12 @@ int iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
             }
 
             // calc dirent record length
-            reclen = sizeof(struct dirent) + ent->namelen + 1;
+            reclen = GET_DIRENT_LEN(ent->namelen);
 
             // make it 4-byte aligned
-            ALIGN_WORD(reclen);
+            //ALIGN_WORD(reclen);
             //KDEBUG("ext2_getdents_internal: reclen 0x%x\n", reclen);
-            
+
             // check the buffer has enough space for this entry
             if((count + reclen) > (size_t)bufsz)
             {
@@ -1296,7 +1292,7 @@ int iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
 /*
  * Return filesystem statistics.
  */
-int iso9660fs_ustat(struct mount_info_t *d, struct ustat *ubuf)
+long iso9660fs_ustat(struct mount_info_t *d, struct ustat *ubuf)
 {
     if(!d)
     {
@@ -1322,7 +1318,7 @@ int iso9660fs_ustat(struct mount_info_t *d, struct ustat *ubuf)
 /*
  * Return detailed filesystem statistics.
  */
-int iso9660fs_statfs(struct mount_info_t *d, struct statfs *statbuf)
+long iso9660fs_statfs(struct mount_info_t *d, struct statfs *statbuf)
 {
     if(!d)
     {
@@ -1373,8 +1369,8 @@ int iso9660fs_statfs(struct mount_info_t *d, struct statfs *statbuf)
  * Returns:
  *    number of chars read on success, -errno on failure
  */
-int iso9660fs_read_symlink(struct fs_node_t *link, char *buf,
-                           size_t bufsz, int kernel)
+long iso9660fs_read_symlink(struct fs_node_t *link, char *buf,
+                            size_t bufsz, int kernel)
 {
     UNUSED(link);
     UNUSED(buf);
