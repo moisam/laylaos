@@ -14,6 +14,7 @@ PATCH_FILE=${DOWNLOAD_NAME}.diff
 CWD=`pwd`
 
 export CFLAGS="-I${CROSSCOMPILE_SYSROOT_PATH}/usr/include -mstackrealign"
+export CXXFLAGS="${CXXFLAGS} -mstackrealign -fPIC -DPIC"
 
 # where the downloaded and extracted source will end up
 DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
@@ -38,6 +39,9 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 mv ${DOWNLOAD_SRCDIR}/.auto/config.sub ${DOWNLOAD_SRCDIR}/.auto/config.sub.OLD
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/.auto/config.sub
 
+mv ${DOWNLOAD_SRCDIR}/.auto/config.guess ${DOWNLOAD_SRCDIR}/.auto/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/.auto/config.guess
+
 cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 
 # build
@@ -53,6 +57,9 @@ cd ${DOWNLOAD_SRCDIR}/build2
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
+
+# Fix libcaca++.la for the future generations
+sed -i "s/dependency_libs=.*/dependency_libs='-lcaca -lz -lstdc++'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libcaca++.la
 
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}

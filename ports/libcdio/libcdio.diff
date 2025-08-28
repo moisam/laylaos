@@ -1,0 +1,246 @@
+diff -rub ./libcdio-2.1.0/configure ./libcdio-2.1.0/configure
+--- ./libcdio-2.1.0/configure	2019-04-18 00:39:24.000000000 +0100
++++ ./libcdio-2.1.0/configure	2025-07-12 19:17:01.220733204 +0100
+@@ -7846,7 +7846,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos* | laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -13344,6 +13344,16 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++laylaos*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
+@@ -17321,6 +17331,16 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++laylaos*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
+@@ -18231,6 +18251,12 @@
+   	cd_drivers="${cd_drivers}, NetBSD "
+ 	enable_cdda_player="no"
+ 	;;
++     laylaos*)
++
++$as_echo "#define HAVE_LAYLAOS_CDROM 1" >>confdefs.h
++
++  	cd_drivers="${cd_drivers}, LaylaOS "
++	;;
+      os2*)
+ 
+ $as_echo "#define HAVE_OS2_CDROM 1" >>confdefs.h
+diff -rub ./libcdio-2.1.0/lib/driver/device.c ./libcdio-2.1.0/lib/driver/device.c
+--- ./libcdio-2.1.0/lib/driver/device.c	2018-08-12 17:33:48.000000000 +0100
++++ ./libcdio-2.1.0/lib/driver/device.c	2025-07-07 11:41:07.109846938 +0100
+@@ -72,6 +72,8 @@
+ const driver_id_t cdio_os_driver = DRIVER_SOLARIS;
+ #elif  defined(HAVE_WIN32_CDROM)
+ const driver_id_t cdio_os_driver = DRIVER_WIN32;
++#elif  defined(HAVE_LAYLAOS_CDROM)
++const driver_id_t cdio_os_driver = DRIVER_LAYLAOS;
+ #else
+ const driver_id_t cdio_os_driver = DRIVER_UNKNOWN;
+ #endif
+@@ -201,6 +203,19 @@
+    &close_tray_win32
+   },
+ 
++  {DRIVER_LAYLAOS,
++   CDIO_SRC_IS_DEVICE_MASK|CDIO_SRC_IS_NATIVE_MASK|CDIO_SRC_IS_SCSI_MASK,
++   "LaylaOS",
++   "LaylaOS driver",
++   &cdio_have_laylaos,
++   &cdio_open_laylaos,
++   &cdio_open_am_laylaos,
++   &cdio_get_default_device_laylaos,
++   &cdio_is_device_generic,
++   &cdio_get_devices_laylaos,
++   &close_tray_laylaos
++  },
++
+   {DRIVER_CDRDAO,
+    CDIO_SRC_IS_DISK_IMAGE_MASK,
+    "CDRDAO",
+@@ -256,6 +271,7 @@
+   DRIVER_SOLARIS,
+   DRIVER_OSX,
+   DRIVER_WIN32,
++  DRIVER_LAYLAOS,
+   DRIVER_CDRDAO,
+   DRIVER_BINCUE,
+   DRIVER_NRG,
+@@ -270,6 +286,7 @@
+   DRIVER_SOLARIS,
+   DRIVER_OSX,
+   DRIVER_WIN32,
++  DRIVER_LAYLAOS,
+   DRIVER_UNKNOWN
+ };
+ 
+@@ -975,6 +992,7 @@
+   case DRIVER_SOLARIS:
+   case DRIVER_WIN32:
+   case DRIVER_OSX:
++  case DRIVER_LAYLAOS:
+   case DRIVER_NRG:
+   case DRIVER_BINCUE:
+   case DRIVER_CDRDAO:
+diff -rub ./libcdio-2.1.0/test/testgetdevices.c ./libcdio-2.1.0/test/testgetdevices.c
+--- ./libcdio-2.1.0/test/testgetdevices.c	2018-08-12 17:33:48.000000000 +0100
++++ ./libcdio-2.1.0/test/testgetdevices.c	2025-07-07 11:36:16.707434147 +0100
+@@ -156,6 +156,17 @@
+ 		printf("-- Good! You have the OS/X driver installed.\n");
+ 	      }
+ 	  }
++	else if (0 == strncmp("LaylaOS", utsname.sysname, sizeof("LaylaOS")))
++	  {
++	    if (!cdio_have_driver(DRIVER_LAYLAOS))
++	      {
++		fprintf(stderr,
++			"You should have been able to get LaylaOS driver\n");
++		return 6;
++	      } else {
++		printf("-- Good! You have the LaylaOS driver installed.\n");
++	      }
++	  }
+       }
+   }
+ #endif
+diff -rub ./libcdio-2.1.0/configure.ac ./libcdio-2.1.0/configure.ac
+--- ./libcdio-2.1.0/configure.ac	2019-04-18 00:38:43.000000000 +0100
++++ ./libcdio-2.1.0/configure.ac	2025-07-12 19:28:59.935624627 +0100
+@@ -510,6 +510,11 @@
+   	cd_drivers="${cd_drivers}, NetBSD "
+ 	enable_cdda_player="no"
+ 	;;
++     laylaos*)
++     	AC_DEFINE([HAVE_LAYLAOS_CDROM], [1],
++                  [Define 1 if you have LaylaOS CD-ROM support])
++  	cd_drivers="${cd_drivers}, LaylaOS "
++	;;
+      os2*)
+        AC_DEFINE([HAVE_OS2_CDROM], [1],
+                   [Define 1 if you have OS/2 CD-ROM support])
+diff -rub ./libcdio-2.1.0/include/cdio/device.h ./libcdio-2.1.0/include/cdio/device.h
+--- ./libcdio-2.1.0/include/cdio/device.h	2019-04-18 02:08:31.000000000 +0100
++++ ./libcdio-2.1.0/include/cdio/device.h	2025-07-12 19:37:39.292750840 +0100
+@@ -159,6 +159,7 @@
+     DRIVER_OSX,     /**< Apple OSX (or MacOS) Driver */
+     DRIVER_WIN32,   /**< Microsoft Windows Driver. Includes ASPI and
+                          ioctl access. */
++    DRIVER_LAYLAOS, /**< LaylaOS Driver */
+     DRIVER_CDRDAO,  /**< cdrdao format CD image. This is listed
+                          before BIN/CUE, to make the code prefer cdrdao
+                          over BIN/CUE when both exist. */
+@@ -713,6 +714,50 @@
+   char **cdio_get_devices_linux(void);
+ 
+   /**
++     Set up CD-ROM for reading using the LaylaOS driver. The
++     device_name is the some sort of device name.
++
++     @return the cdio object for subsequent operations.
++     NULL on error or there is no LaylaOS driver.
++
++     In some situations of drivers or OS's we can't find a CD device if
++     there is no media in it and it is possible for this routine to return
++     NULL even though there may be a hardware CD-ROM.
++   */
++  CdIo_t * cdio_open_laylaos (const char *psz_source);
++
++  /**
++     Set up CD-ROM for reading using the LaylaOS driver. The
++     device_name is the some sort of device name.
++
++     @return the cdio object for subsequent operations.
++     NULL on error or there is no LaylaOS driver.
++   */
++  CdIo_t * cdio_open_am_laylaos (const char *psz_source,
++                                 const char *access_mode);
++
++  /**
++     Return a string containing the default device name that the
++     LaylaOS driver would use when none is specified. A scan is made
++     for CD-ROM drives with CDs in them.
++
++     NULL is returned on error or there is no CD-ROM device.
++
++     In some situations of drivers or OS's we can't find a CD device if
++     there is no media in it and it is possible for this routine to return
++     NULL even though there may be a hardware CD-ROM.
++
++     @see cdio_open_cd, cdio_open
++   */
++  char * cdio_get_default_device_laylaos(void);
++
++  /**
++     Return a list of all of the CD-ROM devices that the LaylaOS
++     driver can find.
++   */
++  char **cdio_get_devices_laylaos(void);
++
++  /**
+      Set up CD-ROM for reading using the Sun Solaris driver. The
+      device_name is the some sort of device name.
+ 
+diff -rub ./libcdio-2.1.0/lib/driver/cdio_private.h ./libcdio-2.1.0/lib/driver/cdio_private.h
+--- ./libcdio-2.1.0/lib/driver/cdio_private.h	2018-08-12 17:33:48.000000000 +0100
++++ ./libcdio-2.1.0/lib/driver/cdio_private.h	2025-07-12 19:40:50.222726327 +0100
+@@ -533,6 +533,7 @@
+   driver_return_code_t close_tray_osx     (const char *psz_drive);
+   driver_return_code_t close_tray_solaris (const char *psz_drive);
+   driver_return_code_t close_tray_win32   (const char *psz_drive);
++  driver_return_code_t close_tray_laylaos (const char *psz_drive);
+ 
+   bool cdio_have_netbsd(void);
+   CdIo_t * cdio_open_netbsd (const char *psz_source);
+@@ -565,6 +566,10 @@
+   bool cdio_have_linux   (void);
+ 
+   /*! DEPRICATED: use cdio_have_driver().
++    True if GNU/Linux driver is available. */
++  bool cdio_have_laylaos   (void);
++
++  /*! DEPRICATED: use cdio_have_driver().
+     True if Sun Solaris driver is available. */
+   bool cdio_have_solaris (void);
+ 
+diff -rub ./libcdio-2.1.0/lib/driver/Makefile.am ./libcdio-2.1.0/lib/driver/Makefile.am
+--- ./libcdio-2.1.0/lib/driver/Makefile.am	2019-04-13 10:00:04.000000000 +0100
++++ ./libcdio-2.1.0/lib/driver/Makefile.am	2025-07-12 19:43:09.344182892 +0100
+@@ -94,6 +94,7 @@
+ 	MSWindows/win32.c \
+ 	MSWindows/win32.h \
+ 	netbsd.c \
++	laylaos.c \
+ 	osx.c \
+ 	read.c \
+         realpath.c \

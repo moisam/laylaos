@@ -1,15 +1,16 @@
 #!/bin/bash
 
 #
-# Script to download and build libass
+# Script to download and build libcdio-paranoia
 #
 
-DOWNLOAD_NAME="libass"
-DOWNLOAD_VERSION="0.17.1"
-DOWNLOAD_URL="https://github.com/libass/libass/releases/download/${DOWNLOAD_VERSION}/"
-DOWNLOAD_PREFIX="libass-"
-DOWNLOAD_SUFFIX=".tar.xz"
+DOWNLOAD_NAME="libcdio-paranoia"
+DOWNLOAD_VERSION="10.2+2.0.2"
+DOWNLOAD_URL="https://ftp.gnu.org/gnu/libcdio/"
+DOWNLOAD_PREFIX="libcdio-paranoia-"
+DOWNLOAD_SUFFIX=".tar.bz2"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
+PATCH_FILE=${DOWNLOAD_NAME}.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -19,7 +20,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libass.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libcdio_paranoia.so
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -32,6 +33,8 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
+cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
+
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
 
@@ -43,22 +46,24 @@ cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
 
 cd ${DOWNLOAD_SRCDIR} && autoreconf
 
-# build
+# build SDL2
 mkdir ${DOWNLOAD_SRCDIR}/build2
 cd ${DOWNLOAD_SRCDIR}/build2
 
-../configure --host=${BUILD_TARGET} \
-    --enable-shared --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \
-    --enable-fontconfig --disable-asm \
+CFLAGS="$CFLAGS -mstackrealign" \
+    ../configure \
+    --host=${BUILD_TARGET} --prefix=/usr --enable-maintainer-mode --with-pic=yes \
+    --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
-# Fix libass.la for the future generations
-sed -i "s/dependency_libs=.*/dependency_libs='-liconv -lfribidi -lharfbuzz -lfontconfig -lfreetype -lpng16 -lexpat -lm -lpng16 -lz'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libass.la
+# Fix libcdio_paranoia.la for the future generations
+sed -i "s/dependency_libs=.*/dependency_libs=' -lcdio_cdda -lcdio -ltinfo -liconv -lrt -lm'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libcdio_paranoia.la
 
+# Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 

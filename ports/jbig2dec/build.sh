@@ -37,14 +37,27 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+
+mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+
 mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
 cp ${CWD}/../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
 
-autoreconf
+if [ -e ./config.status ]; then
+    # The stupid ./autogen script automatically runs ./configure, but that's no
+    # good as we need it to generate config files so that we can patch them.
+    # We can either patch ./autogen and risk it being changed upstream at some
+    # point and break our patch, or just delete the config files (what a waste)
+    # and re-run ./configure ourselves below.
+    make distclean
+else
+    autoreconf
+fi
 
 # build
-mkdir ${DOWNLOAD_SRCDIR}/build
-cd ${DOWNLOAD_SRCDIR}/build
+mkdir ${DOWNLOAD_SRCDIR}/build2
+cd ${DOWNLOAD_SRCDIR}/build2
 
 CFLAGS="-mstackrealign" ../configure \
     --host=${BUILD_TARGET} --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \

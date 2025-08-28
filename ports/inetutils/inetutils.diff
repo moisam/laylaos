@@ -1,0 +1,24 @@
+diff -rub ./inetutils-2.2/ifconfig/system.c ./inetutils-2.2/ifconfig/system.c
+--- ./inetutils-2.2/ifconfig/system.c	2021-05-25 16:54:19.000000000 +0100
++++ ./inetutils-2.2/ifconfig/system.c	2024-10-26 22:38:08.031159484 +0100
+@@ -20,7 +20,7 @@
+ 
+ #include <config.h>
+ 
+-#if defined __linux__
++#if defined __linux__ || defined __laylaos__
+ # include "system/linux.c"
+ #elif defined __sun
+ # include "system/solaris.c"
+diff -rub ./inetutils-2.2/ifconfig/system.h ./inetutils-2.2/ifconfig/system.h
+--- ./inetutils-2.2/ifconfig/system.h	2021-05-25 16:54:19.000000000 +0100
++++ ./inetutils-2.2/ifconfig/system.h	2024-10-26 22:50:24.979066372 +0100
+@@ -88,7 +88,7 @@
+ 
+ extern struct if_nameindex* (*system_if_nameindex) (void);
+ 
+-# if defined __linux__
++# if defined __linux__ || defined __laylaos__
+ #  include "system/linux.h"
+ # elif defined __sun
+ #  include "system/solaris.h"

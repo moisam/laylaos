@@ -33,7 +33,8 @@ download_and_extract
 # build
 cd ${DOWNLOAD_SRCDIR}
 
-CPPFLAGS="-D_GNU_SOURCE -D__laylaos__ -D__${BUILD_ARCH}__" CFLAGS="${CFLAGS} -mstackrealign" \
+CPPFLAGS="-D_GNU_SOURCE -D__laylaos__ -D__${BUILD_ARCH}__ -fPIC -DPIC" \
+    CFLAGS="${CFLAGS} -mstackrealign" \
     meson setup build --cross-file ${CWD}/../crossfile.meson.laylaos \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 

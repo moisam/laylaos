@@ -37,12 +37,21 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 cd ${DOWNLOAD_SRCDIR}
 ./bootstrap
+
 mv ${DOWNLOAD_SRCDIR}/autotools/config.sub ${DOWNLOAD_SRCDIR}/autotools/config.sub.OLD
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/autotools/config.sub
 
+mv ${DOWNLOAD_SRCDIR}/autotools/config.guess ${DOWNLOAD_SRCDIR}/autotools/config.guess.OLD
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/autotools/config.guess
+
 autoreconf
 
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
+myname=`uname -s`
+if [ "$myname" == "LaylaOS" ]; then
+    sed -i 's/-prefer-non-pic//' ${DOWNLOAD_SRCDIR}/configure
+else
+    cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
+fi
 
 # build
 mkdir ${DOWNLOAD_SRCDIR}/build

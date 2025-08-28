@@ -1,0 +1,32 @@
+diff -rub ./lame-3.100/configure ./lame-3.100/configure
+--- ./lame-3.100/configure	2017-08-15 16:17:12.000000000 +0100
++++ ./lame-3.100/configure	2024-09-24 22:54:33.306078204 +0100
+@@ -5838,7 +5838,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos* | laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -11322,6 +11322,19 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++# LaylaOS
++laylaos*)
++  version_type=linux # correct to gnu/linux during the next big refactor
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='$libname$release$shared_ext$versuffix $libname$release$shared_ext$major $libname$shared_ext'
++  soname_spec='$libname$release$shared_ext$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  shlibpath_overrides_runpath=no
++  dynamic_linker='LaylaOS ld.so'
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no

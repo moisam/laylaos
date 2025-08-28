@@ -1,15 +1,16 @@
 #!/bin/bash
 
 #
-# Script to download and build libass
+# Script to download and build libcddb
 #
 
-DOWNLOAD_NAME="libass"
-DOWNLOAD_VERSION="0.17.1"
-DOWNLOAD_URL="https://github.com/libass/libass/releases/download/${DOWNLOAD_VERSION}/"
-DOWNLOAD_PREFIX="libass-"
-DOWNLOAD_SUFFIX=".tar.xz"
+DOWNLOAD_NAME="libcddb"
+DOWNLOAD_VERSION="1.3.2"
+DOWNLOAD_URL="http://prdownloads.sourceforge.net/libcddb/"
+DOWNLOAD_PREFIX="libcddb-"
+DOWNLOAD_SUFFIX=".tar.bz2"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
+PATCH_FILE=${DOWNLOAD_NAME}.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -19,7 +20,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libass.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libcddb.so
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -33,32 +34,32 @@ echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
-cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
+cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
 
 mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
-cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+cp ${CWD}/../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
 
-mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
-cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
-
-cd ${DOWNLOAD_SRCDIR} && autoreconf
+cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0
 
 # build
 mkdir ${DOWNLOAD_SRCDIR}/build2
 cd ${DOWNLOAD_SRCDIR}/build2
 
-../configure --host=${BUILD_TARGET} \
-    --enable-shared --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \
-    --enable-fontconfig --disable-asm \
+CFLAGS="$CFLAGS -mstackrealign" \
+    ../configure \
+    --host=${BUILD_TARGET} --prefix=/usr --with-pic=yes \
+    ac_cv_func_malloc_0_nonnull=yes ac_cv_func_realloc_0_nonnull=yes \
+    --with-libiconv-prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
-# Fix libass.la for the future generations
-sed -i "s/dependency_libs=.*/dependency_libs='-liconv -lfribidi -lharfbuzz -lfontconfig -lfreetype -lpng16 -lexpat -lm -lpng16 -lz'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libass.la
+# Fix libcddb.la for the future generations
+sed -i "s/dependency_libs=.*/dependency_libs=' -liconv'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libcddb.la
 
+# Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 

@@ -1,0 +1,15 @@
+diff -rub ./libcdio-paranoia-10.2+2.0.2/configure.ac ./libcdio-paranoia-10.2+2.0.2/configure.ac
+--- ./libcdio-paranoia-10.2+2.0.2/configure.ac	2024-07-20 13:16:30.000000000 +0100
++++ ./libcdio-paranoia-10.2+2.0.2/configure.ac	2025-07-12 20:50:47.855077029 +0100
+@@ -414,6 +414,11 @@
+  	# LIBS="$LIBS -lcam"
+   	cd_drivers="${cd_drivers}, NetBSD "
+ 	;;
++     laylaos*)
++     	AC_DEFINE([HAVE_LAYLAOS_CDROM], [1],
++                  [Define 1 if you have LaylaOS CD-ROM support])
++  	cd_drivers="${cd_drivers}, LaylaOS "
++	;;
+      os2*)
+        AC_DEFINE([HAVE_OS2_CDROM], [1],
+                   [Define 1 if you have OS/2 CD-ROM support])

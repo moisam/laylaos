@@ -32,25 +32,42 @@ download_and_extract
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
-cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
-mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
-cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
+#mv ${DOWNLOAD_SRCDIR}/config.sub ${DOWNLOAD_SRCDIR}/config.sub.OLD
+#cp ../config.sub.laylaos ${DOWNLOAD_SRCDIR}/config.sub
 
-cd ${DOWNLOAD_SRCDIR} && autoreconf
+#mv ${DOWNLOAD_SRCDIR}/config.guess ${DOWNLOAD_SRCDIR}/config.guess.OLD
+#cp ../config.guess.laylaos ${DOWNLOAD_SRCDIR}/config.guess
+
+#mv ${DOWNLOAD_SRCDIR}/m4/libtool.m4 ${DOWNLOAD_SRCDIR}/m4/libtool.m4.OLD
+#cp ../libtool.m4.laylaos ${DOWNLOAD_SRCDIR}/m4/libtool.m4
+
+#cd ${DOWNLOAD_SRCDIR} && autoreconf
 
 # build
-mkdir ${DOWNLOAD_SRCDIR}/build2
-cd ${DOWNLOAD_SRCDIR}/build2
+#mkdir ${DOWNLOAD_SRCDIR}/build2
+#cd ${DOWNLOAD_SRCDIR}/build2
 
-CFLAGS="-mstackrealign" CXXFLAGS="-I${CXX_INCLUDE_PATH} -mstackrealign" \
-    ../configure --host=${BUILD_TARGET} \
-    --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --enable-shared \
+#CFLAGS="-mstackrealign" CXXFLAGS="-I${CXX_INCLUDE_PATH} -mstackrealign" \
+#    ../configure --host=${BUILD_TARGET} \
+#    --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --enable-shared \
+#    || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
+
+#make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
+
+#make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
+
+cd ${DOWNLOAD_SRCDIR}
+meson setup build --cross-file ${CWD}/../crossfile.meson.laylaos \
+    -Dc_args="-mstackrealign" -Dcpp_args="-I${CXX_INCLUDE_PATH} -mstackrealign" \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
-make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
+# Search & Replace any '-pthread' to nothing in build/build.ninja
+sed  -i -e "s/-pthread//" build/build.ninja
 
-make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
+meson compile -C build || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
+
+meson install -C build --destdir=${CROSSCOMPILE_SYSROOT_PATH} \
+    || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
 # Fix libharfbuzz.la et al for the future generations
 sed -i "s/dependency_libs=.*/dependency_libs='-lm -lfreetype -lpng16 -lz'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libharfbuzz.la

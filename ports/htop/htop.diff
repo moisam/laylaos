@@ -1,0 +1,48 @@
+diff -rub ./htop-3.3.0/linux/LinuxProcessTable.c ./htop-3.3.0/linux/LinuxProcessTable.c
+--- ./htop-3.3.0/linux/LinuxProcessTable.c	2024-01-10 09:54:15.000000000 +0000
++++ ./htop-3.3.0/linux/LinuxProcessTable.c	2024-09-26 20:16:28.170576089 +0100
+@@ -281,6 +281,11 @@
+ 
+    location = end + 2;
+ 
++#ifdef __laylaos__
++   // on LaylaoOS field (1) is the tgid and the pid comes here
++   location = strchr(location, ' ') + 1;
++#endif
++
+    /* (3) state  -  %c */
+    process->state = LinuxProcessTable_getProcessState(location[0]);
+    location += 2;
+@@ -1348,6 +1353,10 @@
+    /* set runningTasks from /proc/stat (from Machine_scanCPUTime) */
+    pt->runningTasks = lhost->runningTasks;
+ 
++#ifdef __laylaos__
++   int procdir = (strcmp(dirname, PROCDIR) == 0);
++#endif
++
+ #ifdef HAVE_OPENAT
+    int dirFd = openat(parentFd, dirname, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (dirFd < 0)
+@@ -1415,6 +1424,9 @@
+       Process_setThreadGroup(proc, parent ? Process_getPid(parent) : pid);
+       proc->isUserlandThread = Process_getPid(proc) != Process_getThreadGroup(proc);
+ 
++#ifdef __laylaos__
++      if(procdir)
++#endif
+       LinuxProcessTable_recurseProcTree(this, procFd, lhost, "task", proc);
+ 
+       /*
+diff -rub ./htop-3.3.0/Makefile.am ./htop-3.3.0/Makefile.am
+--- ./htop-3.3.0/Makefile.am	2024-01-10 09:54:15.000000000 +0000
++++ ./htop-3.3.0/Makefile.am	2024-09-22 02:23:01.573302212 +0100
+@@ -211,7 +211,7 @@
+ 	zfs/ZfsCompressedArcMeter.c
+ 
+ if HTOP_LINUX
+-AM_LDFLAGS += -rdynamic
++#AM_LDFLAGS += -rdynamic
+ myhtopplatheaders = $(linux_platform_headers)
+ myhtopplatsources = $(linux_platform_sources)
+ endif

@@ -1,13 +1,13 @@
 #!/bin/bash
 
 #
-# Script to download and build hunspell
+# Script to download and build less
 #
 
-DOWNLOAD_NAME="hunspell"
-DOWNLOAD_VERSION="1.7.2"
-DOWNLOAD_URL="https://github.com/hunspell/hunspell/releases/download/v${DOWNLOAD_VERSION}/"
-DOWNLOAD_PREFIX="hunspell-"
+DOWNLOAD_NAME="less"
+DOWNLOAD_VERSION="668"
+DOWNLOAD_URL="http://greenwoodsoftware.com/less/"
+DOWNLOAD_PREFIX="less-"
 DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 CWD=`pwd`
@@ -19,7 +19,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libhunspell-1.7.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/less
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -29,37 +29,19 @@ check_paths
 download_and_extract
 
 # patch and copy our extra files
-echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
-cd ${DOWNLOAD_SRCDIR}
-autoreconf -vfi
-
-mv config.sub config.sub.OLD
-cp ${CWD}/../config.sub.laylaos config.sub
-
-mv config.guess config.guess.OLD
-cp ${CWD}/../config.guess.laylaos config.guess
-
-mv m4/libtool.m4 m4/libtool.m4.OLD
-cp ${CWD}/../libtool.m4.laylaos m4/libtool.m4
-
-autoreconf
-
 # build
-mkdir -p ${DOWNLOAD_SRCDIR}/build
+mkdir ${DOWNLOAD_SRCDIR}/build
 cd ${DOWNLOAD_SRCDIR}/build
 
-CXXFLAGS="${CXXFLAGS} -fPIC -DPIC" ${DOWNLOAD_SRCDIR}/configure --host=${BUILD_TARGET} \
-    --enable-shared --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \
+../configure \
+    --host=${BUILD_TARGET} --prefix=/usr \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
-
-# Fix libhunspell-1.7.la for the future generations
-sed -i "s/dependency_libs=.*/dependency_libs='-lstdc++'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libhunspell-1.7.la
 
 # Clean up
 cd ${CWD}
