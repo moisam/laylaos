@@ -1,6 +1,6 @@
 /* 
- *    Copyright 2022, 2023, 2024 (c) Mohammed Isam [mohammed_isam1984@yahoo.com].
- *    PicoTCP. Copyright (c) 2012-2017 Altran Intelligent Systems. Some rights reserved.
+ *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ipv4.c
  *    This file is part of LaylaOS.
@@ -22,1302 +22,1013 @@
 /**
  *  \file ipv4.c
  *
- *  Internet Protocol (IP) v4 implementation.
- *
- *  The code is divided into the following files:
- *  - ipv4.c: main IPv4 handling code
- *  - ipv4_addr.c: functions for working with IPv4 addresses
- *  - ipv4_frag.c: functions for handling IPv4 & IPv6 packet fragments
+ *  Internet Protocol (IP) version 4 implementation.
  */
 
 //#define __DEBUG
-#include <errno.h>
-#include <string.h>
-#include <netinet/in.h>
-#include <kernel/laylaos.h>
-#include <kernel/timer.h>
-#include <kernel/task.h>
+
 #include <kernel/net.h>
-#include <kernel/net/protocol.h>
 #include <kernel/net/packet.h>
-#include <kernel/net/netif.h>
+#include <kernel/net/ether.h>
+#include <kernel/net/route.h>
 #include <kernel/net/ipv4.h>
+#include <kernel/net/ipv4_addr.h>
+#include <kernel/net/icmpv4.h>
+#include <kernel/net/arp.h>
+#include <kernel/net/tcp.h>
 #include <kernel/net/udp.h>
-#include <kernel/net/icmp4.h>
+#include <kernel/net/raw.h>
+#include <kernel/net/dhcp.h>
 #include <kernel/net/checksum.h>
-#include <kernel/net/notify.h>
-#include <mm/kheap.h>
 
-struct ipv4_link_t *ipv4_links = NULL;
-struct ipv4_route_t *ipv4_routes = NULL;
+// how many fragments we can keep in queue
+#define MAX_FRAGS                   128
 
-struct netif_queue_t ipv4_inq = { 0, };
-struct netif_queue_t ipv4_outq = { 0, };
-
-static struct ipv4_route_t default_broadcast_route =
+struct ip_frag_queue_t
 {
-    .dest = { INADDR_BROADCAST },
-    .netmask = { INADDR_BROADCAST },
-    .gateway = { 0 },
-    .link = NULL,
-    .metric = 1000,
+    struct ipv4_fraglist_t *head, *tail;
+    int count, max;
+    volatile struct kernel_mutex_t lock;
 };
 
+struct ip_frag_queue_t fragq = { 0, };
+volatile uint16_t ip_id = 0;
+volatile struct task_t *ip_slowtimo_task = NULL;
 
-static uint16_t ipv4_id = 1;
-static struct task_t *ipv4_task = NULL;
-static struct kernel_mutex_t ipv4_lock = { 0, };
+static void ip_slowtimo(void *arg);
+static void remove_from_fqueue(struct ipv4_fraglist_t *ifq);
+static struct packet_t *ip_reassemble(struct packet_t *p, struct ipv4_fraglist_t *ifq);
+static int ip_do_options(struct packet_t *p);
 
 
-#ifdef __DEBUG
-
-static inline void DUMP_IPV4_HDR(struct ipv4_hdr_t *h)
+/*
+ * Initialize IP.
+ */
+void ip_init(void)
 {
-    KDEBUG("+------------------------------------+\n");
-    KDEBUG("|  %3d   |  %3d   |      %5d       |\n",
-           h->ver_hlen, h->tos, ntohs(h->len));
-    KDEBUG("+------------------------------------+\n");
-    KDEBUG("|      %5d       |       %5d       |\n",
-           ntohs(h->id), ntohs(h->offset));
-    KDEBUG("+------------------------------------+\n");
-    KDEBUG("|  %3d   |  %3d   |      0x%4x       |\n",
-           h->ttl, h->proto, ntohs(h->checksum));
-    KDEBUG("+------------------------------------+\n");
-    KDEBUG("|        ");
-    KDEBUG_IPV4_ADDR(ntohl(h->src.s_addr));
-    KDEBUG("        |\n+------------------------------------+\n|        ");
-    KDEBUG_IPV4_ADDR(ntohl(h->dest.s_addr));
-    KDEBUG("        |\n");
-}
-
-#else
-
-#define DUMP_IPV4_HDR(h)        if(0) {}
-
-#endif      /* __DEBUG */
-
-
-static int ipv4_link_cmp(struct ipv4_link_t *la, struct ipv4_link_t *lb)
-{
-    struct in_addr *addra = &la->addr;
-    struct in_addr *addrb = &lb->addr;
-    int res;
-    
-    if((res = ipv4_cmp(addra, addrb)))
-    {
-        return res;
-    }
-
-    // zero can be assigned multiple times (e.g. for DHCP)
-    if(la->ifp && lb->ifp &&
-       la->addr.s_addr == INADDR_ANY &&
-       lb->addr.s_addr == INADDR_ANY)
-    {
-        if(la->ifp < lb->ifp)
-        {
-            return -1;
-        }
-
-        if(la->ifp > lb->ifp)
-        {
-            return 1;
-        }
-    }
-    
-    return 0;
-}
-
-
-static int ipv4_route_cmp(struct ipv4_route_t *ra, struct ipv4_route_t *rb)
-{
-    uint32_t aa, ab;
-    int cmp;
-    
-    aa = ntohl(ra->netmask.s_addr);
-    ab = ntohl(rb->netmask.s_addr);
-    
-    // Routes are sorted by (host side) netmask len, then by addr, 
-    // then by metric
-    if(aa < ab)
-    {
-        return -1;
-    }
-
-    if(aa > ab)
-    {
-        return 1;
-    }
-    
-    if((cmp = ipv4_cmp(&ra->dest, &rb->dest)))
-    {
-        return cmp;
-    }
-    
-    if(ra->metric < rb->metric)
-    {
-        return -1;
-    }
-
-    if(ra->metric > rb->metric)
-    {
-        return 1;
-    }
-    
-    return 0;
-}
-
-
-struct ipv4_link_t *ipv4_link_find(struct in_addr *addr)
-{
-    struct ipv4_link_t *link;
-    struct ipv4_link_t tmp = { 0 };
-    
-    tmp.addr.s_addr = addr->s_addr;
-
-    kernel_mutex_lock(&ipv4_lock);
-
-    for(link = ipv4_links; link != NULL; link = link->next)
-    {
-        if(ipv4_link_cmp(link, &tmp) == 0)
-        {
-            kernel_mutex_unlock(&ipv4_lock);
-            return link;
-        }
-    }
-    
-    kernel_mutex_unlock(&ipv4_lock);
-    return NULL;
-}
-
-
-struct ipv4_link_t *ipv4_link_find_like(struct ipv4_link_t *target)
-{
-    struct ipv4_link_t *link;
-
-    kernel_mutex_lock(&ipv4_lock);
-
-    for(link = ipv4_links; link != NULL; link = link->next)
-    {
-        KDEBUG("ipv4: link %lx, ifp %lx, addr", link, link->ifp);
-        KDEBUG_IPV4_ADDR(ntohl(link->addr.s_addr));
-        KDEBUG(", netmask ");
-        KDEBUG_IPV4_ADDR(ntohl(link->netmask.s_addr));
-        KDEBUG("\n");
-
-        if(ipv4_link_cmp(link, target) == 0)
-        {
-            kernel_mutex_unlock(&ipv4_lock);
-            return link;
-        }
-    }
-    
-    kernel_mutex_unlock(&ipv4_lock);
-    return NULL;
-}
-
-
-struct ipv4_link_t *ipv4_link_get(struct in_addr *addr)
-{
-    struct ipv4_link_t *link;
-    struct ipv4_link_t tmp = { 0 };
-    
-    tmp.addr.s_addr = addr->s_addr;
-
-    kernel_mutex_lock(&ipv4_lock);
-
-    for(link = ipv4_links; link != NULL; link = link->next)
-    {
-        if(ipv4_link_cmp(link, &tmp) == 0)
-        {
-            kernel_mutex_unlock(&ipv4_lock);
-            return link;
-        }
-    }
-    
-    kernel_mutex_unlock(&ipv4_lock);
-    return NULL;
-}
-
-
-struct ipv4_link_t *ipv4_link_by_ifp(struct netif_t *ifp)
-{
-    struct ipv4_link_t *link;
-
-    for(link = ipv4_links; link != NULL; link = link->next)
-    {
-        if(link->ifp == ifp)
-        {
-            return link;
-        }
-    }
-    
-    return NULL;
-}
-
-
-struct ipv4_route_t *ipv4_route_find(struct in_addr *addr)
-{
-    struct ipv4_route_t *route, *default_gateway = NULL;
-    
-    if(addr->s_addr == INADDR_ANY)
-    {
-        return NULL;
-    }
-
-    if(addr->s_addr == INADDR_BROADCAST)
-    {
-        return &default_broadcast_route;
-    }
-    
-    kernel_mutex_lock(&ipv4_lock);
-
-    for(route = ipv4_routes; route != NULL; route = route->next)
-    {
-        KDEBUG("ipv4_route_find: addr ");
-        KDEBUG_IPV4_ADDR(ntohl(addr->s_addr));
-        KDEBUG(", netmask ");
-        KDEBUG_IPV4_ADDR(ntohl(route->netmask.s_addr));
-        KDEBUG(", rdest ");
-        KDEBUG_IPV4_ADDR(ntohl(route->dest.s_addr));
-        KDEBUG("\n");
-        
-        if(!route->netmask.s_addr && !route->dest.s_addr)
-        {
-            default_gateway = route;
-            continue;
-        }
-
-        if((addr->s_addr & route->netmask.s_addr) == 
-                    route->dest.s_addr)
-        {
-            kernel_mutex_unlock(&ipv4_lock);
-            return route;
-        }
-    }
-    
-    kernel_mutex_unlock(&ipv4_lock);
-    //return NULL;
-    return default_gateway;
-}
-
-
-struct netif_t *ipv4_source_ifp_find(struct in_addr *addr)
-{
-    struct ipv4_route_t *route;
-    
-    if(!addr)
-    {
-        return NULL;
-    }
-
-    if(!(route = ipv4_route_find(addr)))
-    {
-        return NULL;
-    }
-    
-    return route->link ? route->link->ifp : NULL;
+    init_kernel_mutex(&fragq.lock);
+    fragq.max = MAX_FRAGS;
+    ip_id = now() & 0xFFFF;
+    (void)start_kernel_task("ipslowto", ip_slowtimo, NULL, &ip_slowtimo_task, 0);
 }
 
 
 /*
- * Get the source IP to send to the given addr. The result is returned in
- * the res argument.
+ * IP slow timeout function.
  */
-int ipv4_source_find(struct in_addr *res, struct in_addr *addr)
+static void ip_slowtimo(void *arg)
 {
-    struct ipv4_route_t *route;
-    
-    KDEBUG("ipv4_source_find: addr ");
-    KDEBUG_IPV4_ADDR(ntohl(addr->s_addr));
-    KDEBUG("\n");
+    UNUSED(arg);
 
-    if(!(route = ipv4_route_find(addr)) || !route->link)
+    while(1)
     {
-        res->s_addr = 0;
-        return -EHOSTUNREACH;
-    }
-    
-    res->s_addr = route->link->addr.s_addr;
-    return 0;
-}
+        struct ipv4_fraglist_t *ifq, *prev = NULL, *next;
+        struct packet_t *p, *p2;
 
+        kernel_mutex_lock(&fragq.lock);
 
-/*
- * Get the gateway to the given addr. The result is returned in the gateway
- * argument.
- */
-int ipv4_route_gateway_get(struct in_addr *gateway, struct in_addr *addr)
-{
-    struct ipv4_route_t *route;
-
-    gateway->s_addr = INADDR_ANY;
-    
-    if(!addr || addr->s_addr == 0)
-    {
-        KDEBUG("ipv4: destination address error\n");
-        return -EINVAL;
-    }
-
-    route = ipv4_route_find(addr);
-    
-    if(!route)
-    {
-        KDEBUG("ipv4: cannot find route to host\n");
-        return -EHOSTUNREACH;
-    }
-    
-    gateway->s_addr = route->gateway.s_addr;
-    
-    return 0;
-}
-
-
-int ipv4_route_add(struct ipv4_link_t *link, struct in_addr *addr, 
-                   struct in_addr *netmask, struct in_addr *gateway, 
-                   uint32_t metric)
-{
-    struct ipv4_route_t *route, *route2, tmp;
-    
-    tmp.dest.s_addr = addr->s_addr;
-    tmp.netmask.s_addr = netmask->s_addr;
-    tmp.metric = metric;
-
-    kernel_mutex_lock(&ipv4_lock);
-
-    for(route = ipv4_routes; route != NULL; route = route->next)
-    {
-        if(ipv4_route_cmp(route, &tmp) == 0)
+        for(ifq = fragq.head; ifq != NULL; )
         {
-            break;
-        }
-    }
+            next = ifq->next;
+            ifq->ttl--;
 
-    kernel_mutex_unlock(&ipv4_lock);
-
-    // route already in table
-    if(route)
-    {
-        KDEBUG("ipv4_route_add: route already exists\n");
-        return -EINVAL;
-    }
-    
-    if(!(route = kmalloc(sizeof(struct ipv4_route_t))))
-    {
-        return -ENOMEM;
-    }
-    
-    A_memset(route, 0, sizeof(struct ipv4_route_t));
-    route->dest.s_addr = addr->s_addr;
-    route->netmask.s_addr = netmask->s_addr;
-    route->gateway.s_addr = gateway->s_addr;
-    route->metric = metric;
-
-    KDEBUG("ipv4_route_add: route dest ");
-    KDEBUG_IPV4_ADDR(ntohl(route->dest.s_addr));
-    KDEBUG(", netmask ");
-    KDEBUG_IPV4_ADDR(ntohl(route->netmask.s_addr));
-    KDEBUG(", gateway ");
-    KDEBUG_IPV4_ADDR(ntohl(route->gateway.s_addr));
-    KDEBUG("\n");
-    
-    if(gateway->s_addr == 0)
-    {
-        // No gateway provided, use the link
-        route->link = link;
-    }
-    else
-    {
-        if(!(route2 = ipv4_route_find(gateway)))
-        {
-            // Specified Gateway is unreachable
-            kfree(route);
-            return -EHOSTUNREACH;
-        }
-        
-        if(route2->gateway.s_addr)
-        {
-            // Specified Gateway is not a neighbor
-            kfree(route);
-            return -EHOSTUNREACH;
-        }
-        
-        route->link = route2->link;
-    }
-    
-    if(!route->link)
-    {
-        kfree(route);
-        return -EINVAL;
-    }
-    
-    kernel_mutex_lock(&ipv4_lock);
-    route->next = ipv4_routes;
-    ipv4_routes = route;
-    kernel_mutex_unlock(&ipv4_lock);
-    
-    return 0;
-}
-
-
-void ipv4_route_set_broadcast_link(struct ipv4_link_t *link)
-{
-    if(link)
-    {
-        default_broadcast_route.link = link;
-    }
-}
-
-
-int ipv4_cleanup_routes(struct ipv4_link_t *link)
-{
-    struct ipv4_route_t *route, *prev = NULL, *next = NULL;
-
-    kernel_mutex_lock(&ipv4_lock);
-
-    for(route = ipv4_routes; route != NULL; route = next)
-    {
-        next = route->next;
-        
-        if(route->link == link)
-        {
-            if(prev)
+            if(ifq->ttl == 0)
             {
-                prev->next = route->next;
+                netstats.ip.err++;
+
+                for(p = ifq->plist; p != NULL; )
+                {
+                    p2 = p->next;
+                    free_packet(p);
+                    p = p2;
+                }
+
+                if(prev)
+                {
+                    prev->next = next;
+                }
+                else
+                {
+                    fragq.head = next;
+                }
+            
+                kfree(ifq);
+                fragq.count--;
             }
             else
             {
-                ipv4_routes = route->next;
+                prev = ifq;
             }
-            
-            kfree(route);
-        }
-        else
-        {
-            prev = route;
-        }
         
-        if(!next)
-        {
-            break;
+            ifq = next;
         }
-    }
 
-    kernel_mutex_unlock(&ipv4_lock);
-    
-    return 0;
+        kernel_mutex_unlock(&fragq.lock);
+
+        // schedule every 500ms
+        block_task2(&ip_slowtimo_task, PIT_FREQUENCY / 2);
+    }
 }
 
 
-int ipv4_link_add(struct netif_t *ifp, 
-                  struct in_addr *addr, struct in_addr *netmask)
+STATIC_INLINE uint32_t iptime(void)
 {
-    struct ipv4_link_t *link;
-    struct ipv4_link_t tmp = { 0 };
-    struct in_addr network, gateway;
+    struct timeval atv;
+    uint32_t t;
 
-    if(!ifp)
-    {
-        return -EINVAL;
-    }
-    
-    tmp.addr.s_addr = addr->s_addr;
-    tmp.netmask.s_addr = netmask->s_addr;
-    tmp.ifp = ifp;
-    
-    if(ipv4_link_find_like(&tmp))
-    {
-        KDEBUG("ipv4: ifp %lx, addr", ifp);
-        KDEBUG_IPV4_ADDR(ntohl(addr->s_addr));
-        KDEBUG(", netmask ");
-        KDEBUG_IPV4_ADDR(ntohl(netmask->s_addr));
-        KDEBUG("\n");
+    microtime(&atv);
+    t = (atv.tv_sec % (24 * 60 * 60)) * 1000 + atv.tv_usec / 1000;
 
-        KDEBUG("ipv4: address in use\n");
-        return -EADDRINUSE;
-    }
-    
-    if(!(link = kmalloc(sizeof(struct ipv4_link_t))))
+    return (htonl(t));
+}
+
+
+STATIC_INLINE int do_send(struct rtentry_t *rt, struct packet_t *p, uint32_t dest)
+{
+    int i;
+    uint8_t dest_ethernet[ETHER_ADDR_LEN];
+
+    netstats.ip.xmit++;
+
+    /*
+     * NOTE: If the address is resolved, arp_resolve() returns 1 and we carry 
+     *       on to send the packet. If it wasn't, 0 is returned and the packet
+     *       is queued for delayed send (therefore we don't free the packet 
+     *       here).
+     */
+    if(!arp_resolve(rt, dest, dest_ethernet))
     {
-        return -ENOMEM;
+        if((i = packet_add_header(p, ETHER_HLEN)) < 0 ||
+           (i = arp_queue(rt->ifp, p, dest)) < 0)
+        {
+            printk("ip: failed to queue ARP packet (err %d)\n", i);
+            free_packet(p);
+            netstats.link.drop++;
+            netstats.link.memerr++;
+            return i;
+        }
+
+        return 0;
     }
-    
-    A_memset(link, 0, sizeof(struct ipv4_link_t));
-    link->addr.s_addr = addr->s_addr;
-    link->netmask.s_addr = netmask->s_addr;
-    link->ifp = ifp;
-    
-    kernel_mutex_lock(&ipv4_lock);
-    link->next = ipv4_links;
-    ipv4_links = link;
-    kernel_mutex_unlock(&ipv4_lock);
-    
-    network.s_addr = (addr->s_addr & netmask->s_addr);
-    gateway.s_addr = 0;
-    
-    ipv4_route_add(link, &network, netmask, &gateway, 1);
-    
-    if(!default_broadcast_route.link)
+
+    /*
+     * NOTE: it is the sending function's duty to free the packet!
+     *       we leave this to the sending function, as it may queue the
+     *       packet instead of sending it right away.
+     */
+
+    if((i = ethernet_send(rt->ifp, p, dest_ethernet)) < 0)
     {
-        default_broadcast_route.link = link;
+        printk("ip: failed to send packet (err %d)\n", i);
+        return i;
     }
     
     return 0;
 }
 
 
-int ipv4_link_del(struct netif_t *ifp, struct in_addr *addr)
+static void ip_forward(struct packet_t *p)
 {
-    struct ipv4_link_t *link, *prev = NULL;
-    struct ipv4_link_t tmp = { 0 };
-    
-    tmp.addr.s_addr = addr->s_addr;
-    tmp.ifp = ifp;
-
-    kernel_mutex_lock(&ipv4_lock);
-
-    for(link = ipv4_links; link != NULL; link = link->next)
-    {
-        if(ipv4_link_cmp(link, &tmp) == 0)
-        {
-            if(prev)
-            {
-                prev->next = link->next;
-            }
-            else
-            {
-                ipv4_links = link->next;
-            }
-            
-            link->next = NULL;
-            break;
-        }
-        
-        prev = link;
-    }
-    
-    kernel_mutex_unlock(&ipv4_lock);
-
-    if(!link)
-    {
-        return -EINVAL;
-    }
-
-    ipv4_cleanup_routes(link);
-
-    kfree(link);
-    return 0;
-}
-
-
-int ipv4_cleanup_links(struct netif_t *ifp)
-{
-    struct ipv4_link_t *link, *prev = NULL, *next;
-
-    kernel_mutex_lock(&ipv4_lock);
-
-    for(link = ipv4_links; link != NULL; )
-    {
-        next = link->next;
-        
-        if(link->ifp == ifp)
-        {
-            if(prev)
-            {
-                prev->next = next;
-            }
-            else
-            {
-                ipv4_links = next;
-            }
-            
-            link->next = NULL;
-            kfree(link);
-        }
-        else
-        {
-            prev = link;
-        }
-        
-        link = next;
-    }
-    
-    kernel_mutex_unlock(&ipv4_lock);
-
-    return 0;
-}
-
-
-int ipv4_push(struct packet_t *p, struct in_addr *dest, uint8_t proto)
-{
-    struct ipv4_route_t *route;
-    struct ipv4_link_t *link = NULL;
     struct ipv4_hdr_t *h;
-    int res = 0;
-    int need_hdr;
-    uint8_t ttl = 64, tos = 0;
+    struct rtentry_t *rt;
 
-    KDEBUG("ipv4_push: packet %lx\n", p);
+    h = IPv4_HDR(p);
 
-    if(!dest || dest->s_addr == 0)
+    // find where to route the packet
+    if(!(rt = route_for_ipv4(h->dest)))
     {
-        KDEBUG("ipv4: destination address error ");
-        if(dest)
-        {
-            KDEBUG("- dest ");
-            KDEBUG_IPV4_ADDR(ntohl(dest->s_addr));
-        }
-        KDEBUG("\n");
-        
-
-        // If the socket has the broadcast flag on, accept ADDR_ANY
-        // as the destination address. This will mean we cannot find the
-        // source address here, and the Ethernet layer will have to 
-        // figure it out
-        /*
-        if(p->sock && (p->sock->flags & SOCKET_FLAG_BROADCAST))
-        {
-            p->flags |= PACKET_FLAG_BROADCAST;
-        }
-        else
-        */
-        {
-            res = -EHOSTUNREACH;
-            goto err;
-        }
+        printk("ip: cannot find forwarding route (0x%x)\n", h->dest);
+        netstats.ip.rterr++;
+        free_packet(p);
+        return;
     }
 
-    // If this is a broadcast packet, do not try to find the route
-    //if(!(p->flags & PACKET_FLAG_BROADCAST))
+    // don't route broadcasts
+    if(ipv4_is_broadcast(h->dest, rt->netmask))
     {
-        KDEBUG("ipv4_push: dest ");
-        KDEBUG_IPV4_ADDR(ntohl(dest->s_addr));
-        KDEBUG("\n");
-
-        route = ipv4_route_find(dest);
+        free_packet(p);
+        return;
+    }
     
-        if(!route)
+    // don't forward packets to the same interface they arrived on
+    if(rt->ifp == p->ifp)
+    {
+        printk("ip: not forwarding packet to same arrival interface\n");
+        netstats.ip.rterr++;
+        free_packet(p);
+        return;
+    }
+    
+    // decrement ttl and if it is 0, send an error ICMP, unless the packet
+    // itself is an ICMP packet
+    h->ttl = h->ttl - 1;
+
+    //KDEBUG("ip_forward: ttl = %d\n", h->ttl);
+    
+    if(h->ttl == 0)
+    {
+        if(h->proto != IPPROTO_ICMP)
         {
-            KDEBUG("ipv4: cannot find route to host\n");
-            res = -EHOSTUNREACH;
-            goto err;
-        }
-    
-        link = route->link;
-
-        if(p->sock && p->sock->ifp)
-        {
-            p->ifp = p->sock->ifp;
-        }
-        else
-        {
-            p->ifp = link->ifp;
-        
-            if(p->sock)
-            {
-                p->sock->ifp = p->ifp;
-            }
-        }
-    }
-
-    need_hdr = p->sock ? (!(p->sock->flags & SOCKET_FLAG_IPHDR_INCLUDED)) : 1;
-
-    if(need_hdr && packet_add_header(p, IPv4_HLEN) != 0)
-    {
-        KDEBUG("ipv4: insufficient memory for packet header\n");
-        res = -ENOBUFS;
-        goto err;
-    }
-    
-    if((p->frag & IP_MF) == 0)
-    {
-        ipv4_id++;
-    }
-    
-    /*
-    if(p->send_ttl > 0)
-    {
-        ttl = p->send_ttl;
-    }
-    */
-
-    h = (struct ipv4_hdr_t *)p->data;
-
-    if(need_hdr)
-    {
-        if(p->sock)
-        {
-            if(p->sock->ttl >= 0)
-            {
-                ttl = p->sock->ttl;
-            }
-
-            if(p->sock->tos != 0)
-            {
-                tos = p->sock->tos;
-            }
-        }
-
-        h->ver_hlen = 5 | (4 << 4);     // IPv4 | hlen of 5 (=20 bytes)
-        h->len = htons(p->count);
-        h->id = htons(ipv4_id);
-        h->proto = proto;
-        h->ttl = ttl;
-        //h->tos = p->send_tos;
-        h->tos = tos /* 0 */;
-        h->dest.s_addr = dest ? dest->s_addr : 0;
-        h->src.s_addr = link ? link->addr.s_addr : 0;
-        h->offset = htons(IP_DF);   // don't fragment
-
-        if(proto == IPPROTO_UDP)
-        {
-            // set the frag flags/offset as calculated in the socket layer
-            h->offset = htons(p->frag);
-        }
-
-        if(proto == IPPROTO_ICMP)
-        {
-            // ditto
-            h->offset = htons(p->frag);
-        }
-    }
-    else
-    {
-        h->len = htons(p->count);
-
-        // fill these fields if needed
-        if(h->src.s_addr == 0 && link)
-        {
-            h->src.s_addr = link->addr.s_addr;
-        }
-
-        if(h->id == 0)
-        {
-            h->id = htons(ipv4_id);
-        }
-    }
-
-    h->checksum = 0;
-    h->checksum = htons(checksum(h, IPv4_HLEN));
-    
-    //DUMP_IPV4_HDR(h);
-    
-
-    /*
-     * TODO: process multicast packets
-     */
-
-    
-    // Check for local destination addresses only if this is not a
-    // broadcast packet
-    /*
-    if(!(p->flags & PACKET_FLAG_BROADCAST) && ipv4_link_get(dest))
-    {
-        if(IFQ_FULL(&ipv4_inq))
-        {
-            KDEBUG("ipv4_push: dropping local packet\n");
-            netstats.ip.drop++;
-            res = -ENOBUFS;
-            goto err;
-        }
-        else
-        {
-            KDEBUG("ipv4_push: enqueuing local packet\n");
-            IFQ_ENQUEUE(&ipv4_inq, p);
-            netstats.ip.xmit++;
-        }
-    }
-    else
-    */
-    {
-        if(IFQ_FULL(&ipv4_outq))
-        {
-            KDEBUG("ipv4_push: dropping outgoing packet\n");
-            netstats.ip.drop++;
-            res = -ENOBUFS;
-            goto err;
-        }
-        else
-        {
-            KDEBUG("ipv4_push: enqueuing outgoing packet\n");
-            IFQ_ENQUEUE(&ipv4_outq, p);
-            netstats.ip.xmit++;
-        }
-    }
-
-    return 0;
-
-err:
-
-    packet_free(p);
-    netstats.ip.err++;
-    return res;
-    
-}
-
-
-static int ipv4_forward(struct packet_t *p)
-{
-    static struct in_addr last_src = { 0 };
-    static struct in_addr last_dest = { 0 };
-    static uint16_t last_id = 0, last_proto = 0;
-    struct ipv4_route_t *route;
-    struct ipv4_hdr_t *h = (struct ipv4_hdr_t *)p->data;
-    struct in_addr dest = { .s_addr = h->dest.s_addr };
-    struct in_addr src = { .s_addr = h->src.s_addr };
-    int res = 0;
-
-    route = ipv4_route_find(&dest);
-    
-    if(!route || !route->link)
-    {
-        KDEBUG("ipv4: cannot find route to host\n");
-        notify_dest_unreachable(p, 0);
-        res = -EHOSTUNREACH;
-        goto err;
-    }
-    
-    p->ifp = route->link->ifp;
-    
-    // decrease hop (time to live) count
-    h->ttl = (uint8_t)(h->ttl - 1);
-    
-    if(h->ttl < 1)
-    {
-        KDEBUG("ipv4: dropping packet with expired ttl\n");
-        notify_ttl_expired(p, 0);
-        res = -ETIMEDOUT;       // TODO: find the right errno here
-        goto err;
-    }
-    
-    // increase checksum to compensate for decreased ttl
-    h->checksum++;
-    
-    // local source, discard as packet is bouncing (locally forwarded)
-    if(ipv4_link_get(&src))
-    {
-        KDEBUG("ipv4: dropping bouncing packet - src ");
-        KDEBUG_IPV4_ADDR(ntohl(src.s_addr));
-        KDEBUG(", dest ");
-        KDEBUG_IPV4_ADDR(ntohl(dest.s_addr));
-        KDEBUG("\n");
-
-        res = -EHOSTUNREACH;
-        goto err;
-    }
-    
-    // silently discard if this is the same last forwarded packet
-    if(last_src.s_addr == h->src.s_addr && last_id == h->id &&
-       last_dest.s_addr == h->dest.s_addr && last_proto == h->proto)
-    {
-        packet_free(p);
-        return 0;
-    }
-    else
-    {
-        last_src.s_addr = h->src.s_addr;
-        last_dest.s_addr = h->dest.s_addr;
-        last_id = h->id;
-        last_proto = h->proto;
-    }
-    
-    /*
-     * TODO: implement NAT
-     */
-    
-    /*
-    ipv4_nat_outbound(p, &route->link->addr);
-    */
-    
-    // check packet size
-    if((p->count + ETHER_HLEN) > (size_t)p->ifp->mtu)
-    {
-        KDEBUG("ipv4: dropping packet as too big\n");
-        notify_packet_too_big(p, 0);
-        res = -E2BIG;
-        goto err;
-    }
-    
-    // enqueue for the ethernet layer to process next
-    kernel_mutex_lock(&ethernet_outq.lock);
-    if(!IFQ_FULL(&ethernet_outq))
-    {
-        IFQ_ENQUEUE(&ethernet_outq, p);
-        kernel_mutex_unlock(&ethernet_outq.lock);
-        netstats.ip.xmit++;
-        return 0;
-    }
-
-    kernel_mutex_unlock(&ethernet_outq.lock);
-    netstats.ip.drop++;
-    res = -ENOBUFS;
-
-err:
-
-    packet_free(p);
-    netstats.ip.err++;
-    return res;
-}
-
-
-static int ipv4_process_received_broadcast(struct packet_t *p)
-{
-    struct ipv4_hdr_t *h = (struct ipv4_hdr_t *)p->data;
-    
-    if(ipv4_is_broadcast(h->dest.s_addr))
-    {
-        KDEBUG("ipv4: received broadcast packet\n");
-
-        p->flags |= PACKET_FLAG_BROADCAST;
-
-        if(h->proto == IPPROTO_UDP)
-        {
-            // broadcast UDP packet
-            if(!IFQ_FULL(&udp_inq))
-            {
-                IFQ_ENQUEUE(&udp_inq, p);
-            }
-
-            return 0;
-        }
-
-        if(h->proto == IPPROTO_ICMP)
-        {
-            // broadcast ICMPv4 packet
-            if(!IFQ_FULL(&icmp4_inq))
-            {
-                IFQ_ENQUEUE(&icmp4_inq, p);
-            }
-
-            return 0;
-        }
-    }
-    
-    return -EINVAL;
-}
-
-
-static int ipv4_process_received_multicast(struct packet_t *p)
-{
-    struct ipv4_hdr_t *h = (struct ipv4_hdr_t *)p->data;
-    
-    if(ipv4_is_multicast(h->dest.s_addr))
-    {
-        KDEBUG("ipv4: dropped multicast packet\n");
-
-        /*
-         * TODO: process the packet
-         */
-
-        packet_free(p);
-        return 0;
-    }
-    
-    return -EINVAL;
-}
-
-
-static int ipv4_process_received_local_unicast(struct packet_t *p)
-{
-    struct ipv4_hdr_t *h = (struct ipv4_hdr_t *)p->data;
-    struct in_addr dest = { .s_addr = h->dest.s_addr };
-    struct in_addr tmp = { 0, };
-
-    if(ipv4_link_find(&dest))
-    {
-        KDEBUG("ipv4: received unicast packet\n");
-
-        /*
-         * TODO: implement NAT
-         */
-
-        /*
-        if(ipv4_nat_inbound(p, &dest) == 0)
-        {
-            // destination changed, reprocess
-            IFQ_ENQUEUE(&ipv4_inq, p);
-        }
-        else
-        */
-        {
-            transport_enqueue_in(p, h->proto, 0);
+            //KDEBUG("ip_forward: sending icmp\n");
+            icmpv4_time_exceeded(p, 0);
         }
         
-        return 0;
+        free_packet(p);
+        return;
+    }
+    
+    // incrementally update the header checksum as we changed ttl
+    if(h->checksum >= htons(0xFFFF - 0x100))
+    {
+        h->checksum = h->checksum + htons(0x100) + 1;
     }
     else
     {
-        if(ipv4_link_find(&tmp))
-        {
-            KDEBUG("ipv4: received unicast packet with addr any\n");
-
-            // A network interface with IPv4_ADDR_ANY as its address.
-            // This could be a DHCP packet coming in.
-            IFQ_ENQUEUE(&udp_inq, p);
-            return 0;
-        }
+        h->checksum = h->checksum + htons(0x100);
     }
     
-    return -EINVAL;
+    printk("ip: forwarding packet to 0x%x\n", h->dest);
+    netstats.ip.fw++;
+    netstats.ip.xmit++;
+
+    do_send(rt, p, h->dest);
 }
 
 
-static inline int ipv4_is_invalid_loopback(struct netif_t *ifp, uint32_t addr)
+STATIC_INLINE void hdr_convert(struct ipv4_hdr_t *h)
 {
-    uint8_t *bytes = (uint8_t *)&addr;
-
-    return (bytes[0] == 0x7f && (!ifp || strcmp(ifp->name, "lo0") != 0));
+    h->tlen = ntohs(h->tlen);
+    h->id = ntohs(h->id);
+    h->offset = ntohs(h->offset);
+    //h->src = ntohl(h->src);
+    //h->dest = ntohl(h->dest);
 }
 
 
-int ipv4_is_invalid_src(struct netif_t *ifp, uint32_t addr)
+void ipv4_recv(struct packet_t *p)
 {
-    return ipv4_is_broadcast(addr) || 
-           ipv4_is_multicast(addr) ||
-           ipv4_is_invalid_loopback(ifp, addr);
-}
+    struct rtentry_t *rt;
+    struct ipv4_hdr_t *h;
 
+    netstats.ip.recv++;
+    h = IPv4_HDR(p);
 
-int ipv4_receive(struct packet_t *p)
-{
-    struct ipv4_hdr_t *h = (struct ipv4_hdr_t *)p->data;
-    //uint8_t optlen;
-    uint32_t hlen;
-    /*
-    uint16_t maxbytes = ((int)p->count - 
-                         ((uintptr_t)p->data - ((uintptr_t)p + sizeof(struct packet_t))) - 
-                         IPv4_HLEN);
-
-    // NAT transport needs hdr info
-    if((h->ver_hlen & 0x0f) > 5)
+    // check IP version - we only accept IPv4 packets
+    if(h->ver != 4)
     {
-        optlen = (uint8_t)(4 * ((h->ver_hlen & 0x0f) - 5));
+        printk("ip: dropped packet with invalid version number: %d\n", h->ver);
+        netstats.ip.err++;
+        netstats.ip.drop++;
+        free_packet(p);
+        return;
     }
-    
-    // check for sensible packet length
-    if((ntohs(h->len) - IPv4_HLEN - optlen) > maxbytes)
-    {
-        packet_free(p);
-        return 0;
-    }
-    */
-    
-    KDEBUG("ipv4_receive:\n");
-    DUMP_IPV4_HDR(h);
 
     // check header length is valid, should be at least 5, which equates
     // to 20 bytes, and no more than 60 bytes (hlen is expressed in terms
     // of dwords, see RFC 791)
-    hlen = GET_IP_HLEN(h) * 4;
-    
-    if(hlen < 20 || hlen > 60 || hlen > p->count)
+    if(h->hlen < 5 || h->hlen > 15 || (h->hlen * 4) > p->count)
     {
-        KDEBUG("ipv4: dropped packet with invalid length: %d\n", hlen);
-        icmp4_param_problem(p, 0);
+        printk("ip: dropped packet with invalid length: %d\n", h->hlen);
         netstats.ip.lenerr++;
-        goto err;
-    }
-
-    KDEBUG("ipv4: received packet with length: %d (h->len %d)\n", p->count, ntohs(h->len));
-    
-    // if the packet contains padding, adjust the length so that upper
-    // layer protocols (e.g. TCP) can accurately calculate checksums and
-    // get the right data length of the packet
-    if(ntohs(h->len) < p->count)
-    {
-        p->count = ntohs(h->len);
-    }
-
-    p->transport_hdr = (void *)((uintptr_t)(p->data) + hlen);
-    p->frag = ntohs(h->offset);
-    
-    /*
-     * TODO
-     */
-
-    /*
-    if(ipfilter(p))
-    {
-        return 0;
-    }
-    */
-
-    // validate checksum
-    if(ntohs(checksum(h, hlen)))
-    {
-        KDEBUG("ipv4: dropped packet with invalid header checksum (0x%x)\n", ntohs(checksum(h, hlen)));
-        netstats.ip.chkerr++;
-        goto err;
-    }
-
-    // validate source address
-    if(ipv4_is_invalid_src(p->ifp, h->src.s_addr))
-    {
-        KDEBUG("ipv4: dropped packet with invalid source address - ");
-        KDEBUG_IPV4_ADDR(ntohl(h->src.s_addr));
-        KDEBUG("\n");
-
-        netstats.ip.err++;
-        goto err;
-    }
-    
-    if(p->frag & 0x8000U)
-    {
-        icmp4_param_problem(p, 0);
-        netstats.ip.err++;
-        goto err;
-    }
-
-    netstats.ip.recv++;
-
-#if 0
-    // update our ARP table with the sender's address
-    // (could be handy if the sender does not reply to ARP requests, e.g.
-    //  some gateways/routers)
-    arp_update_entry(p->ifp, h->src.s_addr,
-                        &(((struct ether_header_t *)
-                            ((uintptr_t)p->data - ETHER_HLEN))->src));
-#endif
-
-    // reassemble fragmented packets
-    if((p->frag & (IP_OFFMASK | IP_MF)) != 0)
-    {
-        KDEBUG("ipv4: fragmented packet\n");
-        DUMP_IPV4_HDR(h);
-        //screen_refresh(NULL);
-        __asm__ __volatile__("xchg %%bx, %%bx":::);
-        
-        ipv4_process_fragment(p, h, h->proto);
-        packet_free(p);
-        return 0;
-    }
-    
-    if(ipv4_process_received_broadcast(p) == 0)
-    {
-        return 0;
-    }
-
-    if(ipv4_process_received_multicast(p) == 0)
-    {
-        return 0;
-    }
-    
-    if(ipv4_process_received_local_unicast(p) == 0)
-    {
-        return 0;
-    }
-    
-    // forward
-    if((ipv4_is_broadcast(h->dest.s_addr)) || 
-       (p->flags & PACKET_FLAG_BROADCAST))
-    {
-        // discard broadcast packets
-        KDEBUG("ipv4: dropped broadcast packet\n");
-        goto err;
-    }
-    
-    if(ipv4_forward(p) != 0)
-    {
-        KDEBUG("ipv4: failed to forward packet\n");
         netstats.ip.drop++;
-        return -EINVAL;
+        free_packet(p);
+        return;
+    }
+
+    // check the checksum
+    if(inet_chksum((uint16_t *)(p->head + ETHER_HLEN), h->hlen * 4, 0) != 0)
+    {
+        printk("ip: dropped packet with invalid header checksum\n");
+        netstats.ip.chkerr++;
+        netstats.ip.drop++;
+        free_packet(p);
+        return;
+    }
+
+    // convert multibyte fields to host representation
+    hdr_convert(h);
+
+    // check if this is a DHCP packet, as those need to be processed to get
+    // our IP address
+    if(h->proto == IPPROTO_UDP &&
+       ((struct udp_hdr_t *)((char *)h + (h->hlen * 4)))->srcp == DHCP_SERVER_PORT)
+    {
+        // add or update ARP table entry
+        struct ether_header_t *eh = (struct ether_header_t *)p->data;
+        add_arp_entry(p->ifp, h->src, eh->src);
+
+        // pass over to the transport layer
+        udp_input(p);
+        return;
+    }
+
+    for(rt = route_head.next; rt != NULL; rt = rt->next)
+    {
+        if(rt->dest == h->dest ||
+           (ipv4_is_broadcast(h->dest, rt->netmask) &&
+            ipv4_is_same_network(h->src, rt->dest, rt->netmask)) ||
+            h->dest == 0xffffffff ||
+            rt->dest == 0x00)
+        {
+            break;
+        }
+    }
+
+    if(!rt)
+    {
+        // packet not for us, either forward or discard
+
+        // convert multibyte fields to network representation
+        hdr_convert(h);
+
+        // this will free the packet buf
+        ip_forward(p);
+        return;
+    }
+
+    // add or update ARP table entry if the source IP is on the local network
+    if(ipv4_is_same_network(h->src, rt->dest, rt->netmask))
+    {
+        struct ether_header_t *eh = (struct ether_header_t *)p->data;
+        add_arp_entry(rt->ifp, h->src, eh->src);
+    }
+
+    /*
+     * RFC 1122 says:
+     * 
+     *    A host SHOULD silently discard a datagram that is received via
+     *    a link-layer broadcast (see Section 2.4) but does not specify
+     *    an IP multicast or broadcast destination address.
+     */
+    if((p->flags & PACKET_FLAG_BROADCAST) &&
+       !ipv4_is_broadcast(h->dest, rt->netmask) &&
+       !ipv4_is_multicast(h->dest))
+    {
+        printk("ip: dropped broadcast packet\n");
+        netstats.ip.drop++;
+        free_packet(p);
+        return;
+    }
+
+    /*
+     * Handle IP options and possibly forward the packet.
+     * If the packet is forwarded, or there is an error processing
+     * options, packet will be freed, so we don't need to do this here.
+     */
+    if((h->hlen * 4) > sizeof(struct ipv4_hdr_t) && ip_do_options(p))
+    {
+        return;
+    }
+
+    /*
+     * Reassemble fragmented packets
+     */
+    if((h->offset & (IP_OFFMASK | IP_MF)) != 0)
+    {
+        struct ipv4_fraglist_t *ifq;
+
+        kernel_mutex_lock(&fragq.lock);
+
+        /*
+         * RFC 791 says we should identify fragment buffers via the
+         * combination of 4 fields: source, destination, protocol and
+         * identification fields.
+         */
+        for(ifq = fragq.head; ifq != NULL; ifq = ifq->next)
+        {
+            if(ifq->id == h->id && ifq->proto == h->proto &&
+               ifq->src == h->src && ifq->dest == h->dest)
+            {
+                break;
+            }
+        }
+
+        kernel_mutex_unlock(&fragq.lock);
+
+        // if all fragments are reassembled, we get a packet back
+        if((p = ip_reassemble(p, ifq)) == NULL)
+        {
+            KDEBUG("ip: incomplete fragmented packet\n");
+            return;
+        }
+    }
+
+    // check if a raw socket wants this packet
+    if(raw_input(p) == 0)
+    {
+        KDEBUG("ip: packet consumed by raw socket\n");
+        return;
+    }
+
+    // route up to a higher layer
+    switch(h->proto)
+    {
+        case IPPROTO_UDP:
+            udp_input(p);
+            break;
+
+        case IPPROTO_TCP:
+            tcp_input(p);
+            break;
+
+        case IPPROTO_ICMP:
+            icmpv4_input(p);
+            break;
+
+        default:
+            printk("ip: dropping packet with unsupported protocol (0x%x)\n", h->proto);
+            netstats.ip.proterr++;
+            netstats.ip.drop++;
+
+            if(!ipv4_is_broadcast(h->dest, rt->netmask) &&
+               !ipv4_is_multicast(h->dest))
+            {
+                // this will free the packet buf
+                icmpv4_dest_unreach(p, ICMP_DESTUNREACH_PROTO);
+            }
+            else
+            {
+                free_packet(p);
+            }
+            break;
+    }
+}
+
+
+/*
+ * Process IP options.
+ *
+ * Returns 0 if the options processed successfully, -errno if there was an
+ * error, or if the packet was forwarded. An ICMP packet is sent in case of
+ * an error.
+ */
+static int ip_do_options(struct packet_t *p)
+{
+    struct rtentry_t *rt;
+    struct ipv4_hdr_t *h;
+    struct ip_timestamp_t *ipt;
+    uint8_t *opts, opt, code, opt_len = 0;
+    uint8_t off, icmp_type = ICMP_MSG_PARAMPROBLEM;
+    int hlen, bytes;
+    int forward = 0;
+    uint32_t ntime, dest, ipaddr, *sin;
+
+    h = IPv4_HDR(p);
+    hlen = h->hlen * 4;
+    dest = h->dest;
+    opts = (uint8_t *)p->data + hlen;
+    bytes = hlen - sizeof(struct ipv4_hdr_t);
+
+    for( ; bytes > 0; bytes -= opt_len, opts += opt_len)
+    {
+        opt = opts[IPOPT_OPTVAL];
+        
+        if(opt == IPOPT_EOL)
+        {
+            break;
+        }
+        else if(opt == IPOPT_NOP)
+        {
+            opt_len = 1;
+        }
+        else
+        {
+            opt_len = opts[IPOPT_OLEN];
+            
+            if(opt_len == 0 || opt_len > bytes)
+            {
+                code = &opts[IPOPT_OLEN] - (uint8_t *)p->data;
+                goto err;
+            }
+        }
+        
+        switch(opt)
+        {
+            /*
+             * Loose or strict source routing. Check if the destination
+             * address is on this machine. If the destination address is
+             * not on this machine, drop the packet if source routed, or
+             * do nothing if loosely routed.
+             */
+            case IPOPT_LSRR:
+            case IPOPT_SSRR:
+                // offset should be >= 4
+                if((off = opts[IPOPT_OFFSET]) < IPOPT_MINOFF)
+                {
+                    code = &opts[IPOPT_OFFSET] - (uint8_t *)p->data;
+                    goto err;
+                }
+
+                if(!(rt = route_for_ipv4(h->dest)))
+                {
+                    // strictly routed - send ICMP DESTUNREACH msg
+                    if(opt == IPOPT_SSRR)
+                    {
+                        icmp_type = ICMP_MSG_DESTUNREACH;
+                        code = ICMP_DESTUNREACH_SRCFAIL;
+                        goto err;
+                    }
+                    
+                    // loosely routed - do nothing (just forward)
+                    break;
+                }
+                
+                //off--;
+                
+                if(off >= (opt_len - sizeof(uint32_t)))
+                {
+                    // end of source route
+                    //save_route(opts, h->src);
+                    break;
+                }
+                
+                // find outgoing interface
+                ipaddr = ((uint32_t *)(opts + off))[0];
+
+                if(opt == IPOPT_SSRR)
+                {
+                    rt = route_for_ipv4(ipaddr);
+                }
+                else
+                {
+                    /*
+                     * TODO: find route address
+                     *       See netinet/ip_input.c in 4.3BSD source
+                     */
+                    icmp_type = ICMP_MSG_DESTUNREACH;
+                    code = ICMP_DESTUNREACH_SRCFAIL;
+                    goto err;
+                }
+                
+                if(!rt)
+                {
+                    icmp_type = ICMP_MSG_DESTUNREACH;
+                    code = ICMP_DESTUNREACH_SRCFAIL;
+                    goto err;
+                }
+                
+                h->dest = ipaddr;
+                ((uint32_t *)(opts + off))[0] = rt->dest;
+                opts[IPOPT_OFFSET] += sizeof(uint32_t);
+                forward = !ipv4_is_multicast(ipaddr);
+                break;
+            
+            case IPOPT_RR:
+                if((off = opts[IPOPT_OFFSET]) < IPOPT_MINOFF)
+                {
+                    code = &opts[IPOPT_OFFSET] - (uint8_t *)p->data;
+                    goto err;
+                }
+
+                //off--;
+
+                if(off >= (opt_len - sizeof(uint32_t)))
+                {
+                    break;
+                }
+
+                if(!(rt = route_for_ipv4(h->dest)))
+                {
+                    icmp_type = ICMP_MSG_DESTUNREACH;
+                    code = ICMP_DESTUNREACH_HOST;
+                    goto err;
+                }
+
+                ((uint32_t *)(opts + off))[0] = rt->dest;
+                opts[IPOPT_OFFSET] += sizeof(uint32_t);
+                break;
+
+            case IPOPT_TS:
+                code = opts - (uint8_t *)p->data;
+                ipt = (struct ip_timestamp_t *)opts;
+                
+                if(ipt->len < 5)
+                {
+                    goto err;
+                }
+                
+                if(ipt->ptr > ipt->len - 4)
+                {
+                    TIMESTAMP_OVERFLOW_SET(ipt, TIMESTAMP_OVERFLOW(ipt) + 1);
+
+                    if(TIMESTAMP_OVERFLOW(ipt) == 0)
+                    {
+                        goto err;
+                    }
+                    
+                    break;
+                }
+                
+                sin = (uint32_t *)(opts + ipt->ptr - 1);
+                
+                switch(TIMESTAMP_FLAGS(ipt))
+                {
+                    case IPOPT_TS_TSONLY:
+                        break;
+
+                    case IPOPT_TS_TSANDADDR:
+                        if(ipt->ptr + 4 + sizeof(uint32_t) > ipt->len)
+                        {
+                            goto err;
+                        }
+                        
+                        if(!(rt = route_for_ipv4(dest)))
+                        {
+                            continue;
+                        }
+                        
+                        *sin = rt->dest;
+                        ipt->ptr += sizeof(uint32_t);
+                        break;
+
+                    case IPOPT_TS_PRESPEC:
+                        if(ipt->ptr + 4 + sizeof(uint32_t) > ipt->len)
+                        {
+                            goto err;
+                        }
+
+                        if(!(route_for_ipv4(*sin)))
+                        {
+                            continue;
+                        }
+
+                        ipt->ptr += sizeof(uint32_t);
+                        break;
+
+                    default:
+                        goto err;
+                }
+                
+                ntime = iptime();
+                ((uint32_t *)(opts + ipt->ptr - 1))[0] = ntime;
+                ipt->ptr += 4;
+                break;
+
+            default:
+                break;
+        }
+    }
+    
+    if(forward)
+    {
+        // convert multibyte fields to network representation
+        hdr_convert(h);
+
+        // this will free the packet buf
+        ip_forward(p);
+        return -1;
     }
     
     return 0;
 
 err:
 
-    netstats.ip.drop++;
-    packet_free(p);
+    // this will free the packet buf
+    icmpv4_send(p, icmp_type, code);
+    netstats.ip.opterr++;
     return -EINVAL;
 }
 
 
 /*
- * Send a packet to the Ethernet layer.
- * Called from the network dispatcher when processing IPv4 output queue.
+ * Try to reassemble fragments to form a full packet. If we are still waiting
+ * for more fragments to come, this fragment is added to the waiting queue,
+ * which is passed to us in *ifq. If *ifq == NULL, this is the first fragment
+ * and we create a new queue for it.
  */
-int ipv4_process_out(struct packet_t *p)
+static struct packet_t *ip_reassemble(struct packet_t *p, struct ipv4_fraglist_t *ifq)
 {
-    KDEBUG("ipv4_process_out:\n");
+    struct ipv4_hdr_t *h, *h2;
+    struct packet_t *next, *prev;
+    int hlen;
+    uint16_t offset;
+    uint8_t *buf;
 
-    // enqueue for the ethernet layer to process next
-    kernel_mutex_lock(&ethernet_outq.lock);
-    if(IFQ_FULL(&ethernet_outq))
+    h = IPv4_HDR(p);
+    hlen = h->hlen * 4;
+
+    // subtract ip header length from fragment's length, and convert
+    // the offset count into bytes
+    h->tlen -= hlen;
+    SET_IP_OFFSET(h, GET_IP_OFFSET(h) * 8);
+    p->next = NULL;
+    
+    // create a new queue if this is the first fragment
+    if(ifq == NULL)
     {
-        kernel_mutex_unlock(&ethernet_outq.lock);
+        if(!(ifq = kmalloc(sizeof(struct ipv4_fraglist_t))))
+        {
+            netstats.ip.drop++;
+            free_packet(p);
+            return NULL;
+        }
+        
+        kernel_mutex_lock(&fragq.lock);
+        IPFRAG_ENQUEUE(&fragq, ifq)
+        kernel_mutex_unlock(&fragq.lock);
+        
+        ifq->ttl = IPFRAGTTL;
+        ifq->proto = h->proto;
+        ifq->id = h->id;
+        ifq->src = h->src;
+        ifq->dest = h->dest;
+        ifq->plist = p;
+        //ifq->next = NULL;
+        return NULL;
+    }
+    
+    prev = ifq->plist;
+    
+    // find a fragment that begins after this one
+    for(next = ifq->plist; next != NULL; next = next->next)
+    {
+        if(GET_IP_OFFSET(IPv4_HDR(next)) > GET_IP_OFFSET(h))
+        {
+            break;
+        }
+
+        prev = next;
+    }
+    
+    /*
+     * If there is a preceding fragment, check if its data overlaps with
+     * ours. If the preceding fragment covers some of our data, update our
+     * pointers. If the preceding fragment covers all of our data, drop us.
+     */
+    if(prev)
+    {
+        h2 = IPv4_HDR(prev);
+        offset = GET_IP_OFFSET(h2) + h2->tlen - GET_IP_OFFSET(h);
+
+        if(offset > 0)
+        {
+            if(offset >= h->tlen)
+            {
+                netstats.ip.drop++;
+                free_packet(p);
+                return NULL;
+            }
+            
+            h->offset += offset;
+            h->tlen -= offset;
+        }
+    }
+    
+    // add the new fragment to its queue
+    if(prev)
+    {
+        prev->next = p;
+    }
+    else
+    {
+        ifq->plist = p;
+    }
+    
+    p->next = next;
+    
+    // now check to see if we've got all fragments
+    offset = 0;
+    prev = ifq->plist;
+    
+    for(next = ifq->plist; next != NULL; next = next->next)
+    {
+        // there is a gap here, wait for next fragment to come in
+        h2 = IPv4_HDR(next);
+
+        if(GET_IP_OFFSET(h2) != offset)
+        {
+            return NULL;
+        }
+
+        offset += h2->tlen;
+        prev = next;
+    }
+    
+    // check if the last fragment is actually the last fragment in packet
+    if(GET_IP_FLAGS(IPv4_HDR(prev)) & IP_MF)
+    {
+        return NULL;
+    }
+    
+    // we've got all fragments - time to assemble
+    if(!(p = alloc_packet(PACKET_SIZE_IP(offset))))
+    {
+        /*
+         * TODO: we don't have enogh memory for reassembly - should we 
+         *       send an ICMP packet back to the sender here?
+         */
+        for(next = ifq->plist; next != NULL; )
+        {
+            prev = next->next;
+            free_packet(next);
+            next = prev;
+        }
+
+        remove_from_fqueue(ifq);
         netstats.ip.drop++;
-        netstats.ip.err++;
-        packet_free(p);
-        return -ENOBUFS;
+
+        return NULL;
     }
 
-    IFQ_ENQUEUE(&ethernet_outq, p);
-    kernel_mutex_unlock(&ethernet_outq.lock);
-    netstats.ip.xmit++;
-    return 0;
+    //packet_add_header(p, -ETHER_HLEN);
+    h = IPv4_HDR(p);
+    h2 = IPv4_HDR(ifq->plist);
+    h->ver = 4;
+    h->hlen = (IPv4_HLEN / 4);
+    h->tos = h2->tos;
+    h->tlen = offset + IPv4_HLEN;
+    h->id = ifq->id;
+
+    // get flags from first fragment, but turn the More Fragments bit off
+    h->offset = 0 | GET_IP_FLAGS(h2);
+    h->offset &= ~IP_MF;
+
+    h->ttl = h2->ttl;
+    h->proto = ifq->proto;
+    h->checksum = 0;
+    h->src = ifq->src;
+    h->dest = ifq->dest;
+
+    offset = 0;
+    buf = (uint8_t *)p->data + IPv4_HLEN;
+    
+    // copy all fragment data into the new packet
+    for(next = ifq->plist; next != NULL; )
+    {
+        h2 = IPv4_HDR(next);
+        A_memcpy(buf, (uint8_t *)next->data + (h2->hlen * 4), h2->tlen);
+        buf += h2->tlen;
+        prev = next->next;
+        free_packet(next);
+        next = prev;
+    }
+    
+    // remove from the queue
+    ifq->plist = NULL;
+    remove_from_fqueue(ifq);
+    
+    return p;
+}
+
+
+static void remove_from_fqueue(struct ipv4_fraglist_t *ifq)
+{
+    struct ipv4_fraglist_t *ifq2;
+    
+    kernel_mutex_lock(&fragq.lock);
+    
+    if(fragq.head == ifq)
+    {
+        fragq.head = ifq->next;
+        ifq2 = NULL;
+    }
+    else
+    {
+        ifq2 = fragq.head;
+        
+        while(ifq2 && ifq2->next != ifq)
+        {
+            ifq2 = ifq2->next;
+        }
+        
+        // this shouldn't happen as we know the fragment list is in the queue
+        if(!ifq2)
+        {
+            kpanic("ip: invalid fragment queue pointer");
+        }
+        
+        ifq2->next = ifq->next;
+    }
+
+    if(fragq.tail == ifq)
+    {
+        fragq.tail = ifq2;
+    }
+    
+    fragq.count--;
+    kfree(ifq);
+
+    kernel_mutex_unlock(&fragq.lock);
+}
+
+
+STATIC_INLINE void set_hdr_src(struct netif_t *ifp, struct ipv4_hdr_t *h, uint32_t src)
+{
+    if(src == 0x00)
+    {
+        struct rtentry_t *rt = route_for_ifp(ifp);
+
+        if(!rt)
+        {
+            printk("ip: %s: net interface has no IP address\n", ifp->name);
+            h->src = 0x00;
+        }
+        else
+        {
+            h->src = rt->dest;
+        }
+    }
+    else
+    {
+        h->src = src;
+    }
 }
 
 
 /*
- * IPv4 task function.
+ * Handle sending IP packets.
  */
-void ipv4_task_func(void *arg)
+int ipv4_send(struct packet_t *p, 
+              uint32_t src, uint32_t dest,
+              uint8_t proto, uint8_t ttl)
 {
-    UNUSED(arg);
+    struct ipv4_hdr_t *h;
+    struct rtentry_t *rt;
 
-    for(;;)
+    h = IPv4_HDR(p);
+
+    if(p->flags & PACKET_FLAG_HDRINCLUDED)
     {
-        //KDEBUG("ipv4_task_func:\n");
-
-        ip_fragment_check_expired();
-        
-        // schedule every 500 ms
-        //block_task2(&ipv4_task, PIT_FREQUENCY / 2);
-        block_task2(&ipv4_task, PIT_FREQUENCY);
+        dest = h->dest;
     }
-}
 
-
-void ipv4_init(void)
-{
-    // fork the slow timeout task
-    (void)start_kernel_task("ipv4", ipv4_task_func, NULL, &ipv4_task, 0);
-}
-
-
-int ip_push(struct packet_t *p)
-{
-    KDEBUG("ip_push: sock domain %d\n", p->sock->domain);
-    
-    if(p->sock->domain == AF_INET6)
+    if(!dest || !(rt = route_for_ipv4(dest)))
     {
-        struct in6_addr *dest;
+        printk("ip: cannot find a route (dest 0x%x)\n", dest);
+        netstats.ip.rterr++;
+        free_packet(p);
+        return -EHOSTUNREACH /* EROUTE */;
+    }
 
-        if(!ipv6_is_unspecified(p->remote_addr.ipv6.s6_addr) /* && p->remote_port */)
+    /*
+    if(rt->flags & RT_GATEWAY)
+    {
+        dest = rt->gateway;
+    }
+    */
+
+    if(!(p->flags & PACKET_FLAG_HDRINCLUDED))
+    {
+        if(packet_add_header(p, IPv4_HLEN) != 0)
         {
-            dest = &p->remote_addr.ipv6;
+            printk("ip: insufficient memory for packet header\n");
+            netstats.ip.err++;
+            free_packet(p);
+            return -ENOBUFS;
         }
-        else
+
+        h->ttl = ttl;
+        h->proto = proto;
+        h->dest = dest;
+        h->tos = 0;
+        h->ver = 4;
+        h->hlen = 5;     // hlen of 5 (=20 bytes)
+        h->tlen = htons((uint16_t)p->count);
+        h->offset = htons(IP_DF);
+        h->id = htons(ip_id);
+        ip_id++;
+
+        set_hdr_src(rt->ifp, h, src);
+
+        if(h->proto == IPPROTO_UDP)
         {
-            dest = &p->sock->remote_addr.ipv6;
+            struct udp_hdr_t *udph = (struct udp_hdr_t *)((char *)h + (h->hlen * 4));
+
+            packet_add_header(p, -IPv4_HLEN);
+            udph->checksum = 0;
+            udph->checksum = udp_v4_checksum(p, h->src, h->dest);
+            packet_add_header(p, IPv4_HLEN);
         }
-        
-        return ipv6_push(p, dest, NULL, p->sock->proto->protocol, 0);
+        else if(h->proto == IPPROTO_TCP)
+        {
+            struct tcp_hdr_t *tcph = (struct tcp_hdr_t *)((char *)h + (h->hlen * 4));
+
+            packet_add_header(p, -IPv4_HLEN);
+            tcph->checksum = 0;
+            tcph->checksum = tcp_v4_checksum(p, h->src, h->dest);
+            packet_add_header(p, IPv4_HLEN);
+        }
     }
     else
     {
-        struct in_addr *dest;
+        h->tlen = htons((uint16_t)p->count);
 
-        if(p->remote_addr.ipv4.s_addr /* && p->remote_port */)
+        // fill these fields if needed
+        if(h->src == 0x00)
         {
-            dest = &p->remote_addr.ipv4;
+            set_hdr_src(rt->ifp, h, src);
         }
-        else
+
+        if(h->id == 0)
         {
-            dest = &p->sock->remote_addr.ipv4;
+            h->id = htons(ip_id);
+            ip_id++;
         }
-        
-        return ipv4_push(p, dest, p->sock->proto->protocol);
     }
+
+    h->checksum = 0;
+    h->checksum = inet_chksum((uint16_t *)p->data, IPv4_HLEN, 0);
+
+    return do_send(rt, p, dest);
 }
 

@@ -27,96 +27,60 @@
 
 //#define __DEBUG
 
-#include <errno.h>
 #include <netinet/in.h>
 #include <kernel/laylaos.h>
+#include <kernel/timer.h>
+#include <kernel/net/socket.h>
 #include <kernel/net/protocol.h>
 #include <kernel/net/domain.h>
 #include <kernel/net/udp.h>
 #include <kernel/net/tcp.h>
-#include <kernel/net/ether.h>
+#include <kernel/net/route.h>
+#include <kernel/net/arp.h>
 #include <kernel/net/dhcp.h>
 #include <kernel/net/ipv4.h>
-#include <kernel/net/ipv6.h>
 #include <kernel/net/raw.h>
 #include <kernel/net/unix.h>
-#include <kernel/net/socket.h>
-#include <kernel/net/icmp4.h>
-#include <kernel/net/icmp6.h>
-#include <kernel/timer.h>
+#include <kernel/net/nettimer.h>
 
-int dummy_push(struct packet_t *p);
+extern void loop_attach(void);
 
 
-struct proto_t unix_proto[3] =
+struct proto_t unix_protocols[2] =
 {
-    { SOCK_STREAM, 0, &unix_domain, &unix_sockops, unix_push, },
-    { SOCK_DGRAM, 0, &unix_domain, &unix_sockops, unix_push, },
-    { SOCK_SEQPACKET, 0, &unix_domain, &unix_sockops, unix_push, },
+    { SOCK_STREAM, 0, &unix_domain, &unix_sockops, },
+    { SOCK_DGRAM, 0, &unix_domain, &unix_sockops, },
 };
 
-struct proto_t inet_proto[5] =
+struct proto_t internet_protocols[5] =
 {
-    { 0, 0, &inet_domain, 0, dummy_push, },
-    { SOCK_DGRAM, IPPROTO_UDP, &inet_domain, &udp_sockops, udp_push, },
-    { SOCK_STREAM, IPPROTO_TCP, &inet_domain, &tcp_sockops, tcp_push, },
-    { SOCK_RAW, IPPROTO_RAW, &inet_domain, &raw_sockops, raw_push, },
-    { SOCK_RAW, IPPROTO_ICMP, &inet_domain, &raw_sockops, raw_push, },
+    { 0, 0, &internet_domain, 0, },
+    { SOCK_DGRAM, IPPROTO_UDP, &internet_domain, &udp_sockops, },
+    { SOCK_STREAM, IPPROTO_TCP, &internet_domain, &tcp_sockops, },
+    { SOCK_RAW, IPPROTO_RAW, &internet_domain, &raw_sockops, },
+    { SOCK_RAW, IPPROTO_ICMP, &internet_domain, &raw_sockops, },
 };
-
-struct proto_t inet6_proto[5] =
-{
-    { 0, 0, &inet6_domain, 0, 0, },
-    { SOCK_DGRAM, IPPROTO_UDP, &inet6_domain, &udp_sockops, udp_push, },
-    { SOCK_STREAM, IPPROTO_TCP, &inet6_domain, &tcp_sockops, tcp_push, },
-    { SOCK_RAW, IPPROTO_RAW, &inet6_domain, &raw_sockops, raw_push, },
-    { SOCK_RAW, IPPROTO_ICMPV6, &inet6_domain, &raw_sockops, raw_push, },
-};
-
-
-/*
- * Dummy push function.
- */
-int dummy_push(struct packet_t *p)
-{
-    UNUSED(p);
-    return -EPROTONOSUPPORT;
-}
 
 
 /*
  * Initialize network protocols.
  */
-void proto_init(void)
+void network_init(void)
 {
-    ethernet_inq.max = NETIF_DEFAULT_QUEUE_LEN;
-    ipv4_inq.max = NETIF_DEFAULT_QUEUE_LEN;
-    ipv6_inq.max = NETIF_DEFAULT_QUEUE_LEN;
-    icmp4_inq.max = NETIF_DEFAULT_QUEUE_LEN;
-    icmp6_inq.max = NETIF_DEFAULT_QUEUE_LEN;
-    tcp_inq.max = NETIF_DEFAULT_QUEUE_LEN;
-    udp_inq.max = NETIF_DEFAULT_QUEUE_LEN;
-    raw_inq.max = NETIF_DEFAULT_QUEUE_LEN;
+    printk("Initializing network protocols..\n");
+    netif_init();
+    route_init();
+    nettimer_init();
 
-    ethernet_outq.max = NETIF_DEFAULT_QUEUE_LEN;
-    ipv4_outq.max = NETIF_DEFAULT_QUEUE_LEN;
-    ipv6_outq.max = NETIF_DEFAULT_QUEUE_LEN;
-    //icmp4_outq.max = NETIF_DEFAULT_QUEUE_LEN;
-    //icmp6_outq.max = NETIF_DEFAULT_QUEUE_LEN;
-    //tcp_outq.max = NETIF_DEFAULT_QUEUE_LEN;
-    //udp_outq.max = NETIF_DEFAULT_QUEUE_LEN;
-
-    //ethernet_init();
-    ipv4_init();
-    ipv6_init();
-    //ipv6_nd_init();
-    //icmp4_init();
-    //icmp6_init();
+    ip_init();
     arp_init();
-    //udp_init();
-    tcp_init();
-    //unix_init();
     dhcp_init();
+
+    printk("Attaching pseudo-devices..\n");
+    loop_attach();
+
+    printk("Initializing network statistics..\n");
+    stats_init();
 }
 
 

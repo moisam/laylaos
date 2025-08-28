@@ -2,7 +2,7 @@
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
  *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
- *    file: udp.c
+ *    file: raw.c
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,24 +20,27 @@
  */    
 
 /**
- *  \file udp.c
+ *  \file raw.c
  *
- *  User Datagram Protocol (UDP) implementation.
+ *  RAW socket interface.
  */
 
+//#define __DEBUG
+#include <errno.h>
+#include <kernel/laylaos.h>
 #include <kernel/net.h>
-#include <kernel/net/socket.h>
 #include <kernel/net/packet.h>
+#include <kernel/net/socket.h>
 #include <kernel/net/protocol.h>
 #include <kernel/net/ipv4.h>
-#include <kernel/net/udp.h>
-#include <kernel/net/checksum.h>
+#include <kernel/net/raw.h>
+#include <kernel/task.h>
 #include <mm/kheap.h>
 
 #include "iovec.c"
 
 
-static struct socket_t *udp_socket(void)
+static struct socket_t *raw_socket(void)
 {
     struct socket_t *so;
     
@@ -52,24 +55,26 @@ static struct socket_t *udp_socket(void)
 }
 
 
-static long udp_write(struct socket_t *so, struct msghdr *msg, int kernel)
+static long raw_write(struct socket_t *so, struct msghdr *msg, int kernel)
 {
     struct packet_t *p;
-    struct udp_hdr_t *h;
     long total, res;
+    int hdrincluded = (so->flags & SOCKET_FLAG_IPHDR_INCLUDED);
+    int hdrsize = hdrincluded ? ETHER_HLEN : (ETHER_HLEN + IPv4_HLEN);
 
     if((total = get_iovec_size(msg->msg_iov, msg->msg_iovlen)) == 0)
     {
         return -EINVAL;
     }
 
-    if(!(p = alloc_packet(PACKET_SIZE_UDP(total))))
+    if(!(p = alloc_packet(total + hdrsize)))
     {
-        printk("udp: insufficient memory for sending packet\n");
+        printk("raw: insufficient memory for sending packet\n");
         return -ENOMEM;
     }
 
-    packet_add_header(p, -PACKET_SIZE_UDP(0));
+    packet_add_header(p, -hdrsize);
+    p->flags = hdrincluded ? PACKET_FLAG_HDRINCLUDED : 0;
 
     if((res = read_iovec(msg->msg_iov, msg->msg_iovlen, p->data, 
                          p->count, kernel)) < 0)
@@ -78,17 +83,11 @@ static long udp_write(struct socket_t *so, struct msghdr *msg, int kernel)
         return res;
     }
 
-    packet_add_header(p, UDP_HLEN);
-    h = UDP_HDR(p);
-    h->len = htons(p->count);
-    h->srcp = so->local_port;
-    h->destp = so->remote_port;
-
     if(so->domain == AF_INET)
     {
         res = ipv4_send(p, so->local_addr.ipv4,
                            so->remote_addr.ipv4, 
-                           IPPROTO_UDP, so->ttl);
+                           so->proto->protocol, so->ttl);
         return (res < 0) ? res : total;
     }
 
@@ -100,7 +99,7 @@ static long udp_write(struct socket_t *so, struct msghdr *msg, int kernel)
 }
 
 
-static long udp_read(struct socket_t *so, struct msghdr *msg, unsigned int flags)
+static long raw_read(struct socket_t *so, struct msghdr *msg, unsigned int flags)
 {
     struct packet_t *p;
     size_t size, read = 0;
@@ -167,26 +166,16 @@ try:
 }
 
 
-static long udp_getsockopt(struct socket_t *so, int level, int optname,
+static long raw_getsockopt(struct socket_t *so, int level, int optname,
                            void *optval, int *optlen)
 {
-    if(so->proto->protocol != IPPROTO_UDP)
-    {
-        return -EINVAL;
-    }
-
     return socket_getsockopt(so, level, optname, optval, optlen);
 }
 
 
-static long udp_setsockopt(struct socket_t *so, int level, int optname,
+static long raw_setsockopt(struct socket_t *so, int level, int optname,
                            void *optval, int optlen)
 {
-    if(so->proto->protocol != IPPROTO_UDP)
-    {
-        return -EINVAL;
-    }
-
     return socket_setsockopt(so, level, optname, optval, optlen);
 }
 
@@ -194,75 +183,96 @@ static long udp_setsockopt(struct socket_t *so, int level, int optname,
 #define DROP_PACKET(p)      \
     {                       \
         free_packet(p);     \
-        netstats.udp.drop++;\
-        netstats.udp.err++; \
+        netstats.raw.drop++;\
+        netstats.raw.err++; \
     }
 
 
-void udp_input(struct packet_t *p)
+int raw_input(struct packet_t *p)
 {
-    struct ipv4_hdr_t *iph;
-    struct udp_hdr_t *udph;
+    struct ipv4_hdr_t *iph4 = IPv4_HDR(p);
     struct socket_t *so;
-    int hlen;
-
-    netstats.udp.recv++;
-    iph = IPv4_HDR(p);
-    udph = (struct udp_hdr_t *)((char *)iph + (iph->hlen * 4));
+    int ipver = iph4->ver;
+    uint8_t proto = iph4->proto;
 
     /*
-    udph->srcp = ntohs(udph->srcp);
-    udph->destp = ntohs(udph->destp);
-    udph->checksum = ntohs(udph->checksum);
-    udph->len = ntohs(udph->len);
-    */
-
-    if(!(so = sock_lookup(IPPROTO_UDP, udph->srcp, udph->destp)))
+     * FIXME: We only support IPv4 for now.
+     */
+    if(ipver != 4)
     {
-        printk("udp: cannot find socket for src %d and dest %d\n", udph->srcp, udph->destp);
-        DROP_PACKET(p);
-        return;
+        printk("raw: ignoring packet with ip version %d\n", ipver);
+        return -EPROTONOSUPPORT;
     }
 
-    SOCKET_LOCK(so);
+    kernel_mutex_lock(&sock_lock);
 
-    // User has called shutdown() specifying SHUT_RDWR or SHUT_RD.
-    // Discard input.
-    if(so->flags & SOCKET_FLAG_SHUT_REMOTE)
+    for(so = sock_head.next; so != NULL; so = so->next)
     {
-        DROP_PACKET(p);
-        SOCKET_UNLOCK(so);
-        return;
+        if(!RAW_SOCKET(so) || so->proto->protocol != proto)
+        {
+            continue;
+        }
+
+        if(so->domain != AF_INET)
+        {
+            continue;
+        }
+
+        // deliver the incoming packet to a raw socket if:
+        //   - its local address is the destination specified in the
+        //     packet's destination address, or
+        //   - it is unbound to any local address
+        if(so->local_addr.ipv4 == 0 ||
+           so->local_addr.ipv4 == iph4->dest)
+        {
+            netstats.raw.recv++;
+            kernel_mutex_unlock(&sock_lock);
+            SOCKET_LOCK(so);
+
+            // remove the Ethernet header
+            packet_add_header(p, -ETHER_HLEN);
+
+            // User has called shutdown() specifying SHUT_RDWR or SHUT_RD.
+            // Discard input.
+            if(so->flags & SOCKET_FLAG_SHUT_REMOTE)
+            {
+                DROP_PACKET(p);
+                SOCKET_UNLOCK(so);
+                return 0;
+            }
+
+            if(!IFQ_FULL(&so->inq))
+            {
+                IFQ_ENQUEUE(&so->inq, p);
+            }
+            else
+            {
+                printk("raw: full input queue -- discarding packet\n");
+                DROP_PACKET(p);
+            }
+
+            //so->poll_events |= (POLLIN | POLLPRI | POLLRDNORM | POLLRDBAND);
+            __sync_or_and_fetch(&so->poll_events, (POLLIN | POLLPRI | POLLRDNORM | POLLRDBAND));
+            SOCKET_UNLOCK(so);
+            selwakeup(&(so->selrecv));
+
+            return 0;
+        }
     }
 
-    hlen = ETHER_HLEN + (iph->hlen * 4) + UDP_HLEN;
-    packet_add_header(p, -hlen);
-
-    if(IFQ_FULL(&so->inq))
-    {
-        printk("udp: full input queue -- discarding packet\n");
-        DROP_PACKET(p);
-    }
-    else
-    {
-        IFQ_ENQUEUE(&so->inq, p);
-    }
-
-    //so->poll_events |= (POLLIN | POLLPRI | POLLRDNORM | POLLRDBAND);
-    __sync_or_and_fetch(&so->poll_events, (POLLIN | POLLPRI | POLLRDNORM | POLLRDBAND));
-    SOCKET_UNLOCK(so);
-    selwakeup(&(so->selrecv));
+    kernel_mutex_unlock(&sock_lock);
+    return -ENOENT;
 }
 
 
-struct sockops_t udp_sockops =
+struct sockops_t raw_sockops =
 {
     .connect = NULL,
     .connect2 = NULL,
-    .socket = udp_socket,
-    .write = udp_write,
-    .read = udp_read,
-    .getsockopt = udp_getsockopt,
-    .setsockopt = udp_setsockopt,
+    .socket = raw_socket,
+    .write = raw_write,
+    .read = raw_read,
+    .getsockopt = raw_getsockopt,
+    .setsockopt = raw_setsockopt,
 };
 

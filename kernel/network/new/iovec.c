@@ -88,7 +88,7 @@ INLINE struct iovec *dup_iovec(struct iovec *iov, int iovlen)
 
 
 INLINE size_t read_iovec(struct iovec *iov, int iovlen, 
-                         char *buf, size_t count, int kernel)
+                         uint8_t *buf, size_t count, int kernel)
 {
     size_t read = 0;
     size_t len;
@@ -131,7 +131,7 @@ INLINE size_t read_iovec(struct iovec *iov, int iovlen,
 
 
 INLINE size_t write_iovec(struct iovec *iov, int iovlen, 
-                          char *buf, size_t count, int kernel)
+                          uint8_t *buf, size_t count, int kernel)
 {
     size_t written = 0;
     size_t len;

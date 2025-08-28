@@ -1,6 +1,6 @@
 /* 
- *    Copyright 2022, 2023, 2024 (c) Mohammed Isam [mohammed_isam1984@yahoo.com].
- *    PicoTCP. Copyright (c) 2012-2017 Altran Intelligent Systems. Some rights reserved.
+ *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: dhcp.c
  *    This file is part of LaylaOS.
@@ -25,1356 +25,1331 @@
  *  Dynamic Host Configuration Protocol (DHCP) implementation.
  */
 
-#define __DEBUG
+//#define __DEBUG
+
 #include <errno.h>
-#include <netinet/in.h>
+#include <stdint.h>
+#include <string.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <endian.h>
+#include <kernel/asm.h>
 #include <kernel/laylaos.h>
-#include <kernel/timer.h>
 #include <kernel/task.h>
+#include <kernel/timer.h>
+#include <kernel/clock.h>
+#include <kernel/mutex.h>
+#include <kernel/select.h>
 #include <kernel/net.h>
 #include <kernel/net/socket.h>
-#include <kernel/net/protocol.h>
-#include <kernel/net/ipv4.h>
 #include <kernel/net/dhcp.h>
+#include <kernel/net/ether.h>
+#include <kernel/net/packet.h>
+#include <kernel/net/netif.h>
+#include <kernel/net/route.h>
+#include <kernel/net/arp.h>
+#include <kernel/net/udp.h>
+#include <kernel/net/ipv4.h>
+#include <kernel/net/nettimer.h>
+#include <kernel/net/checksum.h>
 #include <mm/kheap.h>
 
-struct dhcp_client_cookie_t *dhcp_cookies = NULL;
-static struct kernel_mutex_t dhcp_cookie_lock = { 0, };
-static struct task_t *dhcp_task = NULL;
+#include "../../kernel/task_funcs.c"
 
-char dhcp_hostname[64] = { 0, };
-char dhcp_domainname[64] = { 0, };
+extern volatile uint16_t ip_id;
 
-// forward declarations
-static void dhcp_state_machine(struct dhcp_client_cookie_t *dhcpc,
-                               uint8_t *buf, uint8_t ev);
-static void dhcp_client_stop_timers(struct dhcp_client_cookie_t *dhcpc);
-static int dhcp_client_init(struct dhcp_client_cookie_t *dhcpc);
-static int dhcp_client_reinit(struct dhcp_client_cookie_t *dhcpc);
-static void reset(struct dhcp_client_cookie_t *dhcpc);
+static int dhcp_state_transition(struct dhcp_binding_t *binding, int req_state);
+static void dhcp_check(struct dhcp_binding_t *binding);
+static void dhcp_bind(struct dhcp_binding_t *binding);
+static void dhcp_handle_offer(struct dhcp_binding_t *binding);
+static void dhcp_handle_nak(struct dhcp_binding_t *binding);
+static void dhcp_handle_ack(struct dhcp_binding_t *binding);
+static int dhcp_alloc_msg(struct dhcp_binding_t *binding);
+static void dhcp_renewing_timeout(void *arg);
+static void dhcp_rebinding_timeout(void *arg);
+static void dhcp_declining_timeout(void *arg);
+static void dhcp_requesting_timeout(void *arg);
+static void dhcp_checking_timeout(void *arg);
+static void dhcp_t1_timeout(void *arg);
+static void dhcp_t2_timeout(void *arg);
+static void dhcp_lease_timeout(void *arg);
+static void dhcp_task_func(void *unused);
+static void dhcp_sock_func(void *unused);
+
+/*
+ * Client-server interaction to alloate an IP address:
+ *   -> Client broadcasts a DHCPDISCOVER msg
+ *   <- Server(s) respond with DHCPOFFER msg
+ *     Suggested IP address will be in the yiaddr field
+ *     Other config options may be included as well
+ *   -> Client responds with a DHCPREQUEST to either:
+ *     (a) accept server's offer (and decline others)
+ *     (b) confirm correctness of information, e.g. after reboot
+ *     (c) extend the lease on an IP address
+ *   <- Server responds with a DHCPACK msg to confirm address allocation
+ *   <- Server responds with a DHCPNAK msg to indicate incorrect info or
+ *      lease expiry
+ *   -> Client may send DHCPDECLINE to indicate address is in use
+ *   -> Client may send DHCPRELEASE to release address and cancel lease
+ *   -> Client can ask for config params by sending a DHCPINFORM msg
+ */
+
+int dhcp_tasks = 0;
+struct dhcp_binding_t *dhcp_bindings = NULL;
+volatile struct kernel_mutex_t dhcp_lock;
+volatile struct task_t *dhcp_sock_task = NULL;
+struct socket_t *dhcp_sock = NULL;
+
+#define FIX_PACKET_LEN(p, l)                        \
+    (p)->count = sizeof(struct dhcp_msg_t) + (l);
+
+#define dhcp_discover(b)            \
+    dhcp_state_transition((struct dhcp_binding_t *)(b), DHCP_SELECTING)
+#define dhcp_select(b)              \
+    dhcp_state_transition((struct dhcp_binding_t *)(b), DHCP_REQUESTING)
+#define dhcp_release(b)             \
+    dhcp_state_transition((struct dhcp_binding_t *)(b), DHCP_RELEASING)
+#define dhcp_rebind(b)              \
+    dhcp_state_transition((struct dhcp_binding_t *)(b), DHCP_REBINDING)
+#define dhcp_decline(b)             \
+    dhcp_state_transition((struct dhcp_binding_t *)(b), DHCP_DECLINING)
+#define dhcp_renew(b)               \
+    dhcp_state_transition((struct dhcp_binding_t *)(b), DHCP_RENEWING)
+
+#define DHCP_CAP_TRIES          16
 
 
-static int dhcp_client_del_cookie(uint32_t xid)
+/*
+ * Initialize DHCP.
+ */
+void dhcp_init(void)
 {
-    struct dhcp_client_cookie_t *dhcpc, *prev = NULL;
-        
-    for(dhcpc = dhcp_cookies; dhcpc != NULL; dhcpc = dhcpc->next)
-    {
-        if(dhcpc->xid == xid)
-        {
-            break;
-        }
-        
-        prev = dhcpc;
-    }
+    int res;
 
-    if(!dhcpc)
+    init_kernel_mutex(&dhcp_lock);
+
+    res = sock_create(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &dhcp_sock);
+
+    if(res < 0)
     {
-        return -EINVAL;
-    }
-    
-    dhcp_client_stop_timers(dhcpc);
-    socket_close(dhcpc->sock);
-    dhcpc->sock = NULL;
-    ipv4_link_del(dhcpc->ifp, &dhcpc->addr);
-    
-    if(prev)
-    {
-        prev->next = dhcpc->next;
+        printk("dhcp: failed to create socket (err %d)\n", res);
     }
     else
     {
-        dhcp_cookies = dhcpc->next;
-    }
-    
-    kfree(dhcpc);
-    
-    return 0;
-}
+        dhcp_sock->local_addr.ipv4 = 0;
+        dhcp_sock->remote_addr.ipv4 = 0;
+        dhcp_sock->local_port = DHCP_CLIENT_PORT;
+        dhcp_sock->remote_port = DHCP_SERVER_PORT;
 
-
-static struct dhcp_client_timer_t *
-dhcp_timer_add(struct dhcp_client_cookie_t *dhcpc,
-               uint8_t type, uint32_t time)
-{
-    struct dhcp_client_timer_t *timer = &dhcpc->timer[type];
-
-    timer->xid = dhcpc->xid;
-    timer->type = type;
-    
-    // start timer, converting time from msecs to ticks
-    timer->expiry = ticks + (time / MSECS_PER_TICK);
-    
-    return timer;
-}
-
-
-static void dhcp_client_stop_timers(struct dhcp_client_cookie_t *dhcpc)
-{
-    int i;
-    
-    dhcpc->retry = 0;
-    
-    for(i = 0; i < 7; i++)
-    {
-        dhcpc->timer[i].expiry = 0;
+        (void)start_kernel_task("dhcp", dhcp_sock_func, NULL, &dhcp_sock_task, 0);
     }
 }
 
 
-static int dhcp_get_timer_event(struct dhcp_client_cookie_t *dhcpc,
-                                unsigned int type)
+static inline void dhcp_add_option(struct dhcp_binding_t *binding,
+                                   struct dhcp_msg_t *msg,
+                                   uint8_t type, uint8_t len)
 {
-    static int events[] =
-    {
-        DHCP_EVENT_RETRANSMIT,
-        DHCP_EVENT_RETRANSMIT,
-        DHCP_EVENT_RETRANSMIT,
-        DHCP_EVENT_RETRANSMIT,
-        DHCP_EVENT_T1,
-        DHCP_EVENT_T2,
-        DHCP_EVENT_LEASE,
-    };
+    uint8_t *opts = (uint8_t *)msg + sizeof(struct dhcp_msg_t);
+    opts[binding->out_opt_len++] = type;
+    opts[binding->out_opt_len++] = len;
+}
+
+
+static inline void dhcp_add_optionb(struct dhcp_binding_t *binding,
+                                    struct dhcp_msg_t *msg,
+                                    uint8_t type, uint8_t len, uint8_t val)
+{
+    dhcp_add_option(binding, msg, type, len);
     
-    if(type == DHCPC_TIMER_REQUEST)
+    uint8_t *opts = (uint8_t *)msg + sizeof(struct dhcp_msg_t);
+    opts[binding->out_opt_len++] = val;
+}
+
+
+static inline void dhcp_add_options(struct dhcp_binding_t *binding,
+                                    struct dhcp_msg_t *msg,
+                                    uint8_t type, uint8_t len, uint16_t val)
+{
+    dhcp_add_option(binding, msg, type, len);
+
+    uint8_t *opts = (uint8_t *)msg + sizeof(struct dhcp_msg_t);
+    opts[binding->out_opt_len++] = (uint8_t)((val & 0xFF00) >> 8);
+    opts[binding->out_opt_len++] = (uint8_t)((val & 0x00FF) >> 0);
+}
+
+
+static inline void dhcp_add_optionl(struct dhcp_binding_t *binding,
+                                    struct dhcp_msg_t *msg,
+                                    uint8_t type, uint8_t len, uint32_t val)
+{
+    dhcp_add_option(binding, msg, type, len);
+
+    uint8_t *opts = (uint8_t *)msg + sizeof(struct dhcp_msg_t);
+    opts[binding->out_opt_len++] = (uint8_t)((val & 0xFF000000) >> 24);
+    opts[binding->out_opt_len++] = (uint8_t)((val & 0x00FF0000) >> 16);
+    opts[binding->out_opt_len++] = (uint8_t)((val & 0x0000FF00) >> 8);
+    opts[binding->out_opt_len++] = (uint8_t)((val & 0x000000FF) >> 0);
+}
+
+
+static inline void dhcp_add_option_cid(struct dhcp_binding_t *binding,
+                                       struct dhcp_msg_t *msg)
+{
+    uint8_t i;
+    
+    dhcp_add_option(binding, msg, DHCP_OPTION_DHCP_CLIENT_IDENTIFIER,
+                    ETHER_ADDR_LEN + 1);
+
+    uint8_t *opts = (uint8_t *)msg + sizeof(struct dhcp_msg_t);
+    
+    opts[binding->out_opt_len++] = 1;       // ethernet address
+
+    for(i = 0; i < ETHER_ADDR_LEN; i++)
     {
-        if(++dhcpc->retry > DHCP_CLIENT_RETRIES)
+        opts[binding->out_opt_len++] = binding->ifp->hwaddr[i];
+    }
+}
+
+
+static inline void dhcp_add_option_paramlist(struct dhcp_binding_t *binding,
+                                             struct dhcp_msg_t *msg)
+{
+    dhcp_add_option(binding, msg, DHCP_OPTION_DHCP_PARAMETER_REQUEST_LIST, 13);
+
+    uint8_t *opts = (uint8_t *)msg + sizeof(struct dhcp_msg_t);
+    
+    opts[binding->out_opt_len++] = DHCP_OPTION_SUBNET_MASK;
+    opts[binding->out_opt_len++] = DHCP_OPTION_TIME_OFFSET;
+    opts[binding->out_opt_len++] = DHCP_OPTION_ROUTERS;
+    opts[binding->out_opt_len++] = DHCP_OPTION_DOMAIN_NAME_SERVERS;
+    opts[binding->out_opt_len++] = DHCP_OPTION_HOST_NAME;
+    opts[binding->out_opt_len++] = DHCP_OPTION_DOMAIN_NAME;
+    opts[binding->out_opt_len++] = DHCP_OPTION_INTERFACE_MTU;
+    opts[binding->out_opt_len++] = DHCP_OPTION_BROADCAST_ADDRESS;
+    opts[binding->out_opt_len++] = DHCP_OPTION_STATIC_ROUTES;
+    opts[binding->out_opt_len++] = DHCP_OPTION_NIS_DOMAIN;
+    opts[binding->out_opt_len++] = DHCP_OPTION_NIS_SERVERS;
+    opts[binding->out_opt_len++] = DHCP_OPTION_NTP_SERVERS;
+    opts[binding->out_opt_len++] = DHCP_OPTION_ROOT_PATH;
+}
+
+
+static inline void dhcp_add_option_end(struct dhcp_binding_t *binding,
+                                       struct dhcp_msg_t *msg)
+{
+    volatile int len;
+    uint8_t *opts = (uint8_t *)msg + sizeof(struct dhcp_msg_t);
+    
+    opts[binding->out_opt_len++] = DHCP_OPTION_END;
+    len = binding->out_opt_len;
+
+    // pad to min packet size, and make sure it is 4-byte aligned
+    while(len < DHCP_MIN_OPTIONS_LEN || (len & 3))
+    {
+        opts[len++] = 0;
+    }
+    
+    binding->out_opt_len = len;
+}
+
+
+static inline uint8_t dhcp_get_optionb(uint8_t *p)
+{
+    return *p;
+}
+
+
+static inline uint16_t dhcp_get_options(uint8_t *p)
+{
+    uint16_t val;
+    val = (p[0] << 8) | p[1];
+    return val;
+}
+
+
+static inline uint32_t dhcp_get_optionl(uint8_t *p)
+{
+    uint32_t val;
+    val = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+    return val;
+}
+
+
+static void dhcp_set_state(struct dhcp_binding_t *binding, int state)
+{
+    if(state != binding->state)
+    {
+        binding->state = state;
+        binding->tries = 0;
+    }
+}
+
+
+static struct dhcp_binding_t *dhcp_binding_by_netif(struct netif_t *ifp)
+{
+    struct dhcp_binding_t *binding = dhcp_bindings;
+    
+    while(binding)
+    {
+        if(binding->ifp == ifp)
         {
-            reset(dhcpc);
-            return DHCP_EVENT_NONE;
+            return binding;
         }
-    }
-    else if(type < DHCPC_TIMER_T1)
-    {
-        dhcpc->retry++;
+        
+        binding = binding->next;
     }
     
-    return events[type];
+    return NULL;
+}
+
+
+static struct dhcp_binding_t *dhcp_binding_by_task(volatile struct task_t *task)
+{
+    struct dhcp_binding_t *binding = dhcp_bindings;
+    
+    while(binding)
+    {
+        if(binding->task == task)
+        {
+            return binding;
+        }
+        
+        binding = binding->next;
+    }
+    
+    return NULL;
 }
 
 
 /*
- * Returns 1 if the cookie has been removed, 0 otherwise.
+ * Start DHCP.
  */
-static int dhcp_client_reinit(struct dhcp_client_cookie_t *dhcpc)
+struct dhcp_binding_t *dhcp_start(struct netif_t *ifp)
 {
-    int res = 0;
+    struct dhcp_binding_t *binding, *tmp;
+    int res;
+    pid_t pid;
+    char buf[8];
     
-    if(dhcpc->sock)
+    if((binding = dhcp_binding_by_netif(ifp)) != NULL)
     {
-        socket_close(dhcpc->sock);
-        dhcpc->sock = NULL;
-    }
-    
-    if(++dhcpc->retry > DHCP_CLIENT_RETRIES)
-    {
-        if(dhcpc->callback)
+        printk("dhcp: already active on interface %s\n", ifp->name);
+        
+        // restart the negotiation
+        if((res = dhcp_discover(binding)) < 0)
         {
-            dhcpc->callback(dhcpc, DHCP_ERROR);
+            return NULL;
         }
         
-        dhcp_client_del_cookie(dhcpc->xid);
-        res = 1;
+        return binding;
     }
-    else
-    {
-        dhcp_client_init(dhcpc);
-    }
-    
-    return res;
-}
 
-
-static struct dhcp_client_cookie_t *
-dhcp_client_add_cookie(struct netif_t *ifp, 
-                       void (*callback)(void *, int), 
-                       uint32_t *uid, uint32_t xid)
-{
-    struct dhcp_client_cookie_t *dhcpc = NULL, *tmp;
-    
-    kernel_mutex_lock(&dhcp_cookie_lock);
-    
-    for(tmp = dhcp_cookies; tmp != NULL; tmp = tmp->next)
+    if(!(binding = kmalloc(sizeof(struct dhcp_binding_t))))
     {
-        if(tmp->xid == xid)
-        {
-            break;
-        }
-    }
-    
-    // client cookie with same xid was found
-    if(tmp)
-    {
-        kernel_mutex_unlock(&dhcp_cookie_lock);
         return NULL;
     }
 
-    kernel_mutex_unlock(&dhcp_cookie_lock);
-    
-    if(!(dhcpc = kmalloc(sizeof(struct dhcp_client_cookie_t))))
-    {
-        return NULL;
-    }
-    
-    A_memset(dhcpc, 0, sizeof(struct dhcp_client_cookie_t));
-    dhcpc->state = DHCP_CLIENT_STATE_INIT;
-    dhcpc->xid = xid;
-    dhcpc->uid = uid;
-    *(dhcpc->uid) = 0;
-    dhcpc->callback = callback;
-    dhcpc->ifp = ifp;
-    dhcpc->next = NULL;
+    A_memset(binding, 0, sizeof(struct dhcp_binding_t));
 
-    kernel_mutex_lock(&dhcp_cookie_lock);
+    binding->ifp = ifp;
+    binding->xid = now();
 
-    if(dhcp_cookies == NULL)
+    ksprintf(buf, sizeof(buf), "dhcp%d", dhcp_tasks++);
+    pid = start_kernel_task(buf, dhcp_task_func, NULL, &binding->task,
+                            0 /* KERNEL_TASK_ELEVATED_PRIORITY */);
+    binding->task = get_task_by_id(pid);
+    
+    kernel_mutex_lock(&dhcp_lock);
+    
+    if(dhcp_bindings == NULL)
     {
-        dhcp_cookies = dhcpc;
+        dhcp_bindings = binding;
     }
     else
     {
-        for(tmp = dhcp_cookies; tmp->next; tmp = tmp->next)
+        for(tmp = dhcp_bindings; tmp->next != NULL; tmp = tmp->next)
         {
             ;
         }
         
-        tmp->next = dhcpc;
+        tmp->next = binding;
     }
-
-    kernel_mutex_unlock(&dhcp_cookie_lock);
     
-    return dhcpc;
+    kernel_mutex_unlock(&dhcp_lock);
+    
+    dhcp_discover(binding);
+
+    return binding;
 }
 
 
-static int dhcp_client_msg(struct dhcp_client_cookie_t *dhcpc, uint8_t type)
+static void udp_send(struct netif_t *ifp, struct packet_t *p,
+                     uint32_t src, uint32_t dest)
 {
-	struct msghdr msg;
-	struct iovec aiov;
-	int res;
-    uint16_t optlen = 0, offset = 0;
-    struct dhcp_hdr_t *h = NULL;
-    struct sockaddr_in src = { 0, };
-    struct sockaddr_in dest =
+    struct udp_hdr_t *udph;
+    struct ipv4_hdr_t *iph;
+    uint8_t dest_ethernet[ETHER_ADDR_LEN];
+    int res;
+
+    if(dest == 0xffffffff)
     {
-        .sin_family = AF_INET,
-        .sin_addr = { 0xFFFFFFFF },
-        .sin_port = htons(DHCP_SERVER_PORT),
+        for(res = 0; res < ETHER_ADDR_LEN; res++)
+        {
+            dest_ethernet[res] = 0xff;
+        }
+    }
+    else
+    {
+        if(!arp_to_eth(dest, dest_ethernet))
+        {
+            printk("dhcp: failed to resolve server Ethernet address\n");
+            free_packet(p);
+            return;
+        }
+    }
+
+    iph = IPv4_HDR(p);
+    udph = UDP_HDR(p);
+
+    packet_add_header(p, UDP_HLEN);
+    udph->len = htons(p->count);
+    udph->srcp = DHCP_CLIENT_PORT;
+    udph->destp = DHCP_SERVER_PORT;
+    udph->checksum = 0;
+    udph->checksum = udp_v4_checksum(p, src, dest);
+
+    packet_add_header(p, IPv4_HLEN);
+    iph->ttl = IPDEFTTL;
+    iph->proto = IPPROTO_UDP;
+    iph->src = src;
+    iph->dest = dest;
+    iph->tos = 0;
+    iph->ver = 4;
+    iph->hlen = 5;     // hlen of 5 (=20 bytes)
+    iph->tlen = htons((uint16_t)p->count);
+    iph->offset = htons(IP_DF);
+    iph->id = htons(ip_id);
+    ip_id++;
+    iph->checksum = 0;
+    iph->checksum = inet_chksum((uint16_t *)p->data, IPv4_HLEN, 0);
+
+    if((res = ethernet_send(ifp, p, dest_ethernet)) < 0)
+    {
+        printk("dhcp: failed to send packet (err %d)\n", res);
+    }
+}
+
+
+int dhcp_state_transition(struct dhcp_binding_t *binding, int req_state)
+{
+    static int msg_type[] =
+    {
+        // DHCP msg type              req_state
+        0,                      // 0  invalid state
+        DHCP_REQUEST,           // 1  DHCP_REQUESTING
+        0,                      // 2  DHCP_INIT
+        0,                      // 3  DHCP_REBOOTING
+        DHCP_REQUEST,           // 4  DHCP_REBINDING
+        DHCP_REQUEST,           // 5  DHCP_RENEWING
+        DHCP_DISCOVER,          // 6  DHCP_SELECTING
+        0,                      // 7  DHCP_INFORMING
+        0,                      // 8  DHCP_CHECKING
+        0,                      // 9  DHCP_PERMANENT
+        0,                      // 10 DHCP_BOUND
+        DHCP_DECLINE,           // 11 DHCP_DECLINING
+        DHCP_RELEASE,           // 12 DHCP_RELEASING
     };
     
-    // Set again default route for the bcast request
-    ipv4_route_set_broadcast_link(ipv4_link_by_ifp(dhcpc->ifp));
-    
-    switch(type)
+    int res;
+    int secs = 0, tries;
+    struct dhcp_msg_t *msg;
+
+	//KDEBUG("dhcp_state_transition: req_state %d\n", req_state);
+	//__asm__ __volatile__("xchg %%bx, %%bx"::);
+
+    if(req_state == DHCP_SELECTING)
     {
-        case DHCP_MSG_DISCOVER:
-            KDEBUG("dhcp: sent DISCOVER\n");
-            
-            // include opt len for: msg type, max msg size, params, opt end
-            optlen = 3 + 4 + 9 + 1;
-            
-            if(!(h = kmalloc(sizeof(struct dhcp_hdr_t) + optlen)))
-            {
-                return -ENOMEM;
-            }
-            
-            A_memset(h, 0, sizeof(struct dhcp_hdr_t) + optlen);
-            
-            // specific options
-            offset = (uint16_t)dhcp_opt_max_msgsize(DHCP_OPT(h, 0),
-                                                    DHCP_CLIENT_MAX_MSGSIZE);
-            break;
+        binding->ipaddr = 0;
+    }
 
-        case DHCP_MSG_REQUEST:
-            KDEBUG("dhcp: sent REQUEST\n");
-            
-            // include opt len for: msg type, max msg size, params,
-            // reqip, serverid, opt end
-            optlen = 3 + 4 + 9 + 6 + 6 + 1;
-            
-            if(!(h = kmalloc(sizeof(struct dhcp_hdr_t) + optlen)))
-            {
-                return -ENOMEM;
-            }
-            
-            A_memset(h, 0, sizeof(struct dhcp_hdr_t) + optlen);
-            
-            // specific options
-            offset = dhcp_opt_max_msgsize(DHCP_OPT(h, 0),
-                                          DHCP_CLIENT_MAX_MSGSIZE);
-            
-            if(dhcpc->state == DHCP_CLIENT_STATE_REQUESTING)
-            {
-                offset += dhcp_opt_reqip(DHCP_OPT(h, offset), &dhcpc->addr);
-                offset += dhcp_opt_serverid(DHCP_OPT(h, offset), &dhcpc->serverid);
-            }
-            
-            break;
-
-        default:
-            return -EINVAL;
+    if(req_state != DHCP_REQUESTING)
+    {
+        binding->xid++;
     }
     
-    // common options
-    offset += dhcp_opt_msgtype(DHCP_OPT(h, offset), type);
-    offset += dhcp_opt_paramlist(DHCP_OPT(h, offset));
-    offset += dhcp_opt_end(DHCP_OPT(h, offset));
+    tries = DHCP_CAP_TRIES;
+
+    dhcp_set_state(binding, req_state);
     
-    switch(dhcpc->state)
+    if((res = dhcp_alloc_msg(binding)) == 0)
     {
-        case DHCP_CLIENT_STATE_BOUND:
-        case DHCP_CLIENT_STATE_RENEWING:
-            dest.sin_addr.s_addr = dhcpc->serverid.s_addr;
-            h->ciaddr = dhcpc->addr.s_addr;
-            break;
+        msg = (struct dhcp_msg_t *)binding->out_packet->data;
+        dhcp_add_optionb(binding, msg, DHCP_OPTION_DHCP_MESSAGE_TYPE, 1,
+                            msg_type[req_state]);
 
-        case DHCP_CLIENT_STATE_REBINDING:
-            h->ciaddr = dhcpc->addr.s_addr;
-            break;
-    }
-    
-    // header info
-    h->op = DHCP_OP_REQUEST;
-    h->htype = 1;   // Ethernet
-    h->hlen = ETHER_ADDR_LEN;
-    h->xid = dhcpc->xid;
-    h->dhcp_magic = htonl(DHP_MAGIC_COOKIE);
-    
-    COPY_ETHER_ADDR(h->hwaddr, dhcpc->ifp->ethernet_addr.addr);
-    
-    if(dest.sin_addr.s_addr == INADDR_BROADCAST)
-    {
-        ipv4_route_set_broadcast_link(ipv4_link_get(&dhcpc->addr));
-    }
-    
-    // send the message
-	if(socket_check(dhcpc->sock) != 0)
-	{
-	    KDEBUG("dhcp: socket failed check\n");
-        return -EINVAL;
-	}
-	
-	/*
-	if(!(dhcpc->sock->state & SOCKET_STATE_CONNECTED))
-	{
-	    KDEBUG("dhcp: socket is not connected (state %d)\n", dhcpc->sock->state);
-        return -ENOTCONN;
-	}
-	*/
+        dhcp_add_option_cid(binding, msg);
+        dhcp_add_option_paramlist(binding, msg);
 
-    // get src addr
-	if((res = sendto_get_ipv4_src(dhcpc->sock, &dest, &src)) != 0)
-	{
-	    KDEBUG("dhcp: cannot get src addr\n");
-	    kfree(h);
-	    return res;
-	}
+        dhcp_add_options(binding, msg, DHCP_OPTION_DHCP_MAX_MESSAGE_SIZE,
+                         2, 576);
 
-    src.sin_port = htons(DHCP_CLIENT_PORT);
-    
-	msg.msg_namelen = 0;
-	msg.msg_name = 0;
-	msg.msg_iov = &aiov;
-	msg.msg_iovlen = 1;
-	aiov.iov_base = h;
-	aiov.iov_len = sizeof(struct dhcp_hdr_t) + optlen;
-	msg.msg_control = 0;
-	msg.msg_flags = 0;
-
-    res = do_sendto(dhcpc->sock, &msg, &src, &dest, 0, 1);
-    
-    kfree(h);
-
-    KDEBUG("dhcp_client_msg: res %d\n", res);
-    
-    return (res < 0) ? res : 0;
-}
-
-
-static inline int dhcp_sock_bind(struct socket_t *so, uint16_t port)
-{
-    static struct sockaddr_in sin = { .sin_family = AF_INET, 0, };
-    
-    if(!is_port_free(so->domain, so->proto->protocol, port, (struct sockaddr *)&sin))
-    {
-        return -EADDRINUSE;
-    }
-    
-    so->local_port = port;
-    so->local_addr.ipv4.s_addr = sin.sin_addr.s_addr;
-	
-	return socket_update_state(so, SOCKET_STATE_BOUND, 0, 0);
-}
-
-
-static int dhcp_client_init(struct dhcp_client_cookie_t *dhcpc)
-{
-    static struct in_addr addr_any = { 0 };
-    static struct in_addr broadcast_netmask = { 0xFFFFFFFF };
-    uint16_t port = htons(DHCP_CLIENT_PORT);
-    
-    if(!dhcpc)
-    {
-        return -EINVAL;
-    }
-    
-    // adding a link with address 0.0.0.0 and netmask 0.0.0.0,
-    // automatically adds a route for a global broadcast
-    ipv4_link_add(dhcpc->ifp, &addr_any, &broadcast_netmask);
-    
-    if(!dhcpc->sock)
-    {
-        KDEBUG("dhcp_client_init: creating socket\n");
-
-        if(sock_create(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &dhcpc->sock) < 0)
+        if(req_state == DHCP_SELECTING || req_state == DHCP_REQUESTING)
         {
-            return -EAGAIN;
+            msg->flags = htons(DHCP_BROADCAST_FLAG);
+            // this MUST be cleared during the discovery phase
+            msg->ciaddr = 0;
+        }
+        else if(req_state == DHCP_REBINDING)
+        {
+            msg->flags = htons(DHCP_BROADCAST_FLAG);
         }
 
-        dhcpc->sock->wakeup = dhcp_client_wakeup;
-    }
+        if(req_state == DHCP_REQUESTING)
+        {
+            dhcp_add_optionl(binding, msg, DHCP_OPTION_DHCP_REQUESTED_ADDRESS,
+                                4, htonl(binding->ipaddr));
+            dhcp_add_optionl(binding, msg, DHCP_OPTION_DHCP_SERVER_IDENTIFIER,
+                                4, htonl(binding->saddr));
+        }
 
-    if(!dhcpc->sock)
-    {
-        KDEBUG("dhcp_client_init: failed to create socket\n");
-
-        return dhcp_timer_add(dhcpc, DHCPC_TIMER_INIT, 
-                              DHCP_CLIENT_REINIT) ? 0 : -ENOMEM;
-    }
-    
-    dhcpc->sock->ifp = dhcpc->ifp;
-
-    KDEBUG("dhcp_client_init: binding socket\n");
-    
-    // bind socket
-    if(dhcp_sock_bind(dhcpc->sock, port) < 0)
-    {
-        KDEBUG("dhcp_client_init: failed to bind socket\n");
-
-        socket_close(dhcpc->sock);
-        dhcpc->sock = NULL;
-
-        return dhcp_timer_add(dhcpc, DHCPC_TIMER_INIT, 
-                              DHCP_CLIENT_REINIT) ? 0 : -ENOMEM;
-    }
-
-    KDEBUG("dhcp_client_init: sending DISCOVER\n");
-    
-    if(dhcp_client_msg(dhcpc, DHCP_MSG_DISCOVER) < 0)
-    {
-        KDEBUG("dhcp_client_init: failed to send DISCOVER\n");
-
-        socket_close(dhcpc->sock);
-        dhcpc->sock = NULL;
-
-        return dhcp_timer_add(dhcpc, DHCPC_TIMER_INIT, 
-                              DHCP_CLIENT_REINIT) ? 0 : -ENOMEM;
-    }
-    
-    dhcpc->retry = 0;
-    dhcpc->init_timestamp = ticks;
-
-    KDEBUG("dhcp_client_init: adding retry timer\n");
-    
-    // timer value is doubled with every retry (exponential backoff)
-    if(!dhcp_timer_add(dhcpc, DHCPC_TIMER_INIT, DHCP_CLIENT_RETRANS * 1000))
-    {
-        KDEBUG("dhcp_client_init: failed to add timer\n");
-
-        socket_close(dhcpc->sock);
-        dhcpc->sock = NULL;
+        dhcp_add_option_end(binding, msg);
+        FIX_PACKET_LEN(binding->out_packet, binding->out_opt_len);
         
-        return -ENOMEM;
-    }
-    
-    return 0;
-}
-
-
-int dhcp_initiate_negotiation(struct netif_t *ifp, 
-                              void (*callback)(void *, int), uint32_t *uid)
-{
-    int retry = 32;
-    uint32_t xid = 0;
-    struct dhcp_client_cookie_t *dhcpc = NULL;
-    
-    if(!ifp || !uid)
-    {
-        return -EINVAL;
-    }
-    
-    // attempt to generate a correct xid, else fail
-    do
-    {
-        xid = genrand_int32();
-    } while(!xid && --retry);
-    
-    if(!xid)
-    {
-        return -EAGAIN;
-    }
-    
-    if(!(dhcpc = dhcp_client_add_cookie(ifp, callback, uid, xid)))
-    {
-        return -ENOMEM;
-    }
-    
-    KDEBUG("dhcp: added client (cookie xid %u)\n", dhcpc->xid);
-    *uid = xid;
-    
-    return dhcp_client_init(dhcpc);
-}
-
-
-int dhcp_are_opts_valid(void *data, int len)
-{
-    uint8_t optlen = 0;
-    uint8_t *p = data;
-    
-    while(len > 0)
-    {
-        switch(*p)
+        if(req_state == DHCP_REQUESTING)
         {
-            case DHCP_OPT_END:
-                return 1;
-
-            case DHCP_OPT_PAD:
-                p++;
-                len--;
-                break;
-
-            default:
-                // move pointer from code octet to len octet
-                p++;
-                len--;
-                
-                // (*p + 1) to account for len octet
-                if((len <= 0) || (len - (*p + 1) < 0))
-                {
-                    return 0;
-                }
-                
-                optlen = *p;
-                p += optlen + 1;
-                len -= optlen;
-                break;
+            udp_send(binding->ifp, binding->out_packet, 0x00, 0xffffffff);
+            binding->out_packet = NULL;
+        }
+        else if(req_state == DHCP_RENEWING || req_state == DHCP_RELEASING)
+        {
+            // this should be unicast to the DHCP server, but we 
+            // shouldn't include a 'server identifier' in the msg, 
+            // according to RFC 2131
+            udp_send(binding->ifp, binding->out_packet, binding->ipaddr, binding->saddr);
+            binding->out_packet = NULL;
+        }
+        else
+        {
+            udp_send(binding->ifp, binding->out_packet, binding->ipaddr, 0xffffffff);
+            binding->out_packet = NULL;
         }
     }
     
-    return 0;
-}
-
-
-struct dhcp_opt_t *dhcp_next_opt(struct dhcp_opt_t **opts)
-{
-    uint8_t **p = (uint8_t **)opts;
-    struct dhcp_opt_t *opt = *opts;
+    binding->tries++;
     
-    if(opt->code == DHCP_OPT_END)
+    // roundup
+    if(binding->tries == 0)
     {
-        return NULL;
-    }
-
-    if(opt->code == DHCP_OPT_PAD)
-    {
-        *p += 1;
-        return *opts;
+        binding->tries = 1;
     }
     
-    *p += (opt->len + 2);   // (len + 2) to account for code and len octet
-    
-    return *opts;
-}
-
-
-uint16_t dhcp_opt_max_msgsize(struct dhcp_opt_t *opt, uint16_t size)
-{
-    opt->code = DHCP_OPT_MAX_MSGSIZE;
-    opt->len = 2;
-    opt->ext.max_msg_size.size = htons(size);
-    
-    return 4;
-}
-
-
-uint16_t dhcp_opt_reqip(struct dhcp_opt_t *opt, struct in_addr *ip)
-{
-    opt->code = DHCP_OPT_REQIP;
-    opt->len = 4;
-    opt->ext.req_ip.ip.s_addr = ip->s_addr;
-    
-    return 6;
-}
-
-
-uint16_t dhcp_opt_serverid(struct dhcp_opt_t *opt, struct in_addr *ip)
-{
-    opt->code = DHCP_OPT_SERVERID;
-    opt->len = 4;
-    opt->ext.server_id.ip.s_addr = ip->s_addr;
-    
-    return 6;
-}
-
-
-uint16_t dhcp_opt_msgtype(struct dhcp_opt_t *opt, uint8_t type)
-{
-    opt->code = DHCP_OPT_MSGTYPE;
-    opt->len = 1;
-    opt->ext.msg_type.type = type;
-    
-    return 3;
-}
-
-
-uint16_t dhcp_opt_paramlist(struct dhcp_opt_t *opt)
-{
-    uint8_t *params = &(opt->ext.param_list.code[0]);
-    
-    opt->code = DHCP_OPT_PARAMLIST;
-    opt->len = 7;
-    params[0] = DHCP_OPT_NETMASK;
-    params[1] = DHCP_OPT_TIME;
-    params[2] = DHCP_OPT_ROUTER;
-    params[3] = DHCP_OPT_HOSTNAME;
-    params[4] = DHCP_OPT_RENEWAL_TIME;
-    params[5] = DHCP_OPT_REBINDING_TIME;
-    params[6] = DHCP_OPT_DNS;
-    
-    return 9;
-}
-
-
-uint16_t dhcp_opt_end(struct dhcp_opt_t *opt)
-{
-    uint8_t *end = (uint8_t *)opt;
-    
-    *end = DHCP_OPT_END;
-    
-    return 1;
-}
-
-
-static int16_t dhcp_client_opt_parse(void *p, int len)
-{
-    int optlen = len - sizeof(struct dhcp_hdr_t);
-	struct dhcp_hdr_t *h = (struct dhcp_hdr_t *)p;
-    struct dhcp_opt_t *opt = DHCP_OPT(h, 0);
-    
-    if(h->dhcp_magic != htonl(DHP_MAGIC_COOKIE))
+    // In case of RENEWING and REBINDING, schedule timeout only once. Why?
+    //   - For RENEWING, we wait 1/2 of T2, then retransmit the request.
+    //     The next timeout will be at least T2, at which point we need
+    //     to move to the REBINDING state.
+    //   - For REBINDING, we wait 1/2 of the lease time, then retransmit.
+    //     The next timeout will be at least the duration of the lease,
+    //     at which point we should move to the INIT state and we reinit
+    //     discovery.
+    if(req_state == DHCP_RENEWING && tries == 1)
     {
-        return -EINVAL;
-    }
-    
-    if(!dhcp_are_opts_valid(opt, optlen))
-    {
-        return -EINVAL;
-    }
-    
-    do
-    {
-        if(opt->code == DHCP_OPT_MSGTYPE)
+        // RFC 2131 says in the RENEWING state, we should wait 1/2 of the
+        // remaining time until T2, down to a minimum of 60 seconds, before
+        // retransmitting the DHCPREQUEST message
+        secs = (binding->ut2 >> 1) - now();
+        secs = (secs < 60) ? 60 : secs;
+
+        if(secs)
         {
-            return opt->ext.msg_type.type;
-        }
-    } while(dhcp_next_opt(&opt));
-    
-    return -EINVAL;
-}
-
-
-/* static */ void dhcp_client_wakeup(struct socket_t *so, uint16_t ev)
-{
-	struct dhcp_client_cookie_t *dhcpc;
-
-    kernel_mutex_lock(&dhcp_cookie_lock);
-    
-    for(dhcpc = dhcp_cookies; dhcpc != NULL; dhcpc = dhcpc->next)
-    {
-        if(dhcpc->sock == so)
-        {
-            break;
+            nettimer_release(binding->dhcp_renewing_timer);
+            binding->dhcp_renewing_timer = 
+                    nettimer_add(secs * PIT_FREQUENCY, dhcp_renewing_timeout, binding);
         }
     }
-
-    kernel_mutex_unlock(&dhcp_cookie_lock);
-    
-    // client cookie not found
-    if(!dhcpc)
+    else if(req_state == DHCP_REBINDING && tries == 1)
     {
-        KDEBUG("dhcp: cannot find socket to wakeup\n");
-        return;
+        // RFC 2131 says in the REBINDING state, we should wait 1/2 of the
+        // remaining lease time, down to a minimum of 60 seconds, before
+        // retransmitting the DHCPREQUEST message
+        secs = (binding->ulease >> 1) - now();
+        secs = (secs < 60) ? 60 : secs;
+
+        if(secs)
+        {
+            nettimer_release(binding->dhcp_rebinding_timer);
+            binding->dhcp_rebinding_timer = 
+                    nettimer_add(secs * PIT_FREQUENCY, dhcp_rebinding_timeout, binding);
+        }
+    }
+    else if(req_state == DHCP_DECLINING)
+    {
+        // RFC 2131 says we should wait 10 secs when we decline an offer
+        // before restarting the configuration process
+        secs = 10;
+
+        if(secs)
+        {
+            nettimer_release(binding->dhcp_declining_timer);
+            binding->dhcp_declining_timer = 
+                    nettimer_add(secs * PIT_FREQUENCY, dhcp_declining_timeout, binding);
+        }
+    }
+    else if(req_state == DHCP_RELEASING)
+    {
+        secs = 0;
+    }
+    else if(req_state == DHCP_REQUESTING || req_state == DHCP_SELECTING)
+    {
+        // RFC 2131 Section 4.1 suggests the client should delay
+        // retransmissions, allowing time for server response. The first
+        // delay should be 4 secs, then 8 secs, then double up to a maximum
+        // of 64 secs. We simply multiply the number of tries by 4, capping
+        // it at 64 secs.
+        //
+        // NOTE: RFC 2131 says we should randomize retransmissions 'by the
+        //       value of a uniform random number chosen from the range
+        //       -1 to +1.' We currently ignore this :(
+        secs = MIN(binding->tries, tries) * 4;
+
+        if(secs)
+        {
+            nettimer_release(binding->dhcp_requesting_timer);
+            binding->dhcp_requesting_timer = 
+                    nettimer_add(secs * PIT_FREQUENCY, dhcp_requesting_timeout, binding);
+        }
     }
     
-    KDEBUG("dhcp: queueing event on socket\n");
-
-    dhcpc->pending_events |= ev;
+    // we need to record our current time if we are in the DHCPDISCOVER or
+    // the DHCPRENEW state, so that we can calculate lease expiration time
+    if(req_state == DHCP_SELECTING || req_state == DHCP_RENEWING)
+    {
+        binding->binding_time = now();
+    }
     
-    unblock_kernel_task(dhcp_task);
+    if(req_state == DHCP_RELEASING)
+    {
+        //route_free_ipv4(binding->ipaddr, binding->gateway, binding->netmask);
+        route_free_for_ifp(binding->ifp);
+
+        // NOTE: do we need to do this?
+        remove_arp_entry(binding->saddr);
+    }
+
+    return res;
 }
 
 
-static void
-dhcp_client_process_events(struct dhcp_client_cookie_t *dhcpc, uint16_t ev)
+void dhcp_check(struct dhcp_binding_t *binding)
 {
-	struct msghdr msg;
-	struct iovec aiov;
-	int res;
-	char *buf;
-	struct dhcp_hdr_t *h;
-	
-	KDEBUG("dhcp_client_process_events:\n");
+    int ticks;
 
-    if((ev & SOCKET_EV_RD) == 0 ||
-       socket_check(dhcpc->sock) != 0 ||
-       !(dhcpc->sock->state & SOCKET_STATE_BOUND))
-	{
-        return;
-	}
-    
-    if(!(buf = kmalloc(DHCP_CLIENT_MAX_MSGSIZE)))
-	{
-        return;
-	}
+    printk("dhcp: sending APR request for ip 0x%x\n", htonl(binding->ipaddr));
+    arp_request(binding->ifp, 0x00, binding->ipaddr);
 
-	msg.msg_namelen = 0;
-	msg.msg_name = 0;
-	msg.msg_iov = &aiov;
-	msg.msg_iovlen = 1;
-	aiov.iov_base = buf;
-	aiov.iov_len = DHCP_CLIENT_MAX_MSGSIZE;
-	msg.msg_control = 0;
-	msg.msg_flags = 0;
-	
-	if((res = dhcpc->sock->proto->sockops->recvmsg(dhcpc->sock, &msg, 0)) <= 0)
-	{
-    	KDEBUG("dhcp_client_process_events: res %d\n", res);
-	    kfree(buf);
-	    return;
-	}
-	
-	// If the 'xid' of an arriving message does not match the 'xid' of the 
-	// most recent transmitted message, the message must be silently discarded
-	h = (struct dhcp_hdr_t *)buf;
-	    
-    for(dhcpc = dhcp_cookies; dhcpc != NULL; dhcpc = dhcpc->next)
+    dhcp_set_state(binding, DHCP_CHECKING);
+    binding->tries++;
+
+    // roundup
+    if(binding->tries == 0)
     {
-        if(dhcpc->xid == h->xid)
+        binding->tries = 1;
+    }
+
+    // wait in 500ms increments
+    ticks = MIN(binding->tries, DHCP_CAP_TRIES) * 1 * (PIT_FREQUENCY / 2);
+
+    nettimer_release(binding->dhcp_checking_timer);
+    binding->dhcp_checking_timer = nettimer_add(ticks, dhcp_checking_timeout, binding);
+}
+
+
+void dhcp_bind(struct dhcp_binding_t *binding)
+{
+    uint32_t netmask, gateway;
+
+    dhcp_set_state(binding, DHCP_BOUND);
+    
+    // For each of T1, T2 and the lease time, check we have a valid time
+    // and its not infinity, then start a timer for each
+    if(binding->t1 != 0 && binding->t1 != 0xFFFFFFFF)
+    {
+        nettimer_add(binding->t1 * PIT_FREQUENCY, dhcp_t1_timeout, binding);
+    }
+
+    if(binding->t2 != 0 && binding->t2 != 0xFFFFFFFF)
+    {
+        nettimer_add(binding->t2 * PIT_FREQUENCY, dhcp_t2_timeout, binding);
+    }
+
+    if(binding->lease != 0 && binding->lease != 0xFFFFFFFF)
+    {
+        nettimer_add(binding->lease * PIT_FREQUENCY, dhcp_lease_timeout, binding);
+    }
+
+    netmask = binding->netmask;
+    gateway = binding->gateway;
+
+    // If no subnet mask was provided, pick a mask according to the
+    // network class
+    if(netmask == 0)
+    {
+        uint8_t msb = (uint8_t)(binding->ipaddr & 0xFF000000);
+
+        if(msb <= 127)
         {
-            break;
+            netmask = htonl(0xFF000000);
+        }
+        else if(msb >= 192)
+        {
+            netmask = htonl(0xFFFFFF00);
+        }
+        else
+        {
+            netmask = htonl(0xFFFF0000);
         }
     }
 
-    if(!dhcpc)
+    // If no gateway was provided, pick one
+    if(gateway == 0)
     {
-    	KDEBUG("dhcp_client_process_events: cannot find cookie for recv\n");
-	    kfree(buf);
-	    return;
-	}
-	
-	dhcpc->event = (uint8_t)dhcp_client_opt_parse(buf, res);
+        gateway = binding->ipaddr;
+        gateway &= netmask;
+        gateway |= htonl(0x01000000);
+    }
 
-	KDEBUG("dhcp_client_process_events: dhcpc->event %d\n", dhcpc->event);
+    route_free_for_ifp(binding->ifp);
+    route_add_ipv4(binding->ipaddr, gateway, netmask, RT_HOST, 0, binding->ifp);
+    route_add_ipv4(0, binding->gateway, 0, RT_GATEWAY, 0, binding->ifp);
 
-	dhcp_state_machine(dhcpc, (uint8_t *)buf, dhcpc->event);
-	kfree(buf);
+    printk("dhcp: addr binding->ipaddr 0x%x, netmask 0x%x, gateway 0x%x\n",
+            htonl(binding->ipaddr), 
+            htonl(netmask), 
+            htonl(gateway));
+
+    arp_set_expiry(binding->saddr, 0);
 }
 
 
-static void dhcp_client_recv_params(struct dhcp_client_cookie_t *dhcpc,
-                                    struct dhcp_opt_t *opt)
+/*
+ * Handle ARP reply.
+ */
+void dhcp_arp_reply(uint32_t addr)
 {
-    uint32_t maxlen;
+    struct dhcp_binding_t *binding = dhcp_bindings;
     
-    do
+    while(binding)
     {
-        switch(opt->code)
+        if(binding->state == DHCP_CHECKING)
         {
-            case DHCP_OPT_PAD:
-                break;
-            
-            case DHCP_OPT_END:
-                break;
-            
-            case DHCP_OPT_MSGTYPE:
-                dhcpc->event = opt->ext.msg_type.type;
-                break;
-            
-            case DHCP_OPT_LEASE_TIME:
-                dhcpc->lease_time = ntohl(opt->ext.lease_time.time);
-                break;
-            
-            case DHCP_OPT_RENEWAL_TIME:
-                dhcpc->t1_time = ntohl(opt->ext.renewal_time.time);
-                break;
-            
-            case DHCP_OPT_REBINDING_TIME:
-                dhcpc->t2_time = ntohl(opt->ext.rebinding_time.time);
-                break;
-            
-            case DHCP_OPT_ROUTER:
-                dhcpc->gateway.s_addr = opt->ext.router.ip.s_addr;
-                break;
-            
-            case DHCP_OPT_DNS:
-                dhcpc->dns[0].s_addr = opt->ext.dns1.ip.s_addr;
-                
-                if(opt->len >= 8)
-                {
-                    dhcpc->dns[1].s_addr = opt->ext.dns2.ip.s_addr;
-                }
-                
-                break;
-            
-            case DHCP_OPT_NETMASK:
-                dhcpc->netmask.s_addr = opt->ext.netmask.ip.s_addr;
-                break;
-            
-            case DHCP_OPT_SERVERID:
-                dhcpc->serverid.s_addr = opt->ext.server_id.ip.s_addr;
-                break;
-            
-            case DHCP_OPT_OVERLOAD:
-                KDEBUG("dhcp: option overload - ignoring\n");
-                break;
-            
-            case DHCP_OPT_HOSTNAME:
-                maxlen = 64;
-                
-                if(opt->len < maxlen)
-                {
-                    maxlen = opt->len;
-                }
-                
-                A_memcpy(dhcp_hostname, opt->ext.string.txt, maxlen);
-                dhcp_hostname[maxlen] = '\0';
-                break;
-            
-            case DHCP_OPT_DOMAINNAME:
-                maxlen = 64;
-                
-                if(opt->len < maxlen)
-                {
-                    maxlen = opt->len;
-                }
-                
-                A_memcpy(dhcp_domainname, opt->ext.string.txt, maxlen);
-                dhcp_domainname[maxlen] = '\0';
-                break;
-            
-            default:
-                KDEBUG("dhcp: unknown option - %u\n", opt->code);
-                break;
+            if(addr == binding->ipaddr)
+            {
+                dhcp_decline(binding);
+            }
         }
-    } while(dhcp_next_opt(&opt));
-    
-    // default values for T1 and T2 when not provided
-    if(!dhcpc->t1_time)
-    {
-        dhcpc->t1_time = dhcpc->lease_time >> 1;
-    }
-
-    if(!dhcpc->t2_time)
-    {
-        dhcpc->t2_time = (dhcpc->lease_time * 875) / 1000;
+        
+        binding = binding->next;
     }
 }
 
 
 /*
- * DHCP state machine and its helper functions.
+ * Search the packet's options (if there are any) for the given
+ * option and return a pointer to the first character in the option.
+ * If the 'standard' options field doesn't contain the option we're
+ * looking for, we look into the file and sname fields.
  */
-
-static void recv_offer(struct dhcp_client_cookie_t *dhcpc, uint8_t *buf)
+static uint8_t *dhcp_option_ptr(struct dhcp_msg_t *msg,
+                                uint8_t *opts, size_t opts_len,
+                                uint8_t type)
 {
-	struct dhcp_hdr_t *h = (struct dhcp_hdr_t *)buf;
-    struct dhcp_opt_t *opt = DHCP_OPT(h, 0);
+    uint8_t overload = DHCP_OVERLOAD_NONE;
+    size_t offset = 0;
     
-    dhcp_client_recv_params(dhcpc, opt);
-
-    KDEBUG("dhcp: received OFFER\n");
-    
-    if(dhcpc->event != DHCP_MSG_OFFER || !dhcpc->serverid.s_addr ||
-       !dhcpc->netmask.s_addr || !dhcpc->lease_time)
+    if(opts == NULL || opts_len == 0)
     {
-        return;
+        return NULL;
     }
     
-    dhcpc->addr.s_addr = h->yiaddr;
-    
-    // we skip state SELECTING, process first offer received
-    dhcpc->state = DHCP_CLIENT_STATE_REQUESTING;
-    dhcpc->retry = 0;
-    
-    dhcp_client_msg(dhcpc, DHCP_MSG_REQUEST);
-    
-    // timer value is doubled with every retry (exponential backoff)
-    dhcp_timer_add(dhcpc, DHCPC_TIMER_REQUEST, DHCP_CLIENT_RETRANS * 1000);
-}
-
-
-static void recv_ack(struct dhcp_client_cookie_t *dhcpc, uint8_t *buf)
-{
-	struct dhcp_hdr_t *h = (struct dhcp_hdr_t *)buf;
-    struct dhcp_opt_t *opt = DHCP_OPT(h, 0);
-    struct ipv4_link_t *link;
-    
-    dhcp_client_recv_params(dhcpc, opt);
-    
-    if(dhcpc->event != DHCP_MSG_ACK)
+    while((offset < opts_len) && (opts[offset] != DHCP_OPTION_END))
     {
-        return;
-    }
-    
-    KDEBUG("dhcp: received ACK\n");
-    
-    // use the address provided by the server (could be different than the
-    // one we got in the OFFER)
-    if(dhcpc->state == DHCP_CLIENT_STATE_REQUESTING)
-    {
-        dhcpc->addr.s_addr = h->yiaddr;
-    }
-    
-    // close the socket
-    socket_close(dhcpc->sock);
-    dhcpc->sock = NULL;
-    
-    // Delete all the links before adding the new ip address in case the
-    // new address doesn't match the old one 
-    link = ipv4_link_by_ifp(dhcpc->ifp);
-    
-    if(link && dhcpc->addr.s_addr != link->addr.s_addr)
-    {
-        struct in_addr addr = { 0 };
-        struct in_addr any = { 0 };
-        
-        ipv4_link_del(dhcpc->ifp, &addr);
-        link = ipv4_link_by_ifp(dhcpc->ifp);
-        
-        while(link)
+        // check if the sname and/or the file fields are overloaded
+        // with options
+        if(opts[offset] == DHCP_OPTION_DHCP_OPTION_OVERLOAD)
         {
-            ipv4_link_del(dhcpc->ifp, &link->addr);
-            link = ipv4_link_by_ifp(dhcpc->ifp);
+            offset += 2;
+            overload = opts[offset++];
         }
-        
-        ipv4_link_add(dhcpc->ifp, &dhcpc->addr, &dhcpc->netmask);
-        
-        // If router option is received, use it as default gateway
-        if(dhcpc->gateway.s_addr)
+        else if(opts[offset] == type)
         {
-            ipv4_route_add(NULL, &any, &any, &dhcpc->gateway, 1);
+            return &opts[offset];
+        }
+        else if(opts[offset] == DHCP_OPTION_PAD)
+        {
+            offset++;
+        }
+        else
+        {
+            offset++;
+            offset += 1 + opts[offset];
         }
     }
     
-    /*
-    KDEBUG("dhcp: ip ");
-    KDEBUG_IPV4_ADDR(ntohl(dhcpc->addr.s_addr));
-    KDEBUG(", server ip ");
-    KDEBUG_IPV4_ADDR(ntohl(dhcpc->serverid.s_addr));
-    KDEBUG(", dns ip ");
-    KDEBUG_IPV4_ADDR(ntohl(dhcpc->dns[0].s_addr));
-    KDEBUG("\n");
-
-    KDEBUG("dhcp: renewal time (T1) %u\n", (unsigned int)dhcpc->t1_time);
-    KDEBUG("dhcp: rebinding time (T2) %u\n", (unsigned int)dhcpc->t2_time);
-    KDEBUG("dhcp: lease time %u\n", (unsigned int)dhcpc->lease_time);
-    */
-    
-    dhcpc->retry = 0;
-    dhcpc->renew_time = dhcpc->t2_time - dhcpc->t1_time;
-    dhcpc->rebind_time = dhcpc->lease_time - dhcpc->t2_time;
-    
-    // start timers
-    dhcp_client_stop_timers(dhcpc);
-    
-    if(!dhcp_timer_add(dhcpc, DHCPC_TIMER_T1, dhcpc->t1_time * 1000))
+    // check if the message is overloaded
+    if(overload == DHCP_OVERLOAD_NONE)
     {
-        goto timer_err;
-    }
-
-    if(!dhcp_timer_add(dhcpc, DHCPC_TIMER_T2, dhcpc->t2_time * 1000))
-    {
-        goto timer_err;
-    }
-
-    if(!dhcp_timer_add(dhcpc, DHCPC_TIMER_LEASE, dhcpc->lease_time * 1000))
-    {
-        goto timer_err;
+        return NULL;
     }
     
-    *(dhcpc->uid) = dhcpc->xid;
-
-    if(dhcpc->callback)
+    if(overload == DHCP_OVERLOAD_FILE)
     {
-        dhcpc->callback(dhcpc, DHCP_SUCCESS);
+        opts = msg->file;
+        opts_len = 128;
     }
-    
-    dhcpc->state = DHCP_CLIENT_STATE_BOUND;
-    return;
-
-timer_err:
-
-    dhcp_client_stop_timers(dhcpc);
-    
-    if(dhcpc->callback)
+    else if(overload == DHCP_OVERLOAD_SNAME)
     {
-        dhcpc->callback(dhcpc, DHCP_ERROR);
-    }
-}
-
-
-static void reset(struct dhcp_client_cookie_t *dhcpc)
-{
-    struct in_addr addr = { 0 };
-    
-    if(dhcpc->state == DHCP_CLIENT_STATE_REQUESTING)
-    {
-        addr.s_addr = INADDR_ANY;
+        opts = msg->sname;
+        opts_len = 64;
     }
     else
     {
-        addr.s_addr = dhcpc->addr.s_addr;
+        // If both sname and file are overloaded, RFC 2131 says we should
+        // check file first, followed by sname. We definitely are doing
+        // it the wrong way here (because it is simple - look at the DHCP msg's
+        // structure in dhcp.h). FIXME!
+        opts = msg->sname;
+        opts_len = 128 + 64;
     }
+    
+    offset = 0;
 
-    // close the socket
-    socket_close(dhcpc->sock);
-    dhcpc->sock = NULL;
-    
-    // delete the link with the currently in use address
-    ipv4_link_del(dhcpc->ifp, &addr);
-    
-    if(dhcpc->callback)
+    while((offset < opts_len) && (opts[offset] != DHCP_OPTION_END))
     {
-        dhcpc->callback(dhcpc, DHCP_RESET);
+        if(opts[offset] == type)
+        {
+            return &opts[offset];
+        }
+        else if(opts[offset] == DHCP_OPTION_PAD)
+        {
+            offset++;
+        }
+        else
+        {
+            offset++;
+            offset += 1 + opts[offset];
+        }
     }
     
-    dhcpc->state = DHCP_CLIENT_STATE_INIT;
-    dhcp_client_stop_timers(dhcpc);
-    dhcp_client_init(dhcpc);
+    return NULL;
 }
 
 
-static void renew(struct dhcp_client_cookie_t *dhcpc)
+static void dhcp_sock_func(void *unused)
 {
-    uint16_t port = htons(DHCP_CLIENT_PORT);
-    uint32_t halftime = 0;
-    
-    dhcpc->state = DHCP_CLIENT_STATE_RENEWING;
-    
-    if(sock_create(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &dhcpc->sock) < 0)
-    {
-        KDEBUG("dhcp: failed to open socket on renew\n");
-        goto err2;
-    }
+    struct packet_t *p;
+    struct dhcp_binding_t *binding;
 
-    dhcpc->sock->wakeup = dhcp_client_wakeup;
+    UNUSED(unused);
+    
+    while(1)
+    {
+        selrecord(&(dhcp_sock->selrecv));
+        block_task(&dhcp_sock_task, 1);
 
-    // bind socket
-    if(dhcp_sock_bind(dhcpc->sock, port) < 0)
-    {
-        KDEBUG("dhcp: failed to bind socket on renew\n");
-        goto err1;
-    }
-    
-    dhcpc->retry = 0;
-    
-    if(dhcp_client_msg(dhcpc, DHCP_MSG_REQUEST) < 0)
-    {
-        KDEBUG("dhcp: failed to send request on renew\n");
-        goto err1;
-    }
-    
-    // start renew timer.
-    // wait one-half of the remaining time until T2, down to a minimum 
-    // of 60 seconds.
-    // (dhcpc->retry + 1): initial -> divide by 2, 1st retry -> divide by 4,
-    // 2nd retry -> divide by 8, ...
-    dhcp_client_stop_timers(dhcpc);
-    halftime = dhcpc->renew_time >> 1;
-    
-    if(halftime < 60)
-    {
-        halftime = 60;
-    }
+        SOCKET_LOCK(dhcp_sock);
 
-    if(!dhcp_timer_add(dhcpc, DHCPC_TIMER_RENEW, halftime * 1000))
-    {
-        goto err1;
-    }
-    
-    return;
+#define DROP_PACKET(p)      \
+    free_packet(p);         \
+    SOCKET_LOCK(dhcp_sock); \
+    continue;
 
-err1:
-    socket_close(dhcpc->sock);
-    dhcpc->sock = NULL;
+        while(dhcp_sock->inq.head)
+        {
+            IFQ_DEQUEUE(&dhcp_sock->inq, p);
+            SOCKET_UNLOCK(dhcp_sock);
 
-err2:
-    if(dhcpc->callback)
-    {
-        dhcpc->callback(dhcpc, DHCP_ERROR);
+            if(!(binding = dhcp_binding_by_netif(p->ifp)))
+            {
+                printk("dhcp: cannot find binding -- dropping packet\n");
+                DROP_PACKET(p);
+            }
+
+            struct dhcp_msg_t *msg = (struct dhcp_msg_t *)p->data;
+            uint8_t *opts = NULL, *opt_ptr;
+            size_t opts_len = 0;
+
+            if(msg->op != DHCP_BOOTP_REPLY)
+            {
+                printk("dhcp: invalid op -- dropping packet\n");
+                DROP_PACKET(p);
+            }
+
+            if(memcmp(binding->ifp->hwaddr, msg->chaddr, ETHER_ADDR_LEN) != 0)
+            {
+                printk("dhcp: invalid Ethernet address -- dropping packet\n");
+                DROP_PACKET(p);
+            }
+
+            if(ntohl(msg->xid) != binding->xid)
+            {
+                printk("dhcp: invalid xid -- dropping packet\n");
+                DROP_PACKET(p);
+            }
+
+            binding->in_packet = p;
+
+            // check if the packet has options
+            if(p->count > sizeof(struct dhcp_msg_t))
+            {
+                opts = (uint8_t *)p->data + sizeof(struct dhcp_msg_t);
+                opts_len = p->count - sizeof(struct dhcp_msg_t);
+            }
+
+            if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                    DHCP_OPTION_DHCP_MESSAGE_TYPE)) != NULL)
+            {
+                uint8_t msg_type = dhcp_get_optionb(opt_ptr + 2);
+
+                if(msg_type == DHCP_ACK)
+                {
+                    if(binding->state == DHCP_REQUESTING)
+                    {
+                        dhcp_handle_ack(binding);
+                        binding->tries = 0;
+                        dhcp_check(binding);
+                    }
+                    else if(binding->state == DHCP_REBOOTING ||
+                            binding->state == DHCP_REBINDING ||
+                            binding->state == DHCP_RENEWING)
+                    {
+                        dhcp_handle_ack(binding);
+                        binding->tries = 0;
+                        dhcp_bind(binding);
+                    }
+                }
+                else if(msg_type == DHCP_NAK)
+                {
+                    if(binding->state == DHCP_REBOOTING ||
+                       binding->state == DHCP_REQUESTING ||
+                       binding->state == DHCP_REBINDING ||
+                       binding->state == DHCP_RENEWING)
+                    {
+                        dhcp_handle_nak(binding);
+                    }
+                }
+                else if(msg_type == DHCP_OFFER && binding->state == DHCP_SELECTING)
+                {
+                    dhcp_handle_offer(binding);
+                }
+            }
+
+            free_packet(binding->in_packet);
+            binding->in_packet = NULL;
+            binding->in_opt_len = 0;
+
+            SOCKET_LOCK(dhcp_sock);
+        }
+
+        SOCKET_UNLOCK(dhcp_sock);
     }
 }
 
 
-static void rebind(struct dhcp_client_cookie_t *dhcpc)
+static inline void dhcp_release_timers(struct dhcp_binding_t *binding)
 {
-    uint32_t halftime = 0;
+    nettimer_release(binding->dhcp_renewing_timer);
+    nettimer_release(binding->dhcp_rebinding_timer);
+    nettimer_release(binding->dhcp_declining_timer);
+    nettimer_release(binding->dhcp_requesting_timer);
+    nettimer_release(binding->dhcp_checking_timer);
+}
 
-    dhcpc->state = DHCP_CLIENT_STATE_REBINDING;
-    dhcpc->retry = 0;
+void dhcp_handle_offer(struct dhcp_binding_t *binding)
+{
+    struct packet_t *p = binding->in_packet;
+    struct dhcp_msg_t *msg = (struct dhcp_msg_t *)p->data;
+    uint8_t *opts = NULL, *opt_ptr;
+    size_t opts_len = 0;
 
-    if(dhcp_client_msg(dhcpc, DHCP_MSG_REQUEST) < 0)
+    // check if the packet has options
+    if(p->count > sizeof(struct dhcp_msg_t))
     {
-        KDEBUG("dhcp: failed to send request on rebind\n");
+        opts = (uint8_t *)p->data + sizeof(struct dhcp_msg_t);
+        opts_len = p->count - sizeof(struct dhcp_msg_t);
+    }
+
+    if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                  DHCP_OPTION_DHCP_SERVER_IDENTIFIER)) != NULL)
+    {
+        binding->saddr = htonl(dhcp_get_optionl(opt_ptr + 2));
+        binding->ipaddr = msg->yiaddr;
+
+        dhcp_release_timers(binding);
+        dhcp_select(binding);
+    }
+}
+
+
+void dhcp_handle_nak(struct dhcp_binding_t *binding)
+{
+    // RFC 2131 says we should restart the configuration process when we
+    // receive a NAK message
+    dhcp_release_timers(binding);
+    dhcp_discover(binding);
+}
+
+
+void dhcp_handle_ack(struct dhcp_binding_t *binding)
+{
+    struct packet_t *p = binding->in_packet;
+    struct dhcp_msg_t *msg = (struct dhcp_msg_t *)p->data;
+    uint8_t *opts = NULL, *opt_ptr;
+    size_t opts_len = 0;
+
+    dhcp_release_timers(binding);
+
+    binding->netmask = 0;
+    binding->gateway = 0;
+    binding->broadcast = 0;
+    binding->dns[0] = 0;
+    binding->dns[1] = 0;
+    binding->ntp[0] = 0;
+    binding->ntp[1] = 0;
+    
+    binding->t1 = 0;
+    binding->t2 = 0;
+    binding->lease = 0;
+
+    // check if the packet has options
+    if(p->count > sizeof(struct dhcp_msg_t))
+    {
+        opts = (uint8_t *)p->data + sizeof(struct dhcp_msg_t);
+        opts_len = p->count - sizeof(struct dhcp_msg_t);
+    }
+
+    if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                    DHCP_OPTION_DHCP_LEASE_TIME)) != NULL)
+    {
+        binding->lease = dhcp_get_optionl(opt_ptr + 2);
+        binding->t1 = binding->lease / 2;
+        binding->t2 = 0.875 * binding->lease;
+    }
+
+    if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                    DHCP_OPTION_DHCP_RENEWAL_TIME)) != NULL)
+    {
+        binding->t1 = dhcp_get_optionl(opt_ptr + 2);
+    }
+
+    if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                    DHCP_OPTION_DHCP_REBINDING_TIME)) != NULL)
+    {
+        binding->t2 = dhcp_get_optionl(opt_ptr + 2);
+    }
+
+    binding->ut1 = binding->binding_time + binding->t1;
+    binding->ut2 = binding->binding_time + binding->t2;
+    binding->ulease = binding->binding_time + binding->lease;
+    
+    binding->ipaddr = msg->yiaddr;
+
+    if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                    DHCP_OPTION_SUBNET_MASK)) != NULL)
+    {
+        binding->netmask = htonl(dhcp_get_optionl(opt_ptr + 2));
+    }
+
+    if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                    DHCP_OPTION_ROUTERS)) != NULL)
+    {
+        binding->gateway = htonl(dhcp_get_optionl(opt_ptr + 2));
+    }
+
+    if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                    DHCP_OPTION_BROADCAST_ADDRESS)) != NULL)
+    {
+        binding->broadcast = htonl(dhcp_get_optionl(opt_ptr + 2));
+    }
+
+    if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                    DHCP_OPTION_DOMAIN_NAME_SERVERS)) != NULL)
+    {
+        if(opt_ptr[1] >= 4)
+        {
+            binding->dns[0] = htonl(dhcp_get_optionl(opt_ptr + 2));
+        }
+
+        if(opt_ptr[1] >= 8)
+        {
+            binding->dns[1] = htonl(dhcp_get_optionl(opt_ptr + 6));
+        }
+    }
+
+    if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                    DHCP_OPTION_NTP_SERVERS)) != NULL)
+    {
+        if(opt_ptr[1] >= 4)
+        {
+            binding->ntp[0] = htonl(dhcp_get_optionl(opt_ptr + 2));
+        }
+
+        if(opt_ptr[1] >= 8)
+        {
+            binding->ntp[1] = htonl(dhcp_get_optionl(opt_ptr + 6));
+        }
+    }
+
+    if((opt_ptr = dhcp_option_ptr(msg, opts, opts_len,
+                                    DHCP_OPTION_DOMAIN_NAME)) != NULL)
+    {
+        A_memcpy(binding->domain, opt_ptr + 2, opt_ptr[1]);
+        binding->domain[opt_ptr[1]] = '\0';
+    }
+}
+
+
+int dhcp_alloc_msg(struct dhcp_binding_t *binding)
+{
+    size_t len = sizeof(struct dhcp_msg_t) + DHCP_OPTIONS_LEN;
+    struct dhcp_msg_t *msg;
+    
+    if(!(binding->out_packet = alloc_packet(PACKET_SIZE_UDP(len))))
+    {
+        return -ENOMEM;
+    }
+
+    packet_add_header(binding->out_packet, -PACKET_SIZE_UDP(0));
+    msg = (struct dhcp_msg_t *)binding->out_packet->data;
+    A_memset(binding->out_packet->data, 0, len);
+    //binding->xid++;
+    msg->op = DHCP_BOOTP_REQUEST;
+    msg->htype = 1;         // Ethernet
+    msg->hlen = ETHER_ADDR_LEN;
+    msg->xid = htonl(binding->xid);
+    msg->ciaddr = binding->ipaddr;
+
+    A_memcpy(&msg->chaddr, &binding->ifp->hwaddr, ETHER_ADDR_LEN);
+    msg->cookie = htonl(0x63825363);    // magic cookie (see RFC 2131)
+    binding->out_opt_len = 0;
+    
+    return 0;
+}
+
+
+STATIC_INLINE void dhcp_schedule_task(void *arg, int event)
+{
+    struct dhcp_binding_t *binding = (struct dhcp_binding_t *)arg;
+    
+    if(!binding)
+    {
         return;
     }
-
-    // start rebind timer.
-    dhcp_client_stop_timers(dhcpc);
-    halftime = dhcpc->rebind_time >> 1;
     
-    if(halftime < 60)
-    {
-        halftime = 60;
-    }
-
-    if(!dhcp_timer_add(dhcpc, DHCPC_TIMER_REBIND, halftime * 1000))
-    {
-        KDEBUG("dhcp: failed to start timer on rebind\n");
-    }
+    binding->events |= event;
+    unblock_kernel_task(binding->task);
 }
 
 
-static void retransmit(struct dhcp_client_cookie_t *dhcpc)
+void dhcp_renewing_timeout(void *arg)
 {
-    uint32_t halftime = 0;
-
-    switch(dhcpc->state)
-    {
-        case DHCP_CLIENT_STATE_INIT:
-            dhcp_client_msg(dhcpc, DHCP_MSG_DISCOVER);
-
-            // timer value is doubled with every retry (exponential backoff)
-            dhcp_timer_add(dhcpc, DHCPC_TIMER_INIT, 
-                            (DHCP_CLIENT_RETRANS << dhcpc->retry) * 1000);
-            break;
-
-        case DHCP_CLIENT_STATE_REQUESTING:
-            dhcp_client_msg(dhcpc, DHCP_MSG_REQUEST);
-
-            // timer value is doubled with every retry (exponential backoff)
-            dhcp_timer_add(dhcpc, DHCPC_TIMER_REQUEST, 
-                            (DHCP_CLIENT_RETRANS << dhcpc->retry) * 1000);
-            break;
-
-        case DHCP_CLIENT_STATE_RENEWING:
-            dhcp_client_msg(dhcpc, DHCP_MSG_REQUEST);
-
-            // start renew timer.
-            // wait one-half of the remaining time until T2, down to a 
-            // minimum  of 60 seconds.
-            // (dhcpc->retry + 1): initial -> divide by 2, 
-            // 1st retry -> divide by 4,
-            // 2nd retry -> divide by 8, ...
-            dhcp_client_stop_timers(dhcpc);
-            halftime = dhcpc->renew_time >> (dhcpc->retry + 1);
-
-            if(halftime < 60)
-            {
-                halftime = 60;
-            }
-
-            dhcp_timer_add(dhcpc, DHCPC_TIMER_RENEW, halftime * 1000);
-            break;
-
-        case DHCP_CLIENT_STATE_REBINDING:
-            dhcp_client_msg(dhcpc, DHCP_MSG_DISCOVER);
-
-            // start rebind timer.
-            dhcp_client_stop_timers(dhcpc);
-            halftime = dhcpc->rebind_time >> (dhcpc->retry + 1);
-    
-            if(halftime < 60)
-            {
-                halftime = 60;
-            }
-
-            dhcp_timer_add(dhcpc, DHCPC_TIMER_REBIND, halftime * 1000);
-            break;
-
-        default:
-            KDEBUG("dhcp: retransmit in invalid state: %u\n", dhcpc->state);
-            break;
-    }
+    dhcp_schedule_task(arg, DHCP_EVENT_RENEWING_TIMEOUT);
 }
 
 
-static void dhcp_state_machine(struct dhcp_client_cookie_t *dhcpc,
-                               uint8_t *buf, uint8_t ev)
+void dhcp_rebinding_timeout(void *arg)
 {
-    switch(ev)
-    {
-        case DHCP_MSG_OFFER:
-            KDEBUG("dhcp: received OFFER\n");
-            
-            if(dhcpc->state == DHCP_CLIENT_STATE_INIT)
-            {
-                recv_offer(dhcpc, buf);
-            }
-            
-            break;
-
-        case DHCP_MSG_ACK:
-            KDEBUG("dhcp: received ACK\n");
-
-            if(dhcpc->state == DHCP_CLIENT_STATE_REQUESTING ||
-               dhcpc->state == DHCP_CLIENT_STATE_RENEWING   ||
-               dhcpc->state == DHCP_CLIENT_STATE_REBINDING)
-            {
-                recv_ack(dhcpc, buf);
-            }
-            
-            break;
-
-        case DHCP_MSG_NAK:
-            KDEBUG("dhcp: received NAK\n");
-
-            if(dhcpc->state == DHCP_CLIENT_STATE_REQUESTING ||
-               dhcpc->state == DHCP_CLIENT_STATE_RENEWING   ||
-               dhcpc->state == DHCP_CLIENT_STATE_REBINDING)
-            {
-                reset(dhcpc);
-            }
-            
-            break;
-
-        case DHCP_EVENT_T1:
-            KDEBUG("dhcp: received T1 timeout\n");
-            
-            if(dhcpc->state == DHCP_CLIENT_STATE_BOUND)
-            {
-                renew(dhcpc);
-            }
-            
-            break;
-
-        case DHCP_EVENT_T2:
-            KDEBUG("dhcp: received T2 timeout\n");
-            
-            if(dhcpc->state == DHCP_CLIENT_STATE_RENEWING)
-            {
-                rebind(dhcpc);
-            }
-            
-            break;
-
-        case DHCP_EVENT_LEASE:
-            KDEBUG("dhcp: received LEASE timeout\n");
-            
-            if(dhcpc->state == DHCP_CLIENT_STATE_REBINDING)
-            {
-                reset(dhcpc);
-            }
-            
-            break;
-
-        case DHCP_EVENT_RETRANSMIT:
-            KDEBUG("dhcp: received RETRANSMIT timeout\n");
-
-            if(dhcpc->state == DHCP_CLIENT_STATE_INIT       ||
-               dhcpc->state == DHCP_CLIENT_STATE_REQUESTING ||
-               dhcpc->state == DHCP_CLIENT_STATE_RENEWING   ||
-               dhcpc->state == DHCP_CLIENT_STATE_REBINDING)
-            {
-                retransmit(dhcpc);
-            }
-            
-            break;
-
-        default:
-            KDEBUG("dhcp: received unknown event (%u)\n", ev);
-            break;
-    }
+    dhcp_schedule_task(arg, DHCP_EVENT_REBINDING_TIMEOUT);
 }
 
 
-static void dhcp_task_func(void *arg)
+void dhcp_declining_timeout(void *arg)
 {
-    UNUSED(arg);
-    
-    for(;;)
-    {
-        struct dhcp_client_cookie_t *dhcpc;
-        int i;
+    dhcp_schedule_task(arg, DHCP_EVENT_DECLINING_TIMEOUT);
+}
 
-        //KDEBUG("dhcp_task_func:\n");
+
+void dhcp_requesting_timeout(void *arg)
+{
+    dhcp_schedule_task(arg, DHCP_EVENT_REQUESTING_TIMEOUT);
+}
+
+
+void dhcp_checking_timeout(void *arg)
+{
+    dhcp_schedule_task(arg, DHCP_EVENT_CHECKING_TIMEOUT);
+}
+
+
+void dhcp_t1_timeout(void *arg)
+{
+    dhcp_schedule_task(arg, DHCP_EVENT_T1_TIMEOUT);
+}
+
+
+void dhcp_t2_timeout(void *arg)
+{
+    dhcp_schedule_task(arg, DHCP_EVENT_T2_TIMEOUT);
+}
+
+
+void dhcp_lease_timeout(void *arg)
+{
+    dhcp_schedule_task(arg, DHCP_EVENT_LEASE_TIMEOUT);
+}
+
+
+void dhcp_task_func(void *unused)
+{
+    UNUSED(unused);
+    
+    while(1)
+    {
+        volatile struct dhcp_binding_t *binding = dhcp_binding_by_task(this_core->cur_task);
         
-        kernel_mutex_lock(&dhcp_cookie_lock);
-        
-        for(dhcpc = dhcp_cookies; dhcpc != NULL; dhcpc = dhcpc->next)
+        if(!binding)
         {
-            // check for expired timers
-            for(i = 0; i < 7; i++)
+            printk("dhcp: cannot find binding for task %d\n", this_core->cur_task->pid);
+            //kpanic("dhcp failed");
+
+            block_task(&dhcp_bindings, 0);
+            continue;
+        }
+
+        if(binding->events & DHCP_EVENT_RENEWING_TIMEOUT)
+        {
+            if(binding->state == DHCP_RENEWING)
             {
-                if(dhcpc->timer[i].expiry && dhcpc->timer[i].expiry < ticks)
+                printk("dhcp: RENEWING timed out (%d tries)\n", binding->tries);
+
+                if(binding->tries <= 1)
                 {
-                    KDEBUG("dhcp: timer %d expired (cookie %lx)\n", i, dhcpc);
-                    KDEBUG("dhcp: timer ticks %ld, ticks %ld\n", dhcpc->timer[i].expiry, ticks);
+                    dhcp_renew(binding);
+                }
+            }
 
-                    dhcpc->timer[i].expiry = 0;
+            binding->events &= ~DHCP_EVENT_RENEWING_TIMEOUT;
+        }
 
-                    if(i == DHCPC_TIMER_INIT)
+        if(binding->events & DHCP_EVENT_REBINDING_TIMEOUT)
+        {
+            if(binding->state == DHCP_REBINDING)
+            {
+                printk("dhcp: REBINDING timed out (%d tries)\n", binding->tries);
+
+                if(binding->tries <= 1)
+                {
+                    dhcp_rebind(binding);
+                }
+            }
+
+            binding->events &= ~DHCP_EVENT_REBINDING_TIMEOUT;
+        }
+
+        if(binding->events & DHCP_EVENT_DECLINING_TIMEOUT)
+        {
+            if(binding->state == DHCP_DECLINING)
+            {
+                printk("dhcp: DECLINING timed out - restarting discovery\n");
+
+                dhcp_discover(binding);
+            }
+
+            binding->events &= ~DHCP_EVENT_DECLINING_TIMEOUT;
+        }
+
+        if(binding->events & DHCP_EVENT_CHECKING_TIMEOUT)
+        {
+            if(binding->state == DHCP_CHECKING)
+            {
+                printk("dhcp: CHECKING ARP request timed out (%d tries)\n", binding->tries);
+
+                if(binding->tries <= 1)
+                {
+                    printk("dhcp: retrying ARP request\n");
+                    dhcp_check((struct dhcp_binding_t *)binding);
+                }
+                else
+                {
+                    printk("dhcp: binding interface\n");
+                    dhcp_bind((struct dhcp_binding_t *)binding);
+                }
+            }
+
+            binding->events &= ~DHCP_EVENT_CHECKING_TIMEOUT;
+        }
+        
+        if(binding->events & DHCP_EVENT_REQUESTING_TIMEOUT)
+        {
+            switch(binding->state)
+            {
+                case DHCP_SELECTING:
+                    printk("dhcp: SELECT timed out - restarting discovery\n");
+                    dhcp_discover(binding);
+                    break;
+
+                case DHCP_REQUESTING:
+                    printk("dhcp: REQUEST timed out\n");
+                    
+                    // RFC 2131 suggests to try upto 4 times, or 60 secs,
+                    // before bailing out and restarting the process
+                    if(binding->tries <= 5)
                     {
-                        // this was an INIT timer
-                        if(dhcpc->state < DHCP_CLIENT_STATE_SELECTING)
-                        {
-                            // This call returns 1 if the cookie has been 
-                            // removed, 0 otherwise.
-                            if(dhcp_client_reinit(dhcpc))
-                            {
-                                // start over as the list has changed
-                                dhcpc = dhcp_cookies;
-                                continue;
-                            }
-                        }
+                        printk("dhcp: retrying REQUEST (%d tries)\n", binding->tries);
+                        dhcp_select(binding);
                     }
                     else
                     {
-                        // this was not an INIT timer
-                        dhcpc->event = dhcp_get_timer_event(dhcpc, i);
-                
-                        if(dhcpc->event != DHCP_EVENT_NONE)
-                        {
-                            dhcp_state_machine(dhcpc, NULL, dhcpc->event);
-                        }
+                        printk("dhcp: restarting REQUEST\n");
+                        dhcp_release(binding);
+                        dhcp_discover(binding);
                     }
-                }
+                    break;
+            }
+
+            binding->events &= ~DHCP_EVENT_REQUESTING_TIMEOUT;
+        }
+
+        // This gets triggered the first time (when T1 expires)
+        if(binding->events & DHCP_EVENT_T1_TIMEOUT)
+        {
+            if(binding->state == DHCP_BOUND)
+            {
+                printk("dhcp: T1 timeout - scheduling renewal\n");
+                dhcp_renew(binding);
+            }
+
+            binding->events &= ~DHCP_EVENT_T1_TIMEOUT;
+        }
+
+        if(binding->events & DHCP_EVENT_T2_TIMEOUT)
+        {
+            if(binding->state == DHCP_BOUND ||
+               binding->state == DHCP_RENEWING)
+            {
+                printk("dhcp: T2 timeout - scheduling rebind\n");
+                dhcp_rebind(binding);
             }
             
-            // now check for pending events
-            if(dhcpc->pending_events)
-            {
-                uint16_t ev = dhcpc->pending_events;
-
-                KDEBUG("dhcp: pending ev %d (cookie %lx)\n", dhcpc->pending_events, dhcpc);
-
-                dhcpc->pending_events = 0;
-                dhcp_client_process_events(dhcpc, ev);
-            }
+            binding->events &= ~DHCP_EVENT_T2_TIMEOUT;
         }
-        
-        kernel_mutex_unlock(&dhcp_cookie_lock);
 
-        //KDEBUG("dhcp_task_func: sleeping\n");
-        
-        block_task2(&dhcp_task, PIT_FREQUENCY * 10);
+        if(binding->events & DHCP_EVENT_LEASE_TIMEOUT)
+        {
+            printk("dhcp: lease timeout - restarting discovery\n");
+
+            if(binding->state == DHCP_REBINDING ||
+               binding->state == DHCP_BOUND ||
+               binding->state == DHCP_RENEWING)
+            {
+                dhcp_release(binding);
+            }
+
+            dhcp_discover(binding);
+
+            binding->events &= ~DHCP_EVENT_LEASE_TIMEOUT;
+        }
+
+        block_task(&dhcp_bindings, 0);
     }
-}
-
-
-void dhcp_init(void)
-{
-    // fork the DHCP monitor task
-    (void)start_kernel_task("dhcp", dhcp_task_func, NULL, &dhcp_task, 0);
 }
 

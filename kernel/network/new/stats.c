@@ -1,8 +1,8 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2023, 2024 (c)
  * 
- *    file: domain.c
+ *    file: stats.c
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,37 +20,43 @@
  */    
 
 /**
- *  \file domain.c
+ *  \file stats.c
  *
- *  Network domain tables.
+ *  Network statistics.
  */
 
-#include <stddef.h>
-#include <sys/socket.h>
-#include <kernel/net/domain.h>
-#include <kernel/net/protocol.h>
+#include <errno.h>
+#include <kernel/laylaos.h>
+#include <kernel/user.h>
+#include <kernel/net/stats.h>
+
+struct netstats netstats = { 0, };
 
 
-extern struct proto_t unix_protocols[2];
-extern struct proto_t internet_protocols[5];
-
-
-struct domain_t *domains[] =
+int get_netstats(struct netstats *ns)
 {
-    &unix_domain,
-    &internet_domain,
-    NULL,
-};
+    struct netstats tmp;
+    
+    if(!ns)
+    {
+        return -EINVAL;
+    }
+    
+    A_memcpy(&tmp, &netstats, sizeof(struct netstats));
+    return copy_to_user(ns, &tmp, sizeof(struct netstats));
+}
 
-struct domain_t unix_domain =
-{
-    AF_UNIX, "unix", unix_protocols,
-    &unix_protocols[sizeof(unix_protocols) / sizeof(unix_protocols[0])]
-};
 
-struct domain_t internet_domain =
+void stats_init(void)
 {
-    AF_INET, "internet", internet_protocols,
-    &internet_protocols[sizeof(internet_protocols) / sizeof(internet_protocols[0])]
-};
+    static int inited = 0;
+    
+    if(inited)
+    {
+        return;
+    }
+    
+    inited = 1;
+    A_memset(&netstats, 0, sizeof(struct netstats));
+}
 

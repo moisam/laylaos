@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: netif_ioctl.c
  *    This file is part of LaylaOS.
@@ -29,26 +29,26 @@
  *    - netif_ioctl.c => driver ioctl() function
  */
 
-#define __DEBUG
+//#define __DEBUG
 
 #define __USE_MISC
 
 #include <errno.h>
 #include <string.h>
 #include <sys/ioctl.h>
-//#include <sys/sockio.h>
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <kernel/laylaos.h>
 #include <kernel/task.h>
 #include <kernel/user.h>
 #include <kernel/net/netif.h>
+#include <kernel/net/ether.h>
+#include <kernel/net/route.h>
 #include <kernel/net/ipv4.h>
-#include <kernel/net/ipv6.h>
 #include <mm/kheap.h>
 
 /*
- * INetwork interface ioctl.
+ * Network interface ioctl.
  *
  * For details on ioctl flags and their meanings, see:
  *    https://man7.org/linux/man-pages/man7/netdevice.7.html
@@ -60,7 +60,7 @@
                                  IFF_MULTICAST | IFF_PORTSEL)
 
 #define CHECK_PRIVILEGE()                                   \
-     if(!suser(ct)) return -EPERM;
+     if(!suser(this_core->cur_task)) return -EPERM;
 
 #define GET_NETIF(ifp, ifr)                                 \
 	if(!(ifp = netif_by_name(ifr.ifr_name))) return -ENXIO;
@@ -79,11 +79,11 @@
 
 static int get_addr(struct netif_t *ifp, struct ifreq *ifr, int which)
 {
-    struct ipv4_link_t *link;
-    struct in_addr addr;
+    struct rtentry_t *rt;
     struct sockaddr_in *sin = (struct sockaddr_in *)&ifr->ifr_addr;
+    uint32_t addr;
 
-    if(!(link = ipv4_link_by_ifp(ifp)))
+    if(!(rt = route_for_ifp(ifp)))
     {
         return -EINVAL;
     }
@@ -92,23 +92,23 @@ static int get_addr(struct netif_t *ifp, struct ifreq *ifr, int which)
     {
         case WHICH_IPADDR:
             sin->sin_family = AF_INET;
-            sin->sin_addr.s_addr = link->addr.s_addr;
+            sin->sin_addr.s_addr = rt->dest;
             return 0;
 
         case WHICH_BROADCAST:
             // get the network address
-            addr.s_addr = link->addr.s_addr & link->netmask.s_addr;
-            
+            addr = rt->dest & rt->netmask;
+
             // then get the broadcast address
-            addr.s_addr |= ~(link->netmask.s_addr);
+            addr |= ~(rt->netmask);
 
             sin->sin_family = AF_INET;
-            sin->sin_addr.s_addr = addr.s_addr;
+            sin->sin_addr.s_addr = addr;
             return 0;
 
         case WHICH_NETMASK:
             sin->sin_family = AF_INET;
-            sin->sin_addr.s_addr = link->netmask.s_addr;
+            sin->sin_addr.s_addr = rt->netmask;
             return 0;
     }
 
@@ -120,15 +120,14 @@ static int set_addr(struct netif_t *ifp, struct ifreq *ifr, int which)
 {
     if(ifr->ifr_addr.sa_family == AF_INET)
     {
-        struct ipv4_link_t *link;
-        struct in_addr addr = { 0 }, mask = { 0 };
-        struct in_addr network = { 0 }, gateway = { 0 };
+        struct rtentry_t *rt;
+        uint32_t addr = 0, mask = 0;
         struct sockaddr_in *sin = (struct sockaddr_in *)&ifr->ifr_addr;
 
         // AF_INET addresses are deleted by passing an address of 0
         if(sin->sin_addr.s_addr == INADDR_ANY && which == WHICH_IPADDR)
         {
-            ipv4_cleanup_links(ifp);
+            route_free_for_ifp(ifp);
             return 0;
         }
         
@@ -139,36 +138,29 @@ static int set_addr(struct netif_t *ifp, struct ifreq *ifr, int which)
                 return -EOPNOTSUPP;
 
             case WHICH_NETMASK:
-                mask.s_addr = sin->sin_addr.s_addr;
+                mask = sin->sin_addr.s_addr;
 
-                if(!(link = ipv4_link_by_ifp(ifp)))
+                if(!(rt = route_for_ifp(ifp)))
                 {
-                    return ipv4_link_add(ifp, &addr, &mask);
+                    return -EINVAL;
                 }
                 else
                 {
-                    ipv4_cleanup_routes(link);
-                    addr.s_addr = link->addr.s_addr;
-                    link->netmask.s_addr = mask.s_addr;
-                    network.s_addr = (addr.s_addr & mask.s_addr);
-                    ipv4_route_add(link, &network, &mask, &gateway, 1);
+                    rt->netmask = mask;
                     return 0;
                 }
 
             case WHICH_IPADDR:
-                addr.s_addr = sin->sin_addr.s_addr;
+                addr = sin->sin_addr.s_addr;
 
-                if(!(link = ipv4_link_by_ifp(ifp)))
+                if(!(rt = route_for_ifp(ifp)))
                 {
-                    return ipv4_link_add(ifp, &addr, &mask);
+                    route_add_ipv4(addr, 0, 0xffffff00, RT_HOST, 0, ifp);
+                    return 0;
                 }
                 else
                 {
-                    ipv4_cleanup_routes(link);
-                    mask.s_addr = link->netmask.s_addr;
-                    link->addr.s_addr = addr.s_addr;
-                    network.s_addr = (addr.s_addr & mask.s_addr);
-                    ipv4_route_add(link, &network, &mask, &gateway, 1);
+                    rt->dest = addr;
                     return 0;
                 }
             
@@ -178,7 +170,9 @@ static int set_addr(struct netif_t *ifp, struct ifreq *ifr, int which)
     }
     else if(ifr->ifr_addr.sa_family == AF_INET6)
     {
-        // XXX
+        /*
+         * FIXME: We only support IPv4 for now.
+         */
         return -EOPNOTSUPP;
     }
     else
@@ -196,7 +190,7 @@ static int netif_getconf(char *data)
     struct ifconf ifconf;
     struct ifreq *ifr;
     struct ifreq zero;
-    struct ipv4_link_t *link;
+    struct rtentry_t *rt;
     int bytes = 0, userbytes;
     int dryrun;
 
@@ -211,8 +205,10 @@ static int netif_getconf(char *data)
     dryrun = (ifconf.ifc_req == NULL);
     A_memset(&zero, 0, sizeof(struct ifreq));
 
+    kernel_mutex_lock(&route_lock);
+
     // Get all interface addresses
-    for(link = ipv4_links; link != NULL; link = link->next)
+    for(rt = route_head.next; rt != NULL; rt = rt->next)
     {
         bytes += sizeof(struct ifreq);
         
@@ -233,16 +229,18 @@ static int netif_getconf(char *data)
         // addresses
         if(copy_to_user(ifr, &zero, sizeof(struct ifreq)) != 0)
         {
+            kernel_mutex_unlock(&route_lock);
             return -EFAULT;
         }
         
         // now we know the address is legit, we can write directly there
         // we only need to copy the interface name and address for now
-        A_memcpy(ifr->ifr_name, link->ifp->name, sizeof(link->ifp->name));
+        A_memcpy(ifr->ifr_name, rt->ifp->name, sizeof(rt->ifp->name));
         ifr->ifr_addr.sa_family = AF_INET;
-        ((struct sockaddr_in *)&ifr->ifr_addr)->sin_addr.s_addr = 
-                                                        link->addr.s_addr;
+        ((struct sockaddr_in *)&ifr->ifr_addr)->sin_addr.s_addr = rt->dest;
     }
+
+    kernel_mutex_unlock(&route_lock);
     
     // tell the caller the size of needed buffer, or how much we copied into
     // said buffer
@@ -254,12 +252,11 @@ static int netif_getconf(char *data)
 /*
  * Network interface ioctl.
  */
-int netif_ioctl(struct file_t *f, int cmd, char *data)
+long netif_ioctl(struct file_t *f, int cmd, char *data)
 {
     struct ifreq ifr;
     struct netif_t *ifp;
     int copyback = 0;
-    struct task_t *ct = cur_task;
     
 	if(!data)
 	{
@@ -350,27 +347,10 @@ int netif_ioctl(struct file_t *f, int cmd, char *data)
 
 	    // Delete interface address (AF_INET6 only)
 	    case SIOCDIFADDR:
-	    {
-	        GET_NETIF_PRIV(ifp, ifr);
-
-            if(ifr.ifr_addr.sa_family != AF_INET6)
-            {
-                return -EINVAL;
-            }
-            
-            struct ipv6_link_t *link;
-            struct in6_addr addr;
-            struct sockaddr_in6 *orig = (struct sockaddr_in6 *)&ifr.ifr_addr;
-            
-            COPY_FROM_USER(addr.s6_addr, orig->sin6_addr.s6_addr, 16);
-            
-            if(!(link = ipv6_link_get(&addr)))
-            {
-                return -EINVAL;
-            }
-            
-            return ipv6_link_del(link->ifp, &link->addr);
-        }
+            /*
+             * FIXME: We only support IPv4 for now.
+             */
+            return -EAFNOSUPPORT;
 
 	    // Get interface broadcast address (AF_INET only)
 	    case SIOCGIFBRDADDR:
@@ -455,7 +435,7 @@ int netif_ioctl(struct file_t *f, int cmd, char *data)
 	    case SIOCGIFHWADDR:
 	        GET_NETIF(ifp, ifr);
 	        ifr.ifr_hwaddr.sa_family = ARPHRD_ETHER;
-	        A_memcpy(&ifr.ifr_hwaddr.sa_data, ifp->ethernet_addr.addr, 
+	        A_memcpy(&ifr.ifr_hwaddr.sa_data, ifp->hwaddr, 
 	                 ETHER_ADDR_LEN);
 	        copyback = 1;
 	        break;
@@ -463,7 +443,7 @@ int netif_ioctl(struct file_t *f, int cmd, char *data)
         // Set interface hardware address
 	    case SIOCSIFHWADDR:
 	        GET_NETIF_PRIV(ifp, ifr);
-	        A_memcpy(ifp->ethernet_addr.addr, &ifr.ifr_hwaddr.sa_data, 
+	        A_memcpy(ifp->hwaddr, &ifr.ifr_hwaddr.sa_data, 
 	                 ETHER_ADDR_LEN);
 	        break;
 
@@ -482,19 +462,13 @@ int netif_ioctl(struct file_t *f, int cmd, char *data)
         // Get transmit queue length
 	    case SIOCGIFTXQLEN:
 	        GET_NETIF(ifp, ifr);
-	        ifr.ifr_qlen = ifp->outq ? ifp->outq->max : -1;
+	        ifr.ifr_qlen = -1;
 	        copyback = 1;
 	        break;
 
         // Set transmit queue length
 	    case SIOCSIFTXQLEN:
 	        GET_NETIF_PRIV(ifp, ifr);
-	        
-	        if(ifr.ifr_qlen >= 128 && ifp->outq && ifr.ifr_qlen > ifp->outq->count)
-	        {
-	            ifp->outq->max = ifr.ifr_qlen;
-	            return 0;
-	        }
 	        
 	        return -EINVAL;
 

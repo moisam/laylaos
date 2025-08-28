@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: loopback.c
  *    This file is part of LaylaOS.
@@ -28,159 +28,135 @@
 //#define __DEBUG
 #include <errno.h>
 #include <string.h>
-#include <netinet/in.h>
-#include <kernel/laylaos.h>
 #include <kernel/mutex.h>
 #include <kernel/net.h>
+#include <kernel/net/socket.h>
 #include <kernel/net/packet.h>
 #include <kernel/net/netif.h>
+#include <kernel/net/ether.h>
 #include <kernel/net/ipv4.h>
-#include <kernel/net/ipv6.h>
-#include <kernel/net/icmp4.h>
-#include <kernel/net/icmp6.h>
-#include <kernel/net/raw.h>
+#include <kernel/net/route.h>
+#include <kernel/net/icmpv4.h>
 #include <kernel/net/checksum.h>
 
 #define LO_MTU          65536
-#define LO_QUEUE_MAX    128
 
+static int loopback_transmit(struct netif_t *ifp, struct packet_t *p);
+static void loopback_func(void *unused);
+
+static struct netif_queue_t loopback_outq = { 0, };
 static struct netif_t loop_netif = { 0, };
-static struct netif_t *ifp = &loop_netif;
-
-struct netif_queue_t loopback_outq = { 0, };
-
-int loopback_transmit(struct netif_t *ifp, struct packet_t *p);
-void loopback_process_input(struct netif_t *ifp);
+static struct netif_t *loifp = &loop_netif;
+static volatile struct task_t *loopback_task = NULL;
 
 
-int loop_attach(void)
+void loop_attach(void)
 {
-    struct in_addr ipv4, netmask4;
-    struct in6_addr ipv6 = { 0, }, netmask6 = { 0, };
+    loifp->unit = 0;
+    strcpy(loifp->name, "lo0");
+    loifp->flags = (IFF_UP | IFF_LOOPBACK);
+	loifp->transmit = loopback_transmit;
+	loifp->mtu = LO_MTU;
+	A_memset(&(loifp->hwaddr), 0, ETHER_ADDR_LEN);
 
-    ifp->unit = 0;
-    strcpy(ifp->name, "lo0");
-    ifp->flags = (IFF_UP | IFF_LOOPBACK);
-	ifp->transmit = loopback_transmit;
-	ifp->process_input = loopback_process_input;
-	ifp->process_output = NULL;
-	ifp->mtu = LO_MTU;
-	ifp->inq = NULL;
-	ifp->outq = NULL;
-	A_memset(&(ifp->ethernet_addr.addr), 0, ETHER_ADDR_LEN);
-	
-	loopback_outq.max = LO_QUEUE_MAX;
-	
-	netif_add(ifp);
+	loopback_outq.max = SOCKET_DEFAULT_QUEUE_SIZE;
 
-    string_to_ipv4("127.0.0.1", &ipv4.s_addr);
-    string_to_ipv4("255.0.0.0", &netmask4.s_addr);
-    ipv4_link_add(ifp, &ipv4, &netmask4);
+	netif_attach(loifp);
+    route_add_ipv4(htonl(0x7f000001), 0, htonl(0xff000000), RT_LOOPBACK, 0, loifp);
 
-    string_to_ipv6("::1", ipv6.s6_addr);
-    string_to_ipv6("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", netmask6.s6_addr);
-    ipv6_link_add(ifp, &ipv6, &netmask6, NULL);
-    
-    ipv6_ifp_routing_enable(ifp);
-    
-    return 0;
+    (void)start_kernel_task("lo0", loopback_func, NULL, &loopback_task, 0);
 }
 
 
-int loopback_transmit(struct netif_t *ifp, struct packet_t *p)
+static void loopback_func(void *unused)
+{
+    struct packet_t *p;
+
+    UNUSED(unused);
+
+    while(1)
+    {
+        kernel_mutex_lock(&loopback_outq.lock);
+        IFQ_DEQUEUE(&loopback_outq, p);
+        kernel_mutex_unlock(&loopback_outq.lock);
+
+        if(p)
+        {
+            ethernet_receive(loifp, p);
+        }
+        else
+        {
+            block_task(&loopback_outq, 1);
+        }
+    }
+}
+
+
+static int loopback_transmit(struct netif_t *ifp, struct packet_t *p)
 {
     struct ipv4_hdr_t *iph;
-
-    //UNUSED(ifp);
+    int res;
 
     packet_add_header(p, -ETHER_HLEN);
     iph = (struct ipv4_hdr_t *)p->data;
-    
-    KDEBUG("loopback_transmit: ifp %lx, p %lx\n", ifp, p);
-    KDEBUG("loopback_transmit: ipv%d, proto %d, icmp %d\n", GET_IP_VER(iph), iph->proto, IPPROTO_ICMP);
 
     // if this is an ICMP echo request, change it to an ICMP reply so that
     // tools like ping work properly
-    
-    if(GET_IP_VER(iph) == 4 && iph->proto == IPPROTO_ICMP)
+
+    if(iph->ver == 4 && iph->proto == IPPROTO_ICMP)
     {
-        struct icmp4_hdr_t *icmph = (struct icmp4_hdr_t *)p->transport_hdr;
+        int hlen = iph->hlen * 4;
+        struct icmp_echo_header_t *icmph =
+                (struct icmp_echo_header_t *)((char *)p->data + hlen);
 
         if(icmph->type == ICMP_MSG_ECHO)
         {
-            uint32_t tmp = iph->dest.s_addr;
+            uint32_t tmp = iph->dest;
 
             icmph->type = ICMP_MSG_ECHOREPLY;
 
             // swap src & dest
-            iph->dest.s_addr = iph->src.s_addr;
-            iph->src.s_addr = tmp;
-
-            // update checksum
-            icmp4_checksum(p);
-        }
-    }
-    else if(GET_IP_VER(iph) == 6 && iph->proto == IPPROTO_ICMPV6)
-    {
-        struct ipv6_hdr_t *iph6 = (struct ipv6_hdr_t *)p->data;
-        struct icmp6_hdr_t *icmph = (struct icmp6_hdr_t *)p->transport_hdr;
-        struct in6_addr tmp = { 0, };
-
-        if(icmph->type == ICMP6_MSG_ECHO_REQUEST)
-        {
-            icmph->type = ICMP6_MSG_ECHO_REPLY;
-            icmph->code = 0;
-
-            // swap src & dest
-            IPV6_COPY(tmp.s6_addr, iph6->dest.s6_addr);
-            IPV6_COPY(iph6->dest.s6_addr, iph6->src.s6_addr);
-            IPV6_COPY(iph6->src.s6_addr, tmp.s6_addr);
+            iph->dest = iph->src;
+            iph->src = tmp;
 
             // update checksum
             icmph->checksum = 0;
-            icmph->checksum = htons(icmp6_checksum(p));
+            icmph->checksum = 
+                    inet_chksum((uint16_t *)((char *)p->data + hlen), 
+                                        p->count - hlen, 0);
         }
+    }
+    else if(iph->ver == 6 && iph->proto == IPPROTO_ICMPV6)
+    {
+        /*
+         * FIXME: We only support IPv4 for now.
+         */
     }
 
     packet_add_header(p, ETHER_HLEN);
 
+    ifp->stats.rx_packets++;
+    ifp->stats.rx_bytes += p->count;
+
+    kernel_mutex_lock(&loopback_outq.lock);
+
     if(IFQ_FULL(&loopback_outq))
     {
-        KDEBUG("loopback_transmit: dropping packet - queue full\n");
-        loop_netif.stats.rx_dropped++;
+        kernel_mutex_unlock(&loopback_outq.lock);
+        ifp->stats.rx_dropped++;
         netstats.link.drop++;
-        packet_free(p);
-        return -ENOBUFS;
+        free_packet(p);
+        res = -ENOBUFS;
     }
     else
     {
-        KDEBUG("loopback_transmit: queuing packet\n");
         IFQ_ENQUEUE(&loopback_outq, p);
-        loop_netif.stats.rx_packets++;
-        loop_netif.stats.rx_bytes += p->count;
-        return 0;
+        kernel_mutex_unlock(&loopback_outq.lock);
+        netstats.link.recv++;
+        res = 0;
     }
-}
 
-
-void loopback_process_input(struct netif_t *ifp)
-{
-    UNUSED(ifp);
-
-    //KDEBUG("loopback_process_input: ifp %lx\n", ifp);
-
-    struct packet_t *p;
-
-    while(1)
-    {
-        IFQ_DEQUEUE(&loopback_outq, p);
-        
-        if(!p)
-        {
-            break;
-        }
-        
-        IFQ_ENQUEUE(&ethernet_inq, p);
-    }
+    unblock_task(loopback_task);
+    return res;
 }
 
