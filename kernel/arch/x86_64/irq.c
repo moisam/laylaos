@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: irq.c
  *    This file is part of LaylaOS.
@@ -36,9 +36,18 @@
 //#include <kernel/fpu.h>
 #include <kernel/asm.h>
 #include <mm/kheap.h>
+#include <gui/vbe.h>            // screen_refresh()
 
 volatile int nested_irqs = 0;
 struct handler_t *interrupt_handlers[256];
+
+struct irq_redir_t irq_redir[16] =
+{
+    { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 },
+    { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 },
+    { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 },
+    { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 }, { 0xFFFFFFFF, 0 },
+};
 
 
 /*
@@ -50,32 +59,41 @@ void irq_handler(struct regs *r)
     uint8_t int_no = (r->int_no & 0xFF);
     //int done = 0;
     unsigned long long oticks = ticks;
-    
+
     nested_irqs++;
-    
+
+    /*
+    if(cur_task)
+    {
+        cur_task->irq_regs = r;
+    }
+    */
+
     for(h = interrupt_handlers[int_no]; h; h = h->next)
     {
         if(h->handler(r, h->handler_arg))
         {
-            //if(int_no == 43) printk("Handled IRQ %d (%s)\n", int_no - 32, h->short_name);
+            cli();
             h->hits++;
             // TODO: this does not account for round over
             h->ticks += (ticks - oticks);
-            //done = 1;
-            //break;
             nested_irqs--;
+
+            /*
+            if(cur_task)
+            {
+                cur_task->irq_regs = NULL;
+            }
+            */
+
             return;
         }
     }
-    
-    //if(!done)
-    {
-        printk("Unhandled IRQ %d\n", int_no - 32);
-        //screen_refresh(NULL);
-        //__asm__ __volatile__("xchg %%bx, %%bx"::);
-        pic_send_eoi(int_no - 32);
-    }
-    
+
+    printk("Unhandled IRQ %d\n", int_no - 32);
+    screen_refresh(NULL);
+
+    pic_send_eoi(int_no - 32);
     nested_irqs--;
 }
 
@@ -207,6 +225,19 @@ struct handler_t *irq_handler_alloc(int (*func)(struct regs *, int),
     
     return h;
 }
+
+
+/*
+uint32_t irq_remap(uint32_t irq)
+{
+    if(irq_redir[irq] != 0xFFFFFFFF)
+    {
+        return irq_redir[irq];
+    }
+
+    return irq;
+}
+*/
 
 
 /*

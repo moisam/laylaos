@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: switch_task.S
  *    This file is part of LaylaOS.
@@ -26,6 +26,7 @@
  */
 
 #include "task_offsets.h"
+#include "macros.S"
 
 .extern tss_entry
 
@@ -35,6 +36,8 @@
 .code64
 .align 8
 
+
+/*
 .global unlock_scheduler_no_sti
 .type unlock_scheduler_no_sti, @function
 
@@ -46,6 +49,7 @@ unlock_scheduler_no_sti:
     movabsq $IRQ_disable_counter, %rax
     movl %edx, (%rax)
     retq
+*/
 
 
 /*
@@ -116,9 +120,9 @@ save_context:
  *  0(%esp) - return address
  */
 restore_context:
-    //movq %rdi, (cur_task)
-    movabsq $cur_task, %rax
-    movq %rdi, (%rax)
+    //movabsq $cur_task, %rax
+    //movq %rdi, (%rax)
+    movq %rdi, %gs:24               // this_core->cur_task
 
     movq TASK_RBX_FIELD(%rdi), %rbx
     movq TASK_RDX_FIELD(%rdi), %rdx
@@ -147,7 +151,9 @@ restore_context:
     movq TASK_KSTACK_VIRT(%rdi), %rax       // rax = address for the top of
                                             // the next task's kernel stack
     
-    movabsq $tss_entry, %rcx
+    movq %gs:0, %rcx                // get this processor's TSS
+    //movabsq $tss_entry, %rcx
+
     movq %rax, 4(%rcx)          // Adjust the ESP0 field in the TSS (used by CPU
                                 // for CPL=3 -> CPL=0 privilege level changes)
     
@@ -163,21 +169,24 @@ restore_context:
     movq %rax, %cr3             // yes, load the next task's virtual address space
     
 1:
-    // We need to update or VMM pointers
+    // We need to update our VMM pointers
     // This is similar to what we do in vmmngr_switch_pdirectory() 
     // in mmngr_virtual.c
 
-    movabsq $_cur_directory_phys, %rcx
-    movq %rax, (%rcx)
+    movq %rax, %gs:16
+    //movabsq $_cur_directory_phys, %rcx
+    //movq %rax, (%rcx)
+
     movq 48(%rdi), %rax
-    movabsq $_cur_directory_virt, %rcx
-    movq %rax, (%rcx)
-    
+    movq %rax, %gs:8
+    //movabsq $_cur_directory_virt, %rcx
+    //movq %rax, (%rcx)
+
     // set TS in CR0 so the FPU will trap to exception #7
     //movq %cr0, %rax
     //orq  $CR0_TS, %rax
     //movq %rax, %cr0
-    
+
     popq %rdi
     popq %rcx
     

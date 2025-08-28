@@ -32,6 +32,7 @@
 .global empty_loop
 .global get_rip
 .global get_rsp
+.global has_cpuid
 
 
 empty_loop:
@@ -48,4 +49,20 @@ get_rip:
 get_rsp:
     movq %rsp, %rax
     retq
+
+/*
+ * Code from OSDev wiki: https://wiki.osdev.org/CPUID
+ */
+
+has_cpuid:
+    pushfq
+    pushfq
+    xorq $0x0000000000200000, (%rsp)     // Invert the ID bit in stored RFLAGS
+    popfq                       // Load stored RFLAGS (with ID bit inverted)
+    pushfq                      // Store RFLAGS again (ID bit may or may not be inverted)
+    popq %rax                   // rax = modified RFLAGS (ID bit may or may not be inverted)
+    xor (%rsp), %rax            // rax = whichever bits were changed
+    popfq                       // Restore original RFLAGS
+    and $0x00200000, %rax       // rax = zero if ID bit can't be changed, else non-zero
+    ret
 

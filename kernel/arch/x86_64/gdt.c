@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: gdt.c
  *    This file is part of LaylaOS.
@@ -35,12 +35,12 @@
 #include <kernel/user.h>
 #include <kernel/task.h>
 #include <kernel/msr.h>
+#include <kernel/smp.h>
 
-struct gdt_descriptor_s GDT[MAX_DESCRIPTORS];
-uint16_t gdt_descriptor_count;
+struct gdt_descriptor_s GDT[MAX_CORES][MAX_DESCRIPTORS];
 
 /* GDTR data */
-struct gdtr GDTR;
+struct gdtr GDTR[MAX_CORES];
 
 /* defined in gdt_install.S */
 extern void _gdt_install();
@@ -53,7 +53,7 @@ extern unsigned int stack_top;
 /*
  * Set a Descriptor in the GDT
  */
-void gdt_add_descriptor(uint32_t no, uint32_t base,
+void gdt_add_descriptor(int gdt_index, uint32_t no, uint32_t base,
                         uint32_t limit, uint8_t type)
 {
     if(no >= MAX_DESCRIPTORS)
@@ -62,18 +62,18 @@ void gdt_add_descriptor(uint32_t no, uint32_t base,
     }
   
     /* NULL out the Descriptor */
-    memset((void *) &GDT[no], 0, sizeof(struct gdt_descriptor_s));
+    memset((void *)&GDT[gdt_index][no], 0, sizeof(struct gdt_descriptor_s));
 
 #ifdef __x86_64__
 
     if(limit > 65536)
     {
         limit >>= 12;
-        GDT[no].flags = 0xA0;
+        GDT[gdt_index][no].flags = 0xA0;
     }
     else
     {
-        GDT[no].flags = 0x20;
+        GDT[gdt_index][no].flags = 0x20;
     }
 
 #else
@@ -81,21 +81,21 @@ void gdt_add_descriptor(uint32_t no, uint32_t base,
     if(limit > 65536)
     {
         limit >>= 12;
-        GDT[no].flags = 0xC0;
+        GDT[gdt_index][no].flags = 0xC0;
     }
     else
     {
-        GDT[no].flags = 0x40;
+        GDT[gdt_index][no].flags = 0x40;
     }
 
 #endif
   
-    GDT[no].limit = (uint16_t)(limit & 0xFFFF);
-    GDT[no].base_low = (uint16_t)(base & 0xFFFF);
-    GDT[no].base_mid = (uint8_t)((base >> 16) & 0xFF);
-    GDT[no].access = type;
-    GDT[no].flags |= (uint8_t)(limit >> 16) & 0xF;
-    GDT[no].base_hi  = (uint8_t)((base >> 24) & 0xFF);
+    GDT[gdt_index][no].limit = (uint16_t)(limit & 0xFFFF);
+    GDT[gdt_index][no].base_low = (uint16_t)(base & 0xFFFF);
+    GDT[gdt_index][no].base_mid = (uint8_t)((base >> 16) & 0xFF);
+    GDT[gdt_index][no].access = type;
+    GDT[gdt_index][no].flags |= (uint8_t)(limit >> 16) & 0xF;
+    GDT[gdt_index][no].base_hi  = (uint8_t)((base >> 24) & 0xFF);
 }
 
 
@@ -114,21 +114,24 @@ void gdt_clear_descriptor(uint32_t no)
 
 #ifdef __x86_64__
 
-static void gdt_add_descriptor64(uint32_t no, uint64_t base,
+static void gdt_add_descriptor64(int gdt_index, uint32_t no, uint64_t base,
                                  uint32_t limit, uint8_t type)
 {
     struct gdt_descriptor64_s *desc;
 
-    if(no >= MAX_DESCRIPTORS) return;
+    if(no >= MAX_DESCRIPTORS)
+    {
+        return;
+    }
 
-    desc = (struct gdt_descriptor64_s *)&GDT[no];
-    gdt_add_descriptor(no, (base & 0xFFFFFFFF), limit, type);
-    memset((void *) &GDT[no + 1], 0, sizeof(struct gdt_descriptor_s));
+    desc = (struct gdt_descriptor64_s *)&GDT[gdt_index][no];
+    gdt_add_descriptor(gdt_index, no, (base & 0xFFFFFFFF), limit, type);
+    memset((void *) &GDT[gdt_index][no + 1], 0, sizeof(struct gdt_descriptor_s));
     desc->base_very_hi = (base >> 32) & 0xFFFFFFFF;
 }
 
 
-static void set_gs_base(uintptr_t base)
+void set_gs_base(uintptr_t base)
 {
     wrmsr(IA32_GS_BASE, base);
     wrmsr(IA32_KERNGS_BASE, base);
@@ -144,49 +147,56 @@ static void set_gs_base(uintptr_t base)
  */
 void gdt_init(void)
 {
-    gdt_descriptor_count = MAX_DESCRIPTORS;
-    /* set GDTR */
-    GDTR.limit = (uint16_t)((sizeof(struct gdt_descriptor_s) * 
-                                        gdt_descriptor_count) - 1);
-    GDTR.base = (uintptr_t)&GDT;
-  
-    gdt_add_descriptor(0, 0, 0,          0   );	//0x00 - NULL Descriptor
-    gdt_add_descriptor(1, 0, 0xFFFFFFFF, 0x9A);	//0x08 - Ring 0 CODE Descriptor
-    gdt_add_descriptor(2, 0, 0xFFFFFFFF, 0x92);	//0x10 - Ring 0 DATA Descriptor
-    gdt_add_descriptor(3, 0, 0xFFFFFFFF, 0xFA);	//0x18 - Ring 3 CODE Descriptor
-    gdt_add_descriptor(4, 0, 0xFFFFFFFF, 0xF2);	//0x20 - Ring 3 DATA Descriptor
+    int i;
+
+    for(i = 0; i < MAX_CORES; i++)
+    {
+        /* set GDTR */
+        GDTR[i].limit = (uint16_t)((sizeof(struct gdt_descriptor_s) * 
+                                            MAX_DESCRIPTORS) - 1);
+        GDTR[i].base = (uintptr_t)&GDT[i];
+
+        gdt_add_descriptor(i, 0, 0, 0,          0   );	//0x00 - NULL Descriptor
+        gdt_add_descriptor(i, 1, 0, 0xFFFFFFFF, 0x9A);	//0x08 - Ring 0 CODE Descriptor
+        gdt_add_descriptor(i, 2, 0, 0xFFFFFFFF, 0x92);	//0x10 - Ring 0 DATA Descriptor
+        gdt_add_descriptor(i, 3, 0, 0xFFFFFFFF, 0xFA);	//0x18 - Ring 3 CODE Descriptor
+        gdt_add_descriptor(i, 4, 0, 0xFFFFFFFF, 0xF2);	//0x20 - Ring 3 DATA Descriptor
 
 #ifdef __x86_64__
 
-    // 0x28 - Repeat CODE Descriptor for Ring 3 to satisfy 
-    // SYSCALL/SYSRET requirements
-    gdt_add_descriptor(5, 0, 0xFFFFFFFF, 0xFA);
+        // 0x28 - Repeat CODE Descriptor for Ring 3 to satisfy 
+        // SYSCALL/SYSRET requirements
+        gdt_add_descriptor(i, 5, 0, 0xFFFFFFFF, 0xFA);
 
-#endif      /* __x86_64__ */
-
-    tss_install(0x10, (uintptr_t)&stack_top);
-
-#ifdef __x86_64__
-
-    // 0x28   - TSS  Descriptor
-    gdt_add_descriptor64(6, (uint64_t)&tss_entry, sizeof(tss_entry), 0x89);
-
-    /*
-     * TODO: load our processor local data into GS.
-     */
-    set_gs_base(0);
+        // 0x28   - TSS  Descriptor
+        gdt_add_descriptor64(i, 6, (uint64_t)&tss_entry[i], sizeof(*tss_entry), 0x89);
 
 #else
 
-    // 0x28   - TSS  Descriptor
-    gdt_add_descriptor(5, (uint32_t)&tss_entry, sizeof(tss_entry), 0x89);
-    // 0x30 - DATA Descriptor for TLS
-    gdt_add_descriptor(GDT_TLS_DESCRIPTOR, 0, 0xFFFFFFFF, 0xF2);
+        // 0x28   - TSS  Descriptor
+        gdt_add_descriptor(i, 5, (uint32_t)&tss_entry[i], sizeof(*tss_entry), 0x89);
+        // 0x30 - DATA Descriptor for TLS
+        gdt_add_descriptor(i, GDT_TLS_DESCRIPTOR, 0, 0xFFFFFFFF, 0xF2);
 
 #endif      /* __x86_64__ */
 
+    }
+
+    tss_install(0, 0x10, (uintptr_t)&stack_top);
+
     _gdt_install();
     tss_flush();
+
+    /*
+     * load our processor local data into GS.
+     */
+    set_gs_base((uintptr_t)&processor_local_data[0]);
+}
+
+
+void gdt_copy_to_trampoline(int i, char *p)
+{
+    memcpy(p, &GDTR[i], sizeof(struct gdtr));
 }
 
 
@@ -194,13 +204,12 @@ void gdt_init(void)
  * See:
  *   https://man7.org/linux/man-pages/man2/set_thread_area.2.html
  */
-int syscall_set_thread_area(struct user_desc *u_info)
+long syscall_set_thread_area(struct user_desc *u_info)
 {
     uint32_t n;
     struct user_desc tmp;
-    int res;
-    struct task_t *ct = cur_task;
-    
+    long res;
+
     //printk("syscall_set_thread_area: u_info 0x%lx\n", u_info);
     
     if(!u_info)
@@ -229,19 +238,19 @@ int syscall_set_thread_area(struct user_desc *u_info)
 #endif      /* __x86_64__ */
 
     tmp.entry_number = n;
-    ct->ldt.base = tmp.base_addr;
-    ct->ldt.limit = tmp.limit;
-    
+    this_core->cur_task->ldt.base = tmp.base_addr;
+    this_core->cur_task->ldt.limit = tmp.limit;
+
     return copy_to_user(u_info, &tmp, sizeof(struct user_desc));
 }
 
 
-int syscall_get_thread_area(struct user_desc *u_info)
+long syscall_get_thread_area(struct user_desc *u_info)
 {
     uint32_t n;
     struct user_desc tmp;
-    int res;
-    
+    long res;
+
     if(!u_info)
     {
         return -EINVAL;
@@ -261,10 +270,8 @@ int syscall_get_thread_area(struct user_desc *u_info)
 
 #ifdef __x86_64__
 
-    struct task_t *ct = cur_task;
-    
-    tmp.base_addr = ct->ldt.base;
-    tmp.limit = ct->ldt.limit;
+    tmp.base_addr = this_core->cur_task->ldt.base;
+    tmp.limit = this_core->cur_task->ldt.limit;
     tmp.useable = (tmp.base_addr && tmp.limit) ? 1 : 0;
 
 #else      /* !__x86_64__ */

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: idt.c
  *    This file is part of LaylaOS.
@@ -46,6 +46,7 @@
 #include <kernel/fpu.h>
 #include <kernel/ptrace.h>
 #include <kernel/tty.h>
+#include <kernel/user.h>
 #include <mm/mmngr_virtual.h>
 #include <mm/mmngr_phys.h>
 #include <mm/kstack.h>
@@ -55,9 +56,6 @@
 
 #include <fs/dentry.h>
 
-
-/* installs the IDTR */
-extern void _idt_install();
 
 /* The IDT */
 struct idt_descriptor_s IDT[MAX_INTERRUPTS];
@@ -100,6 +98,7 @@ char *intstr[] =
 INT_HANDLER(page_fault)
 INT_HANDLER(singlestep)
 INT_HANDLER(gpf)
+INT_HANDLER(division_by_zero)
 //INT_HANDLER(ill_opcode)
 
 
@@ -109,22 +108,17 @@ INT_HANDLER(gpf)
 void isr_handler(struct regs *r)
 {
     char *s;
-    //KDEBUG("isr_handler: int 0x%x\n", r->int_no);
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
     
     if(interrupt_handlers[r->int_no] != 0)
     {
         struct handler_t *h;
-    
+
         for(h = interrupt_handlers[r->int_no]; h; h = h->next)
         {
-            //KDEBUG("isr_handler: h @ 0x%x\n", h);
             if(h->handler(r, h->handler_arg))
             {
-                //KDEBUG("isr_handler: h @ 0x%x - done\n", h);
                 break;
             }
-            //KDEBUG("isr_handler: h @ 0x%x - skipping\n", h);
         }
     }
     else
@@ -143,40 +137,16 @@ void isr_handler(struct regs *r)
         }
         
         switch_tty(1);
-        //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
-        /*
-        if(cur_task)
-        {
-            printk("Current process: pid %d, comm %s\n",
-                   cur_task->pid, cur_task->command);
-
-            for(struct memregion_t *tmp = cur_task->mem->first_region; tmp != NULL; tmp = tmp->next)
-            {
-                char *path;
-                struct dentry_t *dent;
-                
-                path = "*";
-                
-                if(tmp->inode && get_dentry(tmp->inode, &dent) == 0)
-                {
-                    if(dent->path)
-                    {
-                        path = dent->path;
-                    }
-                }
-
-                printk("memregion: addr %lx - %lx (type %d, prot %x, fl %x, %s)\n", tmp->addr, tmp->addr + (tmp->size * PAGE_SIZE), tmp->type, tmp->prot, tmp->flags, path);
-            }
-        }
-        */
-
+        __asm__ __volatile__("xchg %%bx, %%bx"::);
         printk("\nUnhandled Interrupt: int %d (%s) - err 0x%x\n",
                r->int_no, s, r->err_code);
 
-        if(cur_task)
+        if(this_core->cur_task)
         {
-            printk("Current task (%d - %s)\n", cur_task->pid, cur_task->command);
+            printk("Current task (%d - %s)\n", 
+                    this_core->cur_task->pid, 
+                    this_core->cur_task->command);
         }
 
         dump_regs(r);
@@ -186,6 +156,33 @@ void isr_handler(struct regs *r)
 
         empty_loop();
     }
+}
+
+
+/*
+ * Divison by zero interrupt handler
+ */
+int division_by_zero(struct regs *r, int arg)
+{
+    UNUSED(arg);
+    
+    if(!this_core->cur_task || !this_core->cur_task->user)
+    {
+        kpanic("Divison by zero in kernel space!");
+    }
+    
+    // user task
+    // kill the task and force signal dispatch
+    __asm__ __volatile__("xchg %%bx, %%bx"::);
+
+#ifdef __x86_64__
+    add_task_fpe_signal(this_core->cur_task, FPE_INTDIV, (void *)r->rip);
+#else
+    add_task_fpe_signal(this_core->cur_task, FPE_INTDIV, (void *)r->eip);
+#endif      /* __x86_64__ */
+
+    check_pending_signals(r);
+    return 1;
 }
 
 
@@ -202,7 +199,9 @@ int singlestep(struct regs *r, int arg)
     r->eflags |= 0x100;
 #endif      /* __x86_64__ */
 
-    if(get_cur_task()->properties & PROPERTY_TRACE_SIGNALS)
+    __asm__ __volatile__("xchg %%bx, %%bx"::);
+
+    if(this_core->cur_task->properties & PROPERTY_TRACE_SIGNALS)
     {
         ptrace_signal(SIGTRAP, PTRACE_EVENT_STOP /* PTRACE_EVENT_SINGLESTEP */);
     }
@@ -217,23 +216,68 @@ int singlestep(struct regs *r, int arg)
 int gpf(struct regs *r, int arg)
 {
     UNUSED(arg);
-    struct task_t *ct = get_cur_task();
     
-    if(!ct || !ct->user)
+    if(!this_core->cur_task || !this_core->cur_task->user)
     {
+        switch_tty(1);
+
+        if(this_core->cur_task)
+        {
+            printk("Current task (%d - %s)\n", this_core->cur_task->pid, this_core->cur_task->command);
+        }
+
+        dump_regs(r);
+        screen_refresh(NULL);
         kpanic("General protection fault in kernel space!");
     }
     
     // user task
+    //__asm__ __volatile__("xchg %%bx, %%bx"::);
+
+    // if the GPF happened in the pagefault handler, the task would die
+    // holding its own memory lock, so we need to unlock it here otherwise
+    // terminate_task() will panic
+    if(this_core->cur_task->mem->mutex.holder &&
+       this_core->cur_task->mem->mutex.holder == this_core->cur_task)
+    {
+        kernel_mutex_unlock(&(this_core->cur_task->mem->mutex));
+    }
+
     // kill the task and force signal dispatch
 
 #ifdef __x86_64__
-    add_task_segv_signal(ct, SIGSEGV, SEGV_ACCERR, (void *)r->rip);
+    add_task_segv_signal(this_core->cur_task, SEGV_ACCERR, (void *)r->rip);
 #else
-    add_task_segv_signal(ct, SIGSEGV, SEGV_ACCERR, (void *)r->eip);
+    add_task_segv_signal(this_core->cur_task, SEGV_ACCERR, (void *)r->eip);
 #endif      /* __x86_64__ */
 
+    /*
+    switch_tty(1);
+    printk("\nGPF: int %d  err 0x%x\n", r->int_no, r->err_code);
+
+    if(this_core->cur_task)
+    {
+        printk("Current task (%d - %s)\n", this_core->cur_task->pid, this_core->cur_task->command);
+    }
+
+    char *p = (char *)r->rip;
+    int i;
+
+    printk("\nbytes before: ");
+    for(i = 8; i > 0; i--) printk("0x%02x ", p[-i]);
+    printk("\nbytes after : ");
+    for(i = 0; i < 8; i++) printk("0x%02x ", p[i]);
+    printk("\n\n");
+
+    dump_regs(r);
+    screen_refresh(NULL);
+    __asm__ __volatile__("xchg %%bx, %%bx"::);
+
+    empty_loop();
+    */
+
     check_pending_signals(r);
+    __asm__ __volatile__("xchg %%bx, %%bx"::);
     return 1;
 }
 
@@ -292,7 +336,6 @@ void idt_init(void)
     /* set IDTR */
     IDTR.limit = (sizeof(struct idt_descriptor_s) * MAX_INTERRUPTS) - 1;
     IDTR.base = (uintptr_t)&IDT[0];
-    //IDTR.base = (uint32_t)&IDT[0];
   
     /* NULL the IDT */
     memset((void *)&IDT[0], 0, sizeof(struct idt_descriptor_s) * 
@@ -348,12 +391,28 @@ void idt_init(void)
     {
         install_isr(i, 0x8E, 0x08, isr_handler);
     }
-    
+
+    // clock IRQ for other processors (not the boot processor)
+    install_isr(123, 0x8E, 0x08, isr123);
+
+    // bad TLB shootdown
+    install_isr(124, 0x8E, 0x08, isr124);
+
+    // halt everybody
+    install_isr(125, 0x8E, 0x08, isr125);
+
+    // wakeup from idle task
+    install_isr(126, 0x8E, 0x08, isr126);
+
+    // spurious interrupt
+    install_isr(0xFF, 0x8E, 0x08, isr255);
+
     /* install IDTR */
     idt_install();
 
     irq_init();
 
+    register_isr_handler(0, &division_by_zero_handler);
     register_isr_handler(1, &singlestep_handler);
 
 #ifndef __x86_64__

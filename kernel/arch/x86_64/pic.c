@@ -27,11 +27,13 @@
  */
 
 #include <kernel/pic.h>
+#include <kernel/ioapic.h>
 #include <kernel/io.h>
+#include <kernel/irq.h>
 
 
 /*
- * Initialise the PIC.
+ * Initialize the PIC.
  */
 void pic_init(int offset0, int offset1)
 {
@@ -61,15 +63,12 @@ void pic_init(int offset0, int offset1)
 }
 
 
-/*
-void pic_disable()
+void pic_disable(void)
 {
-  __asm__ __volatile__(
-    "mov $0xFF, %%al\n\
-     out %%al, $0xA1\n\
-     out %%al, $0x21":::);
+    //pic_init(0x20, 0x28);   // remap IRQs
+    outb(PIC1_DATA, 0xFF);
+    outb(PIC2_DATA, 0xFF);
 }
-*/
 
 
 /*
@@ -79,6 +78,13 @@ void enable_irq(unsigned char irq_line)
 {
     uint16_t port;
     uint8_t val;
+
+    if(apic_running)
+    {
+        //ioapic_enable_irq(irq_remap(irq_line), 0x20 + irq_line);
+        ioapic_enable_irq(irq_line);
+        return;
+    }
     
     if(irq_line < 8)
     {
@@ -102,6 +108,13 @@ void disable_irq(unsigned char irq_line)
 {
     uint16_t port;
     uint8_t val;
+
+    if(apic_running)
+    {
+        //ioapic_disable_irq(irq_remap(irq_line));
+        ioapic_disable_irq(irq_line);
+        return;
+    }
     
     if(irq_line < 8)
     {

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: syscall_dispatcher.S
  *    This file is part of LaylaOS.
@@ -36,8 +36,14 @@
 #include "macros.S"
 
 
+#ifdef SMP
+// defined in task.c
+//.extern scheduler_lock
+.extern scheduler_holding_cpu
+#else
 // defined in switch_task.S
 .extern unlock_scheduler_no_sti
+#endif
 
 
 .section .text
@@ -78,7 +84,10 @@ syscall_entry64:
     mov %rsp, %r9
 
     // move to the task's kernel stack, using ESP0 field of the TSS
-    movabsq $tss_entry, %rsp
+    //movabsq $tss_entry, %rsp
+    xor %rsp, %rsp                  // ensure no trash in upper bits
+    movq %gs:0, %rsp                // get this processor's TSS
+
     movq 4(%rsp), %rsp
     
     // push the values the processor usually pushes on an interrupt
@@ -149,11 +158,28 @@ syscall_entry:
  */
 resume_user:
     cli
-    call unlock_scheduler_no_sti
+
+    ////movabsq $scheduler_lock, %rdi
+    ////call kernel_mutex_unlock
+    //call unlock_scheduler_no_sti
+
+    // Unlock the scheduler
+    mov %gs:40, %eax                // this_core->cpuid
+    mov $0xffffffff, %ecx
+    movabsq $scheduler_holding_cpu, %rdi
+    lock cmpxchg %ecx, 0x0(%rdi)
+
+    // Remove the SMP_FLAG_SCHEDULER_BUSY flag
+    movl %gs:56, %eax                // this_core->flags
+    andl $~0x02, %eax
+    movl %eax, %gs:56
+
+
 
     // if user task, release the 'running in kernel mode' flag
-    movabsq $cur_task, %rdi
-    movq (%rdi), %rdi
+    //movabsq $cur_task, %rdi
+    //movq (%rdi), %rdi
+    movq %gs:24, %rdi               // this_core->cur_task
     call unset_syscall_flags
     
     // don't popa as we want to preserve our esp
@@ -201,8 +227,9 @@ resume_user:
 enter_user:
     cli
 
-    movabsq $cur_task, %rax
-    movq (%rax), %rax
+    //movabsq $cur_task, %rax
+    //movq (%rax), %rax
+    movq %gs:24, %rax               // this_core->cur_task
 
     leaq TASK_EXECVE_REGS(%rax), %rax
     movq (%rax), %rbp

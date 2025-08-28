@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: tss.c
  *    This file is part of LaylaOS.
@@ -27,16 +27,17 @@
 
 #include <kernel/laylaos.h>
 #include <kernel/tss.h>
+#include <kernel/smp.h>
 
-tss_entry_t tss_entry;
+tss_entry_t tss_entry[MAX_CORES];
 
 
 /*
  * Initialise and install the TSS.
  */
-void tss_install(uint32_t kernel_ss, uintptr_t kernel_esp)
+void tss_install(int i, uint32_t kernel_ss, uintptr_t kernel_esp)
 {
-    memset(&tss_entry, 0, sizeof(tss_entry));
+    memset(&tss_entry[i], 0, sizeof(tss_entry_t));
 
 #ifdef __x86_64__
 
@@ -44,17 +45,17 @@ void tss_install(uint32_t kernel_ss, uintptr_t kernel_esp)
 
 #else       /* !__x86_64__ */
 
-    tss_entry.ss0 = kernel_ss;
-    tss_entry.cs = 0x0b;
-    tss_entry.ss = 0x13;
-    tss_entry.es = 0x13;
-    tss_entry.ds = 0x13;
-    tss_entry.fs = 0x13;
-    tss_entry.gs = 0x13;
+    tss_entry[i].ss0 = kernel_ss;
+    tss_entry[i].cs = 0x0b;
+    tss_entry[i].ss = 0x13;
+    tss_entry[i].es = 0x13;
+    tss_entry[i].ds = 0x13;
+    tss_entry[i].fs = 0x13;
+    tss_entry[i].gs = 0x13;
 
 #endif      /* !__x86_64__ */
 
-    tss_entry.sp0 = kernel_esp;
+    tss_entry[i].sp0 = kernel_esp;
 }
 
 /*

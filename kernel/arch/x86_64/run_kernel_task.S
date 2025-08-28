@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: run_kernel_task.S
  *    This file is part of LaylaOS.
@@ -43,20 +43,21 @@
 
 
 run_kernel_task:
-    movabsq $cur_task, %rax
-    movq (%rax), %rax
-    //call get_cur_task
+    //movabsq $cur_task, %rax
+    //movq (%rax), %rax
+    movq %gs:24, %rax               // this_core->cur_task
 
-    xor %rbx, %rbx
-    movl 0(%rax), %ebx
+    xor %rdi, %rdi
+    movl 0(%rax), %edi
     
     //call elevate_priority
     
 1:
     // Loop until our parent (init) adds us to the kernel task list.
     // We only do this once, so we can busy loop here.
-    movq %rbx, %rdi
+    pushq %rdi
     call get_ktask
+    popq %rdi
     test %rax, %rax
     //jz 1b
     jnz 2f
@@ -92,14 +93,15 @@ run_kernel_task:
 
     // The function returned, which shouldn't happen.
     // Try to get the ktask struct and restart the function.
-    movabsq $cur_task, %rax
-    movq (%rax), %rax
-    //call get_cur_task
+    //movabsq $cur_task, %rax
+    //movq (%rax), %rax
+    movq %gs:24, %rax               // this_core->cur_task
 
-    xor %rbx, %rbx
-    movl 0(%rax), %ebx
-    movq %rbx, %rdi
+    xor %rdi, %rdi
+    movl 0(%rax), %edi
+    pushq %rdi
     call get_ktask
+    popq %rdi
     test %rax, %rax
     jnz 3b
     

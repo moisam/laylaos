@@ -25,6 +25,8 @@
  *  Some useful x86_64 macros.
  */
 
+.set TSS_SIZE,          0x68
+
 .section .text
 .code64
 .align 8

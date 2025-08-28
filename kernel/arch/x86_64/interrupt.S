@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: interrupt.S
  *    This file is part of LaylaOS.
@@ -34,6 +34,7 @@
 
 
 .extern isr_handler
+.extern apic_running
 
 /********************************
  * Handling ISRs
@@ -90,6 +91,66 @@ ISR_NOERRCODE 28
 ISR_NOERRCODE 29
 ISR_NOERRCODE 30
 ISR_NOERRCODE 31
+
+/*
+ * Timer interrupt for other processors
+ */
+.global isr123
+isr123:
+    cli
+    pushq $0     // dummy error code
+    pushq $123
+    jmp isr_common_stub
+
+/*
+ * TLB shootdown
+ */
+.global isr124
+isr124:
+    cli
+    pushq $0     // dummy error code
+    pushq $124
+    _SWAPGS
+    PUSHAQ
+    call handle_tlb_shootdown
+    movabsq $lapic_virt, %r12
+    movq (%r12), %r12
+    movl $0x0, 0xb0(%r12)
+    POPAQ
+    _SWAPGS
+    add $16, %rsp     // Clean up the pushed error code and pushed ISR number
+    iretq
+
+/*
+ * Fatal -- stop everything
+ */
+.global isr125
+isr125:
+    cli
+1:
+    hlt
+    jmp 1b
+
+/*
+ * Wakeup from idle
+ */
+.global isr126
+isr126:
+    pushq %r12
+    movabsq $lapic_virt, %r12
+    movq (%r12), %r12
+    movl $0x0, 0xb0(%r12)
+    popq %r12
+    iretq
+
+/*
+ * Spurious interrupt -- do nothing
+ */
+.global isr255
+isr255:
+    xchg %bx, %bx
+    iretq
+
 
 /*
  * This is our common ISR stub. It saves the processor state, sets
@@ -194,7 +255,13 @@ irq7:
     //xchg %bx, %bx
     //xchg %bx, %bx
     pushq %rax
-    
+
+    // If the APIC is running, do not check for a spurious IRQ7
+    movabsq $apic_running, %rax
+    movl (%rax), %eax
+    test %eax, %eax
+    jnz 0f
+
     // PIC.OCW3 set function to read ISR (In Service Register)
     movb $0x0b, %al
     
@@ -213,6 +280,7 @@ irq7:
     //bts $0x01, flags
     //jc 1f
 
+0:
     popq %rax
 
     // normal IRQ-7 routine
@@ -240,6 +308,12 @@ irq15:
     //xchg %bx, %bx
     //xchg %bx, %bx
     pushq %rax
+
+    // If the APIC is running, do not check for a spurious IRQ15
+    movabsq $apic_running, %rax
+    movl (%rax), %eax
+    test %eax, %eax
+    jnz 0f
     
     // PIC.OCW3 set function to read ISR (In Service Register)
     movb $0x0b, %al
@@ -261,6 +335,7 @@ irq15:
     //bts $0x01, flags
     //jc 1f
 
+0:
     popq %rax
 
     // normal IRQ-15 routine
@@ -322,6 +397,8 @@ irq_common_stub:
      */
 
     //xchg %bx, %bx
+    cli
+    /*
     movabsq $cur_task, %rax
     movq (%rax), %rax
     test %rax, %rax
@@ -330,6 +407,7 @@ irq_common_stub:
     movl TASK_USER_FIELD(%rax), %eax
     test %eax, %eax
     jz 2f
+    */
 
     mov %rsp, %rdi
     call check_signals_after_irq

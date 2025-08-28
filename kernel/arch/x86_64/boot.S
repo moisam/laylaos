@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: boot.S
  *    This file is part of LaylaOS.
@@ -49,26 +49,22 @@
 .set VIDEO_BPP,     0           // bpp (graphics mode), 0 (text mode)
 */
 
-.section .data
-.align 0x1000
+// Declare constants for the Multiboot2 header
+.set MAGIC2,    0xE85250D6
+.set LENGTH2,   (multiboot2_header_end - multiboot2_header)
+.set CHECKSUM2, -(MAGIC2 + 0 + LENGTH2)
 
-/*
- * Preallocate pages used for paging. Don't hard-code addresses and assume they
- * are available, as the bootloader might have loaded its multiboot structures or
- * modules there. This lets the bootloader know it must avoid the addresses.
- */
+// reserve initial kernel stack space -- that's 16k.
+.set STACKSIZE, 0x4000
 
-BootPageDirectory:
-    .skip 0x3000
-
-/*
- * NOTE: Further page tables may be required if the kernel grows beyond 3 MiB.
- */
+.extern kernel_start_phys
+.extern kernel_bss_start_phys
+.extern kernel_end_phys
 
 
-// Declare a multiboot header that marks the program as a kernel.
-.section .text
-.code32
+.section .multiboot.data, "aw"
+
+/* Declare a Multiboot header that marks the program as a kernel */
 .align 4
 .long MAGIC
 .long FLAGS
@@ -83,13 +79,92 @@ BootPageDirectory:
 .long VIDEO_HEIGHT
 .long VIDEO_BPP
 
-// reserve initial kernel stack space -- that's 16k.
-.set STACKSIZE, 0x4000
+/* Declare a Multiboot2 header */
+.align 8
+multiboot2_header:
+.long MAGIC2
+.long 0     // arch i386
+.long LENGTH2
+.long CHECKSUM2
+
+/* Address tag */
+.align 8
+.word 2
+.word 0
+.long 24
+.long multiboot2_header
+.long kernel_start_phys
+.long kernel_bss_start_phys
+.long kernel_end_phys
+
+/* Entry tag */
+.align 8
+.word 3         // type
+.word 0         // flags
+.long 12        // size
+.long _start    // entry_addr
+
+/* Flags tag */
+.align 8
+.word 4         // type
+.word 0         // flags
+.long 12        // size
+.long 2         // console_flags = get console info & tell we support EGA mode
+
+/* Framebuffer tag */
+.align 8
+.word 5         // type
+.word 0         // flags
+.long 20        // size
+.long VIDEO_WIDTH
+.long VIDEO_HEIGHT
+.long VIDEO_BPP
+
+/* Modules aligned tag */
+.align 8
+.word 6         // type
+.word 0         // flags
+.long 8         // size
+
+/* End tag */
+.align 8
+.word 0         // type
+.word 0         // flags
+.long 8         // size
+
+multiboot2_header_end:
+
+
+.section .bootstrap_stack, "aw", @nobits
+.align 0x1000
+.global stack
+.global stack_top
+stack:
+.skip STACKSIZE
+stack_top:
+
+
+/*
+ * Preallocate pages used for paging. Don't hard-code addresses and assume they
+ * are available, as the bootloader might have loaded its multiboot structures or
+ * modules there. This lets the bootloader know it must avoid the addresses.
+ */
+.section .bss, "aw", @nobits
+.align 0x1000
+
+BootPageDirectory:
+    .skip 0x3000
+
+/*
+ * NOTE: Further page tables may be required if the kernel grows beyond 3 MiB.
+ */
 
 
 /*
  * The kernel entry point.
  */
+.section .multiboot.text, "a"
+.code32
 .global _start
 .type _start, @function
 _start:
@@ -157,7 +232,8 @@ _start:
     
     // Load GDT and jump to long mode
     //lgdt null_gdtr
-    mov $(null_gdtr - 0xFFFF800000000000), %eax
+    mov $null_gdtr, %eax
+    //mov $(null_gdtr - 0xFFFF800000000000), %eax
     lgdt (%eax)
 
 	//xchg %bx, %bx
@@ -224,10 +300,3 @@ long_mode:
 2:	hlt
 	jmp 2b
 
-.section .bss
-.align 32
-.global stack
-.global stack_top
-stack:
-.skip STACKSIZE
-stack_top:
