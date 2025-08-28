@@ -60,19 +60,11 @@ extern struct domain_t *domains[];
 extern struct domain_t unix_domain;
 
 /**
- * @var inet_domain
- * @brief Internet domain IPv4.
+ * @var internet_domain
+ * @brief Internet domain.
  *
- * Table of Internet domain protocols for IP version 4.
+ * Table of Internet domain protocols.
  */
-extern struct domain_t inet_domain;
-
-/**
- * @var inet6_domain
- * @brief Internet domain IPv6.
- *
- * Table of Internet domain protocols for IP version 6.
- */
-extern struct domain_t inet6_domain;
+extern struct domain_t internet_domain;
 
 #endif      /* NET_DOMAIN_H */

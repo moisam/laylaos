@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: netif.h
  *    This file is part of LaylaOS.
@@ -30,13 +30,9 @@
 
 #include <sys/socket.h>
 #include <net/if.h>         // IFF_* flags, IF_NAMESIZE
-#include <kernel/pci.h>
-#include <kernel/vfs.h>
 #include <kernel/mutex.h>
-#include <kernel/net/ether.h>
+#include <kernel/vfs.h>
 #include <kernel/net/stats.h>
-#include <kernel/net/ipv6.h>
-
 
 #define IFQ_ENQUEUE(q, p)                   \
 {                                           \
@@ -69,9 +65,6 @@
 }
 
 #define IFQ_FULL(q)                 ((q)->count >= (q)->max)
-//#define IFQ_DROP(q)                 (q)->drops++
-
-#define NETIF_DEFAULT_QUEUE_LEN     4096
 
 
 // defined in dev/chr/rand.c
@@ -90,7 +83,26 @@ struct netif_queue_t
     struct packet_t *tail;          /**< last packet in queue */
     int count,                      /**< number of packets in queue */
         max;                        /**< max number of packets in queue */
-    struct kernel_mutex_t lock;     /**< struct lock */
+    volatile struct kernel_mutex_t lock;     /**< struct lock */
+};
+
+/**
+ * @struct netifaddr_t
+ * @brief The netifaddr_t structure.
+ *
+ * A structure to represent network interface addresses.
+ */
+struct netifaddr_t
+{
+    sa_family_t family;
+
+    union
+    {
+        uint32_t ipv4;
+        uint8_t ipv6[16];
+    } addr;
+
+    struct netifaddr_t *next;
 };
 
 /**
@@ -102,8 +114,6 @@ struct netif_queue_t
 struct netif_t
 {
     char name[IF_NAMESIZE];             /**< interface name */
-    struct netif_t *next;               /**< next interface in list */
-    struct ether_addr_t ethernet_addr;  /**< hardware address */
     int unit;                           /**< unit number for internal device 
                                              driver use */
     int flags;                          /**< IFF_* flags (defined in 
@@ -111,21 +121,19 @@ struct netif_t
     int index;                          /**< index in interface list */
     int mtu;                            /**< Maximum Transfer Unit for 
                                              the device */
-
-    uint32_t dhcp_xid;                  /**< DHCP transaction id */
-
+    volatile int sending;               /**< non-zero if currently sending */
+    uint8_t hwaddr[6];                  /**< Ethernet hardware address */
+    //struct netifaddr_t *addr;           /**< interface addresses */
     struct stats_nic stats;             /**< interface stats */
-    struct ipv6_nd_hostvars_t hostvars; /**< host variables for IPv6 */
+
+    unsigned long long last_arp_request_time;   /**< last ARP request time */
+
+    struct netif_t *next;               /**< next interface in list */
 
     int (*transmit)(struct netif_t *, 
                     struct packet_t *); /**< transmit function */
-    int	(*ioctl)(struct file_t *f, 
+    long (*ioctl)(struct file_t *f, 
                  unsigned int, char *); /**< ioctl function */
-
-    void (*process_input)(struct netif_t *);    /**< process input function */
-    void (*process_output)(struct netif_t *);   /**< process output function */
-    struct netif_queue_t *inq,          /**< incoming queue */
-                         *outq;         /**< outgoing queue */
 };
 
 
@@ -144,7 +152,16 @@ extern struct netif_t *netif_list;
  **********************************/
 
 /**
- * @brief Interface add.
+ * @brief Initialize netif.
+ *
+ * Initialize the network interface layer.
+ *
+ * @return  nothing.
+ */
+void netif_init(void);
+
+/**
+ * @brief Interface attach.
  *
  * Add a network interface to our list of attached interfaces.
  *
@@ -152,7 +169,7 @@ extern struct netif_t *netif_list;
  *
  * @return  zero on success, -(errno) on failure.
  */
-int netif_add(struct netif_t *ifp);
+int netif_attach(struct netif_t *ifp);
 
 /**
  * @brief Get interface.
@@ -193,8 +210,6 @@ struct netif_t *netif_by_name(char *name);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int netif_ioctl(struct file_t *f, int cmd, char *data);
-
-int netif_ipv6_random_ll(struct netif_t *ifp);
+long netif_ioctl(struct file_t *f, int cmd, char *data);
 
 #endif      /* NET_INTERFACE_H */

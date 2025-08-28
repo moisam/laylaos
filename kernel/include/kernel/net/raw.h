@@ -1,6 +1,6 @@
 /* 
- *    Copyright 2022, 2023, 2024 (c) Mohammed Isam [mohammed_isam1984@yahoo.com].
- *    PicoTCP. Copyright (c) 2012-2017 Altran Intelligent Systems. Some rights reserved.
+ *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
+ *    Copyright 2022, 2023, 2024 (c)
  * 
  *    file: raw.h
  *    This file is part of LaylaOS.
@@ -25,43 +25,12 @@
  *  Functions and macros for handling RAW network packets.
  */
 
-#ifndef NET_RAW_H
-#define NET_RAW_H
+#ifndef RAW_H
+#define RAW_H
 
-#include <netinet/icmp6.h>
+#define RAWTTL                  255              // RAW time to live
 
-struct socket_raw_t
-{
-    struct socket_t sock;
-    struct icmp6_filter icmp6_filter;
-};
-
-
-/**
- * @var raw_inq
- * @brief RAW in queue.
- *
- * Queue of incoming RAW packets.
- * Defined in raw.c.
- */
-extern struct netif_queue_t raw_inq;
-
-/**
- * @var raw_outq
- * @brief RAW out queue.
- *
- * Queue of outgoing RAW packets.
- * Defined in raw.c.
- */
-//extern struct netif_queue_t raw_outq;
-
-/**
- * @var raw_sockops
- * @brief RAW socket operations.
- *
- * Pointer to the socket operations structure for the RAW protocol.
- * Defined in raw.c.
- */
+// externs defined in raw.c
 extern struct sockops_t raw_sockops;
 
 
@@ -69,26 +38,6 @@ extern struct sockops_t raw_sockops;
  * Functions defined in network/raw.c
  *********************************************/
 
-/**
- * @brief RAW push.
- *
- * Handle sending RAW packets.
- *
- * @param   p           packet to push on outgoing queue
- *
- * @return  zero on success, -(errno) on failure.
- */
-int raw_push(struct packet_t *p);
+int raw_input(struct packet_t *p);
 
-/**
- * @brief RAW receive.
- *
- * Handle received RAW packets.
- *
- * @param   p       received packet
- *
- * @return  zero on success, -(errno) on failure.
- */
-int raw_receive(struct packet_t *p);
-
-#endif      /* NET_RAW_H */
+#endif      /* RAW_H */

@@ -33,6 +33,8 @@
 
 #define UDP_HLEN                8
 
+#define UDP_HDR(p)              (struct udp_hdr_t *)((p)->head + ETHER_HLEN + IPv4_HLEN)
+
 struct udp_hdr_t
 {
     uint16_t srcp;         // Source port number 
@@ -43,8 +45,6 @@ struct udp_hdr_t
 
 
 // externs defined in udp.c
-extern struct netif_queue_t udp_inq;
-extern struct netif_queue_t udp_outq;
 extern struct sockops_t udp_sockops;
 
 
@@ -52,15 +52,6 @@ extern struct sockops_t udp_sockops;
  * Functions defined in network/udp.c
  *********************************************/
 
-int udp_receive(struct packet_t *p);
-int udp_push(struct packet_t *p);
-int udp_process_out(struct packet_t *p);
-
-
-/*********************************************
- * Functions defined in network/sockets/udp.c
- *********************************************/
-
-int socket_udp_receive(struct sockport_t *sp, struct packet_t *p);
+void udp_input(struct packet_t *p);
 
 #endif      /* NET_UDP_H */

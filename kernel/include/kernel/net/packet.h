@@ -22,23 +22,27 @@
 /**
  *  \file packet.h
  *
- *  Functions and macros for handling network packets.
+ *  Helper functions for working with network packets.
  */
 
 #ifndef NET_PACKET_H
 #define NET_PACKET_H
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <kernel/net/socket.h>
+#include <errno.h>
+#include <kernel/laylaos.h>
+#include <mm/kheap.h>
 
-#define PACKET_LINK             1
-#define PACKET_IP               2
-#define PACKET_TRANSPORT        3
-#define PACKET_RAW              4
+#define ETHER_HLEN              14
+#define IPv4_HLEN               20
+#define UDP_HLEN                8
+#define TCP_HLEN                20
+
+#define PACKET_SIZE_IP(s)       (ETHER_HLEN + IPv4_HLEN + (s))
+#define PACKET_SIZE_TCP(s)      (ETHER_HLEN + IPv4_HLEN + TCP_HLEN + (s))
+#define PACKET_SIZE_UDP(s)      (ETHER_HLEN + IPv4_HLEN + UDP_HLEN + (s))
 
 #define PACKET_FLAG_BROADCAST   0x01
-#define PACKET_FLAG_SACKED      0x02
+#define PACKET_FLAG_HDRINCLUDED 0x02    /* for RAW sockets */
 
 /**
  * @struct packet_t
@@ -48,35 +52,18 @@
  */
 struct packet_t
 {
-    void *data;                 /**< data buffer */
-    void *transport_hdr;        /**< pointer to transport-layer header
-                                     (for incoming packets) */
-    void *incoming_iphdr;       /**< pointer to IP header
-                                     (for incoming packets) */
-    size_t count;               /**< bytes in this buffer */
-    size_t malloced;            /**< malloced bytes in total */
+    uint8_t *data;              /**< data buffer */
+    uint8_t *head;              /**< data head */
+    uint8_t *end;               /**< data end */
+    size_t count;               /**< bytes in buffer */
     int flags;                  /**< flags */
-    int transport_flags_saved;
-    uint16_t frag;              /**< payload fragmentation info */
-    //int refs;                   /**< reference count */
-    //struct sockaddr src;        /**< source IP address */
+    int refs;                   /**< reference count */
+    uint32_t seq, end_seq;      /**< Starting and ending sequence numbers */
     struct netif_t *ifp;        /**< network interface */
     void (*free_packet)(struct packet_t *p);    /**< free function */
-    struct socket_t *sock;
     struct packet_t *next;      /**< next packet buffer */
-    
-    unsigned long long timestamp;
-
-    union ip_addr_t remote_addr;    /**< remote UDP IP address */
-    uint16_t remote_port;           /**< remote UDP port */
-
-    int nfailed;                    /**< failed transmission tries */
 };
 
-
-/**********************************
- * Function prototypes
- **********************************/
 
 /**
  * @brief Allocate packet.
@@ -84,11 +71,59 @@ struct packet_t
  * Allocate memory for a new network packet.
  *
  * @param   len     requested size
- * @param   type    network layer requesting packet
  *
  * @return  pointer to new alloced packet on success, NULL on failure.
  */
-struct packet_t *packet_alloc(size_t len, int type);
+STATIC_INLINE struct packet_t *alloc_packet(size_t len)
+{
+    struct packet_t *p;
+
+    if(!(p = kmalloc(sizeof(struct packet_t) + len)))
+    {
+        return NULL;
+    }
+
+    A_memset(p, 0, sizeof(struct packet_t) + len);
+    p->data = ((uint8_t *)p + sizeof(struct packet_t));
+    p->head = p->data;
+    p->end = p->data + len;
+    p->refs = 1;
+    p->count = len;
+
+    return p;
+}
+
+
+/**
+ * @brief Duplicate a packet.
+ *
+ * Allocate memory for a new network packet and copy the given packet to it.
+ *
+ * @param   p       network packet to copy
+ *
+ * @return  pointer to new alloced packet on success, NULL on failure.
+ */
+STATIC_INLINE struct packet_t *dup_packet(struct packet_t *p)
+{
+    struct packet_t *p2;
+    size_t tlen = p->end - (uint8_t *)p;
+
+    if(!(p2 = kmalloc(tlen)))
+    {
+        return NULL;
+    }
+
+    A_memcpy(p2, p, tlen);
+    p2->head = (uint8_t *)p2 + (p->head - (uint8_t *)p);
+    p2->data = (uint8_t *)p2 + (p->data - (uint8_t *)p);
+    p2->end = (uint8_t *)p2 + (p->end - (uint8_t *)p);
+    p2->refs = 1;
+    p2->next = NULL;
+    p2->free_packet = NULL;
+
+    return p2;
+}
+
 
 /**
  * @brief Free packet.
@@ -99,7 +134,29 @@ struct packet_t *packet_alloc(size_t len, int type);
  *
  * @return  nothing.
  */
-void packet_free(struct packet_t *p);
+STATIC_INLINE void free_packet(struct packet_t *p)
+{
+    if(!p)
+    {
+        return;
+    }
+    
+    p->refs--;
+    
+    if(p->refs == 0)
+    {
+        // some modules (e.g. ne2000) have their own packet free functions
+        if(p->free_packet)
+        {
+            p->free_packet(p);
+        }
+        else
+        {
+            kfree(p);
+        }
+    }
+}
+
 
 /**
  * @brief Add header.
@@ -111,17 +168,28 @@ void packet_free(struct packet_t *p);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int packet_add_header(struct packet_t *p, size_t hdr_len);
+STATIC_INLINE int packet_add_header(struct packet_t *p, size_t hdr_len)
+{
+    uint8_t *data = p->data - hdr_len;
+    uint8_t *not_below = (uint8_t *)p + sizeof(struct packet_t);
 
-/**
- * @brief Duplicate a packet.
- *
- * Allocate memory for a new network packet and copy the given packet to it.
- *
- * @param   p       network packet to copy
- *
- * @return  pointer to new alloced packet on success, NULL on failure.
- */
-struct packet_t *packet_duplicate(struct packet_t *p);
+    if(data < not_below)
+    {
+        return -ENOBUFS;
+    }
+
+    p->count += hdr_len;
+    p->data = data;
+
+    return 0;
+}
+
+
+/*
+STATIC_INLINE void reset_packet_header(struct packet_t *p)
+{
+    p->data = p->end - p->count;
+}
+*/
 
 #endif      /* NET_PACKET_H */

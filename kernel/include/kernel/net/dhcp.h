@@ -1,6 +1,6 @@
 /* 
- *    Copyright 2022, 2023, 2024 (c) Mohammed Isam [mohammed_isam1984@yahoo.com].
- *    PicoTCP. Copyright (c) 2012-2017 Altran Intelligent Systems. Some rights reserved.
+ *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
+ *    Copyright 2022, 2023, 2024 (c)
  * 
  *    file: dhcp.h
  *    This file is part of LaylaOS.
@@ -29,297 +29,227 @@
 #ifndef NET_DHCP_H
 #define NET_DHCP_H
 
-// dhcp states
-#define DHCP_CLIENT_STATE_INIT_REBOOT       0
-#define DHCP_CLIENT_STATE_REBOOTING         1
-#define DHCP_CLIENT_STATE_INIT              2
-#define DHCP_CLIENT_STATE_SELECTING         3
-#define DHCP_CLIENT_STATE_REQUESTING        4
-#define DHCP_CLIENT_STATE_BOUND             5
-#define DHCP_CLIENT_STATE_RENEWING          6
-#define DHCP_CLIENT_STATE_REBINDING         7
+#include <sys/types.h>
+#include <netinet/in.h>
 
-// dhcp op codes
-#define DHCP_OP_REQUEST                     1
-#define DHCP_OP_REPLY                       2
+#define DHCP_SERVER_PORT                        htons(67)
+#define DHCP_CLIENT_PORT                        htons(68)
 
-// dhcp ports
-#define DHCP_CLIENT_PORT                    68
-#define DHCP_SERVER_PORT                    67
+#define DHCP_OPTIONS_LEN                        512
+#define DHCP_MIN_OPTIONS_LEN                    68
 
-// dhcp magic (in message headers)
-#define DHP_MAGIC_COOKIE                    0x63825363
+// DHCP message types
+#define DHCP_DISCOVER                           1
+#define DHCP_OFFER                              2
+#define DHCP_REQUEST                            3
+#define DHCP_DECLINE                            4
+#define DHCP_ACK                                5
+#define DHCP_NAK                                6
+#define DHCP_RELEASE                            7
+#define DHCP_INFORM                             8
 
-// dhcp message types
-#define DHCP_MSG_DISCOVER                   1
-#define DHCP_MSG_OFFER                      2
-#define DHCP_MSG_REQUEST                    3
-#define DHCP_MSG_DECLINE                    4
-#define DHCP_MSG_ACK                        5
-#define DHCP_MSG_NAK                        6
-#define DHCP_MSG_RELEASE                    7
-#define DHCP_MSG_INFORM                     8
+// DHCP overload types
+#define DHCP_OVERLOAD_NONE                      0
+#define DHCP_OVERLOAD_FILE                      1
+#define DHCP_OVERLOAD_SNAME                     2
+#define DHCP_OVERLOAD_SNAME_FILE                3
 
-// custom message types
-#define DHCP_EVENT_T1                       9
-#define DHCP_EVENT_T2                       10
-#define DHCP_EVENT_LEASE                    11
-#define DHCP_EVENT_RETRANSMIT               12
-#define DHCP_EVENT_NONE                     0xff
-
-// timer types
-#define DHCPC_TIMER_INIT                    0
-#define DHCPC_TIMER_REQUEST                 1
-#define DHCPC_TIMER_RENEW                   2
-#define DHCPC_TIMER_REBIND                  3
-#define DHCPC_TIMER_T1                      4
-#define DHCPC_TIMER_T2                      5
-#define DHCPC_TIMER_LEASE                   6
-
-// timer values
-#define DHCP_CLIENT_REINIT                  6000 /* msecs */
-#define DHCP_CLIENT_RETRANS                 4    /* secs */
-#define DHCP_CLIENT_RETRIES                 3
-
-// codes for callback functions
-#define DHCP_SUCCESS                        0
-#define DHCP_ERROR                          1
-#define DHCP_RESET                          2
-
-// max message size
-#define DHCP_CLIENT_MAX_MSGSIZE             (1500 - IPv4_HLEN)
-
-// get an option
-#define DHCP_OPT(h, off)            ((struct dhcp_opt_t *)  \
-                                     (((uint8_t *)h) +      \
-                                     sizeof(struct dhcp_hdr_t) + off))
-
-// option types
-#define DHCP_OPT_PAD                        0x00
-#define DHCP_OPT_NETMASK                    0x01
-#define DHCP_OPT_TIME                       0x02
-#define DHCP_OPT_ROUTER                     0x03
-#define DHCP_OPT_DNS                        0x06
-#define DHCP_OPT_HOSTNAME                   0x0c
-#define DHCP_OPT_DOMAINNAME                 0x0f
-#define DHCP_OPT_REQIP                      0x32
-#define DHCP_OPT_LEASE_TIME                 0x33
-#define DHCP_OPT_OVERLOAD                   0x34
-#define DHCP_OPT_MSGTYPE                    0x35
-#define DHCP_OPT_SERVERID                   0x36
-#define DHCP_OPT_PARAMLIST                  0x37
-#define DHCP_OPT_MAX_MSGSIZE                0x39
-#define DHCP_OPT_RENEWAL_TIME               0x3a
-#define DHCP_OPT_REBINDING_TIME             0x3b
-#define DHCP_OPT_END                        0xff
+// DHCP Options and BOOTP Vendor Extensions
+// See RFC 1533
+#define DHCP_OPTION_PAD                         0
+#define DHCP_OPTION_SUBNET_MASK                 1
+#define DHCP_OPTION_TIME_OFFSET                 2
+#define DHCP_OPTION_ROUTERS                     3
+#define DHCP_OPTION_TIME_SERVERS                4
+#define DHCP_OPTION_NAME_SERVERS                5
+#define DHCP_OPTION_DOMAIN_NAME_SERVERS         6
+#define DHCP_OPTION_LOG_SERVERS                 7
+#define DHCP_OPTION_COOKIE_SERVERS              8
+#define DHCP_OPTION_LPR_SERVERS                 9
+#define DHCP_OPTION_IMPRESS_SERVERS             10
+#define DHCP_OPTION_RESOURCE_LOCATION_SERVERS   11
+#define DHCP_OPTION_HOST_NAME                   12
+#define DHCP_OPTION_BOOT_SIZE                   13
+#define DHCP_OPTION_MERIT_DUMP                  14
+#define DHCP_OPTION_DOMAIN_NAME                 15
+#define DHCP_OPTION_SWAP_SERVER                 16
+#define DHCP_OPTION_ROOT_PATH                   17
+#define DHCP_OPTION_EXTENSIONS_PATH             18
+#define DHCP_OPTION_IP_FORWARDING               19
+#define DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING    20
+#define DHCP_OPTION_POLICY_FILTER               21
+#define DHCP_OPTION_MAX_DGRAM_REASSEMBLY        22
+#define DHCP_OPTION_DEFAULT_IP_TTL              23
+#define DHCP_OPTION_PATH_MTU_AGING_TIMEOUT      24
+#define DHCP_OPTION_PATH_MTU_PLATEAU_TABLE      25
+#define DHCP_OPTION_INTERFACE_MTU               26
+#define DHCP_OPTION_ALL_SUBNETS_LOCAL           27
+#define DHCP_OPTION_BROADCAST_ADDRESS           28
+#define DHCP_OPTION_PERFORM_MASK_DISCOVERY      29
+#define DHCP_OPTION_MASK_SUPPLIER               30
+#define DHCP_OPTION_ROUTER_DISCOVERY            31
+#define DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS 32
+#define DHCP_OPTION_STATIC_ROUTES               33
+#define DHCP_OPTION_TRAILER_ENCAPSULATION       34
+#define DHCP_OPTION_ARP_CACHE_TIMEOUT           35
+#define DHCP_OPTION_IEEE802_3_ENCAPSULATION     36
+#define DHCP_OPTION_DEFAULT_TCP_TTL             37
+#define DHCP_OPTION_TCP_KEEPALIVE_INTERVAL      38
+#define DHCP_OPTION_TCP_KEEPALIVE_GARBAGE       39
+#define DHCP_OPTION_NIS_DOMAIN                  40
+#define DHCP_OPTION_NIS_SERVERS                 41
+#define DHCP_OPTION_NTP_SERVERS                 42
+#define DHCP_OPTION_VENDOR_ENCAPSULATED_OPTIONS 43
+#define DHCP_OPTION_NETBIOS_NAME_SERVERS        44
+#define DHCP_OPTION_NETBIOS_DD_SERVER           45
+#define DHCP_OPTION_NETBIOS_NODE_TYPE           46
+#define DHCP_OPTION_NETBIOS_SCOPE               47
+#define DHCP_OPTION_FONT_SERVERS                48
+#define DHCP_OPTION_X_DISPLAY_MANAGER           49
+#define DHCP_OPTION_DHCP_REQUESTED_ADDRESS      50
+#define DHCP_OPTION_DHCP_LEASE_TIME             51
+#define DHCP_OPTION_DHCP_OPTION_OVERLOAD        52
+#define DHCP_OPTION_DHCP_MESSAGE_TYPE           53
+#define DHCP_OPTION_DHCP_SERVER_IDENTIFIER      54
+#define DHCP_OPTION_DHCP_PARAMETER_REQUEST_LIST 55
+#define DHCP_OPTION_DHCP_MESSAGE                56
+#define DHCP_OPTION_DHCP_MAX_MESSAGE_SIZE       57
+#define DHCP_OPTION_DHCP_RENEWAL_TIME           58
+#define DHCP_OPTION_DHCP_REBINDING_TIME         59
+#define DHCP_OPTION_VENDOR_CLASS_IDENTIFIER     60
+#define DHCP_OPTION_DHCP_CLIENT_IDENTIFIER      61
+#define DHCP_OPTION_NWIP_DOMAIN_NAME            62
+#define DHCP_OPTION_NWIP_SUBOPTIONS             63
+#define DHCP_OPTION_USER_CLASS                  77
+#define DHCP_OPTION_FQDN                        81
+#define DHCP_OPTION_DHCP_AGENT_OPTIONS          82
+#define DHCP_OPTION_END                         255
 
 
 /**
- * @struct dhcp_hdr_t
- * @brief The dhcp_hdr_t structure.
+ * @struct dhcp_msg_t
+ * @brief The dhcp_msg_t structure.
  *
- * DHCP message header structure. Field names are as defined in RFC 2131.
+ * DHCP message structure. Field names are as defined in RFC 2131.
  * Note that RFC 2131 says we should expect an options field of at least
  * 312 byte-length, which makes a DHCP message of 576 bytes.
  */
-struct dhcp_hdr_t
+struct dhcp_msg_t
 {
-    uint8_t op;             /**< Message opcode/type */
-    uint8_t htype;          /**< Hardware address type (1 for Ether) */
-    uint8_t hlen;           /**< Hardware address length (6 for Ether) */
-    uint8_t hops;           /**< Number of relay agent hops from client */
-    uint32_t xid;           /**< Transaction ID */
-    uint16_t secs;          /**< Seconds since client began address 
-                                 requisition */
-    uint16_t flags;         /**< Flags */
-    uint32_t ciaddr;        /**< Client IP address if client in BOUND, 
-                                 RENEW or REBINDING state */
-    uint32_t yiaddr;        /**< 'Your' client IP address */
-    uint32_t siaddr;        /**< IP address of next server to use in 
-                                 bootstrap, returned in DHCPOFFER, 
-                                 DHCPACK by server */
-    uint32_t giaddr;        /**< Relay agent IP address */
-    uint8_t hwaddr[6];      /**< Client hardware address */
-    uint8_t hwaddr_padding[10]; /**< padding */
-    char hostname[64];      /**< Optional server name (null-terminated) */
-    char bootp_filename[128];   /**< Boot filename (null-terminated str), 
+// DHCP opcode types
+#define DHCP_BOOTP_REQUEST                      1
+#define DHCP_BOOTP_REPLY                        2
+    uint8_t op;                 /**< Message opcode/type */
+
+    uint8_t htype;              /**< Hardware address type (1 for Ether) */
+    uint8_t hlen;               /**< Hardware address length (6 for Ether) */
+    uint8_t hops;               /**< Number of relay agent hops from client */
+    uint32_t xid;               /**< Transaction ID */
+    uint16_t secs;              /**< Seconds since client began address 
+                                     requisition */
+
+#define DHCP_BROADCAST_FLAG         0x8000
+    uint16_t flags;             /**< Flags */
+    uint32_t ciaddr;            /**< Client IP address if client in BOUND, 
+                                     RENUEW or REBINDING state */
+    uint32_t yiaddr;            /**< 'Your' client IP address */
+    uint32_t siaddr;            /**< IP address of next server to use in 
+                                     bootstrap, returned in DHCPOFFER, 
+                                     DHCPACK by server */
+    uint32_t giaddr;            /**< Relay agent IP address */
+    unsigned char chaddr[16];   /**< Client hardware address */
+    unsigned char sname[64];    /**< Optional server name (null-terminated) */
+    unsigned char file[128];    /**< Boot filename (null-terminated str), 
                                      "generic" name or null in DHCPDISCOVER, 
                                      fully qualified directory-path name 
                                      in DHCPOFFER */
-    uint32_t dhcp_magic;    /**< Magic cookie - decimal 99, 130, 
-                                 83 and 99 */
+    uint32_t cookie;                /**< Magic cookie - decimal 99, 130, 
+                                         83 and 99 */
 } __attribute__((packed));
 
-/**
- * @struct dhcp_opt_t
- * @brief The dhcp_opt_t structure.
- *
- * Structure to represent a DHCP option.
- */
-struct dhcp_opt_t
-{
-    uint8_t code, len;
-    
-    union
-    {
-        struct
-        {
-            struct in_addr ip;
-        } netmask;
-
-        struct
-        {
-            struct in_addr ip;
-        } router;
-
-        struct
-        {
-            struct in_addr ip;
-        } dns1;
-
-        struct
-        {
-            struct in_addr ip;
-        } dns2;
-
-        struct
-        {
-            struct in_addr ip;
-        } broadcast;
-
-        struct
-        {
-            struct in_addr ip;
-        } req_ip;
-
-        struct
-        {
-            struct in_addr ip;
-        } server_id;
-
-        struct
-        {
-            uint32_t time;
-        } lease_time;
-
-        struct
-        {
-            uint32_t time;
-        } renewal_time;
-
-        struct
-        {
-            uint32_t time;
-        } rebinding_time;
-
-        struct
-        {
-            uint8_t value;
-        } opt_overload;
-
-        struct
-        {
-            char name[1];
-        } tftp_server;
-
-        struct
-        {
-            char name[1];
-        } bootfile;
-
-        struct
-        {
-            char error[1];
-        } message;
-
-        struct
-        {
-            char txt[1];
-        } string;
-
-        struct
-        {
-            uint8_t code[1];
-        } param_list;
-
-        struct
-        {
-            uint8_t id[1];
-        } vendor_id;
-
-        struct
-        {
-            uint8_t id[1];
-        } client_id;
-
-        struct
-        {
-            uint8_t type;
-        } msg_type;
-
-        struct
-        {
-            uint16_t size;
-        } max_msg_size;
-    } ext;
-} __attribute__((packed));
 
 /**
- * @struct dhcp_client_timer_t
- * @brief The dhcp_client_timer_t structure.
+ * @struct dhcp_binding_t
+ * @brief The dhcp_binding_t structure.
  *
- * Structure to represent a DHCP timer.
+ * DHCP binding state for each interface.
  */
-struct dhcp_client_timer_t
+struct dhcp_binding_t
 {
-    //int running;
-    int type;                   /**< Type of timer */
-    uint32_t xid;               /**< Transaction id */
-    unsigned long long expiry;  /**< When is the timer going to expire */
-};
+// States of the DHCP client state machine. All states are defined
+// by RFC 2131, except the following:
+//     INFORMING, CHECKING, PERMANENT, DECLINING, RELEASING
+#define DHCP_REQUESTING                         1
+#define DHCP_INIT                               2
+#define DHCP_REBOOTING                          3
+#define DHCP_REBINDING                          4
+#define DHCP_RENEWING                           5
+#define DHCP_SELECTING                          6
+#define DHCP_INFORMING                          7
+#define DHCP_CHECKING                           8
+#define DHCP_PERMANENT                          9
+#define DHCP_BOUND                              10
+#define DHCP_DECLINING                          11
+#define DHCP_RELEASING                          12
+    int state;                  /**< Binding state */
 
-/**
- * @struct dhcp_client_cookie_t
- * @brief The dhcp_client_cookie_t structure.
- *
- * Structure to represent a DHCP binding.
- */
-struct dhcp_client_cookie_t
-{
-    uint8_t event;          /**< Event type - see dhcp.c */
-    uint8_t retry;          /**< Number of retries */
-    uint32_t xid;           /**< Transaction id */
-    uint32_t *uid;          /**< Pointer to transaction id */
-    int state;              /**< Binding state */
-    unsigned long long init_timestamp;  /**< Binding time */
-    void (*callback)(void *, int);      /**< callback function for events */
-    struct socket_t *sock;      /**< pointer to UDP socket used in 
-                                     communicating with the server */
-    struct in_addr addr;        /**< Host IP address */
-    struct in_addr netmask;     /**< Network mask */
-    struct in_addr gateway;     /**< Gateway IP address */
-    struct in_addr dns[2];      /**< DNS IP addresses */
-    struct in_addr serverid;    /**< Server IP address */
+    int tries;                  /**< Number of tries */
+    uint32_t xid;               /**< Transaction ID */
     struct netif_t *ifp;        /**< Network interface */
-    struct dhcp_client_timer_t timer[7];    /**< Timers */
-    uint32_t t1_time,           /**< T1 time */
-             t2_time;           /**< T2 time */
-    uint32_t lease_time,        /**< Lease time */
-             renew_time,        /**< Renewal time */
-             rebind_time;       /**< Rebinding time */
-    uint16_t pending_events;    /**< Any pending events? */
-    struct dhcp_client_cookie_t *next;  /**< Pointer to next cookie */
+    //struct socket_t *so;        /**< UDP socket pointer */
+
+    struct packet_t *in_packet; /**< Incoming packet */
+    int in_opt_len;             /**< Length of incoming packet options */
+
+    struct packet_t *out_packet;    /**< Outgoing packet */
+    int out_opt_len;            /**< Length of outgoing packet options */
+
+    volatile struct task_t *task;   /**< Binding task */
+
+    uint32_t saddr;             /**< Server IP address */
+    uint32_t ipaddr;            /**< Host IP address */
+    uint32_t netmask;           /**< Network mask */
+    uint32_t gateway;           /**< Gateway IP address */
+    uint32_t broadcast;         /**< Broadcast IP address */
+
+    uint32_t dns[2];            /**< DNS IP addresses */
+    uint32_t ntp[2];            /**< NTP IP addresses */
+
+    char domain[256];           /**< Domain name */
+    
+    unsigned long long binding_time;    /**< Binding time */
+    uint32_t lease,             /**< Lease time */
+             t1,                /**< T1 time */
+             t2;                /**< T2 time */
+    time_t   ulease,            /**< Lease time in Unix time */
+             ut1,               /**< T1 time in Unix time */
+             ut2;               /**< T2 time in Unix time */
+
+    struct nettimer_t *dhcp_renewing_timer;
+    struct nettimer_t *dhcp_rebinding_timer;
+    struct nettimer_t *dhcp_declining_timer;
+    struct nettimer_t *dhcp_requesting_timer;
+    struct nettimer_t *dhcp_checking_timer;
+
+#define DHCP_EVENT_REQUESTING_TIMEOUT           0x01
+#define DHCP_EVENT_RENEWING_TIMEOUT             0x02
+#define DHCP_EVENT_REBINDING_TIMEOUT            0x04
+#define DHCP_EVENT_DECLINING_TIMEOUT            0x08
+#define DHCP_EVENT_CHECKING_TIMEOUT             0x10
+#define DHCP_EVENT_T1_TIMEOUT                   0x20
+#define DHCP_EVENT_T2_TIMEOUT                   0x40
+#define DHCP_EVENT_LEASE_TIMEOUT                0x80
+    int events;                 /**< Events bitmap */
+    
+    struct dhcp_binding_t *next;    /**< Pointer to next binding */
 };
 
 
-/**
- * @var dhcp_cookies
- * @brief DHCP cookies.
- *
- * Linked list of all DHCP cookies (or bindings).
- * Defined in dhcp.c.
- */
-extern struct dhcp_client_cookie_t *dhcp_cookies;
+/*******************************************
+ * External definitions (dhcp.c)
+ *******************************************/
+
+extern struct dhcp_binding_t *dhcp_bindings;
 
 
 /**********************************
@@ -336,27 +266,26 @@ extern struct dhcp_client_cookie_t *dhcp_cookies;
 void dhcp_init(void);
 
 /**
- * @brief Initiate DHCP negotiation.
+ * @brief Start DHCP.
  *
- * When a new network interface is detected, this function is called to
- * initiate DHCP negotiation with the server.
+ * Start DHCP discovery and create a DHCP binding for the given network 
+ * interface.
  *
- * @return  zero on success, -(errno) on failure.
+ * @param   ifp     network interface
+ *
+ * @return  DHCP binding on success, NULL on failure.
  */
-int dhcp_initiate_negotiation(struct netif_t *ifp, 
-                              void (*callback)(void *, int), uint32_t *uid);
+struct dhcp_binding_t *dhcp_start(struct netif_t *ifp);
 
-/**********************************
- * Internal functions
- **********************************/
-
-uint16_t dhcp_opt_max_msgsize(struct dhcp_opt_t *opt, uint16_t size);
-uint16_t dhcp_opt_reqip(struct dhcp_opt_t *opt, struct in_addr *ip);
-uint16_t dhcp_opt_serverid(struct dhcp_opt_t *opt, struct in_addr *ip);
-uint16_t dhcp_opt_msgtype(struct dhcp_opt_t *opt, uint8_t type);
-uint16_t dhcp_opt_paramlist(struct dhcp_opt_t *opt);
-uint16_t dhcp_opt_end(struct dhcp_opt_t *opt);
-
-void dhcp_client_wakeup(struct socket_t *so, uint16_t ev);
+/**
+ * @brief Handle ARP reply.
+ *
+ * Handle ARP reply.
+ *
+ * @param   addr    IPv4 address
+ *
+ * @return  nothing.
+ */
+void dhcp_arp_reply(uint32_t addr);
 
 #endif      /* NET_DHCP_H */

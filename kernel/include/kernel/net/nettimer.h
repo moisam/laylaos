@@ -1,8 +1,8 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2024 (c)
  * 
- *    file: unix.h
+ *    file: nettimer.h
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,27 +20,28 @@
  */    
 
 /**
- *  \file unix.h
+ *  \file nettimer.h
  *
- *  Functions and macros for handling Unix packets.
+ *  Functions and macros for working with network timers.
  */
 
-#ifndef UNIXSOCK_H
-#define UNIXSOCK_H
+#ifndef NET_TIMER_H
+#define NET_TIMER_H
 
-#include <kernel/net/netif.h>
+struct nettimer_t
+{
+    int refs;
+    int cancelled;
+    unsigned long long expires;
+    void (*handler)(void *);
+    void *arg;
+    struct nettimer_t *next;
+};
 
-// externs defined in unix.c
-extern struct sockops_t unix_sockops;
 
-/*********************************************
- * Functions defined in network/unix.c
- *********************************************/
+void nettimer_init(void);
+struct nettimer_t *nettimer_add(uint32_t expire, void (*handler)(void *), void *arg);
+void nettimer_oneshot(uint32_t expire, void (*handler)(void *), void *arg);
+void nettimer_release(struct nettimer_t *t);
 
-long socket_unix_bind(struct socket_t *so, 
-                      struct sockaddr *name, socklen_t namelen);
-
-long socket_unix_connect(struct socket_t *so, 
-                         struct sockaddr *name, socklen_t namelen);
-
-#endif      /* UNIXSOCK_H */
+#endif      /* NET_TIMER_H */

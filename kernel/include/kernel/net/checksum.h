@@ -1,6 +1,6 @@
 /* 
- *    Copyright 2023, 2024 (c) Mohammed Isam [mohammed_isam1984@yahoo.com].
- *    PicoTCP. Copyright (c) 2012-2017 Altran Intelligent Systems. Some rights reserved.
+ *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
+ *    Copyright 2022, 2023, 2024 (c)
  * 
  *    file: checksum.h
  *    This file is part of LaylaOS.
@@ -22,21 +22,80 @@
 /**
  *  \file checksum.h
  *
- *  Functions to calculate checksums for the network layer.
+ *  Helper functions for calculating internet checksums.
  */
 
-#ifndef NET_CHECKSUM_H
-#define NET_CHECKSUM_H
+#include <kernel/laylaos.h>
 
-uint16_t checksum(void *buf, uint32_t len);
+STATIC_INLINE uint32_t chksum(void *addr, int len)
+{
+    volatile uint16_t w;
+    uint16_t *p = addr;
+    uint32_t acc = 0;
+    
+    while(len > 1)
+    {
+        w = *p;
+        acc += w;
+        p++;
+        len -= 2;
+    }
+    
+    // account for a leftover byte
+    if(len)
+    {
+        volatile uint8_t b = *(volatile uint8_t *)p;
+        acc += b;
+    }
+    
+    return acc;
+}
 
-uint16_t tcp_checksum_ipv4(struct packet_t *p);
-uint16_t tcp_checksum_ipv6(struct packet_t *p);
 
-uint16_t udp_checksum_ipv4(struct packet_t *p);
-uint16_t udp_checksum_ipv6(struct packet_t *p);
+STATIC_INLINE uint16_t inet_chksum(uint16_t *addr, int len, uint32_t start)
+{
+    volatile uint32_t acc = start;
 
-uint16_t icmp4_checksum(struct packet_t *p);
-uint16_t icmp6_checksum(struct packet_t *p);
+    acc += chksum(addr, len);
 
-#endif      /* NET_CHECKSUM_H */
+    while(acc >> 16)
+    {
+        acc = (acc & 0xFFFF) + (acc >> 16);
+    }
+
+    return (uint16_t) ~(acc & 0xFFFF);
+}
+
+
+STATIC_INLINE
+uint16_t __udp_v4_checksum(struct packet_t *p, uint32_t src, uint32_t dest, uint16_t proto)
+{
+    uint32_t acc = 0;
+
+    // add the source and destination as two 16-bit entities each, as a broadcast
+    // address (0xffffffff) would result in carry, which will be truncated when
+    // we perform 32-bit addition
+    acc += (src >> 16) & 0xffff;
+    acc += src & 0xffff;
+
+    acc += (dest >> 16) & 0xffff;
+    acc += dest & 0xffff;
+
+    acc += htons(proto);
+    acc += htons(p->count);
+
+    return inet_chksum((uint16_t *)p->data, p->count, acc);
+}
+
+
+STATIC_INLINE uint16_t udp_v4_checksum(struct packet_t *p, uint32_t src, uint32_t dest)
+{
+    return __udp_v4_checksum(p, src, dest, IPPROTO_UDP);
+}
+
+
+STATIC_INLINE uint16_t tcp_v4_checksum(struct packet_t *p, uint32_t src, uint32_t dest)
+{
+    return __udp_v4_checksum(p, src, dest, IPPROTO_TCP);
+}
+

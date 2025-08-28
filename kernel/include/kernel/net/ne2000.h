@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ne2000.h
  *    This file is part of LaylaOS.
@@ -118,16 +118,17 @@ struct ne2000_t
     uint8_t next_packet;
 
     struct netif_queue_t outq;
-    struct kernel_mutex_t lock;
+    volatile struct kernel_mutex_t lock;
+    volatile struct task_t *task;
 };
 
 
 int ne2000_init(struct pci_dev_t *pci);
 int ne2000_intr(struct regs *r, int unit);
-void ne2000_do_intr(int unit);
+void ne2000_do_intr(struct ne2000_t *ne);
 void ne2000_receive(struct ne2000_t *ne);
 int ne2000_transmit(struct netif_t *ifp, struct packet_t *p);
-void ne2000_process_input(struct netif_t *ifp);
-void ne2000_process_output(struct netif_t *ifp);
+int ne2000_process_input(struct netif_t *ifp);
+int ne2000_process_output(struct netif_t *ifp);
 
 #endif      /* NET_NE2000_H */

@@ -1,6 +1,6 @@
 /* 
- *    Copyright 2022, 2023, 2024 (c) Mohammed Isam [mohammed_isam1984@yahoo.com].
- *    PicoTCP. Copyright (c) 2012-2017 Altran Intelligent Systems. Some rights reserved.
+ *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: socket.h
  *    This file is part of LaylaOS.
@@ -22,14 +22,21 @@
 /**
  *  \file socket.h
  *
- *  Functions and macros to implement the kernel's socket layer.
+ *  Functions and macros for working with sockets.
  */
 
-#ifndef __KERNEL_SOCKETS_H__
-#define __KERNEL_SOCKETS_H__
+#ifndef NET_SOCKET_H
+#define NET_SOCKET_H
 
-#include <kernel/select.h>
+#include <sys/un.h>
 #include <kernel/net/netif.h>
+
+#define SOCKSTATE_FREE              0
+#define SOCKSTATE_UNCONNECTED       1
+#define SOCKSTATE_CONNECTING        2
+#define SOCKSTATE_CONNECTED         3
+#define SOCKSTATE_DISCONNECTING     4
+#define SOCKSTATE_LISTENING         5
 
 #define SOCKET_FLAG_TCPNODELAY      0x01
 #define SOCKET_FLAG_NONBLOCK        0x02
@@ -38,48 +45,23 @@
 #define SOCKET_FLAG_RECVTOS         0x10
 #define SOCKET_FLAG_RECVTTL         0x20    /* not for stream sockets */
 #define SOCKET_FLAG_RECVOPTS        0x40    /* not for stream sockets */
+#define SOCKET_FLAG_SHUT_LOCAL      0x80
+#define SOCKET_FLAG_SHUT_REMOTE     0x100
 
-#define SOCKET_LINGER_TIMEOUT       3000
-#define SOCKET_BOUND_TIMEOUT        3000
 #define SOCKET_DEFAULT_QUEUE_SIZE   (8 * 1024)
 
-// generic socket states
-#define SOCKET_STATE_UNDEFINED      0x00
-#define SOCKET_STATE_SHUT_LOCAL     0x01
-#define SOCKET_STATE_SHUT_REMOTE    0x02
-#define SOCKET_STATE_BOUND          0x04
-#define SOCKET_STATE_CONNECTED      0x08
-#define SOCKET_STATE_CLOSING        0x10
-#define SOCKET_STATE_CLOSED         0x20
-#define SOCKET_STATE_CONNECTING     0x40
-#define SOCKET_STATE_LISTENING      0x80
+#define SOCKET_LOCK(s)                      \
+    kernel_mutex_lock(&((s)->lock));
 
-// TCP socket states
-#define SOCKET_STATE_TCP                0xff00
-#define SOCKET_STATE_TCP_UNDEF          0x00ff
-#define SOCKET_STATE_TCP_CLOSED         0x0100
-#define SOCKET_STATE_TCP_LISTEN         0x0200
-#define SOCKET_STATE_TCP_SYN_SENT       0x0300
-#define SOCKET_STATE_TCP_SYN_RECV       0x0400
-#define SOCKET_STATE_TCP_ESTABLISHED    0x0500
-#define SOCKET_STATE_TCP_CLOSE_WAIT     0x0600
-#define SOCKET_STATE_TCP_LAST_ACK       0x0700
-#define SOCKET_STATE_TCP_FIN_WAIT1      0x0800
-#define SOCKET_STATE_TCP_FIN_WAIT2      0x0900
-#define SOCKET_STATE_TCP_CLOSING        0x0a00
-#define SOCKET_STATE_TCP_TIME_WAIT      0x0b00
-#define SOCKET_STATE_TCP_ARRAYSIZ       0x0c
+#define SOCKET_UNLOCK(s)                    \
+    kernel_mutex_unlock(&((s)->lock));
 
-// socket events
-#define SOCKET_EV_RD                    0x01
-#define SOCKET_EV_WR                    0x02
-#define SOCKET_EV_CONN                  0x04
-#define SOCKET_EV_CLOSE                 0x08
-#define SOCKET_EV_FIN                   0x10
-#define SOCKET_EV_ERR                   0x80
+#define RAW_SOCKET(so)      ((so)->proto && (so)->proto->sockops == &raw_sockops)
 
+#define SOCK_PROTO(so)      (RAW_SOCKET(so) ? IPPROTO_RAW : \
+                                              (so)->proto ? \
+                                                 (so)->proto->protocol : 0)
 
-#include <sys/un.h>
 
 /**
  * @union ip_addr_t
@@ -89,8 +71,8 @@
  */
 union ip_addr_t
 {
-    struct in_addr ipv4;    /**< IPv4 address */
-    struct in6_addr ipv6;   /**< IPv6 address */
+    uint32_t ipv4;          /**< IPv4 address */
+    uint8_t ipv6[16];       /**< IPv6 address */
     struct sockaddr_un sun; /**< Unix address */
 };
 
@@ -105,11 +87,14 @@ struct socket_t
 {
     int type;       /**< Socket type */
     int domain;     /**< Socket domain */
-    int state;      /**< Socket state */
     int flags;      /**< Socket flags */
+    int refs;       /**< Socket references */
+    volatile int state;      /**< Socket state */
+    volatile int err;        /**< Last socket error */
+    size_t peek_offset;     /**< peak offset (used with MSG_PEEK) */
 
     struct proto_t *proto;      /**< pointer to protocol operations struct */
-    
+
     union ip_addr_t local_addr;     /**< Local IP address */
     union ip_addr_t remote_addr;    /**< Remote IP address */
 
@@ -119,21 +104,22 @@ struct socket_t
     struct netif_queue_t inq;       /**< Input queue */
     struct netif_queue_t outq;      /**< Output queue */
 
-    struct selinfo recvsel,     /**< Select channel for waiting receivers */
-                   sendsel;     /**< Select channel for waiting senders */
-    
-    void (*wakeup)(struct socket_t *so, uint16_t ev);
-                                /**< Callback function */
-    
+    struct selinfo selrecv,     /**< Select channel for waiting receivers */
+                   sleep;       /**< Select channel for everything else */
+
     uint8_t tos;                /**< Type of service */
     int ttl;                    /**< ttl value (for IPv4) or unicast hops 
                                      (for IPv6), can be 0-255, while -1 means
                                      to use route default */
 
+#if 0
+
     unsigned long long timestamp;   /**< Current timestamp */
     
     struct netif_t *ifp;            /**< Network interface */
-    
+
+#endif
+
     struct socket_t *next;          /**< Pointer to next socket */
 
     struct socket_t *pairedsock;    /**< Pointer to paired socket */
@@ -148,22 +134,11 @@ struct socket_t
     uint16_t max_backlog;       /**< Length of backlog list */
     uint16_t pending_connections;   /**< Pending connections */
 
-    uint16_t pending_events;    /**< Pending events */
+    uint16_t poll_events;       /**< Pending events */
+
+    volatile struct kernel_mutex_t lock;     /**< Socket lock */
 };
 
-/**
- * @struct sockport_t
- * @brief The sockport_t structure.
- *
- * A structure to represent a socket port.
- */
-struct sockport_t
-{
-    struct socket_t *sockets;   /**< Sockets connected to this port */
-    uint16_t number;            /**< Port number */
-    struct proto_t *proto;      /**< Pointer to protocol operations struct */
-    struct sockport_t *next;    /**< Pointer to next port */
-};
 
 /**
  * @struct sockops_t
@@ -176,78 +151,64 @@ struct sockport_t
  */
 struct sockops_t
 {
-    int (*connect2)(struct socket_t *, struct socket_t *);
+    long (*connect)(struct socket_t *);
             /**< Handler for the connect() call */
-    int (*getsockopt)(struct socket_t *, int, int, void *, int *);
+    long (*connect2)(struct socket_t *, struct socket_t *);
+            /**< Handler for the connect2() call */
+    long (*getsockopt)(struct socket_t *, int, int, void *, int *);
             /**< Handler for the getsockopt() call */
-    int (*recvmsg)(struct socket_t *, struct msghdr *, unsigned int);
+    long (*read)(struct socket_t *, struct msghdr *, unsigned int);
             /**< Handler for the recvmsg() call */
-    int (*sendmsg)(struct socket_t *, struct msghdr *, unsigned int);
+    long (*write)(struct socket_t *, struct msghdr *, int);
             /**< Handler for the sendmsg() call */
-    int (*setsockopt)(struct socket_t *, int, int, void *, int);
+    long (*setsockopt)(struct socket_t *, int, int, void *, int);
             /**< Handler for the setsockopt() call */
-    int (*socket)(int, int, struct socket_t **);
+    struct socket_t *(*socket)(void);
             /**< Handler for the socket() call */
 };
 
 
 /*******************************************
- * External definitions (syscall/socket.c)
+ * External definitions (socket.c)
  *******************************************/
 
-extern struct kernel_mutex_t sockunix_lock;
-extern struct socket_t *unix_socks;
+/**
+ * @var sock_head
+ * @brief Socket head.
+ *
+ * The head of the socket list.
+ */
+extern struct socket_t sock_head;
 
-extern struct kernel_mutex_t sockport_lock;
-extern struct sockport_t *tcp_ports;
-extern struct sockport_t *udp_ports;
-
-extern struct kernel_mutex_t sockraw_lock;
-extern struct socket_t *raw_socks;
+/**
+ * @var sock_lock
+ * @brief Socket lock.
+ *
+ * The socket list lock.
+ */
+extern volatile struct kernel_mutex_t sock_lock;
 
 
 /*****************************
  * Helper functions
  *****************************/
 
-struct sockport_t *get_sockport(uint16_t proto, uint16_t port);
-int is_port_free(int domain, uint16_t proto, uint16_t port, struct sockaddr *addr);
-int sock_create(int domain, int type, int protocol, struct socket_t **res);
-
-int do_sendto(struct socket_t *so, struct msghdr *msg, 
-              void *src, void *dest, int flags, int kernel);
-
-int sendto_pre_checks(struct socket_t *so, 
-                      struct sockaddr *to, socklen_t tolen,
-                      char *src_namebuf, char *dest_namebuf);
-
-int socket_check(struct socket_t *so);
+long sock_create(int domain, int type, int protocol, struct socket_t **res);
+long sendto_pre_checks(struct socket_t *so, 
+                       struct sockaddr *to, socklen_t tolen);
 void socket_close(struct socket_t *so);
-int socket_clone(struct socket_t *so, struct socket_t **res);
-int socket_add(struct socket_t *so);
-int socket_delete(struct socket_t *so);
-void socket_wakeup(struct socket_t *so, uint16_t ev);
+void socket_delete(struct socket_t *so, uint32_t expiry);
+void sock_connected(struct socket_t *so);
 
-int socket_update_state(struct socket_t *so, uint16_t more_states, 
-                        uint16_t less_states, uint16_t tcp_state);
-int socket_error(struct packet_t *p, uint8_t proto);
+struct socket_t *sock_find(struct socket_t *find);
+struct socket_t *sock_lookup(uint16_t proto, uint16_t remoteport, uint16_t localport);
 
-//void socket_process_outqueues(void);
+void socket_copy_remoteaddr(struct socket_t *so, struct msghdr *msg);
 
-uint32_t socket_get_mss(struct socket_t *so);
-struct netif_t *sock_get_ifp(struct socket_t *so);
-
-void packet_copy_remoteaddr(struct socket_t *so, 
-                            struct packet_t *p, struct msghdr *msg);
-
-int sendto_get_ipv4_src(struct socket_t *so, 
-                        struct sockaddr_in *dest,
-                        struct sockaddr_in *res);
-
-int socket_getsockopt(struct socket_t *so, int level, int optname,
-                      void *optval, int *optlen);
-int socket_setsockopt(struct socket_t *so, int level, int optname,
-                      void *optval, int optlen);
+long socket_getsockopt(struct socket_t *so, int level, int optname,
+                       void *optval, int *optlen);
+long socket_setsockopt(struct socket_t *so, int level, int optname,
+                       void *optval, int optlen);
 
 
 /***********************
@@ -264,7 +225,7 @@ int socket_setsockopt(struct socket_t *so, int level, int optname,
  *
  * @return  zero or positive result on success, -(errno) on failure.
  */
-int syscall_socketcall(int call, unsigned long *args);
+long syscall_socketcall(int call, unsigned long *args);
 
 /**
  * @brief Handler for syscall socket().
@@ -279,7 +240,7 @@ int syscall_socketcall(int call, unsigned long *args);
  *
  * @return  zero or positive file descriptor on success, -(errno) on failure.
  */
-int syscall_socket(int domain, int type, int protocol);
+long syscall_socket(int domain, int type, int protocol);
 
 /**
  * @brief Handler for syscall bind().
@@ -292,7 +253,7 @@ int syscall_socket(int domain, int type, int protocol);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_bind(int s, struct sockaddr *name, socklen_t namelen);
+long syscall_bind(int s, struct sockaddr *name, socklen_t namelen);
 
 /**
  * @brief Handler for syscall connect().
@@ -305,7 +266,7 @@ int syscall_bind(int s, struct sockaddr *name, socklen_t namelen);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_connect(int s, struct sockaddr *name, socklen_t namelen);
+long syscall_connect(int s, struct sockaddr *name, socklen_t namelen);
 
 /**
  * @brief Handler for syscall listen().
@@ -317,7 +278,7 @@ int syscall_connect(int s, struct sockaddr *name, socklen_t namelen);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_listen(int s, int backlog);
+long syscall_listen(int s, int backlog);
 
 /**
  * @brief Handler for syscall accept().
@@ -330,7 +291,7 @@ int syscall_listen(int s, int backlog);
  *
  * @return  zero or positive file descriptor on success, -(errno) on failure.
  */
-int syscall_accept(int s, struct sockaddr *name, socklen_t *namelen);
+long syscall_accept(int s, struct sockaddr *name, socklen_t *namelen);
 
 /**
  * @brief Handler for syscall getsockname().
@@ -343,7 +304,7 @@ int syscall_accept(int s, struct sockaddr *name, socklen_t *namelen);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getsockname(int s, struct sockaddr *name, socklen_t *namelen);
+long syscall_getsockname(int s, struct sockaddr *name, socklen_t *namelen);
 
 /**
  * @brief Handler for syscall getpeername().
@@ -356,7 +317,7 @@ int syscall_getsockname(int s, struct sockaddr *name, socklen_t *namelen);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getpeername(int s, struct sockaddr *name, socklen_t *namelen);
+long syscall_getpeername(int s, struct sockaddr *name, socklen_t *namelen);
 
 /**
  * @brief Handler for syscall socketpair().
@@ -372,7 +333,7 @@ int syscall_getpeername(int s, struct sockaddr *name, socklen_t *namelen);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_socketpair(int domain, int type, int protocol, int *rsv);
+long syscall_socketpair(int domain, int type, int protocol, int *rsv);
 
 /**
  * @brief Handler for syscall sendto().
@@ -384,7 +345,7 @@ int syscall_socketpair(int domain, int type, int protocol, int *rsv);
  *
  * @return  number of bytes sent on success, -(errno) on failure.
  */
-int syscall_sendto(struct syscall_args *__args);
+long syscall_sendto(struct syscall_args *__args);
 
 /**
  * @brief Handler for syscall sendmsg().
@@ -398,7 +359,7 @@ int syscall_sendto(struct syscall_args *__args);
  *
  * @return  number of bytes sent on success, -(errno) on failure.
  */
-int syscall_sendmsg(int s, struct msghdr *_msg, int flags);
+long syscall_sendmsg(int s, struct msghdr *_msg, int flags);
 
 /**
  * @brief Handler for syscall recvfrom().
@@ -410,7 +371,7 @@ int syscall_sendmsg(int s, struct msghdr *_msg, int flags);
  *
  * @return  number of bytes received on success, -(errno) on failure.
  */
-int syscall_recvfrom(struct syscall_args *__args);
+long syscall_recvfrom(struct syscall_args *__args);
 
 /**
  * @brief Handler for syscall recvmsg().
@@ -424,7 +385,7 @@ int syscall_recvfrom(struct syscall_args *__args);
  *
  * @return  number of bytes received on success, -(errno) on failure.
  */
-int syscall_recvmsg(int s, struct msghdr *_msg, int flags);
+long syscall_recvmsg(int s, struct msghdr *_msg, int flags);
 
 /**
  * @brief Handler for syscall shutdown().
@@ -436,7 +397,7 @@ int syscall_recvmsg(int s, struct msghdr *_msg, int flags);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_shutdown(int s, int how);
+long syscall_shutdown(int s, int how);
 
 /**
  * @brief Handler for syscall setsockopt().
@@ -451,7 +412,7 @@ int syscall_shutdown(int s, int how);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_setsockopt(int s, int level, int name, void *val, int valsize);
+long syscall_setsockopt(int s, int level, int name, void *val, int valsize);
 
 /**
  * @brief Handler for syscall getsockopt().
@@ -466,6 +427,6 @@ int syscall_setsockopt(int s, int level, int name, void *val, int valsize);
  *
  * @return  zero on success, -(errno) on failure.
  */
-int syscall_getsockopt(int s, int level, int name, void *val, int *valsize);
+long syscall_getsockopt(int s, int level, int name, void *val, int *valsize);
 
-#endif      /* __KERNEL_SOCKETS_H__ */
+#endif      /* NET_SOCKET_H */
