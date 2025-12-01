@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: main.c
  *    This file is part of LaylaOS.
@@ -117,29 +117,15 @@ int main(int argc, char **argv)
         time(&t);
         tm = gmtime(&t);
 
+        draw_clock();
+
         if(m != tm->tm_min)
         {
 #if 0
-            gc_line(main_window->gc, x, y,
-                    x + (r - 40) * cos(thetamin * (M_PI / 180)),
-                    y - (r - 40) * sin(thetamin * (M_PI / 180)),
-                    2, WHITE);
-
-            gc_line(main_window->gc, x, y,
-                    x + (r - 140) * cos(thetahr * (M_PI / 180)),
-                    y - (r - 140) * sin(thetahr * (M_PI / 180)),
-                    3, WHITE);
-            /*
-            gc_line(main_window->gc, x, y,
-                    x + (r - 140) * cos(M_PI / 6 * h - ((m / 2) * (M_PI / 180))),
-                    y - (r - 140) * sin(M_PI / 6 * h - ((m / 2) * (M_PI / 180))),
-                    3, WHITE);
-            */
-#endif
-
             draw_line(70, (-90 + m * 6), 2, WHITE);
             draw_line(40, (-90 + h * 360 / 12 + (m * 30 / 60)), 3, WHITE);
             draw_line(40, (-90 + h * 360 / 12), 3, WHITE);
+#endif
         }
 
         if(tm->tm_hour >= 12)
@@ -147,69 +133,11 @@ int main(int argc, char **argv)
             tm->tm_hour -= 12;
         }
 
-
-
         m = tm->tm_min;
         h = tm->tm_hour;
         draw_line(75, (-90 + tm->tm_sec * 6), 1, BLACK);
         draw_line(70, (-90 + tm->tm_min * 6), 2, BLACK);
         draw_line(40, (-90 + tm->tm_hour * 360 / 12 + (m * 30 / 60)), 3, BLACK);
-
-
-#if 0
-        /*
-        if(tm->tm_hour < 4)
-        {
-            h = ABS(tm->tm_hour - 3);
-        }
-        else
-        {
-            h = 15 - tm->tm_hour;
-        }
-        */
-        thetahr = (15 - tm->tm_hour) * 6;
-
-        m = tm->tm_min;
-
-        if(tm->tm_min <= 15)
-        {
-            thetamin = (15 - tm->tm_min) * 6;
-        }
-        else
-        {
-            thetamin = 450 - tm->tm_min * 6;
-        }
-
-        if(tm->tm_sec <= 15)
-        {
-            thetasec = (15 - tm->tm_sec) * 6;
-        }
-        else
-        {
-            thetasec = 450 - tm->tm_sec * 6;
-        }
-
-        gc_line(main_window->gc, x, y,
-                x + (r - 140) * cos(thetahr * (M_PI / 180)),
-                y - (r - 140) * sin(thetahr * (M_PI / 180)),
-                3, BLACK);
-        /*
-        gc_line(main_window->gc, x, y,
-                x + (r - 140) * cos(M_PI / 6 * h - ((m / 2) * (M_PI / 180))),
-                y - (r - 140) * sin(M_PI / 6 * h - ((m / 2) * (M_PI / 180))),
-                3, BLACK);
-        */
-
-        gc_line(main_window->gc, x, y,
-                x + (r - 40) * cos(thetamin * (M_PI / 180)),
-                y - (r - 40) * sin(thetamin * (M_PI / 180)),
-                2, BLACK);
-
-        gc_line(main_window->gc, x, y,
-                x + (r - 170) * cos(thetasec * (M_PI / 180)),
-                y - (r - 170) * sin(thetasec * (M_PI / 180)),
-                1, BLACK);
-#endif
 
         window_invalidate(main_window);
 
@@ -235,14 +163,9 @@ int main(int argc, char **argv)
             }
         }
 
-        draw_line(75, (-90 + tm->tm_sec * 6), 1, WHITE);
 #if 0
-        gc_line(main_window->gc, x, y,
-                x + (r - 170) * cos(thetasec * (M_PI / 180)),
-                y - (r - 170) * sin(thetasec * (M_PI / 180)),
-                1, WHITE);
+        draw_line(75, (-90 + tm->tm_sec * 6), 1, WHITE);
 #endif
-
     }
 }
 
