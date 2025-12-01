@@ -1054,7 +1054,7 @@ size_t get_partitions(char **buf)
     /*
      * Next check AHCI CD-ROM devices
      */
-    for(i = 0; i < MAX_AHCI_DEVICES; i++)
+    for(i = 0; i < MAX_AHCI_CDROMS; i++)
     {
         entry = NULL;
         kb = 0;

@@ -58,23 +58,6 @@ static struct hda_dev_t dummy_hda = { 0, };
 static struct hda_out_t dummy_out = { 0, };
 
 
-static inline void hda_wait(int msecs)
-{
-    volatile unsigned long long last_ticks = ticks;
-
-    while(msecs)
-    {
-        if(ticks != last_ticks)
-        {
-            msecs--;
-            last_ticks = ticks;
-        }
-
-        __asm__ __volatile__("nop" ::: "memory");
-    }
-}
-
-
 static int hda_send_verb(struct hda_dev_t *hda, uint32_t verb,
                                                 uint64_t *response)
 {
@@ -94,7 +77,7 @@ static int hda_send_verb(struct hda_dev_t *hda, uint32_t verb,
 
     while((rp2 == rp1) && timeout--)
     {
-        hda_wait(2);
+        tick_delay(2);
         rp2 = hda_inw(REG_RIRBWP);
     }
 
@@ -233,7 +216,7 @@ static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
 
     while(((word & 0x1) != 0) && timeout--)
     {
-        hda_wait(1);
+        tick_delay(1);
         word = hda_inw(out->base_port + REG_OFFSET_OUT_CTLL);
     }
 
@@ -462,7 +445,7 @@ int hda_init(struct pci_dev_t *pci)
 
     while((hda_inl(REG_GLOBCTL) & 0x1) == 0 && timeout--)
     {
-        hda_wait(1);
+        tick_delay(1);
     }
 
     if(timeout <= 0)
@@ -485,7 +468,7 @@ int hda_init(struct pci_dev_t *pci)
     while(((hda_inl(REG_CORBCTL) & 0x2) ||
           (hda_inl(REG_RIRBCTL) & 0x2)) && timeout--)
     {
-        hda_wait(1);
+        tick_delay(1);
     }
 
     if(timeout <= 0)
@@ -595,7 +578,7 @@ int hda_init(struct pci_dev_t *pci)
     // read until bit 15 is set
     while(!(hda_inw(REG_CORBRP) & 0x8000) && timeout--)
     {
-        hda_wait(1);
+        tick_delay(1);
     }
 
     if(timeout <= 0)
@@ -612,7 +595,7 @@ int hda_init(struct pci_dev_t *pci)
     // ensure we read back 0 in bit 15
     while((hda_inw(REG_CORBRP) & 0x8000) && timeout--)
     {
-        hda_wait(1);
+        tick_delay(1);
     }
 
     if(timeout <= 0)
@@ -648,7 +631,7 @@ int hda_init(struct pci_dev_t *pci)
     hda_outb(REG_RIRBCTL, byte | 0x03);
 
     // wait at least 521 usecs to ensure codecs reset and registered
-    hda_wait(10);
+    tick_delay(10);
 
     word = hda_inw(REG_STATESTS);
 
@@ -780,28 +763,6 @@ int hda_intr(struct regs *r, int unit)
             }
 
             out->last_linkpos = new_linkpos;
-
-#if 0
-
-            unblock = 1;
-
-            /*
-            volatile ssize_t bytes = __sync_sub_and_fetch(&out->bytes_playing, BDL_BUFSZ);
-
-            if(bytes < 0)
-            {
-                __lock_xchg_ptr(&out->bytes_playing, 0);
-            }
-            */
-
-            out->bytes_playing -= BDL_BUFSZ;
-
-            if(out->bytes_playing < 0)
-            {
-                out->bytes_playing = 0;
-            }
-
-#endif
         }
         
         hda_outb(out->base_port + REG_OFFSET_OUT_STS, outsts);
@@ -810,13 +771,6 @@ int hda_intr(struct regs *r, int unit)
     
     hda_outl(REG_INTSTS, isr);
     pic_send_eoi(hda->pci->irq[0]);
-
-    /*
-    if(unblock && hda->task)
-    {
-        unblock_kernel_task(hda->task);
-    }
-    */
 
     return 1;
 }
@@ -896,260 +850,6 @@ ssize_t hda_write_buf(struct hda_dev_t *hda, char *buf, size_t len)
 
     return len;
 }
-
-
-#if 0
-
-void hda_task_func(void *arg)
-{
-    struct hda_dev_t *hda = (struct hda_dev_t *)arg;
-    volatile uint32_t lpib, curbuf, stopatbuf;
-    volatile struct hda_buf_t *buf;
-    volatile uintptr_t ptr;
-    volatile size_t left;
-    
-    if(!hda)
-    {
-        kpanic("hda: hda_task_func() called with NULL arg\n");
-    }
-    
-    for(;;)
-    {
-        // task started too eary during boot
-        if(!hda->out)
-        {
-            block_task2(hda, PIT_FREQUENCY);
-            continue;
-        }
-
-        // check nothing is currently playing
-        if(hda->out->bytes_playing)
-        {
-            //block_task2(hda, PIT_FREQUENCY);
-            scheduler();
-            continue;
-        }
-
-        /*
-        for(curbuf = 0; curbuf < BDL_ENTRIES; curbuf++)
-        {
-            if(hda->out->hasdata[curbuf])
-            {
-                if(!(hda->flags & HDA_FLAG_PLAYING))
-                {
-                    hda_play_stop(hda, 1);
-                }
-
-                block_task2(hda, PIT_FREQUENCY);
-                continue;
-            }
-        }
-
-        A_memset(hda->out->hasdata, 0, sizeof(hda->out->hasdata));
-        hda->out->curdesc = 0;
-        */
-
-        kernel_mutex_lock(&hda->outq.lock);
-
-        if((hda->flags & HDA_FLAG_PLAYING))
-        {
-            hda_play_stop(hda, 0);
-        }
-
-        if(hda->outq.head == NULL)
-        {
-            kernel_mutex_unlock(&hda->outq.lock);
-            //block_task2(hda, PIT_FREQUENCY);
-            scheduler();
-            continue;
-        }
-
-        //uintptr_t s = int_off();
-
-        // get link position in buffer
-        /*
-        lpib = hda_inl(hda->out->base_port + REG_OFFSET_OUT_LPIB);
-        curbuf = ((lpib + (BDL_BUFSZ - 1)) / BDL_BUFSZ);
-
-        if(curbuf == BDL_ENTRIES)
-        {
-            curbuf = 0;
-        }
-        switch_tty(1);
-        printk("  lpib %u, curbuf %u\n", lpib, curbuf);
-        */
-
-        /*
-        for(curbuf = 0; curbuf < BDL_ENTRIES; curbuf += 2)
-        {
-            A_memset((void *)hda->out->vbdl[curbuf], 0, PAGE_SIZE);
-        }
-        */
-
-        //stopatbuf = (curbuf == 0 ? BDL_ENTRIES : curbuf) - 1;
-        curbuf = 0;
-        stopatbuf = BDL_ENTRIES;
-
-        hda->out->bytes_playing = 0;
-        //__lock_xchg_ptr(&hda->out->bytes_playing, 0);
-
-        while(hda->outq.head)
-        {
-            if(curbuf == stopatbuf)
-            {
-                break;
-            }
-
-            ptr = hda->out->vbdl[curbuf];
-            left = BDL_BUFSZ;
-
-            while(hda->outq.head)
-            {
-                buf = hda->outq.head;
-
-                // Buffer bigger than space left. Copy whatever we can and
-                // leave the rest for the next HDA buffer.
-                if(buf->size > left)
-                {
-                    A_memcpy((void *)ptr, (void *)buf->curptr, left);
-
-                    buf->curptr += left;
-                    buf->size -= left;
-                    ptr += left;
-                    hda->outq.bytes -= left;
-                    //hda->outq.bytes_played += left;
-                    ////hda->out->hasdata[curbuf] = 1;
-                    hda->out->bytes_playing += left;
-                    /*
-                    __sync_fetch_and_add(&buf->curptr, left);
-                    __sync_fetch_and_sub(&buf->size, left);
-                    __sync_fetch_and_sub(&hda->outq.bytes, left);
-                    __sync_fetch_and_add(&hda->out->bytes_playing, left);
-                    ptr += left;
-                    */
-
-                    left = 0;
-                    break;
-                }
-
-                hda->outq.head = hda->outq.head->next;
-
-                if(hda->outq.head == NULL)
-                {
-                    hda->outq.tail = NULL;
-                }
-
-                hda->outq.queued--;
-                hda->outq.bytes -= buf->size;
-                //hda->outq.bytes_played += buf->size;
-                ////hda->out->hasdata[curbuf] = 1;
-                hda->out->bytes_playing += buf->size;
-                /*
-                __sync_fetch_and_sub(&hda->outq.queued, 1);
-                __sync_fetch_and_sub(&hda->outq.bytes, buf->size);
-                __sync_fetch_and_add(&hda->out->bytes_playing, buf->size);
-                */
-
-                kernel_mutex_unlock(&hda->outq.lock);
-
-                A_memcpy((void *)ptr, (void *)buf->curptr, buf->size);
-                ptr += buf->size;
-                left -= buf->size;
-                kfree((void *)buf);
-
-                kernel_mutex_lock(&hda->outq.lock);
-
-                if(left == 0)
-                {
-                    break;
-                }
-            }
-
-            /*
-            if(left)
-            {
-                A_memset((void *)ptr, 0, left);
-            }
-            */
-
-            curbuf++;
-        }
-
-        kernel_mutex_unlock(&hda->outq.lock);
-        __asm__ __volatile__("wbinvd":::);
-
-        //if(!(hda->flags & HDA_FLAG_PLAYING))
-        {
-            hda_play_stop(hda, 1);
-        }
-
-        //int_on(s);
-        //block_task2(hda, PIT_FREQUENCY);
-        scheduler();
-
-        /*
-        kernel_mutex_lock(&hda->outq.lock);
-        
-        if(hda->outq.head == NULL)
-        {
-            kernel_mutex_unlock(&hda->outq.lock);
-            
-            if((hda->flags & HDA_FLAG_PLAYING))
-            //if(hda->playing)
-            {
-                hda_play_stop(hda, 0);
-            }
-            
-            block_task(hda, 0);
-            continue;
-        }
-        
-        buf = hda->outq.head;
-        hda->outq.head = hda->outq.head->next;
-        
-        if(hda->outq.head == NULL)
-        {
-            hda->outq.tail = NULL;
-        }
-
-        hda->outq.queued--;
-        
-        kernel_mutex_unlock(&hda->outq.lock);
-
-        // get link position in buffer
-        lpib = hda_inl(hda->out->base_port + REG_OFFSET_OUT_LPIB);
-        curbuf = (lpib / BDL_BUFSZ);
-        
-        if(curbuf == BDL_ENTRIES)
-        {
-            curbuf = 0;
-        }
-        
-        ptr = hda->out->vbdl[curbuf];
-        A_memcpy((void *)ptr, buf->buf, buf->size);
-        
-        if(buf->size < BDL_BUFSZ)
-        {
-            A_memset((void *)(ptr + buf->size), 0, BDL_BUFSZ - buf->size);
-        }
-
-        kfree(buf);
-        
-        //printk("freeing buf " _XPTR_ "\n", buf);
-        
-        if(!(hda->flags & HDA_FLAG_PLAYING))
-        //if(!hda->playing)
-        {
-            hda_play_stop(hda, 1);
-        }
-
-        //unblock_tasks(&hda->outq);
-        block_task(hda, 0);
-        */
-    }
-}
-
-#endif
 
 
 /*
@@ -1397,7 +1097,7 @@ int hda_set_blksz(struct hda_dev_t *hda, unsigned int blksz)
     }
 
     // nothing to do
-    if(blksz == 0)
+    if(blksz == 0 || blksz == BDL_BUFSZ)
     {
         return 0;
     }

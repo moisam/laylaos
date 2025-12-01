@@ -646,8 +646,8 @@ void pci_register_irq_handler(struct pci_dev_t *pci,
     {
         pci->irq_handler.handler = handler;
         pci->irq_handler.handler_arg = pci->unit;
-        pci->irq_handler.hits = 0;
-        pci->irq_handler.ticks = 0;
+        //pci->irq_handler.hits = 0;
+        //pci->irq_handler.ticks = 0;
 
         char *p = pci->irq_handler.short_name;
 

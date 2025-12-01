@@ -65,12 +65,13 @@ volatile struct ata_request_t requests[NR_REQUESTS];
 volatile struct ata_request_t *cur_request = NULL;
 volatile struct kernel_mutex_t request_lock;
 
+#if 0
 volatile int serving = 0;
 int request_wait_channel;
-int irq_wait_channel;
 volatile struct task_t *disk_task = NULL;
+#endif
 
-//volatile unsigned char ide_irq_invoked = 0;
+int irq_wait_channel;
 
 static void ata_do_request(void);
 
@@ -96,10 +97,12 @@ long ata_add_req(struct ata_dev_s *dev,
                  virtual_addr buf, int write,
                  long (*func)(struct ata_dev_s *, virtual_addr))
 {
+    /*
     volatile int tries = 0;
     volatile struct ata_request_t *tmp, *req, *lreq = &requests[NR_REQUESTS];
 
     init_bufs();
+    */
     
     if(!dev || !numsects /* || !buf */)
     {
@@ -112,6 +115,37 @@ long ata_add_req(struct ata_dev_s *dev,
     {
         return -EINVAL;
     }
+
+
+    volatile struct ata_request_t req;
+    int res;
+
+    elevated_priority_lock(&request_lock);
+    cur_request = &req;
+
+    req.dev = dev;
+    req.buf = buf;
+    req.lba = lba;
+    req.numsects = numsects;
+    req.next = NULL;
+    req.irq = 0;
+    req.res = 0;
+    req.write = write;
+    req.err = 0;
+    req.func = func;
+
+    ata_do_request();
+
+    res = req.res;
+    cur_request = NULL;
+    
+    elevated_priority_unlock(&request_lock);
+    //printk("ata_add_req: res %d\n", res);
+
+    return res ? -EIO : (long)(numsects * dev->bytes_per_sector);
+
+
+#if 0
 
     elevated_priority_lock(&request_lock);
 
@@ -135,13 +169,20 @@ loop:
             kpanic("ata: waiting too long for request slot\n");
         }
 
+        /*
         //block_task(&request_wait_channel, 0);
         block_task2(&request_wait_channel, 200);
+        */
+        set_task_waitchan(this_core->cur_task, &request_wait_channel);
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+        scheduler();
+
         elevated_priority_relock(&request_lock);
         goto loop;
     }
 
-    req->active = 1;
+    __atomic_store_n(&req->active, 1, __ATOMIC_SEQ_CST);
+    //req->active = 1;
     req->buf = buf;
     req->lba = lba;
     req->numsects = numsects;
@@ -182,7 +223,8 @@ loop:
     
     if(!serving)
     {
-        serving = 1;
+        //serving = 1;
+        __atomic_store_n(&serving, 1, __ATOMIC_SEQ_CST);
         unblock_task(disk_task);
     }
     
@@ -190,16 +232,73 @@ loop:
     // user tasks. Sleep for some time and then wake up and check if the
     // I/O operation was performed.
 
-    volatile unsigned char active = req->active;
+    //volatile unsigned char active = req->active;
     int res;
+    tries = 0;
 
-    while(active)
+    while(__atomic_load_n(&req->active, __ATOMIC_SEQ_CST))
+    //while(active)
     {
-        ////block_task2(&req->wait_channel, 200);
-        //block_task2(&request_wait_channel, 20);
-        block_task(&request_wait_channel, 1);
+        /*
+        if(++tries > 500000)
+        {
+            kpanic("ata: waiting too long for request result\n");
+        }
+        */
 
-        active = req->active;
+        /****
+        //scheduler();
+        block_task2(&request_wait_channel, 2);
+        //block_task(&request_wait_channel, 1);
+        //__asm__ __volatile__("pause":::"memory");
+        ****/
+
+        /*
+        set_task_waitchan(this_core->cur_task, &request_wait_channel);
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+
+        if(!__atomic_load_n(&req->active, __ATOMIC_SEQ_CST))
+        {
+            set_task_state(this_core->cur_task, TASK_RUNNING);
+            printk("nosleep ");
+            break;
+        }
+        */
+
+        scheduler();
+
+        /*
+        if(processor_count <= 1)
+        {
+            set_task_waitchan(this_core->cur_task, &request_wait_channel);
+            set_task_state(this_core->cur_task, TASK_SLEEPING);
+            scheduler();
+        }
+        else
+        {
+            set_task_waitchan(this_core->cur_task, &request_wait_channel);
+            set_task_waking_signal(this_core->cur_task, 0);
+            __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+            block_task_timeout(this_core->cur_task, 2);
+        }
+        */
+
+        /****
+        set_task_waitchan(this_core->cur_task, &request_wait_channel);
+        prep_wait(2);
+
+        if(!__atomic_load_n(&req->active, __ATOMIC_SEQ_CST))
+        {
+            end_wait();
+            break;
+        }
+
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+        scheduler();
+        end_wait();
+        ****/
+
+        //active = req->active;
     }
     
     res = req->res;
@@ -207,8 +306,13 @@ loop:
     req->numsects = 0;
     
     return res ? -EIO : (long)(numsects * dev->bytes_per_sector);
+
+#endif
+
 }
 
+
+#if 0
 
 /*
  * Kernel disk task function.
@@ -221,15 +325,24 @@ void disk_task_func(void *arg)
 
     while(1)
     {
-        while(!serving)
+        while(!__atomic_load_n(&serving, __ATOMIC_SEQ_CST))
+        //while(!serving)
         {
-            block_task2(&disk_task, 500);
-            //block_task(&disk_task, 0);
+            /*
+            //block_task2(&disk_task, 100);
+            block_task(&disk_task, 0);
+            */
+            set_task_waitchan(this_core->cur_task, &disk_task);
+            //block_task_timeout(this_core->cur_task, PIT_FREQUENCY);
+            set_task_state(this_core->cur_task, TASK_SLEEPING);
+            scheduler();
         }
-        
+
         ata_do_request();
     }
 }
+
+#endif
 
 
 static void ata_do_request(void)
@@ -237,9 +350,11 @@ static void ata_do_request(void)
     KDEBUG("ata_do_request:\n");
     
     if(cur_request == NULL)
-    //if(cur_request == NULL || cur_request->buf == 0 /* NULL */)
     {
-        serving = 0;
+#if 0
+        __atomic_store_n(&serving, 0, __ATOMIC_SEQ_CST);
+        //serving = 0;
+#endif
         return;
     }
     
@@ -267,13 +382,18 @@ static void ata_do_request(void)
         }
     }
 
-    //volatile struct ata_request_t *tmp = cur_request;
-    cur_request->active = 0;
+    /*
+    volatile struct ata_request_t *tmp = cur_request;
     elevated_priority_lock(&request_lock);
     cur_request = cur_request->next;
     elevated_priority_unlock(&request_lock);
+
+    //tmp->active = 0;
+    __atomic_store_n(&tmp->active, 0, __ATOMIC_SEQ_CST);
+
     //unblock_tasks((void *)&tmp->wait_channel);
     unblock_tasks(&request_wait_channel);
+    */
 }
 
 
@@ -291,7 +411,7 @@ int ide_wait_irq(void)
     }
 
     volatile unsigned char irq = cur_request->irq;
-    volatile int timeout = 800000;
+    volatile int timeout = 80000000;
     
     /*
      * There is a small window of time between checking ide_irq_invoked and 
@@ -318,7 +438,7 @@ int ide_wait_irq(void)
         
         KDEBUG("Still waiting!\n");
 
-        scheduler();
+        //scheduler();
 
         irq = cur_request->irq;
     }
@@ -328,25 +448,26 @@ int ide_wait_irq(void)
         volatile uint8_t status = inb(cur_request->dev->bmide +
                                       ATA_BUS_MASTER_REG_STATUS);
         uint8_t missed_irq = (status & ATA_IRQ_PENDING);
+
         printk("!!! status = 0x%x, missed_irq %d, IRQ %d\n", status, missed_irq, cur_request->dev->irq);
         __asm__ __volatile__("xchg %%bx, %%bx"::);
+
         status = (ATA_DMA_ERROR | ATA_IRQ_PENDING);
         outb(cur_request->dev->bmide + ATA_BUS_MASTER_REG_STATUS, status);
 
-        //delay for 400 nanoseconds
+        // delay for 400 nanoseconds
         ata_delay(cur_request->dev->ctrl + ATA_REG_ALT_STATUS);
 
         // read the device status register
         status = inb(cur_request->dev->base + ATA_REG_STATUS);
 
-        //return -EAGAIN;
         return missed_irq ? 0 : -EAGAIN;
     }
 
-    cur_request->irq--;
+    //cur_request->irq--;
+    __atomic_fetch_sub(&cur_request->irq, 1, __ATOMIC_SEQ_CST);
     KDEBUG("cur_request->irq %d\n", cur_request->irq);
 
-    //return 0;
     return cur_request->err;
 }
 
@@ -394,13 +515,13 @@ int ide_irq_callback(struct regs *r, int arg)
         
         if(status & ATA_DMA_ERROR)
         {
-            //cur_request->buf->flags |= IOBUF_FLAG_ERROR;
-            cur_request->err = -EIO;
+            //cur_request->err = -EIO;
+            __atomic_store_n(&cur_request->err, -EIO, __ATOMIC_SEQ_CST);
         }
         else
         {
-            //cur_request->buf->flags &= ~IOBUF_FLAG_ERROR;
-            cur_request->err = 0;
+            //cur_request->err = 0;
+            __atomic_store_n(&cur_request->err, 0, __ATOMIC_SEQ_CST);
         }
 
         // clear the ERR flags
@@ -408,29 +529,38 @@ int ide_irq_callback(struct regs *r, int arg)
     }
 
     // clear the IRQ flag
-    //status |= ATA_REQ_PENDING;
+    ////status |= ATA_REQ_PENDING;
     outb(cur_request->dev->bmide + ATA_BUS_MASTER_REG_STATUS, status);
 
-    //delay for 400 nanoseconds
+    // delay for 400 nanoseconds
     ata_delay(cur_request->dev->ctrl + ATA_REG_ALT_STATUS);
 
     // read the device status register
     status = inb(cur_request->dev->base + ATA_REG_STATUS);
 
+    /*
     cur_request->numsects--;
     cur_request->err = 0;
-    
-    cli();
+    */
+    __atomic_fetch_sub(&cur_request->numsects, 1, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&cur_request->err, 0, __ATOMIC_SEQ_CST);
 
+    //cli();
+    volatile uintptr_t s = int_off();
+
+    /*
     //ide_irq_invoked = 1;
     volatile unsigned char irq = cur_request->irq;
     //cur_request->irq++;
     cur_request->irq = irq + 1;
-    
+    */
+    __atomic_fetch_add(&cur_request->irq, 1, __ATOMIC_SEQ_CST);
+
     pic_send_eoi(int_no);
-    
-    sti();
-    
+
+    //sti();
+    int_on(s);
+
     return 1;
 }
 

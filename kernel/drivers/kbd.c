@@ -146,8 +146,13 @@ void kbd_task_func(void *arg)
         // up tasks in copy_to_buf() above
         if(kbdbuf_is_empty(&kbd_queue))
         {
+            /*
             //block_task(&kbd_queue, 0);
-            block_task2(&kbd_queue, 500);
+            block_task2(&kbd_queue, PIT_FREQUENCY);
+            */
+            set_task_waitchan(this_core->cur_task, &kbd_queue);
+            set_task_state(this_core->cur_task, TASK_SLEEPING);
+            scheduler();
         }
     }
 }

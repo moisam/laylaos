@@ -42,6 +42,7 @@
 #include <kernel/dev.h>
 #include <kernel/task.h>
 #include <kernel/cdrom.h>
+#include <kernel/asm.h>
 #include <mm/kheap.h>
 #include <mm/kstack.h>
 #include <kernel/gpt_mbr.h>
@@ -299,23 +300,6 @@ long ahci_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
 }
 
 
-static inline void ahci_wait(int msecs)
-{
-    volatile unsigned long long last_ticks = ticks;
-
-    while(msecs)
-    {
-        if(ticks != last_ticks)
-        {
-            msecs--;
-            last_ticks = ticks;
-        }
-
-        __asm__ __volatile__("nop" ::: "memory");
-    }
-}
-
-
 /*
  * Start command engine
  */
@@ -395,7 +379,15 @@ static inline int lock_and_find_cmdslot(struct ahci_dev_t *ahci, HBA_PORT *port,
     while((slot = find_cmdslot(port)) == -1)
     {
         kernel_mutex_unlock(&ahci->port_lock[port_index]);
-        block_task2((void *)port, 5000);
+
+        /*
+        block_task2((void *)port, 500);
+        //block_task2((void *)port, 5000);
+        */
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, PIT_FREQUENCY * 5);
+
         kernel_mutex_lock(&ahci->port_lock[port_index]);
     }
 
@@ -1596,9 +1588,9 @@ void ahci_init(struct pci_dev_t *pci)
     // start the controller and tell it we know it exists
     hba = (HBA_MEM *)ahci->iobase;
     hba->ghc = 1;
-    ahci_wait(50);
+    tick_delay(50);
     hba->ghc = hba->ghc | (1 << 31);
-    ahci_wait(50);
+    tick_delay(50);
     
     printk("ahci: ver %d.%d, cap 0x%x, cmdslots %d, ports 0x%x\n",
            (hba->vs >> 16), (hba->vs & 0xff),
