@@ -56,7 +56,7 @@ void set_color_theme(void *_evbuf)
 
 
 /*
- * Get the system color theme from the server and stores it in the global
+ * Get the system color theme from the server and store it in the global
  * theme color array.
  */
 int get_color_theme(void)

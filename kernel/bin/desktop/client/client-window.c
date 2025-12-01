@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: client-window.c
  *    This file is part of LaylaOS.
@@ -216,6 +216,8 @@ struct window_t *__window_create(struct window_attribs_t *attribs,
                                                     &GLOB.mono);
     }
 
+    window->repaint(window, 1);
+
     return window;
 }
 
@@ -239,7 +241,7 @@ struct window_t *window_create(struct window_attribs_t *attribs)
 }
 
 
-static inline void __window_destroy(struct window_t *window)
+static inline void __window_destroy(volatile struct window_t *window)
 {
     winid_t winid;
 
@@ -258,7 +260,7 @@ static inline void __window_destroy(struct window_t *window)
     }
     
     winid = window->winid;
-    free(window);
+    free((void *)window);
 
     simple_request(REQUEST_WINDOW_DESTROY, GLOB.server_winid, winid);
 }
@@ -393,7 +395,7 @@ struct window_t *win_for_winid(winid_t winid)
         if(winlist[i] && winlist[i]->winid == winid)
         {
             mutex_unlock(&__winlist_lock);
-            return winlist[i];
+            return (struct window_t *)(winlist[i]);
         }
     }
 
