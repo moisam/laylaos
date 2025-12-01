@@ -51,6 +51,9 @@ make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
+# set the SONAME so everybody else can link to it without using the full pathname
+patchelf --set-soname libwebp.so ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libwebp.so
+
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 

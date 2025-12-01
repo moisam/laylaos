@@ -66,6 +66,9 @@ cp ${CWD}/*.pc ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/pkgconfig/
 cp ${CWD}/*.la ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/
 ln -s libpng16.pc ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/pkgconfig/libpng.pc
 
+# set the SONAME so everybody else can link to it without using the full pathname
+patchelf --set-soname libpng16.so ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libpng16.so
+
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
 
