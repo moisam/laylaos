@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: term.c
  *    This file is part of LaylaOS.
@@ -993,6 +993,7 @@ void delete_chars(unsigned long count)
         for( ; dest < end; src++, dest++)
         {
             *dest = *src;
+            dest->dirty = 1;
         }
         
         clear_cell(dest);
@@ -1038,6 +1039,7 @@ void insert_chars(unsigned long count)
         for( ; dest > end; src--, dest--)
         {
             *dest = *src;
+            dest->dirty = 1;
         }
         
         clear_cell(dest);
