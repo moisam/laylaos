@@ -38,15 +38,11 @@
  * If we've reached the end of our allowed memory, restart from the first
  * address and try to find an earlier address that was alloc'd and free'd.
  *
- * @param   phys    the physical address of the top of the kstack is stored 
- *                    here, that is equal to the actual physical address +
- *                    PAGE_SIZE
- * @param   virt    similar to the above, except the virtual address is 
- *                    stored here
+ * @param   task        task pointer
  *
  * @return  zero on success, -1 on failure.
  */
-int get_kstack(physical_addr *phys, virtual_addr *virt);
+int get_kstack(volatile struct task_t *task);
 
 /**
  * @brief Free a kernel stack.
@@ -58,7 +54,7 @@ int get_kstack(physical_addr *phys, virtual_addr *virt);
  *
  * @return  nothing.
  */
-void free_kstack(virtual_addr virt);
+void free_kstack(volatile struct task_t *task);
 
 /**
  * @brief Get kernel stack count.

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: vmmngr_pte.h
  *    This file is part of LaylaOS.
@@ -93,6 +93,12 @@
  * Check if a page table entry (PTE) is marked private
  */
 #define PTE_PRIVATE(e)          (((e) & I86_PTE_PRIVATE) == I86_PTE_PRIVATE)
+
+/**
+ * \def PTE_ACCESSED
+ * Check if a page table entry (PTE) is marked accessed
+ */
+#define PTE_ACCESSED(e)          (((e) & I86_PTE_ACCESSED) == I86_PTE_ACCESSED)
 
 /**
  * \def PTE_FRAME

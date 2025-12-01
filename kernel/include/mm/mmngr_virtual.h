@@ -534,11 +534,18 @@ void free_user_pages(virtual_addr addr);
  */
 size_t get_task_pagecount(struct task_t *task);
 
-/*
- * Helper function.
- */
+
+/***********************************
+ * Helper functions.
+ ***********************************/
+
+#ifndef __x86_64__
 int page_fault_check_table(pdirectory *pd, 
                            volatile virtual_addr faulting_address);
+#endif
+
+// defined in arch/x86_64/mmngr_virtual_x86_64.c
+extern pt_entry *__get_page_entry_pd(pdirectory *pml4, void *virt, int __flags);
 
 
 #ifdef __x86_64__

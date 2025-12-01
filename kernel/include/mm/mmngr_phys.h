@@ -73,7 +73,7 @@ extern volatile unsigned char *frame_shares;
  */
 static inline void inc_frame_shares(physical_addr frame_addr)
 {
-   frame_shares[frame_addr / PAGE_SIZE] += 1;
+    frame_shares[frame_addr / PAGE_SIZE] += 1;
     __asm__ __volatile__("":::"memory");
 }
 
@@ -88,7 +88,7 @@ static inline void inc_frame_shares(physical_addr frame_addr)
  */
 static inline void dec_frame_shares(physical_addr frame_addr)
 {
-   frame_shares[frame_addr / PAGE_SIZE] -= 1;
+    frame_shares[frame_addr / PAGE_SIZE] -= 1;
     __asm__ __volatile__("":::"memory");
 }
 

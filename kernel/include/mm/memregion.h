@@ -409,6 +409,17 @@ void memregion_consolidate(struct task_t *task);
 size_t memregion_shared_pagecount(volatile struct task_t *task);
 
 /**
+ * @brief Get file-mapped page count.
+ *
+ * Get the number of memory pages with file backing.
+ *
+ * @param   task        pointer to task
+ *
+ * @return  memory usage in pages (not bytes).
+ */
+size_t memregion_file_pagecount(volatile struct task_t *task);
+
+/**
  * @brief Get anonymous page count.
  *
  * Get the number of anonymous memory pages (ones with no file-backing).
