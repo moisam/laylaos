@@ -174,6 +174,10 @@ void dev_init(void)
     add_dev_node("pts", 0, (S_IFDIR | 0755));                   // drwxr-xr-x
     add_dev_node("shm", 0, (S_IFDIR | 0777));                   // drwxrwxrwx
 
+    add_dev_node("stdin", 0, (S_IFLNK | 0777));                 // drwxrwxrwx
+    add_dev_node("stdout", 0, (S_IFLNK | 0777));                // drwxrwxrwx
+    add_dev_node("stderr", 0, (S_IFLNK | 0777));                // drwxrwxrwx
+
     add_dev_node("fb0", TO_DEVID(29, 0), (S_IFCHR | 0440));     // cr--r-----
     //add_dev_node("guiev", TO_DEVID(13, 64), (S_IFCHR | 0660));     // crw-rw----
 
