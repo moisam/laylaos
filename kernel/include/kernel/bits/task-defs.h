@@ -43,8 +43,8 @@
 
 /* task states */
 //#define TASK_DYING              8   // exiting
-#define TASK_STOPPED            7   /**< task being traced */
-#define TASK_IDLE               6   /**< task idle or being created */
+//#define TASK_STOPPED            7   /**< task being traced */
+//#define TASK_IDLE               6   /**< task idle or being created */
 #define TASK_ZOMBIE             5   /**< task being terminated */
 #define TASK_SLEEPING           4   /**< task in high priority sleep 
                                            (interruptible) */
@@ -73,6 +73,7 @@
 #define PROPERTY_HANDLING_PAGEFAULT (1 << 13)   /**< task is handling a 
                                                      page fault */
 #define PROPERTY_DYNAMICALLY_LOADED (1 << 14)   /**< dynamically loaded */
+#define PROPERTY_SELECT_EVENT       (1 << 15)   /**< select event occurred */
 
 /* thread group flags */
 #define TG_FLAG_EXITING             (1 << 0)
@@ -272,6 +273,21 @@ struct task_t
 
     int properties;             /**< task properties */
 
+    int32_t cpuid;              /**< id of the cpu the task is running on */
+    int32_t prev_cpuid;
+
+    //physical_addr tss_stack_phys;  /**< TSS stack physical address */
+    //virtual_addr tss_stack_virt;   /**< TSS stack virtual address */
+
+    /*
+     * XXX: Anything above this line could be referenced in assembly code
+     *      and should be left alone. Specifically, field offsets should not
+     *      be changed or things _will_ break.
+     *
+     *      Anything below this line is not, and new fields can be added or
+     *      fields reordered if needed with no issues.
+     */
+
     int sched_policy;           /**< scheduling policy */
 
     int priority;               /**< task priority in the queue */
@@ -313,8 +329,6 @@ struct task_t
     struct task_files_t *ofiles;        /**< open files handlers */
 
     uint32_t cloexec;               /**< which files are closed on exec() */
-
-    int32_t cpuid;                  /**< id of the cpu the task is running on */
   
     struct task_vm_t *mem;          /**< task memory map */
 
@@ -390,8 +404,9 @@ struct task_t
     /* 
      * The executable's device and inode numbers 
      */
-    dev_t exe_dev;          /**< Exe device id */
-    ino_t exe_inode;        /**< Exe inode number */
+    //dev_t exe_dev;          /**< Exe device id */
+    //ino_t exe_inode;        /**< Exe inode number */
+    char *exe_path;         /**< Exe path */
   
     /*
      * page fault counter:
@@ -417,11 +432,9 @@ struct task_t
      * fields to support process tracing
      */
 
-#if 0
     struct regs *syscall_regs;  /**< traced registers, also contains user
                                      registers on entry to syscall */
     struct regs *irq_regs;      /**< registers on interrupt */
-#endif
 
     unsigned int interrupted_syscall;   /**< number of the 
                                                interrupted syscall */
@@ -439,10 +452,10 @@ struct task_t
                                            requesting PTRACE_GETEVENTMSG, the
                                            actual value depends on the msg 
                                            (see `man 2 ptrace`) */
-  
+
     /* FPU math state */
 #ifdef __x86_64__
-    uint64_t fpregs[64] __attribute__((aligned(16)));   /**< XMM registers */
+    uint64_t *fpregs, __fpregs[66]; /**< XMM registers */
 #else
     struct i387_state_t i387;       /**< FPU math registers */
 #endif

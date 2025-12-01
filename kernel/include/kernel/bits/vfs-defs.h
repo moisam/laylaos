@@ -101,12 +101,10 @@ struct fs_ops_t
     /*
      * directory operations
      */
-    long (*finddir)(struct fs_node_t *, char *, struct dirent **,
-                    struct cached_page_t **, size_t *);  /**< find file in dir */
-
+    long (*finddir)(struct fs_node_t *, char *, struct dirent **);
+                                            /**< find file in dir */
     long (*finddir_by_inode)(struct fs_node_t *, struct fs_node_t *,
-                             struct dirent **, struct cached_page_t **, 
-                             size_t *);      /**< find inode in dir */
+                             struct dirent **);  /**< find inode in dir */
     long (*addir)(struct fs_node_t *, struct fs_node_t *, char *);
                                             /**< add file to dir */
     long (*mkdir)(struct fs_node_t *, struct fs_node_t *);/**< make new dir */
@@ -174,7 +172,7 @@ struct mount_info_t
     //volatile struct kernel_mutex_t superblock_mutex;     /**< superblock lock */
 
 #define FS_SUPER_DIRTY      0x01
-//#define FS_SUPER_RDONLY     0x02
+#define FS_SUPER_RDONLY     0x02
     int flags;                  /**< Filesystem flags */
 
     int mountflags;             /**< Mount flags */
@@ -220,7 +218,7 @@ struct fs_node_t
     unsigned int links; /**< hard link count */
     gid_t gid;          /**< group id */
     unsigned long blocks[15];   /**< pointer to disk blocks (for pipes, 
-                                     [0] and [1] point to pipe head/tail */
+                                     [0] and [1] point to pipe head/tail) */
 
     uint32_t disk_sectors;  /**<  count of disk sectors (not Ext2 blocks) in
                                   use by this inode, not counting the actual
@@ -230,15 +228,17 @@ struct fs_node_t
     volatile struct kernel_mutex_t lock; /**< struct lock */
     //volatile struct kernel_mutex_t sleeping_task;    /**< waiting task sleep channel */
 
-#define FS_NODE_DIRTY           0x01
-#define FS_NODE_PIPE            0x02
-#define FS_NODE_MOUNTPOINT      0x04
-#define FS_NODE_SOCKET          0x08
-#define FS_NODE_SOCKET_ONDISK   0x10
-#define FS_NODE_KEEP_INCORE     0x20
-#define FS_NODE_STALE           0x40
-#define FS_NODE_LOOP_BACKING    0x80
-//#define FS_NODE_WANTED          0x80
+#define FS_NODE_DIRTY           0x0001
+#define FS_NODE_PIPE            0x0002
+#define FS_NODE_MOUNTPOINT      0x0004
+#define FS_NODE_SOCKET          0x0008
+#define FS_NODE_SOCKET_ONDISK   0x0010
+#define FS_NODE_KEEP_INCORE     0x0020
+#define FS_NODE_STALE           0x0040
+#define FS_NODE_LOOP_BACKING    0x0080
+//#define FS_NODE_WANTED          0x0080
+#define FS_NODE_INDEXED_DIR     0x0100
+#define FS_NODE_APPEND_ONLY     0x0200
     unsigned int flags;     /**< node flags */
     struct fs_ops_t *ops;   /**< pointer to filesystem operations struct */
     struct fs_node_t *ptr;  /**< alias pointer for symlinks and mount-points */
