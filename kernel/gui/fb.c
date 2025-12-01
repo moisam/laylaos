@@ -306,9 +306,11 @@ void screen_task_func(void *arg)
 
     for(;;)
     {
-        //printk("Z");
         screen_refresh(NULL);
-        block_task2(&screen_task, PIT_FREQUENCY / 5);
+        //block_task2(&screen_task, PIT_FREQUENCY / 5);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, PIT_FREQUENCY / 5);
     }
 }
 
