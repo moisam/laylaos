@@ -51,7 +51,14 @@ extern struct fs_ops_t tmpfs_ops;
 extern volatile struct kernel_mutex_t tmpfs_lock;
 
 
-struct fs_node_t *tmpfs_create_fsnode(void);
+/**
+ * @brief Get tmpfs page count.
+ *
+ * Return the number of allocated tmpfs pages.
+ *
+ * @return  tmpfs page count.
+ */
+size_t get_tmpfs_pagecount(void);
 
 
 /**
@@ -219,17 +226,10 @@ uint32_t tmpfs_alloc(dev_t dev);
  *                        a kmalloc'd dirent struct (by calling
  *                        ext2_entry_to_dirent()), and the result is
  *                        stored in this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found \a filename, this is useful if the caller
- *                        wants to delete the file after finding it
- *                        (vfs_unlink(), for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
-long tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                   struct cached_page_t **dbuf, size_t *dbuf_off);
+long tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -248,18 +248,11 @@ long tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  *                        kmalloc'd dirent struct (by calling
  *                        entry_to_dirent()), and the result is stored in
  *                        this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found file, this is useful if the caller wants to
- *                        delete the file after finding it (vfs_unlink(), 
- *                        for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
 long tmpfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                            struct dirent **entry,
-                            struct cached_page_t **dbuf, size_t *dbuf_off);
+                            struct dirent **entry);
 
 /**
  * @brief Add new entry to a directory.

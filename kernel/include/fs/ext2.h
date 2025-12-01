@@ -113,6 +113,17 @@ struct ext2_superblock_t
     uint32_t journal_inode; /**<  journal inode */
     uint32_t journal_device;    /**<  journal device */
     uint32_t orphan_list_head;  /**<  head of orphan inode list */
+
+    // extended fields
+    uint32_t hash_seed[4];
+    uint8_t default_hash_ver;
+    uint8_t reserved2;
+    uint16_t group_desc_size;
+    uint32_t default_mount_opts;
+    uint32_t first_meta_block_group;
+    uint32_t filesystem_creation_time;
+    uint32_t journal_inode_backup[17];
+
     /* rest of 1024 bytes are unused */
 } __attribute__((packed));
 
@@ -230,11 +241,29 @@ struct ext2_dirent_t
 #define EXT3_FEATURE_INCOMPAT_RECOVER       0x0004
 #define EXT3_FEATURE_INCOMPAT_JOURNAL_DEV   0x0008
 #define EXT2_FEATURE_INCOMPAT_META_BG       0x0010
+#define EXT2_FEATURE_INCOMPAT_EXTENTS       0x0040
+#define EXT2_FEATURE_INCOMPAT_64BIT         0x0080
+#define EXT2_FEATURE_INCOMPAT_MMP           0x0100
+#define EXT2_FEATURE_INCOMPAT_FLEX_GROUP    0x0200
+#define EXT2_FEATURE_INCOMPAT_EA_INODE      0x0400
+#define EXT2_FEATURE_INCOMPAT_DIR_DATA      0x1000
+#define EXT2_FEATURE_INCOMPAT_CHKSUM_SEED   0x2000
+#define EXT2_FEATURE_INCOMPAT_LARGE_DIR     0x4000
+#define EXT2_FEATURE_INCOMPAT_INLINE_DATA   0x8000
 
 /* s_feature_ro_compat superblock field value(s) */
 #define EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER 0x0001  //Sparse Superblock
 #define EXT2_FEATURE_RO_COMPAT_LARGE_FILE   0x0002  //Large file support, 64-bit file size
 #define EXT2_FEATURE_RO_COMPAT_BTREE_DIR    0x0004  //Binary tree sorted directory files
+#define EXT2_FEATURE_RO_COMPAT_HUGE_FILE    0x0008
+#define EXT2_FEATURE_RO_COMPAT_GDT_CHKSUM   0x0010
+#define EXT2_FEATURE_RO_COMPAT_DIR_NLINK    0x0020
+#define EXT2_FEATURE_RO_COMPAT_EXTRA_ISIZE  0x0040
+#define EXT2_FEATURE_RO_COMPAT_QUOTA        0x0100
+#define EXT2_FEATURE_RO_COMPAT_BIGALLOC     0x0200
+#define EXT2_FEATURE_RO_COMPAT_METADATA_CHKSUM 0x0400
+#define EXT2_FEATURE_RO_COMPAT_READONLY     0x1000
+#define EXT2_FEATURE_RO_COMPAT_PROJECT      0x2000
 
 /* reserved inodes */
 #define EXT2_BAD_INO            1 /**<  bad blocks inode */
@@ -505,17 +534,10 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
  *                        a kmalloc'd dirent struct (by calling
  *                        ext2_entry_to_dirent()), and the result is
  *                        stored in this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found \a filename, this is useful if the caller
- *                        wants to delete the file after finding it
- *                        (vfs_unlink(), for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
-long ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                  struct cached_page_t **dbuf, size_t *dbuf_off);
+long ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -534,18 +556,11 @@ long ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  *                        kmalloc'd dirent struct (by calling
  *                        entry_to_dirent()), and the result is stored in
  *                        this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found file, this is useful if the caller wants to
- *                        delete the file after finding it (vfs_unlink(), 
- *                        for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
 long ext2_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                           struct dirent **entry,
-                           struct cached_page_t **dbuf, size_t *dbuf_off);
+                           struct dirent **entry);
 
 /**
  * @brief Add new entry to a directory.
@@ -681,27 +696,117 @@ long ext2_read_symlink(struct fs_node_t *link, char *buf,
 size_t ext2_write_symlink(struct fs_node_t *link, char *target,
                           size_t len, int kernel);
 
-/*
+/*****************************
  * Internal functions.
- */
+ *****************************/
 
 long ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent, 
-                         int ext_dir_type, size_t block_size);
-long ext2_dir_empty_internal(char *module, struct fs_node_t *dir);
-long ext2_getdents_internal(struct fs_node_t *dir, off_t *pos, void *buf,
-                            int bufsz, int ext_dir_type);
+                         struct mount_info_t *d, int ext_dir_type);
+long ext2_dir_empty_internal(char *module, struct fs_node_t *dir, struct mount_info_t *d);
+long ext2_getdents_internal(struct fs_node_t *dir, 
+                            off_t *pos, void *buf, int bufsz, 
+                            struct mount_info_t *d);
 long ext2_finddir_internal(struct fs_node_t *dir, char *filename,
-                           struct dirent **entry, struct cached_page_t **dbuf,
-                           size_t *dbuf_off, int ext_dir_type);
+                           struct dirent **entry, 
+                           struct mount_info_t *d, int flags
+                           /* int ext_dir_type, int remove */);
 long ext2_finddir_by_inode_internal(struct fs_node_t *dir,
                                     struct fs_node_t *node,
                                     struct dirent **entry,
-                                    struct cached_page_t **dbuf,
-                                    size_t *dbuf_off, int ext_dir_type);
+                                    struct mount_info_t *d, int flags
+                                    /* int ext_dir_type */);
 long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
-                         char *filename, int ext_dir_type, size_t block_size);
-long ext2_deldir_internal(struct fs_node_t *dir, struct dirent *entry, int ext_dir_type);
+                         char *filename, struct mount_info_t *d);
+long ext2_deldir_internal(struct fs_node_t *dir, struct dirent *entry, 
+                          struct mount_info_t *d, int ext_dir_type);
+struct dirent *ext2_entry_to_dirent(struct ext2_dirent_t *ext2_ent,
+                                    struct dirent *__ent,
+                                    char *name, int namelen, int off,
+                                    int ext_dir_type);
 
 int matching_node(dev_t dev, ino_t ino, struct fs_node_t *node);
+
+/*****************************
+ * Inlined functions.
+ *****************************/
+
+#ifdef __EXT2_INTERNAL_DRIVER__
+
+STATIC_INLINE uint8_t mode_to_ext2_type(mode_t mode)
+{
+    if(S_ISCHR(mode))
+    {
+        return EXT2_FT_CHRDEV;
+    }
+    else if(S_ISBLK(mode))
+    {
+        return EXT2_FT_BLKDEV;
+    }
+    else if(S_ISFIFO(mode))
+    {
+        return EXT2_FT_FIFO;
+    }
+    else if(S_ISSOCK(mode))
+    {
+        return EXT2_FT_SOCK;
+    }
+    else if(S_ISLNK(mode))
+    {
+        return EXT2_FT_SYMLINK;
+    }
+    else if(S_ISDIR(mode))
+    {
+        return EXT2_FT_DIR;
+    }
+    else if(S_ISREG(mode))
+    {
+        return EXT2_FT_REG_FILE;
+    }
+    else
+    {
+        return EXT2_FT_UNKNOWN;
+    }
+}
+
+STATIC_INLINE size_t ext2_entsz(struct ext2_dirent_t *ent, int ext_dir_type)
+{
+    size_t len = ent->name_length_lsb;
+
+    if(!ext_dir_type)
+    {
+        len |= ((size_t)ent->type_indicator << 8);
+    }
+
+    return len;
+}
+
+/*
+ * Do dir entries contain a type field insted of filelength MSB?
+ */
+STATIC_INLINE int is_ext_dir_type(volatile struct ext2_superblock_t *super)
+{
+    return (super->version_major >= 1 &&
+            (super->required_features & EXT2_FEATURE_INCOMPAT_FILETYPE));
+}
+
+STATIC_INLINE struct cached_page_t *get_relative_block(struct fs_node_t *dir,
+                                                       struct mount_info_t *d,
+                                                       size_t offset, int bmap_flags)
+{
+    struct fs_node_header_t tmp;
+    size_t lblock;
+
+    tmp.inode = PCACHE_NOINODE;
+    tmp.dev = dir->dev;
+
+    if((lblock = d->fs->ops->bmap(dir, offset, d->block_size, bmap_flags)) == 0)
+    {
+        return NULL;
+    }
+
+    return get_cached_page((struct fs_node_t *)&tmp, lblock, 0);
+}
+
+#endif      /* __EXT2_INTERNAL_DRIVER__ */
 
 #endif      /* __EXT2_FSYS_H__ */

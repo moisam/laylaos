@@ -170,17 +170,10 @@ long devfs_write_inode(struct fs_node_t *);
  *                        a kmalloc'd dirent struct (by calling
  *                        entry_to_dirent()), and the result is
  *                        stored in this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found \a filename, this is useful if the caller
- *                        wants to delete the file after finding it
- *                        (vfs_unlink(), for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
-long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                   struct cached_page_t **dbuf, size_t *dbuf_off);
+long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -199,18 +192,11 @@ long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  *                        kmalloc'd dirent struct (by calling
  *                        entry_to_dirent()), and the result is stored in
  *                        this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found file, this is useful if the caller wants to
- *                        delete the file after finding it (vfs_unlink(), 
- *                        for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
 long devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                            struct dirent **entry,
-                            struct cached_page_t **dbuf, size_t *dbuf_off);
+                            struct dirent **entry);
 
 /**
  * @brief Get dir entries.
@@ -241,5 +227,25 @@ long devfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz);
  * @return  zero on success, -(errno) on failure.
  */
 int devfs_find_deventry(dev_t dev, int blk, struct dirent **entry);
+
+/**
+ * @brief Read a symbolic link.
+ *
+ * Read the contents of a symbolic link. As different filesystems might have
+ * different ways of storing symlinks (e.g. ext2 stores links < 60 chars in
+ * length in the inode struct itself), we hand over this task to the
+ * filesystem.
+ *
+ * @param   link    the symlink's inode
+ * @param   buf     the buffer in which we will read and store the
+ *                    symlink's target
+ * @param   bufsz   size of buffer above 
+ * @param   kernel  set if the caller is a kernel function (i.e. 'buf' address
+ *                    is in kernel memory), 0 if 'buf' is a userspace address
+ *
+ * @return  number of chars read on success, -(errno) on failure.
+ */
+long devfs_read_symlink(struct fs_node_t *link, char *buf,
+                        size_t bufsz, int kernel);
 
 #endif      /* __DEV_FSYS_H__ */

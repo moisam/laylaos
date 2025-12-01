@@ -31,6 +31,10 @@
 #include <kernel/pcache.h>
 
 
+/*************************************************
+ * Base ISO9660 structs
+ *************************************************/
+
 /**
  * @struct lebe_dword_t
  * @brief The lebe_dword_t structure.
@@ -60,12 +64,12 @@ struct lebe_word_t
 
 
 /**
- * @struct iso9660_datetime
- * @brief The iso9660_datetime structure.
+ * @struct iso9660_datetime_t
+ * @brief The iso9660_datetime_t structure.
  *
  * A structure to represent an ISO9660 data and time.
  */
-struct iso9660_datetime
+struct iso9660_datetime_t
 {
     uint8_t yr;     /**<  years since 1900 */
     uint8_t mon;    /**<  month 1-12 */
@@ -73,6 +77,24 @@ struct iso9660_datetime
     uint8_t hr;     /**<  hour 0-23 */
     uint8_t min;    /**<  minutes 0-59 */
     uint8_t sec;    /**<  seconds 0-59 */
+    uint8_t gmtoff; /**<  GMT offset in 15 min intervls from -48 to +52 */
+};
+
+
+/**
+ * @struct iso9660_long_datetime_t
+ * @brief The iso9660_long_datetime_t structure.
+ *
+ * A structure to represent a long ISO9660 data and time.
+ */
+struct iso9660_long_datetime_t
+{
+    uint32_t yr;    /**<  year from 1 to 9999 (ASCII digits) */
+    uint16_t mon;   /**<  month 1-12 (ASCII digits) */
+    uint16_t day;   /**<  day of month 1-31 (ASCII digits) */
+    uint16_t hr;    /**<  hour 0-23 (ASCII digits) */
+    uint16_t min;   /**<  minutes 0-59 (ASCII digits) */
+    uint16_t sec;   /**<  seconds 0-59 (ASCII digits) */
     uint8_t gmtoff; /**<  GMT offset in 15 min intervls from -48 to +52 */
 };
 
@@ -175,15 +197,15 @@ struct iso9660_pvd_t
     uint8_t biblioid[37];       /**<  Filename of a file in the root dir that 
                                       contains bibliographic info. If not 
                                       specified, all bytes should be 0x20 */
-    struct iso9660_datetime ctime;  /**<  Volume creation date & time */
-    struct iso9660_datetime mtime;  /**<  Volume modification date & time */
-    struct iso9660_datetime exptime; /**<  Date & time after which this 
-                                           volume becomes obsolete. If not 
-                                           specified, the volume does not
-                                           expire */
-    struct iso9660_datetime efftime; /**<  Date and time after which the 
-                                           volume may be used. If not 
-                                           specified, may be used now */
+    struct iso9660_datetime_t ctime;  /**<  Volume creation date & time */
+    struct iso9660_datetime_t mtime;  /**<  Volume modification date & time */
+    struct iso9660_datetime_t exptime;/**<  Date & time after which this 
+                                            volume becomes obsolete. If not 
+                                            specified, the volume does not
+                                            expire */
+    struct iso9660_datetime_t efftime;/**<  Date and time after which the 
+                                            volume may be used. If not 
+                                            specified, may be used now */
     uint8_t fstruct_ver;    /**<  The dir records and path table version
                                   (always 0x01) */
     uint8_t unused4;        /**<  Reserved */
@@ -191,6 +213,102 @@ struct iso9660_pvd_t
     uint8_t reserved[653];  /**<  Reserved by ISO */
 } __attribute__((packed));
 
+
+/*************************************************
+ * System Use Sharing Protocol (SUSP) structs
+ *************************************************/
+
+/**
+ * @struct iso9660_susp_field_t
+ * @brief The iso9660_susp_field_t structure.
+ *
+ * A structure to represent a System Use Sharing Protocol (SUSP) field.
+ */
+struct iso9660_susp_field_t
+{
+    uint8_t sig[2];
+    uint8_t len;
+    uint8_t ver;
+} __attribute__((packed));
+
+
+/*************************************************
+ * RockRidge Interchange Protocol (RRIP) structs
+ *************************************************/
+
+/**
+ * @struct iso9660_rrip_px_t
+ * @brief The iso9660_rrip_px_t structure.
+ *
+ * A structure to represent a POSIX file attribute (PX) entry.
+ */
+struct iso9660_rrip_px_t
+{
+    struct iso9660_susp_field_t hdr;
+    struct lebe_dword_t mode;
+    struct lebe_dword_t links;
+    struct lebe_dword_t uid;
+    struct lebe_dword_t gid;
+    struct lebe_dword_t ino;
+} __attribute__((packed));
+
+
+/**
+ * @struct iso9660_rrip_tf_t
+ * @brief The iso9660_rrip_tf_t structure.
+ *
+ * A structure to represent a Time Fields (TF) entry.
+ */
+struct iso9660_rrip_tf_t
+{
+    struct iso9660_susp_field_t hdr;
+    uint8_t flags;
+} __attribute__((packed));
+
+
+/**
+ * @struct iso9660_rrip_pn_t
+ * @brief The iso9660_rrip_pn_t structure.
+ *
+ * A structure to represent a POSIX device number (PN) entry.
+ */
+struct iso9660_rrip_pn_t
+{
+    struct iso9660_susp_field_t hdr;
+    struct lebe_dword_t devhi;
+    struct lebe_dword_t devlo;
+} __attribute__((packed));
+
+
+/**
+ * @struct iso9660_rrip_sl_t
+ * @brief The iso9660_rrip_sl_t structure.
+ *
+ * A structure to represent a Symbolic Link (SL) entry.
+ */
+struct iso9660_rrip_sl_t
+{
+    struct iso9660_susp_field_t hdr;
+    uint8_t flags;
+} __attribute__((packed));
+
+
+/**
+ * @struct iso9660_rrip_nm_t
+ * @brief The iso9660_rrip_nm_t structure.
+ *
+ * A structure to represent a Alternate Name (NM) entry.
+ */
+struct iso9660_rrip_nm_t
+{
+    struct iso9660_susp_field_t hdr;
+    uint8_t flags;
+} __attribute__((packed));
+
+
+/*************************************************
+ * Function prototypes
+ *************************************************/
 
 /**
  * @brief Initialize the ISO9660 filesystem.
@@ -329,18 +447,11 @@ uint32_t iso9660fs_alloc(dev_t dev);
  * @param   entry       if the \a filename is found, its entry is converted to
  *                        a kmalloc'd dirent struct, and the result is
  *                        stored in this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found \a filename, this is useful if the caller
- *                        wants to delete the file after finding it
- *                        (vfs_unlink(), for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
 long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
-                       struct dirent **entry, struct cached_page_t **dbuf,
-                       size_t *dbuf_off);
+                       struct dirent **entry);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -358,18 +469,11 @@ long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
  * @param   entry       if the \a node is found, its entry is converted to a
  *                        kmalloc'd dirent struct, and the result is stored in
  *                        this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found file, this is useful if the caller wants to
- *                        delete the file after finding it (vfs_unlink(), 
- *                        for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
 long iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                                struct dirent **entry,
-                                struct cached_page_t **dbuf, size_t *dbuf_off);
+                                struct dirent **entry);
 
 /**
  * @brief Add new entry to a directory.

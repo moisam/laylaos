@@ -138,6 +138,17 @@ enum dir_proc_enum
     b = tmp;                                    \
 }
 
+#define PR_REALLOC_OR_UNLOCK(b, s, c, m)        \
+{                                               \
+    char *tmp;                                  \
+    if(!(tmp = (char *)krealloc(b, s * 2))) {   \
+        kernel_mutex_unlock(m);                 \
+        return c;                               \
+    }                                           \
+    s *= 2;                                     \
+    b = tmp;                                    \
+}
+
 
 /**
  * @var procfs_ops
@@ -269,18 +280,11 @@ long procfs_write_inode(struct fs_node_t *);
  *                        a kmalloc'd dirent struct (by calling
  *                        ext2_entry_to_dirent()), and the result is
  *                        stored in this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found \a filename, this is useful if the caller
- *                        wants to delete the file after finding it
- *                        (vfs_unlink(), for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
 long procfs_finddir(struct fs_node_t *dir, char *filename,
-                    struct dirent **entry,
-                    struct cached_page_t **dbuf, size_t *dbuf_off);
+                    struct dirent **entry);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -299,18 +303,11 @@ long procfs_finddir(struct fs_node_t *dir, char *filename,
  *                        kmalloc'd dirent struct (by calling
  *                        entry_to_dirent()), and the result is stored in
  *                        this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found file, this is useful if the caller wants to
- *                        delete the file after finding it (vfs_unlink(), 
- *                        for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
 long procfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                             struct dirent **entry,
-                             struct cached_page_t **dbuf, size_t *dbuf_off);
+                             struct dirent **entry);
 
 /**
  * @brief Get dir entries.
@@ -427,6 +424,7 @@ size_t write_other_taskmem(struct task_t *task, off_t pos,
 
 size_t get_task_rlimits(struct task_t *task, char **_buf);
 size_t get_task_mmaps(struct task_t *task, char **_buf);
+size_t get_task_smaps(struct task_t *task, char **_buf);
 size_t get_task_posix_timers(struct task_t *task, char **_buf);
 size_t get_task_io(struct task_t *task, char **buf);
 
@@ -451,7 +449,11 @@ size_t get_vmstat(char **buf);
 size_t get_loadavg(char **buf);
 size_t get_meminfo(char **buf);
 size_t get_modules(char **buf);
+
 size_t get_mounts(char **buf);
+size_t get_mountstats(char **buf);
+size_t get_mountinfo(char **buf);
+
 size_t get_sysstat(char **buf);
 size_t get_pci_device_list(char **_buf);
 size_t get_pci_device_config_space(struct pci_dev_t *pci, char **_buf);

@@ -119,4 +119,27 @@ long pipefs_select(struct file_t *f, int which);
  */
 long pipefs_poll(struct file_t *f, struct pollfd *pfd);
 
+/**
+ * @brief Get pipe size.
+ *
+ * Get the size, in bytes, of the given pipe.
+ *
+ * @param   node        file node referring to the open pipe
+ *
+ * @return  size in bytes.
+ */
+long pipefs_get_size(struct fs_node_t *node);
+
+/**
+ * @brief Set pipe size.
+ *
+ * Set the size, in bytes, of the given pipe.
+ *
+ * @param   node        file node referring to the open pipe
+ * @param   newsz       new pipe size
+ *
+ * @return new size on success, -(errno) on failure
+ */
+long pipefs_set_size(struct fs_node_t *node, int newsz);
+
 #endif      /* __PIPE_FSYS_H__ */

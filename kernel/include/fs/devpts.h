@@ -160,18 +160,11 @@ long devpts_write_inode(struct fs_node_t *node);
  *                        a kmalloc'd dirent struct (by calling
  *                        entry_to_dirent()), and the result is
  *                        stored in this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found \a filename, this is useful if the caller
- *                        wants to delete the file after finding it
- *                        (vfs_unlink(), for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
 long devpts_finddir(struct fs_node_t *dir, char *filename,
-                    struct dirent **entry,
-                    struct cached_page_t **dbuf, size_t *dbuf_off);
+                    struct dirent **entry);
 
 /**
  * @brief Find the given inode in the parent directory.
@@ -190,18 +183,11 @@ long devpts_finddir(struct fs_node_t *dir, char *filename,
  *                        kmalloc'd dirent struct (by calling
  *                        entry_to_dirent()), and the result is stored in
  *                        this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found file, this is useful if the caller wants to
- *                        delete the file after finding it (vfs_unlink(), 
- *                        for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry
  *
  * @return  zero on success, -(errno) on failure.
  */
 long devpts_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                             struct dirent **entry,
-                             struct cached_page_t **dbuf, size_t *dbuf_off);
+                             struct dirent **entry);
 
 /**
  * @brief Get dir entries.
