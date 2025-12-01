@@ -101,7 +101,10 @@ struct cd_audio_page_t
 
 void cdrom_task_func(void *arg)
 {
-    int i, res;
+    int i;
+#ifdef __DEBUG
+    int res;
+#endif
     uint8_t buf[2];
     struct ata_devtab_s *tab;
     struct ata_dev_s *dev;
@@ -110,12 +113,17 @@ void cdrom_task_func(void *arg)
 
     for(;;)
     {
+#if 0
         if(disk_task == NULL)
         {
             // we are too early as the disk task has not been forked yet
-            block_task2(&cdrom_task, PIT_FREQUENCY * 5);
+            //block_task2(&cdrom_task, PIT_FREQUENCY * 5);
+            set_task_waking_signal(this_core->cur_task, 0);
+            __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+            block_task_timeout(this_core->cur_task, PIT_FREQUENCY * 5);
             continue;
         }
+#endif
 
         for(i = 0; i < MAX_CDROM_DEVICES; i++)
         {
@@ -155,7 +163,11 @@ void cdrom_task_func(void *arg)
             // See: https://cygnus.speccy.cz/download/datasheety/atapi.pdf
 
             KDEBUG("cdrom: cdrom_task_func() adding disk req\n");
-            res = ata_add_req(dev, 0, 1, (virtual_addr)&buf,
+
+#ifdef __DEBUG
+            res = 
+#endif
+                ata_add_req(dev, 0, 1, (virtual_addr)&buf,
                                             0, cdrom_test_unit_ready);
 
             KDEBUG("cdrom: res %d, status 0x%x, err 0x%x\n", res, buf[0], buf[1]);
@@ -165,7 +177,11 @@ void cdrom_task_func(void *arg)
                 struct sense_data_t sense_data;
 
                 A_memset(&sense_data, 0, sizeof(struct sense_data_t));
-                res = ata_add_req(dev, 0, 1, (virtual_addr)&sense_data,
+
+#ifdef __DEBUG
+                res = 
+#endif
+                    ata_add_req(dev, 0, 1, (virtual_addr)&sense_data,
                                                 0, cdrom_request_sense);
 
                 KDEBUG("cdrom: res %d, errcode 0x%x, key 0x%x, asc 0x%x\n",
@@ -263,7 +279,10 @@ void cdrom_task_func(void *arg)
             }
         }
 
-        block_task2(&cdrom_task, PIT_FREQUENCY * 5);
+        //block_task2(&cdrom_task, PIT_FREQUENCY * 5);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, PIT_FREQUENCY * 5);
     }
 }
 
