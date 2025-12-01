@@ -52,6 +52,18 @@ struct processor_local_t
 #define SMP_FLAG_SCHEDULER_BUSY         0x02
     volatile int flags;                 // offset 56
 
+    volatile unsigned long long prev_ticks;
+    volatile unsigned long user_time,   // total user time
+                           sys_time;    // total system time
+
+    //volatile int nested_irqs;
+    volatile uint64_t irq_count[19];    // 0..15: basic IRQs
+                                        //    16: IRQ 123 (local timer)
+                                        //    17: IRQ 124 (TLB shootdown)
+                                        //    18: IRQ 255 (spurious)
+    volatile uint64_t irq_ticks[19];    // indices are the same as above
+    volatile uint64_t softirq_ticks;
+
     // cpu features obtained from cpuid
     char vendorid[16];
     char modelname[68];

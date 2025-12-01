@@ -108,8 +108,8 @@ extern time_t startup_time;
 extern struct clock_waiter_t waiter_head[];
 
 
-long clock_wait(struct clock_waiter_t *head, pid_t pid,
-                int64_t delta, ktimer_t timerid);
+long __clock_wait(struct clock_waiter_t *head, pid_t pid,
+                  int64_t delta, ktimer_t timerid);
 
 
 /**

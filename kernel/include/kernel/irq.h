@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: irq.h
  *    This file is part of LaylaOS.
@@ -46,8 +46,8 @@ struct handler_t
     int (*handler)(struct regs *r, int arg);  /**< handler function */
     int handler_arg;                          /**< handler function argument */
     char short_name[16];           /**< what this IRQ is used for */
-    uint64_t hits;                 /**< how many times this IRQ happened */
-    uint64_t ticks;                /**< total ticks used to serve this IRQ */
+    //uint64_t hits;                 /**< how many times this IRQ happened */
+    //uint64_t ticks;                /**< total ticks used to serve this IRQ */
     struct handler_t *next;        /**< next handler (for shared IRQs) */
 };
 

@@ -92,6 +92,29 @@ static inline int is_cloexec(volatile struct task_t *t, int fd)
 
 #define tgid(t)             ((t)->threads ? (t)->threads->tgid : (t)->pid)
 
+#define set_task_state(t, s)            \
+    __atomic_store_n(&((t)->state), s, __ATOMIC_SEQ_CST)
+
+#define get_task_state(t)               \
+    __atomic_load_n(&((t)->state), __ATOMIC_SEQ_CST)
+
+#define set_task_waitchan(t, w)         \
+    __atomic_store_n(&((t)->wait_channel), w, __ATOMIC_SEQ_CST)
+
+#define get_task_waitchan(t)            \
+    __atomic_load_n(&((t)->wait_channel), __ATOMIC_SEQ_CST)
+
+#define get_task_properties(t)          \
+    __atomic_load_n(&((t)->properties), __ATOMIC_SEQ_CST)
+
+#define set_task_waking_signal(t, s)    \
+    __atomic_store_n(&((t)->woke_by_signal), s, __ATOMIC_SEQ_CST)
+
+#define get_task_waking_signal(t)       \
+    __atomic_load_n(&((t)->woke_by_signal), __ATOMIC_SEQ_CST)
+
+#define block_task_timeout(t, ticks)    \
+    __clock_wait(&waiter_head[0], (t)->pid, ticks, 0)
 
 // a short-hand for all the code that traverses the master task table
 #define for_each_taskptr(t)                              \
@@ -272,17 +295,7 @@ struct task_t *task_alloc(void);
  */
 void task_free(volatile struct task_t *task);
 
-/**
- * @brief Blocked task callback.
- *
- * Callback function to be called by the clock soft interrupt when the
- * timeout set by block_task2() expires.
- *
- * @param   arg             pointer to blocked task
- *
- * @return  nothing.
- */
-void block_task_callback(void *arg);
+#if 0
 
 /**
  * @brief Block task with timeout.
@@ -311,6 +324,8 @@ int block_task2(void *wait_channel, int timeout);
  * @return  1 if interruptible sleep and woken by a signal, zero otherwise.
  */
 int block_task(void *wait_channel, int interruptible);
+
+#endif
 
 /**
  * @brief Unblock tasks.
@@ -402,8 +417,8 @@ void reap_zombie(volatile struct task_t *task);
 void terminate_task(int code);
 
 
-void append_to_ready_queue_locked(volatile struct task_t *task, int move_queue);
-void move_to_queue_end_locked(volatile struct task_t *task);
+void append_to_ready_queue_locked(volatile struct task_t *task /* , int move_queue */);
+//void move_to_queue_end_locked(volatile struct task_t *task);
 void task_change_priority(volatile struct task_t *t, int new_prio, int new_policy);
 void schedule_and_block(volatile struct task_t *tracer, volatile struct task_t *tracee);
 
@@ -441,7 +456,9 @@ pid_t start_kernel_task(char *name, void (*func)(void *), void *func_arg,
  *
  * @return  nothing.
  */
-void unblock_kernel_task(volatile struct task_t *task);
+#define unblock_kernel_task(task)   unblock_task_no_preempt(task)
+
+//void unblock_kernel_task(volatile struct task_t *task);
 
 
 /**************************************

@@ -222,9 +222,20 @@ size_t get_cached_block_count(void);
  *
  * @return  number of cached pages.
  *
- * @see     get_cached_block_count()
+ * @see     get_cached_block_count(), get_busy_cached_page_count()
  */
 size_t get_busy_cached_block_count(void);
+
+/**
+ * @brief Get dirty cached block count.
+ *
+ * Return the count of all the cached disk blocks that are marked dirty.
+ *
+ * @return  number of cached pages.
+ *
+ * @see     get_cached_block_count(), get_busy_cached_page_count()
+ */
+size_t get_dirty_cached_block_count(void);
 
 /**
  * @brief Get cached page count.

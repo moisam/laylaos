@@ -99,6 +99,7 @@ extern unsigned char byte_count;
 extern volatile struct task_t *mouse_task;
 
 
+extern struct selinfo mouse_ssel;
 extern int mouse_scaled;
 
 

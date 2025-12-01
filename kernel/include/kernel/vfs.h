@@ -719,16 +719,10 @@ long vfs_open(char *pathname, int flags, mode_t mode, int dirfd,
  * @param   entry       a pointer to a kmalloc()'d struct dirent representing
  *                        the file is returned here. It is the caller's 
  *                        responsibility to call kfree() to release this!
- * @param   dbuf        a pointer to the disk buffer containing the found 
- *                        entry is returned here. Useful for things like 
- *                        removing the entry from parent directory without
- *                        needing to re-read the block from disk again
- * @param   dbuf_off    offset of the entry in the disk buffer
  *
  * @return  zero on success, -(errno) on failure.
  */
-long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                 struct cached_page_t **dbuf, size_t *dbuf_off);
+long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry);
 
 /**
  * @brief Find an inode in a directory.
@@ -742,18 +736,11 @@ long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  * @param   entry       if the \a node is found, its entry is converted to a
  *                        kmalloc'd dirent struct, and the result is returned
  *                        in this field
- * @param   dbuf        the disk buffer representing the disk block containing
- *                        the found filename is returned here. This is useful 
- *                        if the caller wants to delete the file after finding
- *                        it (vfs_unlink(), for example)
- * @param   dbuf_off    the offset in dbuf->data at which the caller can find
- *                        the file's entry is returned here
  *
  * @return  zero on success, -(errno) on failure.
  */
 long vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                          struct dirent **entry,
-                          struct cached_page_t **dbuf, size_t *dbuf_off);
+                          struct dirent **entry);
 
 /**
  * @brief Add a directory entry.

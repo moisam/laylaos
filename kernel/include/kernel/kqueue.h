@@ -118,7 +118,8 @@ static inline void __buf_clear(struct kqueue_t *q)
 {                                                   \
     if(__buf_is_full(q))                            \
     {                                               \
-        printk("Tried to enqueue a full queue\n");  \
+        printk("Tried to enqueue a full queue (" _XPTR_ " in %s)\n", \
+                q, __func__);                       \
         return;                                     \
     }                                               \
     ((type *)q->buf)[q->tail] = v;                  \
@@ -139,7 +140,8 @@ static inline void ttybuf_enqueue(struct kqueue_t *q, char v)
 {                                                       \
     if(__buf_is_empty(q))                               \
     {                                                   \
-        printk("Tried to dequeue an empty queue\n");    \
+        printk("Tried to dequeue an empty queue (" _XPTR_ " in %s)\n", \
+                q, __func__);                           \
         return 0;                                       \
     }                                                   \
     type res = ((type *)q->buf)[q->head];               \

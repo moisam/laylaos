@@ -57,12 +57,12 @@ extern struct handler_t fpu_handler;
 
 INLINE void fpu_state_save(volatile struct task_t *task)
 {
-    __asm__ __volatile__("fxsave (%0)" : : "r"(&task->fpregs));
+    __asm__ __volatile__("fxsave (%0)" : : "r"(task->fpregs));
 }
 
 INLINE void fpu_state_restore(volatile struct task_t *task)
 {
-    __asm__ __volatile__("fxrstor (%0)" : : "r"(&task->fpregs));
+    __asm__ __volatile__("fxrstor (%0)" : : "r"(task->fpregs));
 }
 
 #else       /* !__x86_64__ */

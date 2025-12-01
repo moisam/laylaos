@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: asm.h
  *    This file is part of LaylaOS.
@@ -69,43 +69,60 @@ static inline unsigned long long rdtsc(void)
 }
 
 
+static inline void tick_delay(int howmany)
+{
+    volatile unsigned long long last_ticks = ticks;
+
+    while(howmany)
+    {
+        if(ticks != last_ticks)
+        {
+            howmany--;
+            last_ticks = ticks;
+        }
+
+        __asm__ __volatile__("nop" ::: "memory");
+    }
+}
+
+
 static inline void __lock_xchg_byte(volatile void *p, uint8_t v)
 {
-    uint8_t res;
+    uint8_t res = v;
     uint8_t *p2 = (uint8_t *)p;
-    __asm__ __volatile__("lock xchgb %0, %1":"+m"(*p2),"=a"(res):"1"(v):"cc","memory");
+    __asm__ __volatile__("lock xchgb %0, %1":"+m"(*p2),"=a"(res):"1"(res):"cc","memory");
 }
 
 
 static inline void __lock_xchg_word(volatile void *p, uint16_t v)
 {
-    uint16_t res;
+    uint16_t res = v;
     uint16_t *p2 = (uint16_t *)p;
-    __asm__ __volatile__("lock xchgw %0, %1":"+m"(*p2),"=a"(res):"1"(v):"cc","memory");
+    __asm__ __volatile__("lock xchgw %0, %1":"+m"(*p2),"=a"(res):"1"(res):"cc","memory");
 }
 
 
 static inline void __lock_xchg_int(volatile void *p, unsigned int v)
 {
-    unsigned int res;
+    unsigned int res = v;
     unsigned int *p2 = (unsigned int *)p;
-    __asm__ __volatile__("lock xchgl %0, %1":"+m"(*p2),"=a"(res):"1"(v):"cc","memory");
+    __asm__ __volatile__("lock xchgl %0, %1":"+m"(*p2),"=a"(res):"1"(res):"cc","memory");
 }
 
 
 static inline void __lock_xchg_ptr(volatile void *p, uintptr_t v)
 {
-    void *res;
+    void *res = (void *)v;
     uintptr_t *p2 = (uintptr_t *)p;
-    __asm__ __volatile__("lock xchgq %0, %1":"+m"(*p2),"=a"(res):"1"(v):"cc","memory");
+    __asm__ __volatile__("lock xchgq %0, %1":"+m"(*p2),"=a"(res):"1"(res):"cc","memory");
 }
 
 
 static inline unsigned int __lock_xchg_int_res(volatile void *p, unsigned int v)
 {
-    unsigned int res;
+    unsigned int res = v;
     unsigned int *p2 = (unsigned int *)p;
-    __asm__ __volatile__("lock xchgl %0, %1":"+m"(*p2),"=a"(res):"1"(v):"cc","memory");
+    __asm__ __volatile__("lock xchgl %0, %1":"+m"(*p2),"=a"(res):"1"(res):"cc","memory");
     return res;
 }
 

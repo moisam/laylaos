@@ -43,22 +43,6 @@
 #define ITIMER_PROF_ID          (ktimer_t)2
 #define ITIMER_VIRT_ID          (ktimer_t)3
 
-#if 0
-/**
- * @struct itimer_t
- * @brief The itimer_t structure.
- *
- * A structure to represent an interval timer.
- */
-struct itimer_t
-{
-    unsigned long rel_ticks;    /**< relative timer value in ticks */
-    unsigned long interval;     /**< relative timer interval in ticks */
-    struct task_t *task;        /**< task owning this itimer */
-    struct itimer_t *next_real; /* linked list for ITIMER_REAL timers */
-};
-#endif
-
 
 /**
  * @var ticks
@@ -75,7 +59,7 @@ extern unsigned long long ticks;
  * Previous number of ticks, that is, when the last task time accounting
  * was done.
  */
-extern unsigned long long prev_ticks;
+//extern unsigned long long prev_ticks;
 
 /**
  * @var avenrun

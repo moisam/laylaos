@@ -42,9 +42,8 @@
  *
  * @return  zero on success, -(errno) on failure.
  */
-/*
-static inline int fdnode(int fd, struct task_t *t,
-                         struct file_t **f, struct fs_node_t **node)
+static inline long fdnode(int fd, volatile struct task_t *t,
+                          struct file_t **f, struct fs_node_t **node)
 {
     *f = NULL;
     *node = NULL;
@@ -62,8 +61,9 @@ static inline int fdnode(int fd, struct task_t *t,
     
     return 0;
 }
-*/
+/*
 int fdnode(int fd, volatile struct task_t *t, struct file_t **f, struct fs_node_t **node);
+*/
 
 
 /**
