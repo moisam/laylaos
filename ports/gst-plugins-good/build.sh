@@ -1,16 +1,15 @@
 #!/bin/bash
 
 #
-# Script to download and build gstreamer
+# Script to download and build gst-plugins-good
 #
 
-DOWNLOAD_NAME="gstreamer"
+DOWNLOAD_NAME="gst-plugins-good"
 DOWNLOAD_VERSION="1.20.7"
-DOWNLOAD_URL="https://gstreamer.freedesktop.org/src/gstreamer/"
-DOWNLOAD_PREFIX="gstreamer-"
+DOWNLOAD_URL="https://gstreamer.freedesktop.org/src/gst-plugins-good/"
+DOWNLOAD_PREFIX="gst-plugins-good-"
 DOWNLOAD_SUFFIX=".tar.xz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
-PATCH_FILE=${DOWNLOAD_NAME}.diff
 CWD=`pwd`
 
 export CFLAGS="-I${CROSSCOMPILE_SYSROOT_PATH}/usr/include -mstackrealign"
@@ -22,7 +21,7 @@ DOWNLOAD_SRCDIR="${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}"
 source ../common.sh
 
 # check for an existing compile
-check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libgstreamer-1.0.so
+check_existing ${DOWNLOAD_NAME} ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/gstreamer-1.0/libgstalpha.so
 
 # download source
 echo " ==> Downloading ${DOWNLOAD_NAME}"
@@ -31,17 +30,15 @@ check_target
 check_paths
 download_and_extract
 
-# patch and copy our extra files
-echo " ==> Patching ${DOWNLOAD_NAME}"
-echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
-
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
-
 # build
 cd ${DOWNLOAD_SRCDIR}
 
-meson setup build --cross-file ${CWD}/../crossfile.meson.laylaos \
-    --buildtype=release -D doc=disabled -D examples=disabled -D nls=disabled -D tools=enabled \
+CPPFLAGS="-D_GNU_SOURCE -D__laylaos__ -D__${BUILD_ARCH}__ -fPIC -DPIC" \
+    CFLAGS="${CFLAGS} -mstackrealign" \
+    meson setup build --cross-file ${CWD}/../crossfile.meson.laylaos \
+    --buildtype=release \
+    -D doc=disabled -D examples=disabled \
+    -D tests=enabled -D nls=disabled -D orc=disabled \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 # Search & Replace any '-pthread' to nothing in build/build.ninja

@@ -1,0 +1,18 @@
+diff -rub ./gstreamer-1.20.7/gst/gstpluginloader.c ./gstreamer-1.20.7/gst/gstpluginloader.c
+--- ./gstreamer-1.20.7/gst/gstpluginloader.c	2023-07-26 16:18:38.000000000 +0100
++++ ./gstreamer-1.20.7/gst/gstpluginloader.c	2025-11-27 00:52:39.928581330 +0000
+@@ -444,6 +444,14 @@
+     return FALSE;
+   }
+ 
++#ifdef __laylaos__
++  // Pipes on LaylaOS are 2 PAGE_SIZE in capacity, which does not
++  // work for some larger plugins. Resize here before we use the pipe
++  // to load any plugin
++  fcntl(loader->fd_w.fd, F_SETPIPE_SZ, 16 * 4096);
++  fcntl(loader->fd_r.fd, F_SETPIPE_SZ, 16 * 4096);
++#endif
++
+   gst_poll_add_fd (loader->fdset, &loader->fd_w);
+   gst_poll_add_fd (loader->fdset, &loader->fd_r);
+ 
