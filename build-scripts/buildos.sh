@@ -354,7 +354,7 @@ build_list "Vulkan-Headers"
 ##############################################
 
 build_list "glib"
-build_list "gstreamer gst-plugins-base"
+build_list "gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav"
 
 # remove the -pthread commandline option from these files (we are using musl,
 # which has pthread functionality built into libc)

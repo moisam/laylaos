@@ -31,18 +31,20 @@ error: action=report
 info: action=ignore, keyboard=report
 
 ata0-master:  type=disk, path="$1", mode=flat, translation=auto
+#ata0-master:  type=cdrom, path="`dirname $1`/laylaos.iso", status=inserted
 
 magic_break: enabled=1
 mouse: type=imps2, enabled=1, toggle=ctrl+f10
 
-ne2k: type=pci, ioaddr=0x300, irq=10, mac=b0:c4:20:00:00:00, ethmod=linux, ethdev=wlp0s20f3
+#ne2k: type=pci, ioaddr=0x300, irq=10, mac=b0:c4:20:00:00:00, ethmod=linux, ethdev=wlp0s20f3
 
-pci: enabled=1, chipset=i440fx, slot1=es1370, slot2=ne2k
+pci: enabled=1, chipset=i440fx, slot1=es1370 #, slot2=ne2k
 sound: waveoutdrv=alsa, waveindrv=alsa, midioutdrv=dummy
 es1370: enabled=1, wavemode=1
 speaker: enabled=1, mode=sound
 
 boot: disk
+#boot: cdrom
 
 display_library: x, options="gui_debug"
 

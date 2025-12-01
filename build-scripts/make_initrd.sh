@@ -61,7 +61,7 @@ if ! [ -d "${CWD}/../others" ]; then
 fi
 
 # some useful constants
-SIZE=6144              # 6 MiB
+SIZE=8192              # 8 MiB
 BLKSIZE=1024
 MAXSIZE=$(( 16 * 1024 * 1024 ))		# max size we support is 16 MiB
 DIR=./initrd_tmp
@@ -140,7 +140,7 @@ echo "==> Populating etc/"
 ${SUDO} touch etc/fstab
 
 # fix the disk name in fstab
-sed  -i -e "s/hda1/${ROOT_DISK}/" -e "s/sda1/${ROOT_DISK}/" ${CWD}/../others/etc_files/fstab
+#sed  -i -e "s/hda1/${ROOT_DISK}/" -e "s/sda1/${ROOT_DISK}/" ${CWD}/../others/etc_files/fstab
 
 echo "   Populating bin/"
 ${SUDO} cp ${SYSROOT}/usr/bin/bash bin/
@@ -163,6 +163,7 @@ ${SUDO} mkdir -p usr/lib
 ${SUDO} cp ${SYSROOT}/usr/lib/libc.so usr/lib/
 ${SUDO} cp ${SYSROOT}/usr/lib/libgcc_s.so.1 usr/lib/
 ${SUDO} cp ${SYSROOT}/usr/lib/libtinfo* usr/lib/
+${SUDO} cp ${SYSROOT}/usr/lib/libiconv.so.2 usr/lib/
 
 # musl's ld.so is a symlink to its libc.so
 ${SUDO} ln -s /usr/lib/libc.so usr/lib/ld.so

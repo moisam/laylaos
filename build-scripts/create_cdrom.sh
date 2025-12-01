@@ -32,7 +32,7 @@ fi
 # build 64bit OS by default
 ARCH=x86_64
 
-ROOTDEV=hda1
+ROOTDEV=hda
 CWD=`pwd`
 
 # use ./build/sysroot as the cross sysroot by default
@@ -105,26 +105,88 @@ echo "  Sysroot:       ${SYSROOT}"
 echo "  Output path:   ${OUTDIR}"
 echo
 
-mkdir -p ${OUTDIR}/isodir
+# create essential dirs
+echo "=> Creating directories"
 mkdir -p ${OUTDIR}/isodir/boot
 mkdir -p ${OUTDIR}/isodir/boot/grub
 
-echo "Copying kernel img"
+for d in bin sbin dev etc initrd lib mnt proc root tmp usr var; do
+    mkdir -p ${OUTDIR}/isodir/${d}
+done
+
+for d in log run tmp; do
+    mkdir -p ${OUTDIR}/isodir/var/${d}
+done
+
+mkdir -p ${OUTDIR}/isodir/usr/share/gui/desktop
+mkdir -p ${OUTDIR}/isodir/usr/share/fonts
+mkdir ${OUTDIR}/isodir/mnt/cdrom
+
+#ln -s /usr/bin ${OUTDIR}/isodir/bin
+#ln -s /usr/sbin ${OUTDIR}/isodir/sbin
+#ln -s /usr/share/doc ${OUTDIR}/isodir/usr/doc
+#ln -s /usr/share/info ${OUTDIR}/isodir/usr/info
+#ln -s /usr/share/man ${OUTDIR}/isodir/usr/man
+
+# set up appropriate permissions for dirs
+for d in bin dev etc lib mnt sbin usr var; do
+    chmod 0755 ${OUTDIR}/isodir/${d}
+done
+
+chmod 0700 ${OUTDIR}/isodir/root
+chmod 0644 ${OUTDIR}/isodir/initrd
+chmod 0555 ${OUTDIR}/isodir/proc
+chmod 0777 ${OUTDIR}/isodir/tmp
+
+
+echo "=> Copying sysroot"
+#cp -r "${SYSROOT}"/* ${OUTDIR}/isodir/
+for d in etc usr; do
+    cp -R "${SYSROOT}"/${d}/* ${OUTDIR}/isodir/${d}/
+done
+
+for f in init dispman getty login bash desktop widgets; do
+    mv ${OUTDIR}/isodir/usr/bin/${f} ${OUTDIR}/isodir/bin/
+done
+
+echo "=> Copying desktop resources"
+cp -r ${CWD}/../others/share_files/gui/ usr/share/
+cp -r ${CWD}/../others/share_files/fonts/ usr/share/
+
+echo "=> Copying /etc files"
+cp -r ${CWD}/../others/etc_files/* ${OUTDIR}/isodir/etc/
+cp -r ${CWD}/../others/timidity ${OUTDIR}/isodir/etc/
+ln -s /etc/timidity/timidity.cfg ${OUTDIR}/isodir/etc/timidity.cfg
+
+# fix /etc/fstab to not mount cdrom (it will be mounted as sysroot)
+sed -i "s~/dev/cdrom~#/dev/cdrom~" ${OUTDIR}/isodir/etc/fstab
+
+# fix the root dev in fstab
+sed -i -e "s/hda./${ROOTDEV}/" -e "s/sda./${ROOTDEV}/" ${OUTDIR}/isodir/etc/fstab
+sed -i "s/ext2/iso9660/" ${OUTDIR}/isodir/etc/fstab
+
+echo "=> Copying home files"
+touch ${OUTDIR}/isodir/root/.profile
+cp ${CWD}/../others/home_files/inputrc ${OUTDIR}/isodir/root/.inputrc
+cp ${CWD}/../others/home_files/bashrc ${OUTDIR}/isodir/root/.bashrc
+cp ${CWD}/../others/share_files/pci.ids ${OUTDIR}/isodir/usr/share/
+
+echo "=> Copying kernel img"
 cp "${SYSROOT}/boot/laylaos.kernel" ${OUTDIR}/isodir/boot/laylaos.kernel
 
-echo "Copying kernel symbol table System.map"
+echo "=> Copying kernel symbol table System.map"
 cp "${SYSROOT}/boot/System.map" ${OUTDIR}/isodir/boot/System.map
 
-echo "Copying boot modules"
+echo "=> Copying boot modules"
 cp "${SYSROOT}/boot/modules/"* ${OUTDIR}/isodir/boot/
 
-echo "Making initrd img"
+echo "=> Making initrd img"
 ${CWD}/make_initrd.sh root ${ROOTDEV} sysroot ${SYSROOT}
 
-echo "Copying initrd img"
+echo "=> Copying initrd img"
 mv initrd.img.gz ${OUTDIR}/isodir/boot/
 
-echo "Copying vdso img"
+echo "=> Copying vdso img"
 cp ${CWD}/../vdso/vdso.so ${OUTDIR}/isodir/boot/
 
 cat > ${OUTDIR}/isodir/boot/grub/grub.cfg << EOF
@@ -132,7 +194,7 @@ default=0
 timeout=0
 insmod all_video
 menuentry "Layla OS" {
-  multiboot2 /boot/laylaos.kernel root=/dev/${ROOTDEV}
+  multiboot2 /boot/laylaos.kernel root=/dev/${ROOTDEV} rootfs=iso9660
   module2 --nounzip /boot/initrd.img.gz "INITRD"
   module2 /boot/System.map "SYSTEM.MAP"
   module2 /boot/acpica.o "ACPICA"
@@ -140,10 +202,10 @@ menuentry "Layla OS" {
 }
 EOF
 
-echo "Creating ISO image"
+echo "=> Creating ISO image"
 [ -e ${OUTDIR}/laylaos.iso ] && rm ${OUTDIR}/laylaos.iso
 grub-mkrescue -o ${OUTDIR}/laylaos.iso ${OUTDIR}/isodir
 
-echo "Removing temporary directory"
+echo "=> Removing temporary directory"
 rm -rf ${OUTDIR}/isodir
 

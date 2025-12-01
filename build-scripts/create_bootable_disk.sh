@@ -467,7 +467,7 @@ echo "Creating bochsrc"
 chmod +x ./create_bochsrc.sh
 ./create_bochsrc.sh ${IMAGE} ${OUTDIR}
 
-echo "Creating qemu script"
+echo "Creating qemu scripts"
 if [ ${ARCH} == 'i686' ]; then
     QEMU_ARCH=i386
 else
@@ -478,7 +478,13 @@ cat << EOF > "${OUTDIR}/qemu.sh"
 qemu-system-${QEMU_ARCH} -accel tcg,thread=single -cpu core2duo -m 2048 -M pc -no-reboot -no-shutdown -drive format=raw,file=${IMAGE},index=0,media=disk -boot d -serial stdio -smp 1 -usb -vga std -net nic,model=ne2k_pci -net tap,ifname=tap0,script=no,downscript=no,id=net0 -device intel-hda,debug=4 -device hda-duplex -audiodev id=pa,driver=pa,server=/run/user/1000/pulse/native
 EOF
 
-chmod +x "${OUTDIR}/qemu.sh"
+cat << EOF > "${OUTDIR}/qemu_nonet.sh"
+qemu-system-${QEMU_ARCH} -accel tcg,thread=single -cpu core2duo -m 2048 -M pc -no-reboot -no-shutdown -drive format=raw,file=${IMAGE},index=0,media=disk -boot d -serial stdio -smp 1 -usb -vga std -device intel-hda,debug=4 -device hda-duplex -audiodev id=pa,driver=pa,server=/run/user/1000/pulse/native
+EOF
 
+chmod +x "${OUTDIR}/qemu.sh"
+chmod +x "${OUTDIR}/qemu_nonet.sh"
+
+echo
 echo "Done!"
 
