@@ -135,6 +135,7 @@ int vmmngr_alloc_page(pt_entry *e, int flags)
     
     if(!p)
     {
+        kpanic("Insufficient memory (in vmmngr_alloc_page())!\n");
         return 0;
     }
 
@@ -143,6 +144,7 @@ int vmmngr_alloc_page(pt_entry *e, int flags)
     *e = 0;
     PTE_SET_FRAME(e, (uintptr_t)p);
     PTE_ADD_ATTRIB(e, flags);
+    __asm__ __volatile__("":::"memory");
 
     return 1;
 }
@@ -179,6 +181,7 @@ int vmmngr_alloc_pages(virtual_addr addr, size_t sz, int flags)
             if(!(p = pmmngr_alloc_block()))
             {
                 printk("vmm: failed to alloc page at 0x%x\n", i);
+                kpanic("Insufficient memory (in vmmngr_alloc_pages())!\n");
 
                 // rollback everything
                 i -= PAGE_SIZE;
@@ -196,6 +199,7 @@ int vmmngr_alloc_pages(virtual_addr addr, size_t sz, int flags)
             *page = 0;
             PTE_SET_FRAME(page, (uintptr_t)p);
             PTE_ADD_ATTRIB(page, flags);
+            __asm__ __volatile__("":::"memory");
 
             vmmngr_flush_tlb_entry(i);
         }
@@ -225,6 +229,7 @@ void vmmngr_free_page(pt_entry *e)
     }
 
     *e = 0;
+    __asm__ __volatile__("":::"memory");
 }
 
 
@@ -249,6 +254,7 @@ void vmmngr_free_pages(virtual_addr addr, size_t sz)
             }
 
             *e = 0;
+            __asm__ __volatile__("":::"memory");
         }
 
         vmmngr_flush_tlb_entry(i);
@@ -273,6 +279,7 @@ void vmmngr_change_page_flags(virtual_addr addr, size_t sz, int flags)
         {
             PTE_CLEAR_ATTRIBS(page);
             PTE_ADD_ATTRIB(page, flags);
+            __asm__ __volatile__("":::"memory");
             vmmngr_flush_tlb_entry(i);
         }
 
@@ -307,6 +314,7 @@ void init_pd_entry(pdirectory *dir, int index,
    *entry = 0;
    PDE_ADD_ATTRIB(entry, I86_PDE_PRESENT | I86_PDE_WRITABLE | userflag);
    PDE_SET_VIRT_FRAME(entry, vtable);
+    __asm__ __volatile__("":::"memory");
 }
 
 
@@ -326,6 +334,7 @@ void vmmngr_map_page(void *phys, void *virt, int flags)
     *page = 0;
     PTE_SET_FRAME(page, (uintptr_t)phys);
     PTE_ADD_ATTRIB(page, flags);
+    __asm__ __volatile__("":::"memory");
 }
 
 
@@ -339,6 +348,7 @@ void vmmngr_unmap_page(void *virt)
     if(pt)
     {
         *pt = 0;
+        __asm__ __volatile__("":::"memory");
         vmmngr_flush_tlb_entry((virtual_addr)virt);
     }
 }
@@ -362,6 +372,7 @@ void free_pd(virtual_addr src_addr)
         {
             vmmngr_free_page(pt);
             *pt = 0;
+            __asm__ __volatile__("":::"memory");
             vmmngr_flush_tlb_entry(addr);
             __atomic_fetch_sub(&pagetable_count, 1, __ATOMIC_SEQ_CST);
         }
@@ -413,6 +424,7 @@ void get_tmp_virt_addr(virtual_addr *__addr, pt_entry **tmp, int flags)
         {
             PTE_SET_FRAME(pt, 1);
             PTE_ADD_ATTRIB(pt, flags);
+            __asm__ __volatile__("":::"memory");
             *__addr = addr;
             *tmp = pt;
             kernel_mutex_unlock(&tmpfs_lock);
@@ -526,9 +538,10 @@ virtual_addr phys_to_virt_off(physical_addr pstart, physical_addr pend,
 {
     struct kernel_region_t *r = &kernel_regions[region];
     volatile virtual_addr a, addr = 0;
+    volatile size_t i, j;
     size_t sz = align_up(pend - pstart);
-    size_t i, j, pages = sz / PAGE_SIZE;
-    
+    size_t pages = sz / PAGE_SIZE;
+
     elevated_priority_lock_recursive(r->mutex, r->lock_count);
 
     for(i = r->min, j = 0; i < r->max; i += PAGE_SIZE)
@@ -554,6 +567,7 @@ virtual_addr phys_to_virt_off(physical_addr pstart, physical_addr pend,
     if(j != pages)
     {
         elevated_priority_unlock_recursive(r->mutex, r->lock_count);
+        kpanic("Insufficient memory (in phys_to_virt_off(1))!\n");
         return 0;
     }
 
@@ -598,7 +612,8 @@ virtual_addr vmmngr_alloc_and_map(size_t sz, int pcontiguous,
                                   int region)
 {
     struct kernel_region_t *r = &kernel_regions[region];
-    size_t i, j, pages = sz / PAGE_SIZE;
+    size_t pages = sz / PAGE_SIZE;
+    volatile size_t i, j;
     volatile virtual_addr addr = 0;
     volatile physical_addr phys = 0;
 
@@ -615,6 +630,7 @@ virtual_addr vmmngr_alloc_and_map(size_t sz, int pcontiguous,
 
     if(pcontiguous && !(phys = (physical_addr)pmmngr_alloc_blocks(pages)))
     {
+        kpanic("Insufficient memory (in vmmngr_alloc_and_map(1))!\n");
         return 0;
     }
 
@@ -650,7 +666,8 @@ virtual_addr vmmngr_alloc_and_map(size_t sz, int pcontiguous,
         }
 
         elevated_priority_unlock_recursive(r->mutex, r->lock_count);
-        
+        kpanic("Insufficient memory (in vmmngr_alloc_and_map(2))!\n");
+
         return 0;
     }
     

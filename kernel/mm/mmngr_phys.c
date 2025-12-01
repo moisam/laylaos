@@ -81,7 +81,7 @@ static volatile size_t _mmngr_max_blocks = 0;
 static volatile size_t _mmngr_available_blocks = 0;
 
 // memory map bit array. Each bit represents a memory block
-static volatile uint32_t __mmngr_memory_map[0x24000];
+static volatile uint32_t __mmngr_memory_map[0x60000];
 static volatile uint32_t *_mmngr_memory_map = 0;
 
 // How many items are in the memory map bit array
@@ -96,6 +96,7 @@ static void mmap_set(uintptr_t bit)
     volatile uintptr_t i = bit / 32;
     volatile uint32_t j = ((uint32_t)1 << (bit % 32));
     _mmngr_memory_map[i] |= j;
+    __asm__ __volatile__("":::"memory");
 }
 
 // unset any bit (frame) within the memory map bit array
@@ -104,6 +105,7 @@ static void mmap_unset(uintptr_t bit)
     volatile uintptr_t i = bit / 32;
     volatile uint32_t j = ((uint32_t)1 << (bit % 32));
     _mmngr_memory_map[i] &= ~j;
+    __asm__ __volatile__("":::"memory");
 }
 
 // test if any bit (frame) is set within the memory map bit array
@@ -111,11 +113,12 @@ static int mmap_test(uintptr_t bit)
 {
     volatile uintptr_t i = bit / 32;
     volatile uint32_t j = ((uint32_t)1 << (bit % 32));
+    __asm__ __volatile__("":::"memory");
 	return (_mmngr_memory_map[i] & j) ? 1 : 0;
 }
 
 // finds first free frame in the bit array and returns its index
-static inline uintptr_t mmap_first_free(void)
+static uintptr_t mmap_first_free(void)
 {
     volatile size_t i;
     volatile uint32_t j;
@@ -131,6 +134,7 @@ static inline uintptr_t mmap_first_free(void)
 				if(!(_mmngr_memory_map[i] & ((uint32_t)1 << j)))
 				{
 					lowest_available_index = i;
+                    __asm__ __volatile__("":::"memory");
 					return i * 4 * 8 + j;
 				}
 			}
@@ -143,6 +147,9 @@ static inline uintptr_t mmap_first_free(void)
 // finds first free "size" number of frames and returns its index
 static uintptr_t mmap_first_free_s(size_t size)
 {
+    volatile size_t i;
+    volatile uint32_t j;
+
 	if(size == 0)
 	{
 		return 0;
@@ -153,13 +160,11 @@ static uintptr_t mmap_first_free_s(size_t size)
 		return mmap_first_free();
 	}
 
-    size_t count = _mmngr_memory_map_size;
-
-	for(volatile size_t i = 0; i < count; i++)
+	for(i = lowest_available_index; i < _mmngr_memory_map_size; i++)
 	{
 		if(_mmngr_memory_map[i] != 0xffffffff)
 		{
-			for(volatile uint32_t j = 0; j < 32; j++)
+			for(j = 0; j < 32; j++)
 			{
 			    // test each bit in the dword
 				if(!(_mmngr_memory_map[i] & ((uint32_t)1 << j)))
@@ -578,6 +583,7 @@ static void pmmngr_reclaim_memory(size_t count)
     remove_unreferenced_cached_pages(NULL);
     remove_old_cached_pages(-1, TWO_MINUTES);
     lowest_available_index = 0;
+    __asm__ __volatile__("":::"memory");
 
     if(pmmngr_get_free_block_count() >= sz)
     {
@@ -598,7 +604,7 @@ static void pmmngr_reclaim_memory(size_t count)
 
 void *pmmngr_alloc_block(void)
 {
-    volatile uintptr_t frame;
+    uintptr_t frame;
     volatile int tries = 0;
 
 try: ;
@@ -632,7 +638,7 @@ try: ;
 
 void pmmngr_free_block(void *p)
 {
-	volatile uintptr_t frame = (uintptr_t)p / PMMNGR_BLOCK_SIZE;
+	uintptr_t frame = (uintptr_t)p / PMMNGR_BLOCK_SIZE;
 
     elevated_priority_lock(&physmem_lock);
 
@@ -660,7 +666,7 @@ void pmmngr_free_block(void *p)
 
 void *pmmngr_alloc_blocks(size_t size)
 {
-    volatile uintptr_t frame;
+    uintptr_t frame;
     volatile int tries = 0;
 
 try: ;

@@ -42,46 +42,73 @@ volatile size_t kstack_count = 0;
  * address and try to find an earlier address that was alloc'd and free'd.
  *
  * Output:
- *     phys => the physical address of the top of the kstack is stored here,
- *             that is equal to the actual physical address + PAGE_SIZE
- *     virt => similar to the above, except here the virtual address is stored
+ *     task->kstack_phys => the physical address of the top of the kstack 
+ *                          is stored here, that is equal to the actual
+ *                          physical address + PAGE_SIZE
+ *     task->kstack_virt => similar to the above, except here the virtual 
+ *                          address is stored
  *
  * Returns 0 on success, -1 on failure.
  */
-int get_kstack(physical_addr *phys, virtual_addr *virt)
+int get_kstack(volatile struct task_t *task)
 {
-    // for safety
-    *virt = 0;
-    *phys = 0;
+    physical_addr phys = 0;
+    virtual_addr virt = 0;
 
-    /*
-    if((*virt = vmmngr_alloc_and_map(PAGE_SIZE * 2, 0,
-                                     PTE_FLAGS_PWU, phys, 
-                                     REGION_KSTACK)) == 0)
+    /***
+    if((virt = vmmngr_alloc_and_map(PAGE_SIZE * 2, 0,
+                                    PTE_FLAGS_PWU, &phys, 
+                                    REGION_KSTACK)) == 0)
     {
         // nothing found
         return -1;
     }
 
-    vmmngr_change_page_flags(*virt, PAGE_SIZE, 0);
-    *virt += (PAGE_SIZE * 2);
-    */
+    vmmngr_change_page_flags(virt, PAGE_SIZE, 0);
+    virt += (PAGE_SIZE * 2);
+    ***/
 
-    if(get_next_addr(phys, virt, PTE_FLAGS_PWU, REGION_KSTACK) != 0)
+    if(get_next_addr(&phys, &virt, PTE_FLAGS_PWU, REGION_KSTACK) != 0)
     {
         // nothing found
         return -1;
     }
 
-    *virt += PAGE_SIZE;
-    *phys += PAGE_SIZE;
+    task->kstack_virt = virt + PAGE_SIZE;
+    task->kstack_phys = phys + PAGE_SIZE;
 
     kstack_count++;
 
     //KDEBUG("new task kstack @ 0x%x - 0x%x\n", *phys, *virt);
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
+    /*
+    phys = 0;
+    virt = 0;
+
+    if(get_next_addr(&phys, &virt, PTE_FLAGS_PWU, REGION_KSTACK) != 0)
+    {
+        // nothing found
+        free_kstack(task);
+        return -1;
+    }
+
+    task->tss_stack_virt = virt + PAGE_SIZE;
+    task->tss_stack_phys = phys + PAGE_SIZE;
+    */
+
     return 0;
+}
+
+
+static inline void __free_kstack(virtual_addr vaddr)
+{
+    vaddr -= PAGE_SIZE;
+
+    pt_entry *pt = get_page_entry((void *)vaddr);
+
+    vmmngr_free_page(pt);
+    vmmngr_flush_tlb_entry(vaddr);
 }
 
 
@@ -89,26 +116,34 @@ int get_kstack(physical_addr *phys, virtual_addr *virt)
  * Free the memory page used by a user kstack.
  *
  * Input:
- *     vaddr => the virtual address of the top of the kstack, that is, the 
- *              actual virtual address + PAGE_SIZE
+ *     task->kstack_virt => the virtual address of the top of the kstack, 
+ *                          that is, the actual virtual address + PAGE_SIZE
  *
  * Returns nothing.
  */
-void free_kstack(virtual_addr vaddr)
+void free_kstack(volatile struct task_t *task)
 {
     struct kernel_region_t *r = &kernel_regions[REGION_KSTACK];
 
     elevated_priority_lock_recursive(r->mutex, r->lock_count);
 
-    vaddr -= PAGE_SIZE;
-    pt_entry *pt = get_page_entry((void *)vaddr);
-    vmmngr_free_page(pt);
-    vmmngr_flush_tlb_entry(vaddr);
+    __free_kstack(task->kstack_virt);
+    task->kstack_virt = 0;
+    task->kstack_phys = 0;
 
-    /*
+    /***
     pt = get_page_entry((void *)(vaddr - PAGE_SIZE));
     vmmngr_free_page(pt);
     vmmngr_flush_tlb_entry(vaddr);
+    ***/
+
+    /*
+    if(task->tss_stack_virt)
+    {
+        __free_kstack(task->tss_stack_virt);
+        task->tss_stack_virt = 0;
+        task->tss_stack_phys = 0;
+    }
     */
 
     elevated_priority_unlock_recursive(r->mutex, r->lock_count);

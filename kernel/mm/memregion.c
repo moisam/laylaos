@@ -1466,6 +1466,63 @@ long memregion_check_overlaps(struct task_t *task,
 }
 
 
+STATIC_INLINE size_t __count_resident_pages(struct memregion_t *memregion, 
+                                            pdirectory *pml4_src)
+{
+    volatile pt_entry *e;
+    volatile virtual_addr addr;
+    virtual_addr start = memregion->addr;
+    virtual_addr end = start + (memregion->size * PAGE_SIZE);
+    size_t count = 0;
+
+    for(addr = start; addr < end; addr += PAGE_SIZE)
+    {
+        if(!(e = __get_page_entry_pd(pml4_src, (void *)addr, 0)))
+        {
+            continue;
+        }
+
+        if(PTE_PRESENT(*e))
+        {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+/*
+ * Get the number of file-mapped memory pages.
+ *
+ * Returns:
+ *   memory usage in pages (not bytes).
+ */
+size_t memregion_file_pagecount(volatile struct task_t *task)
+{
+    struct memregion_t *memregion;
+    size_t count = 0;
+
+    if(!task || !task->mem)
+    {
+        return 0;
+    }
+
+    for(memregion = task->mem->first_region;
+        memregion != NULL;
+        memregion = memregion->next)
+    {
+        if((memregion->flags & MEMREGION_FLAG_SHARED) && memregion->inode &&
+           memregion->type != MEMREGION_TYPE_KERNEL)
+        {
+            //count += memregion->size;
+            count += __count_resident_pages(memregion, (pdirectory *)task->pd_virt);
+        }
+    }
+    
+    return count;
+}
+
+
 /*
  * Get the number of shared memory pages.
  *
@@ -1486,9 +1543,11 @@ size_t memregion_shared_pagecount(volatile struct task_t *task)
         memregion != NULL;
         memregion = memregion->next)
     {
-        if((memregion->flags & MEMREGION_FLAG_SHARED) && memregion->inode)
+        if((memregion->flags & MEMREGION_FLAG_SHARED) &&
+           memregion->type != MEMREGION_TYPE_KERNEL)
         {
-            count += memregion->size;
+            //count += memregion->size;
+            count += __count_resident_pages(memregion, (pdirectory *)task->pd_virt);
         }
     }
     
@@ -1520,7 +1579,8 @@ size_t memregion_anon_pagecount(volatile struct task_t *task)
         if(memregion->inode == NULL && 
            memregion->type != MEMREGION_TYPE_KERNEL)
         {
-            count += memregion->size;
+            //count += memregion->size;
+            count += __count_resident_pages(memregion, (pdirectory *)task->pd_virt);
         }
     }
     
@@ -1529,9 +1589,40 @@ size_t memregion_anon_pagecount(volatile struct task_t *task)
 
 
 /*
+ * Get the number of kernel memory pages.
+ *
+ * Returns:
+ *   memory usage in pages (not bytes).
+ */
+size_t memregion_kernel_pagecount(volatile struct task_t *task)
+{
+    volatile pt_entry *e;
+    volatile virtual_addr addr;
+    virtual_addr start = 0xFFFF800000000000;
+    virtual_addr end = 0xFFFFFFFFFFFFFFFF;
+    size_t count = 0;
+
+    for(addr = start; addr < end; addr += PAGE_SIZE)
+    {
+        if(!(e = __get_page_entry_pd((pdirectory *)task->pd_virt, (void *)addr, 0)))
+        {
+            continue;
+        }
+
+        if(PTE_PRESENT(*e))
+        {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+
+/*
  * Helper function.
  */
-static size_t memregion_pagecount_by_type(volatile struct task_t *task, int type)
+STATIC_INLINE size_t __memregion_pagecount_by_type(volatile struct task_t *task, int type)
 {
     struct memregion_t *memregion;
     size_t count = 0;
@@ -1547,7 +1638,8 @@ static size_t memregion_pagecount_by_type(volatile struct task_t *task, int type
     {
         if(memregion->type == type)
         {
-            count += memregion->size;
+            //count += memregion->size;
+            count += __count_resident_pages(memregion, (pdirectory *)task->pd_virt);
         }
     }
     
@@ -1563,7 +1655,7 @@ static size_t memregion_pagecount_by_type(volatile struct task_t *task, int type
  */
 size_t memregion_text_pagecount(volatile struct task_t *task)
 {
-    return memregion_pagecount_by_type(task, MEMREGION_TYPE_TEXT);
+    return __memregion_pagecount_by_type(task, MEMREGION_TYPE_TEXT);
 }
 
 
@@ -1575,7 +1667,7 @@ size_t memregion_text_pagecount(volatile struct task_t *task)
  */
 size_t memregion_data_pagecount(volatile struct task_t *task)
 {
-    return memregion_pagecount_by_type(task, MEMREGION_TYPE_DATA);
+    return __memregion_pagecount_by_type(task, MEMREGION_TYPE_DATA);
 }
 
 
@@ -1587,18 +1679,6 @@ size_t memregion_data_pagecount(volatile struct task_t *task)
  */
 size_t memregion_stack_pagecount(volatile struct task_t *task)
 {
-    return memregion_pagecount_by_type(task, MEMREGION_TYPE_STACK);
-}
-
-
-/*
- * Get the number of kernel memory pages.
- *
- * Returns:
- *   memory usage in pages (not bytes).
- */
-size_t memregion_kernel_pagecount(volatile struct task_t *task)
-{
-    return memregion_pagecount_by_type(task, MEMREGION_TYPE_KERNEL);
+    return __memregion_pagecount_by_type(task, MEMREGION_TYPE_STACK);
 }
 

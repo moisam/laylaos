@@ -46,6 +46,7 @@
 #include <kernel/user.h>
 #include <kernel/ipc.h>
 #include <kernel/user.h>
+#include <kernel/tty.h>
 
 //#include <fs/dentry.h>
 
@@ -141,6 +142,7 @@ virtual_addr get_user_addr(virtual_addr size, virtual_addr min, virtual_addr max
                 */
 
                 __asm__ __volatile__("xchg %%bx, %%bx"::);
+                switch_tty(1);
                 printk("mmap: addr %lx in use but not in a memregion\n", end);
                 kpanic("mmap error\n");
             }
