@@ -2,6 +2,8 @@
 
 # Fix the library search dir for Qt apps
 export LD_LIBRARY_PATH=/usr/lib:/usr/Qt-5.12/lib
+export QT_QPA_PLATFORM=laylaos
+export QT_QPA_PLATFORM_PLUGIN_PATH=/usr/Qt-5.12/plugins/platforms/
 
 # If not running interactively, don't do anything
 case $- in
