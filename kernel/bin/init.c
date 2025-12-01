@@ -806,6 +806,8 @@ int init(void)
         INIT_EXIT_ERR("failed to mount filesystems: %s", strerror(i));
     }
 
+    INIT_MSG("finished mounting filesystems");
+
     // now setup our SIGINT and SIGHUP signal handlers, which we use to handle
     // system shutdown and reboot
     set_sigaction(SIGINT, init_sigint_handler, SA_RESTART);
@@ -848,9 +850,13 @@ spawn:
     if(!done_daemons && (target != TARGET_RESCUE_MODE))
     {
         // This name sounds really ominous
+        INIT_MSG("spawning daemons");
         spawn_daemons();
         done_daemons = 1;
+        INIT_MSG("done spawning daemons");
     }
+
+    INIT_MSG("forking first child");
 
     if((child.pid = fork()) < 0)
     {

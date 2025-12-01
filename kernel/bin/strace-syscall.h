@@ -200,6 +200,8 @@ const char *syscall_names[] =
     [__NR_setresgid         ] = "setresgid",                // 170
     [__NR_getresgid         ] = "getresgid",                // 171
 
+    [__NR_sigtimedwait      ] = "sigtimedwait",             // 177
+
     [__NR_pread             ] = "pread",                    // 180
     [__NR_pwrite            ] = "pwrite",
     [__NR_chown             ] = "chown",
@@ -266,6 +268,8 @@ const char *syscall_names[] =
     [__NR_faccessat         ] = "faccessat",
     [__NR_pselect           ] = "pselect",
     [__NR_ppoll             ] = "ppoll",                    // 309
+
+    [__NR_utimensat         ] = "utimensat",                // 320
 
     [__NR_dup3              ] = "dup3",	                    // 330
     [__NR_pipe2             ] = "pipe2",	                // 331

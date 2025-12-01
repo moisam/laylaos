@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: strace.c
  *    This file is part of LaylaOS.
@@ -145,10 +145,10 @@ void unblock_fatal_signals(sigset_t *set)
 
 void maybe_error(struct stracee_t *tracee, struct user_regs_struct *regs)
 {
-    int res = GET_SYSCALL_RESULT(regs);
+    long res = GET_SYSCALL_RESULT(regs);
     const char *str;
 
-    fprintf(tracee->log, ") = %d", res);
+    fprintf(tracee->log, ") = %ld", res);
     
     if(res < 0)
     {
@@ -161,7 +161,7 @@ void maybe_error(struct stracee_t *tracee, struct user_regs_struct *regs)
         }
         else
         {
-            fprintf(tracee->log, " %d (%s)", res, strerror(res));
+            fprintf(tracee->log, " %ld (%s)", res, strerror(res));
         }
     }
     
@@ -212,7 +212,7 @@ void syscall_handle(struct stracee_t *tracee, struct user_regs_struct *regs)
 void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *regs)
 {
     //int sys = GET_SYSCALL_NUMBER(regs);
-    int sysres;
+    long sysres;
 
     if(sys < 0 || sys >= syscall_mask_count)
     {
@@ -1827,6 +1827,26 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             print_arg_i(tracee, GET_SYSCALL_ARG2(regs));
             break;
 
+        // long syscall_sigtimedwait(sigset_t *set, siginfo_t *info, struct timespec *ts)
+        case __NR_sigtimedwait:
+            print_arg_sigset(tracee, GET_SYSCALL_ARG1(regs));
+            fprintf(tracee->log, ", ");
+            print_arg_ptr(tracee, GET_SYSCALL_ARG2(regs));  // TODO:
+            fprintf(tracee->log, ", ");
+            print_arg_timespec(tracee, GET_SYSCALL_ARG3(regs));
+            break;
+
+        // long syscall_utimensat(int dirfd, char *filename, struct timespec *__times, int __flags)
+        case __NR_utimensat:
+            print_arg_i(tracee, GET_SYSCALL_ARG1(regs));
+            fprintf(tracee->log, ", ");
+            print_arg_str(tracee, GET_SYSCALL_ARG2(regs));
+            fprintf(tracee->log, ", ");
+            print_arg_timespec(tracee, GET_SYSCALL_ARG3(regs));
+            fprintf(tracee->log, ", ");
+            print_arg_i(tracee, GET_SYSCALL_ARG4(regs));
+            break;
+
 // END of Linux x86 syscall list (last entry is #384)
 // The following are LaylaOS-specific syscalls (they exist on non-x86 Linux)
 
@@ -1961,7 +1981,7 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
     }
     else if(sys == __NR_brk)
     {
-        fprintf(tracee->log, ") = %#0x\n", sysres);
+        fprintf(tracee->log, ") = %#0lx\n", sysres);
     }
     else
     {
@@ -2049,7 +2069,7 @@ int main(int argc, char **argv)
     
     memset(stracee, 0, sizeof(stracee));
     
-    while((c = getopt_long(argc, argv, "+b:ce:fho:p:s:u:vzAE:I:Z",
+    while((c = getopt_long(argc, argv, "+b:cde:fho:p:s:u:vzAE:I:Z",
                                 long_options, &option_index)) != -1)
     {
         switch(c)
@@ -2538,15 +2558,12 @@ int main(int argc, char **argv)
                         {
                             syscall_finish(tracee, __NR_execve, NULL);
                         }
-                        
-                        tracee->prev_syscall = GET_SYSCALL_NUMBER(&regs);
-                        syscall_handle(tracee, &regs);
                         */
 
                         tracee->prev_syscall = GET_SYSCALL_NUMBER(&regs);
                         syscall_handle(tracee, &regs);
-                        
-                        if(detach_on == tracee->prev_syscall)
+
+                        if(detach_on && detach_on == tracee->prev_syscall)
                         {
                             if(!quiet_mask[QUIET_ATTACH])
                             {

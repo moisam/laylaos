@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: dispman.c
  *    This file is part of LaylaOS.
@@ -198,6 +198,10 @@ void fork_getty(char *myname, int i)
     {
         fprintf(stderr, "%s: failed to fork\n", myname);
     }
+    else
+    {
+        fprintf(stderr, "%s: forked pid %d for tty %s\n", myname, child_pid[i], ttyname);
+    }
 }
 
 
@@ -219,13 +223,7 @@ int main(int argc, char **argv)
         }
     }
 
-    fprintf(stderr, "%s: forking getty\n", argv[0]);
-
-    for(i = 2; i < NTTYS; i++)
-    {
-        fork_getty(argv[0], i);
-    }
-
+    fprintf(stderr, "%s: switching to %s\n", argv[0], switchtty);
     sprintf(ttypath, "/dev/%s", switchtty);
 
     if((i = open(ttypath, O_RDONLY|O_NOCTTY|O_NONBLOCK)) < 0)
@@ -238,8 +236,23 @@ int main(int argc, char **argv)
     // if 0 is passed as arg, use the tty device referenced by
     // the given file descriptor
     ioctl(i, VT_SWITCH_TTY, 0);
-
     close(i);
+
+    fprintf(stderr, "%s: forking getty\n", argv[0]);
+
+    for(i = 2; i < NTTYS; i++)
+    {
+        fork_getty(argv[0], i);
+
+        /*
+         * FIXME:
+         * There is a very weird race condition in QEmu where some of the forked 
+         * shells randomly exit, leaving some virtual consoles with no shell.
+         * I could not work out why this happens, but somehow waiting for some
+         * time to allow each shell to start up fixes this.
+         */
+        sleep(2);
+    }
 
     fprintf(stderr, "%s: waiting for children\n", argv[0]);
     
