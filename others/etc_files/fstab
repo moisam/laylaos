@@ -1,4 +1,4 @@
-/dev/hda4   /   ext2	sysroot,rw,remount
+/dev/hda1   /   ext2	sysroot,rw,remount
 /dev/cdrom0    /mnt/cdrom  iso9660 defaults,skip-errors
 #/dev/sdc1   /mnt/fat    vfat    defaults
 /proc		/proc	procfs	defaults
