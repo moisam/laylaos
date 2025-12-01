@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: member.c
  *    This file is part of LaylaOS.
@@ -98,6 +98,7 @@ int read_member(char *src, long srcsize, virtual_addr *dest, size_t *destsize)
 
     if(hdr->ID1 != 0x1f || hdr->ID2 != 0x8b)
     {
+        printk("    Signature %02x%02x, expected 1f8b\n", hdr->ID1, hdr->ID2);
         return GZIP_INVALID_SIGNATURE;
     }
     
