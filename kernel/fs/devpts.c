@@ -662,232 +662,6 @@ long pty_slave_open(struct fs_node_t *node)
 }
 
 
-#if 0
-
-/*
- * Read data from a master pseudoterminal device. This is handled separate from
- * the slave device, as the master "reads" from the write queue.
- *
- * Slave pseudoterminal devices are handled by ttyx_read(), much like regular
- * terminal devices.
- *
- * Inputs:
- *    dev => device number of the terminal device to read from.
- *           major should be PTY_MASTER_MAJ (2), while minor should be between 
- *           0 and MAX_PTY_DEVICES - 1, inclusive
- *    buf => input buffer where data is copied
- *    count => number of characters to read
- *
- * Output:
- *    buf => data is copied to this buffer
- *
- * Returns:
- *    number of characters read on success, -errno on failure
- */
-ssize_t pty_master_read(struct file_t *f, off_t *pos,
-                        unsigned char *buf, size_t _count, int kernel)
-{
-    UNUSED(pos);
-
-    dev_t dev = f->node->blocks[0];
-    struct tty_t *tty;
-    unsigned char c, *p = buf;
-    volatile size_t count = _count;
-    volatile int has_signal = 0;
-    struct task_t *ct = cur_task;
-    
-    /*
-    if(!buf)
-    {
-        return -EINVAL;
-    }
-    */
-    
-    if(!(tty = devpts_get_struct_tty(dev)))
-    {
-        return -EINVAL;
-    }
-
-    // check the given user address is valid
-    if(!kernel)
-    {
-        if(valid_addr(ct, (virtual_addr)p, (virtual_addr)p + count - 1) != 0)
-        {
-            add_task_segv_signal(ct, SIGSEGV, SEGV_MAPERR, (void *)p);
-            return -EFAULT;
-        }
-    }
-    
-    // read input
-    while(count > 0)
-    {
-        has_signal = ct->woke_by_signal;
-        
-        // stop if we receive a signal
-        if(has_signal)
-        {
-            break;
-        }
-        
-        // sleep if the write queue is empty
-        if(ttybuf_is_empty(&tty->write_q))
-        {
-            //sleep_if_empty(tty, &tty->write_q);
-            sleep_if_empty(tty, &tty->write_q, 0);
-            KDEBUG("pty_master_read: woke up - pid %d\n", ct->pid);
-            continue;
-        }
-        
-        // get next char
-        do
-        {
-            c = ttybuf_dequeue(&tty->write_q);
-            
-            // copy next char to user buf
-            *p++ = c;
-            
-            // stop if we got our count
-            if(--count == 0)
-            {
-                break;
-            }
-            
-            // loop until we get our count chars or queue is empty
-        } while(count > 0 && !ttybuf_is_empty(&tty->write_q));
-    }
-    
-    // check if we were interrupted by a signal and no chars read
-    if(ct->woke_by_signal && (p - buf) == 0)
-    {
-        KDEBUG("pty_master_read: interrupted\n");
-        return -ERESTARTSYS;
-    }
-    
-
-    // wakeup waiters if we read anything
-    if((p - buf))
-    {
-        // wake up waiting tasks
-        unblock_tasks(&tty->write_q);
-    
-        // wake up select() waiting tasks
-        selwakeup(&tty->wsel);
-    }
-
-    //KDEBUG("pty_master_read: got %d chars\n", (p - buf));
-
-    // return count of bytes read
-    return (ssize_t)(p - buf);
-}
-
-
-/*
- * Write data to a master pseudoterminal device. This is handled separate from
- * the slave device, as the master "writes" to the read queue.
- *
- * Slave pseudoterminal devices are handled by ttyx_write(), much like regular
- * terminal devices.
- *
- * Inputs:
- *    dev => device number of the terminal device to write to.
- *           major should be PTY_MASTER_MAJ (2), while minor should be between 
- *           0 and MAX_PTY_DEVICES - 1, inclusive
- *    buf => output buffer from which data is copied
- *    count => number of characters to write
- *
- * Output:
- *    none
- *
- * Returns:
- *    number of characters written on success, -errno on failure
- */
-ssize_t pty_master_write(struct file_t *f, off_t *pos,
-                         unsigned char *buf, size_t _count, int kernel)
-{
-    UNUSED(pos);
-
-    dev_t dev = f->node->blocks[0];
-    struct tty_t *tty;
-    unsigned char c, *p = buf;
-    volatile size_t count = _count;
-    volatile int has_signal = 0;
-    struct task_t *ct = cur_task;
-    
-    /*
-    if(!buf)
-    {
-        return -EINVAL;
-    }
-    */
-    
-    if(!(tty = devpts_get_struct_tty(dev)))
-    {
-        return -EINVAL;
-    }
-    
-    // check the given user address is valid
-    if(!kernel)
-    {
-        if(valid_addr(ct, (virtual_addr)p, (virtual_addr)p + count - 1) != 0)
-        {
-            add_task_segv_signal(ct, SIGSEGV, SEGV_MAPERR, (void *)p);
-            return -EFAULT;
-        }
-    }
-
-    ct->woke_by_signal = 0;
-
-    // write output
-    while(count > 0)
-    {
-        // wait until input buffer has space
-        sleep_if_full(&tty->read_q);
-
-        has_signal = ct->woke_by_signal;
-        
-        // stop if we receive a signal
-        if(has_signal)
-        {
-            break;
-        }
-        
-        // copy data as long as there is space in the input buffer
-        while(count > 0 && !ttybuf_is_full(&tty->read_q))
-        {
-            c = *p;
-            
-            p++;
-            count--;
-            ttybuf_enqueue(&tty->read_q, c);
-        }
-        
-        // copy input to secondary buffer, and wakeup any waiting readers
-        copy_to_buf(tty);
-        
-        // if there is still input, it means the queue is full, so sleep until
-        // there is space
-        if(count > 0)
-        {
-            lock_scheduler();
-            //preempt(&ct->r);
-            scheduler();
-            unlock_scheduler();
-        }
-    }
-    
-    // check if we were interrupted by a signal and no chars written
-    if(ct->woke_by_signal && (p - buf) == 0)
-    {
-        return -ERESTARTSYS;
-    }
-    
-    // return count of bytes written
-    return (ssize_t)(p - buf);
-}
-
-#endif
-
-
 /*
  * Helper function that copies info from a devpts node to an incore
  * (memory resident) node.
@@ -1119,18 +893,12 @@ static inline int root_dirent(char *filename, struct dirent **entry)
  * Outputs:
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long devpts_finddir(struct fs_node_t *dir, char *filename,
-                    struct dirent **entry,
-                    struct cached_page_t **dbuf, size_t *dbuf_off)
+                    struct dirent **entry)
 {
     int i;
     
@@ -1141,8 +909,6 @@ long devpts_finddir(struct fs_node_t *dir, char *filename,
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
 
     KDEBUG("devpts_finddir: name %s\n", filename);
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
@@ -1196,18 +962,12 @@ long devpts_finddir(struct fs_node_t *dir, char *filename,
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long devpts_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                             struct dirent **entry,
-                             struct cached_page_t **dbuf, size_t *dbuf_off)
+                             struct dirent **entry)
 {
     int i;
 
@@ -1218,8 +978,6 @@ long devpts_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
     
     // devpts root node
     if(node->inode == ROOT_INODE)

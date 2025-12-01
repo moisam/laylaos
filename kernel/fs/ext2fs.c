@@ -29,6 +29,7 @@
  */
 
 //#define __DEBUG
+#define __EXT2_INTERNAL_DRIVER__
 
 #include <errno.h>
 #include <string.h>
@@ -44,6 +45,7 @@
 #include <kernel/clock.h>
 #include <kernel/user.h>
 #include <fs/ext2.h>
+#include <fs/ext2_hash.h>
 #include <fs/magic.h>
 #include <fs/procfs.h>
 #include <mm/kheap.h>
@@ -51,7 +53,9 @@
 
 #define EXT2_SUPPORTED_INCOMPAT_FEATURES        (EXT2_FEATURE_INCOMPAT_FILETYPE)
 #define EXT2_SUPPORTED_RO_COMPAT_FEATURES       \
-        (EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER | EXT2_FEATURE_RO_COMPAT_LARGE_FILE)
+        (EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER |  \
+         EXT2_FEATURE_RO_COMPAT_LARGE_FILE |    \
+         EXT2_FEATURE_RO_COMPAT_METADATA_CHKSUM)
 
 
 static inline int is_empty_block(uint32_t *buf, unsigned long ptr_per_block);
@@ -94,16 +98,6 @@ struct fs_ops_t ext2fs_ops =
     .ustat = ext2_ustat,
     .statfs = ext2_statfs,
 };
-
-
-/*
- * Does dir entries contain a type field insted of filelength MSB?
- */
-STATIC_INLINE int is_ext_dir_type(volatile struct ext2_superblock_t *super)
-{
-    return (super->version_major >= 1 &&
-            (super->required_features & EXT2_FEATURE_INCOMPAT_FILETYPE));
-}
 
 
 STATIC_INLINE size_t get_group_count(volatile struct ext2_superblock_t *super)
@@ -263,7 +257,9 @@ long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
     /* check boot sector signature */
     if(psuper->signature != EXT2_SUPER_MAGIC)
     {
-        printk("ext2: invalid signature -- aborting mount\n");
+        printk("ext2: invalid signature -- found 0x%x, expected 0x%x\n", 
+                psuper->signature, EXT2_SUPER_MAGIC);
+        printk("ext2: aborting mount (dev 0x%x)\n", dev);
         BAIL_OUT(-EINVAL);
     }
 
@@ -275,6 +271,7 @@ long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
         BAIL_OUT(-EINVAL);
     }
 
+#if 0
     if(psuper->filesystem_state != EXT2_VALID_FS)
     {
         /*
@@ -283,6 +280,7 @@ long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
         printk("ext2: filesystem not clean -- aborting mount\n");
         BAIL_OUT(-EINVAL);
     }
+#endif
 
     /* validate block group count */
     bgcount[0] = psuper->total_inodes / psuper->inodes_per_group;
@@ -617,6 +615,17 @@ void inode_to_incore(struct fs_node_t *n, struct inode_data_t *i)
     n->blocks[j++] = i->double_indirect_pointer;
     n->blocks[j++] = i->triple_indirect_pointer;
     n->disk_sectors = i->disk_sectors;
+
+#define SET_UNSET_FLAG(ext2f, incoref)          \
+    if(i->flags & ext2f) n->flags |= incoref;   \
+    else n->flags &= ~incoref;
+
+    // convert Ext2 inode flags to vfs flags
+    SET_UNSET_FLAG(EXT2_INDEX_FL, FS_NODE_INDEXED_DIR);
+    SET_UNSET_FLAG(EXT2_APPEND_FL, FS_NODE_APPEND_ONLY);
+
+#undef SET_UNSET_FLAG
+
     __asm__ __volatile__("":::"memory");
 }
 
@@ -634,8 +643,7 @@ void incore_to_inode(struct inode_data_t *i, struct fs_node_t *n)
     i->last_modification_time = (uint32_t)n->mtime;
     i->last_access_time = (uint32_t)n->atime;
     i->creation_time = (uint32_t)n->ctime;
-    i->size_lsb = n->size & 0xffffffff;     // for pipes, the pipe's physical
-                                            // memory address
+    i->size_lsb = n->size & 0xffffffff;
 
     if(sizeof(size_t) == 4)
     {
@@ -658,6 +666,17 @@ void incore_to_inode(struct inode_data_t *i, struct fs_node_t *n)
     i->double_indirect_pointer = n->blocks[j++];
     i->triple_indirect_pointer = n->blocks[j++];
     i->disk_sectors = n->disk_sectors;
+
+#define SET_UNSET_FLAG(incoref, ext2f)          \
+    if(n->flags & incoref) i->flags |= ext2f;   \
+    else i->flags &= ~ext2f;
+
+    // convert vfs inode flags to Ext2 flags
+    SET_UNSET_FLAG(FS_NODE_INDEXED_DIR, EXT2_INDEX_FL);
+    SET_UNSET_FLAG(FS_NODE_APPEND_ONLY, EXT2_APPEND_FL);
+
+#undef SET_UNSET_FLAG
+
     __asm__ __volatile__("":::"memory");
 }
 
@@ -991,17 +1010,6 @@ long ext2_write_inode(struct fs_node_t *node)
     }
     
     incore_to_inode(inode, node);
-
-    /*
-     * Clear the htree index flag if this is a directory and we have written
-     * to it.
-     *
-     * TODO: remove this when we have support for indexed directories.
-     */
-    if(S_ISDIR(node->mode) && (node->flags & FS_NODE_DIRTY))
-    {
-        inode->flags &= ~EXT2_INDEX_FL;
-    }
 
     __sync_or_and_fetch(&block_table->flags, PCACHE_FLAG_DIRTY);
     release_cached_page(block_table);
@@ -1943,19 +1951,6 @@ struct dirent *ext2_entry_to_dirent(struct ext2_dirent_t *ext2_ent,
 }
 
 
-static inline size_t ext2_entsz(struct ext2_dirent_t *ent, int ext_dir_type)
-{
-    size_t len = ent->name_length_lsb;
-
-    if(!ext_dir_type)
-    {
-        len |= ((size_t)ent->type_indicator << 8);
-    }
-
-    return len;
-}
-
-
 /*
  * Find the given filename in the parent directory.
  *
@@ -1967,49 +1962,47 @@ static inline size_t ext2_entsz(struct ext2_dirent_t *ent, int ext_dir_type)
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
  *             dirent struct (by calling ext2_entry_to_dirent() above), and the
  *             result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
-long ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                  struct cached_page_t **dbuf, size_t *dbuf_off)
+long ext2_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
 {
     volatile struct ext2_superblock_t *super;
     struct mount_info_t *d;
     int ext_dir_type = 0;
-    
+    int flags;
+
     if(get_super(dir->dev, &d, &super) < 0)
     {
         return -EINVAL;
     }
 
     ext_dir_type = is_ext_dir_type(super);
+    flags = ext_dir_type ? DIR_LOOKUP_FLAG_HAS_DIRTYPE : 0;
 
-    return ext2_finddir_internal(dir, filename, entry,
-                                 dbuf, dbuf_off, ext_dir_type);
+    if(dir->flags & FS_NODE_INDEXED_DIR)
+    {
+        return ext2_finddir_hashed(dir, filename, entry, d, flags);
+    }
+
+    return ext2_finddir_internal(dir, filename, entry, d, flags);
 }
 
 
 long ext2_finddir_internal(struct fs_node_t *dir, char *filename,
-                           struct dirent **entry, struct cached_page_t **dbuf,
-                           size_t *dbuf_off, int ext_dir_type)
+                           struct dirent **entry, 
+                           struct mount_info_t *d, int flags)
 {
-    struct cached_page_t *buf;
-    struct ext2_dirent_t *ent;
-    size_t len, offset = 0;
     size_t fnamelen = strlen(filename);
-    unsigned char *blk, *end;
-    char *n;
+    long res;
+    size_t offset = 0, blocks;
 
     // for safety
-    *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
+    if(entry)
+    {
+        *entry = NULL;
+    }
 
     if(!fnamelen)
     {
@@ -2021,69 +2014,18 @@ long ext2_finddir_internal(struct fs_node_t *dir, char *filename,
         return -ENAMETOOLONG;
     }
 
-    while(offset < dir->size)
+    blocks = ((dir->size + (d->block_size - 1)) / d->block_size);
+
+    while((res = linear_dir_lookup(dir, filename, entry,
+                                    d, flags, fnamelen, offset)) < 0)
     {
-        KDEBUG("ext2_finddir_internal: offset 0x%x, dir->size 0x%x\n", offset, dir->size);
-        
-        if(!(buf = get_cached_page(dir, offset, 0)))
+        if(++offset >= blocks)
         {
-            offset += PAGE_SIZE;
-            continue;
+            break;
         }
-
-        KDEBUG("ext2_finddir_internal: buf @ 0x%lx\n", buf);
-        
-        blk = (unsigned char *)buf->virt;
-
-        if(offset + PAGE_SIZE > dir->size)
-        {
-            end = blk + (dir->size % PAGE_SIZE);
-        }
-        else
-        {
-            end = blk + PAGE_SIZE;
-        }
-        
-        while(blk < end)
-        {
-            KDEBUG("ext2_finddir_internal: blk 0x%x, end 0x%x\n", blk, end);
-
-            ent = (struct ext2_dirent_t *)blk;
-            
-            KDEBUG("ext2_finddir_internal: sz 0x%x, len 0x%x, ino 0x%x\n", ent->entry_size, ent->name_length_lsb, ent->inode);
-            
-            if(!ent->entry_size)
-            {
-                break;
-            }
-            
-            len = ext2_entsz(ent, ext_dir_type);
-
-            n = (char *)(blk + sizeof(struct ext2_dirent_t));
-            
-            if(ent->inode == 0 || len != fnamelen)
-            {
-                blk += ent->entry_size;
-                continue;
-            }
-
-            if(memcmp(n, filename, len) == 0)
-            {
-                *entry = ext2_entry_to_dirent(ent, NULL, n, len,
-                            offset + (blk - (unsigned char *)buf->virt), 0);
-                *dbuf = buf;
-                *dbuf_off = (size_t)(blk - buf->virt);
-                return 0;
-            }
-
-            blk += ent->entry_size;
-        }
-        
-        release_cached_page(buf);
-        offset += PAGE_SIZE;
     }
-    
-    return -ENOENT;
+
+    return res;
 }
 
 
@@ -2100,22 +2042,17 @@ long ext2_finddir_internal(struct fs_node_t *dir, char *filename,
  *    entry => if the node is found, its entry is converted to a kmalloc'd
  *             dirent struct (by calling ext2_entry_to_dirent() above), and the
  *             result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long ext2_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                           struct dirent **entry,
-                           struct cached_page_t **dbuf, size_t *dbuf_off)
+                           struct dirent **entry)
 {
     volatile struct ext2_superblock_t *super;
     struct mount_info_t *d;
-    int ext_dir_type = 0;
+    int ext_dir_type;
+    int flags;
     
     if(get_super(dir->dev, &d, &super) < 0)
     {
@@ -2123,9 +2060,9 @@ long ext2_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
     }
 
     ext_dir_type = is_ext_dir_type(super);
+    flags = ext_dir_type ? DIR_LOOKUP_FLAG_HAS_DIRTYPE : 0;
 
-    return ext2_finddir_by_inode_internal(dir, node, entry,
-                                          dbuf, dbuf_off, ext_dir_type);
+    return ext2_finddir_by_inode_internal(dir, node, entry, d, flags);
 }
 
 
@@ -2157,39 +2094,30 @@ int matching_node(dev_t dev, ino_t ino, struct fs_node_t *node)
 long ext2_finddir_by_inode_internal(struct fs_node_t *dir,
                                     struct fs_node_t *node,
                                     struct dirent **entry,
-                                    struct cached_page_t **dbuf,
-                                    size_t *dbuf_off, int ext_dir_type)
+                                    struct mount_info_t *d, int flags)
 {
     struct cached_page_t *buf;
     struct ext2_dirent_t *ent;
-    size_t len, offset = 0;
+    size_t len, blocks, offset = 0;
     unsigned char *blk, *end;
     char *n;
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
 
-    while(offset < dir->size)
+    blocks = ((dir->size + (d->block_size - 1)) / d->block_size);
+
+    while(offset < blocks)
     {
-        if(!(buf = get_cached_page(dir, offset, 0)))
+        if(!(buf = get_relative_block(dir, d, offset, 0)))
         {
-            offset += PAGE_SIZE;
+            offset++;
             continue;
         }
-        
-        blk = (unsigned char *)buf->virt;
 
-        if(offset + PAGE_SIZE > dir->size)
-        {
-            end = blk + (dir->size % PAGE_SIZE);
-        }
-        else
-        {
-            end = blk + PAGE_SIZE;
-        }
-        
+        blk = (unsigned char *)buf->virt;
+        end = blk + d->block_size;
+
         while(blk < end)
         {
             ent = (struct ext2_dirent_t *)blk;
@@ -2198,87 +2126,32 @@ long ext2_finddir_by_inode_internal(struct fs_node_t *dir,
             {
                 break;
             }
-            
-            len = ext2_entsz(ent, ext_dir_type);
 
+            len = ext2_entsz(ent, (flags & DIR_LOOKUP_FLAG_HAS_DIRTYPE));
             n = (char *)(blk + sizeof(struct ext2_dirent_t));
-            
+
             if(ent->inode == 0)
             {
                 blk += ent->entry_size;
                 continue;
             }
 
-
-            /*
-            printk("ext2_finddir_by_inode_internal: [%d] ", offset);
-            for(size_t x = 0; x < len; x++)
-            {
-                printk("%c", n[x]);
-            }
-            printk(" (");
-            for(size_t x = 0; x < len; x++)
-            {
-                printk("%x", n[x]);
-            }
-            printk(")\n");
-            */
-
-
             if(matching_node(dir->dev, ent->inode, node))
             {
                 *entry = ext2_entry_to_dirent(ent, NULL, n, len,
                             offset + (blk - (unsigned char *)buf->virt), 0);
-                *dbuf = buf;
-                *dbuf_off = (size_t)(blk - buf->virt);
+                release_cached_page(buf);
                 return 0;
             }
 
             blk += ent->entry_size;
         }
-        
+
         release_cached_page(buf);
-        offset += PAGE_SIZE;
+        offset++;
     }
     
     return -ENOENT;
-}
-
-
-STATIC_INLINE uint8_t mode_to_ext2_type(mode_t mode)
-{
-    if(S_ISCHR(mode))
-    {
-        return EXT2_FT_CHRDEV;
-    }
-    else if(S_ISBLK(mode))
-    {
-        return EXT2_FT_BLKDEV;
-    }
-    else if(S_ISFIFO(mode))
-    {
-        return EXT2_FT_FIFO;
-    }
-    else if(S_ISSOCK(mode))
-    {
-        return EXT2_FT_SOCK;
-    }
-    else if(S_ISLNK(mode))
-    {
-        return EXT2_FT_SYMLINK;
-    }
-    else if(S_ISDIR(mode))
-    {
-        return EXT2_FT_DIR;
-    }
-    else if(S_ISREG(mode))
-    {
-        return EXT2_FT_REG_FILE;
-    }
-    else
-    {
-        return EXT2_FT_UNKNOWN;
-    }
 }
 
 
@@ -2296,52 +2169,28 @@ STATIC_INLINE uint8_t mode_to_ext2_type(mode_t mode)
 long ext2_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
 {
     struct bgd_table_info_t bgd;
-    int res, ext_dir_type = 0;
 
     if(get_bgd_table(dir->dev, &bgd) < 0)
     {
         return -EINVAL;
     }
     
-    ext_dir_type = is_ext_dir_type(bgd.super);
-
-    if((res = ext2_addir_internal(dir, file, filename, ext_dir_type, bgd.d->block_size)) == 0)
+    if(dir->flags & FS_NODE_INDEXED_DIR)
     {
-        /*
-        if(S_ISDIR(file->mode))
-        {
-            uint32_t group = inode_group(bgd.super, file->inode);
-
-            kernel_mutex_lock(&(bgd.d->lock));
-            bgd.bgd_table[group].dir_count++;
-            bgd.d->flags |= FS_SUPER_DIRTY;
-            kernel_mutex_unlock(&(bgd.d->lock));
-        }
-        */
+        return ext2_addir_hashed(dir, file, filename, bgd.d);
     }
 
-    return res;
+    return ext2_addir_internal(dir, file, filename, bgd.d);
 }
 
 
 long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
-                         char *filename, int ext_dir_type, size_t block_size)
+                         char *filename, struct mount_info_t *d)
 {
-    size_t sz, offset = 0;
-    size_t fnamelen = strlen(filename);
     struct cached_page_t *buf;
-    struct ext2_dirent_t *ent;
-    int found = 0;
-    size_t entsize = fnamelen + sizeof(struct ext2_dirent_t);
-    size_t actual_size;
-    unsigned char *blk, *end;
-    char *namebuf;
-    
-    // adjust the entry size to make sure it is 4-byte aligned
-    if(entsize & 3)
-    {
-        entsize = (entsize & ~3) + 4;
-    }
+    size_t sz, offset = 0, blocks;
+    size_t fnamelen = strlen(filename);
+    long res;
     
     if(!fnamelen)
     {
@@ -2352,171 +2201,91 @@ long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
     {
         return -ENAMETOOLONG;
     }
-    
+
+    /*
     if(dir->links >= LINK_MAX)
     {
         return -EMLINK;
     }
+    */
 
-    while(1)
+    blocks = ((dir->size + (d->block_size - 1)) / d->block_size);
+
+    while((res = linear_dir_add(dir, file, filename,
+                                d, fnamelen, offset)) < 0)
     {
-        if(!(buf = get_cached_page(dir, offset, 0 /* PCACHE_AUTO_ALLOC */)))
+        /*
+        if(res != -ENOBUFS)
         {
-            return -EIO;
+            return res;
         }
-        
-        blk = (unsigned char *)buf->virt;
-        end = blk + PAGE_SIZE;
-        
-        while(blk < end)
+        */
+
+        if(++offset >= blocks)
         {
-            ent = (struct ext2_dirent_t *)blk;
-            
-            // 1 - Check if we reached the last entry in the block.
-            //     We need to be careful here, as we read dirs in a PAGE_SIZE
-            //     granularity, while entries should not span disk sectors, 
-            //     which are very likely to be less than PAGE_SIZE in size.
-            if(!ent->entry_size)
+            // If the filesystem supports indexed directory, its time to 
+            // convert this directory to an indexed one
+            if(d->super)
             {
-                // down-align our current position to a block boundary, find
-                // the end of this block, then subtract our current position
-                // to find the remaining space in this block
-                sz = (((size_t)blk & ~(block_size - 1)) + block_size) - 
-                                                                (size_t)blk;
-                //sz = end - blk;
+                struct htree_incore_t *info;
+                struct ext2_superblock_t *super =
+                        (struct ext2_superblock_t *)(d->super->data);
 
-                ent->entry_size = sz;
-                
-                if(sz >= entsize)
+                if(super->version_major >= 1 &&
+                   (super->optional_features & EXT2_FEATURE_COMPAT_DIR_INDEX))
                 {
-                    // is there room for another entry?
-                    /*
-                    if(sz - entsize > sizeof(struct ext2_dirent_t))
+                    // create new blocks
+                    if(add_blocks(dir, d, 2) < 0)
                     {
-                        ent->entry_size = entsize;
+                        return -ENOBUFS;
                     }
-                    else
+
+                    // We don't need a full info struct as we only need it for hashing
+                    if(!(info = kmalloc(sizeof(struct htree_incore_t))))
                     {
-                        ent->entry_size = sz;
+                        return -ENOMEM;
                     }
-                    */
 
-                    found = 1;
-                }
-                else
-                {
-                    // mark this as a deleted entry
-                    ent->inode = 0;
-                    __sync_or_and_fetch(&buf->flags, PCACHE_FLAG_DIRTY);
-                }
+                    info->super = super;
+                    info->d = d;
+                    info->hash_ver = DEFAULT_HASH(d);
+                    info->dir = dir;
 
-                break;
+                    res = split_indexed_block(info, file, filename, 1, 1);
+
+                    kfree(info);
+
+                    return res;
+                }
             }
-            
-            // 2 - Check for deleted entries and if that entry is large enough
-            //     to fit us. A corrupt (but valid still) directory might have
-            //     '.' and '..' entries with 0 inode numbers. Avoid overwriting
-            //     these entries.
-            if(ent->inode == 0)
+
+            // Reached end of dir. Try to create a new block at the end
+            if(!(buf = get_relative_block(dir, d, offset, BMAP_FLAG_CREATE)))
             {
-                namebuf = (char *)((unsigned char *)ent + sizeof(struct ext2_dirent_t));
-
-                if(namebuf[0] == '.' && 
-                    (ent->name_length_lsb == 1 ||
-                        (namebuf[1] == '.' && ent->name_length_lsb == 2)))
-                {
-                    blk += ent->entry_size;
-                    continue;
-                }
-
-                if(ent->entry_size >= (fnamelen +
-                                        sizeof(struct ext2_dirent_t)))
-                {
-                    found = 1;
-                    break;
-                }
+                return -EIO;
             }
 
-            // 3 - Entries at the end of a block occupy the whole space left.
-            //     Check if this is the case and if we can fit ourself there.
-            actual_size = sizeof(struct ext2_dirent_t) +
-                                    ext2_entsz(ent, ext_dir_type);
+            release_cached_page(buf);
 
-            // adjust the entry size to make sure it is 4-byte aligned
-            if(actual_size & 3)
+            if((res = linear_dir_add(dir, file, filename,
+                                        d, fnamelen, offset)) < 0)
             {
-                actual_size = (actual_size & ~3) + 4;
-            }
-            
-            if(ent->entry_size > actual_size)
-            {
-                // is there room for another entry?
-                if(ent->entry_size - actual_size >= entsize)
-                {
-                    entsize = ent->entry_size - actual_size;
-
-                    // truncate the existing entry
-                    ent->entry_size = actual_size;
-                    
-                    // create a new entry
-                    ent = (struct ext2_dirent_t *)((char *)ent + actual_size);
-                    ent->entry_size = entsize;
-
-                    found = 1;
-                    break;
-                }
+                return res;
             }
 
-            blk += ent->entry_size;
-        }
-        
-        if(found)
-        {
             break;
-        }
-        
-        release_cached_page(buf);
-        offset += PAGE_SIZE;
-    }
-    
-    namebuf = (char *)((unsigned char *)ent + sizeof(struct ext2_dirent_t));
-    A_memcpy(namebuf, filename, fnamelen);
-    ent->name_length_lsb = fnamelen;
-
-    if(!ext_dir_type)
-    {
-        ent->type_indicator = (fnamelen >> 8) & 0xffff;
-    }
-    else
-    {
-        ent->type_indicator = mode_to_ext2_type(file->mode);
-    }
-
-    ent->inode = file->inode;
-
-    // Ensure all blocks have valid empty entries until the end of the page
-    for(sz = block_size; sz < PAGE_SIZE; sz += block_size)
-    {
-        ent = (struct ext2_dirent_t *)(buf->virt + sz);
-
-        if(ent->entry_size == 0)
-        {
-            ent->inode = 0;
-            ent->entry_size = block_size;
         }
     }
 
     dir->mtime = now();
     dir->flags |= FS_NODE_DIRTY;
-    
-    if(offset + PAGE_SIZE >= dir->size)
+    sz = (offset * d->block_size) + d->block_size;
+
+    if(sz >= dir->size)
     {
-        dir->size = offset + PAGE_SIZE;
+        dir->size = sz;
         dir->ctime = dir->mtime;
     }
-
-    __sync_or_and_fetch(&buf->flags, PCACHE_FLAG_DIRTY);
-    release_cached_page(buf);
 
     return 0;
 }
@@ -2540,16 +2309,21 @@ long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
 long ext2_mkdir(struct fs_node_t *dir, struct fs_node_t *parent)
 {
     struct bgd_table_info_t bgd;
-    int res, ext_dir_type = 0;
+    int res, ext_dir_type;
 
     if(get_bgd_table(dir->dev, &bgd) < 0)
     {
         return -EINVAL;
     }
 
+    // For indexed directories (flags & FS_NODE_INDEXED_DIR), we use the
+    // same code here. The directory will be a traditional linear dir, until
+    // it outgrows the first block, in which case it will automatically be
+    // converted to an indexed directory
+
     ext_dir_type = is_ext_dir_type(bgd.super);
 
-    if((res = ext2_mkdir_internal(dir, parent->inode, ext_dir_type, bgd.d->block_size)) == 0)
+    if((res = ext2_mkdir_internal(dir, parent->inode, bgd.d, ext_dir_type)) == 0)
     {
         uint32_t group = inode_group(bgd.super, dir->inode);
 
@@ -2564,7 +2338,7 @@ long ext2_mkdir(struct fs_node_t *dir, struct fs_node_t *parent)
 
 
 long ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent, 
-                         int ext_dir_type, size_t block_size)
+                         struct mount_info_t *d, int ext_dir_type)
 {
     size_t sz;
     char *p;
@@ -2572,9 +2346,9 @@ long ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent,
     volatile struct ext2_dirent_t *ent;
 
     dir->flags |= FS_NODE_DIRTY;
-    dir->size = PAGE_SIZE;
-    
-    if(!(buf = get_cached_page(dir, 0, 0 /* PCACHE_AUTO_ALLOC */)))
+    dir->size = d->block_size;
+
+    if(!(buf = get_relative_block(dir, d, 0, BMAP_FLAG_CREATE)))
     {
         dir->ctime = now();
         dir->flags |= FS_NODE_DIRTY;
@@ -2604,16 +2378,7 @@ long ext2_mkdir_internal(struct fs_node_t *dir, ino_t parent,
 
     ent = (struct ext2_dirent_t *)(buf->virt + (sz * 2) + 8);
     ent->inode = 0;
-    ent->entry_size = block_size - ((sz * 2) + 8);
-
-    // We filled the first block. Now fill the other blocks until the end
-    // of the page
-    for(sz = block_size; sz < PAGE_SIZE; sz += block_size)
-    {
-        ent = (struct ext2_dirent_t *)(buf->virt + sz);
-        ent->inode = 0;
-        ent->entry_size = block_size;
-    }
+    ent->entry_size = d->block_size - ((sz * 2) + 8);
 
     __sync_or_and_fetch(&buf->flags, PCACHE_FLAG_DIRTY);
     release_cached_page(buf);
@@ -2649,7 +2414,15 @@ long ext2_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir)
         return -EINVAL;
     }
 
-    if((res = ext2_deldir_internal(dir, entry, is_ext_dir_type(bgd.super))) < 0)
+    if(dir->flags & FS_NODE_INDEXED_DIR)
+    {
+        if((res = ext2_deldir_hashed(dir, entry, bgd.d)) < 0)
+        {
+            return res;
+        }
+    }
+    else if((res = ext2_deldir_internal(dir, entry, bgd.d, 
+                                        is_ext_dir_type(bgd.super))) < 0)
     {
         return res;
     }
@@ -2668,29 +2441,19 @@ long ext2_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir)
 }
 
 
-long ext2_deldir_internal(struct fs_node_t *dir, struct dirent *entry, int ext_dir_type)
+long ext2_deldir_internal(struct fs_node_t *dir, struct dirent *entry, 
+                          struct mount_info_t *d, int ext_dir_type)
 {
-    struct dirent *entry2;
-    struct cached_page_t *dbuf;
-    unsigned char *blk;
-    volatile struct ext2_dirent_t *ent;
-    size_t dbuf_off;
-    long res;
+    //struct dirent *entry2;
+    int flags = DIR_LOOKUP_FLAG_REMOVE;
 
-    if((res = ext2_finddir_internal(dir, entry->d_name, &entry2, &dbuf,
-                                      &dbuf_off, ext_dir_type)) < 0)
+    if(ext_dir_type)
     {
-        return res;
+        flags |= DIR_LOOKUP_FLAG_HAS_DIRTYPE;
     }
 
-    blk = (unsigned char *)dbuf->virt;
-    ent = (volatile struct ext2_dirent_t *)(blk + dbuf_off);
-    ent->inode = 0;
-    __sync_or_and_fetch(&dbuf->flags, PCACHE_FLAG_DIRTY);
-    release_cached_page(dbuf);
-    kfree(entry2);
-
-    return 0;
+    //return ext2_finddir_internal(dir, entry->d_name, &entry2, ext_dir_type, 1);
+    return ext2_finddir_internal(dir, entry->d_name, NULL, d, flags);
 }
 
 
@@ -2713,20 +2476,25 @@ long ext2_dir_empty(struct fs_node_t *dir)
         return -EINVAL;
     }
 
-    return ext2_dir_empty_internal("ext2fs", dir);
+    // I assume this code works for indexed directories (those with
+    // flags & FS_NODE_INDEXED_DIR). I cannot see any reason why it
+    // shouldn't -- after all, these directories can still be traversed
+    // as traditional linear directories?
+    // XXX: test this theory
+
+    return ext2_dir_empty_internal("ext2fs", dir, d);
 }
 
 
-long ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
+long ext2_dir_empty_internal(char *module, struct fs_node_t *dir, struct mount_info_t *d)
 {
-    char *p;
+    char *n;
     unsigned char *blk, *end;
     struct cached_page_t *buf;
     struct ext2_dirent_t *ent;
-    size_t offset;
-    size_t sz = sizeof(struct ext2_dirent_t);
-    
-    if(!dir->size || !dir->blocks[0] || !(buf = get_cached_page(dir, 0, 0)))
+    size_t offset, blocks;
+
+    if(!dir->size || !dir->blocks[0])
     {
         // not ideal, but treat this as an empty directory
         printk("%s: bad directory inode at 0x%x:0x%x\n",
@@ -2734,54 +2502,20 @@ long ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
         return 1;
     }
 
-    // check '.'
-    ent = (struct ext2_dirent_t *)buf->virt;
-    p = (char *)(buf->virt + sz);
-
-    if(!ent->entry_size)
-    {
-        // not ideal, but treat this as an empty directory
-        release_cached_page(buf);
-        return 1;
-    }
-
-    if(ent->inode != dir->inode ||
-       ent->name_length_lsb != 1 || strncmp(p, ".", 1))
-    {
-        release_cached_page(buf);
-        printk("%s: bad directory inode at 0x%x:0x%x\n",
-               module, dir->dev, dir->inode);
-        return 0;
-    }
-
-    // check '..'
-    ent = (struct ext2_dirent_t *)(buf->virt + ent->entry_size);
-    p = (char *)(ent) + sz;
-
-    if(!ent->entry_size)
-    {
-        // not ideal, but treat this as an empty directory
-        release_cached_page(buf);
-        return 1;
-    }
-
-    if(!ent->inode ||
-       ent->name_length_lsb != 2 || strncmp(p, "..", 2))
-    {
-        release_cached_page(buf);
-        printk("%s: bad directory inode at 0x%x:0x%x\n",
-               module, dir->dev, dir->inode);
-        return 0;
-    }
-    
-    //blk = (unsigned char *)buf->virt + (size_t)ent + ent->entry_size;
-    blk = (unsigned char *)ent + ent->entry_size;
-    end = (unsigned char *)buf->virt + PAGE_SIZE;
     offset = 0;
-    //release_cached_page(buf);
+    blocks = ((dir->size + (d->block_size - 1)) / d->block_size);
 
-    while(offset < dir->size)
+    while(offset < blocks)
     {
+        if(!(buf = get_relative_block(dir, d, offset, 0)))
+        {
+            offset++;
+            continue;
+        }
+
+        blk = (unsigned char *)buf->virt;
+        end = blk + d->block_size;
+
         while(blk < end)
         {
             ent = (struct ext2_dirent_t *)blk;
@@ -2790,7 +2524,17 @@ long ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
             {
                 break;
             }
-            
+
+            // ignore '.' and '..'
+            n = (char *)(blk + sizeof(struct ext2_dirent_t));
+
+            if(n[0] == '.' &&
+               (n[1] == '\0' || (n[1] == '.' && n[2] == '\0')))
+            {
+                blk += ent->entry_size;
+                continue;
+            }
+
             if(ent->inode)
             {
                 release_cached_page(buf);
@@ -2801,34 +2545,7 @@ long ext2_dir_empty_internal(char *module, struct fs_node_t *dir)
         }
         
         release_cached_page(buf);
-        buf = NULL;
-        offset += PAGE_SIZE;
-
-        if(offset >= dir->size)
-        {
-            break;
-        }
-
-        if(!(buf = get_cached_page(dir, offset, 0)))
-        {
-            break;
-        }
-
-        blk = (unsigned char *)buf->virt;
-
-        if(offset + PAGE_SIZE > dir->size)
-        {
-            end = blk + (dir->size % PAGE_SIZE);
-        }
-        else
-        {
-            end = blk + PAGE_SIZE;
-        }
-    }
-
-    if(buf)
-    {
-        release_cached_page(buf);
+        offset++;
     }
 
     return 1;
@@ -2851,131 +2568,64 @@ long ext2_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
 {
     volatile struct ext2_superblock_t *super;
     struct mount_info_t *d;
-    int ext_dir_type = 0;
 
     if(get_super(dir->dev, &d, &super) < 0)
     {
         return -EINVAL;
     }
     
-    ext_dir_type = is_ext_dir_type(super);
+    if(dir->flags & FS_NODE_INDEXED_DIR)
+    {
+        return ext2_getdents_hashed(dir, pos, buf, bufsz, d);
+    }
 
-    return ext2_getdents_internal(dir, pos, buf, bufsz, ext_dir_type);
+    return ext2_getdents_internal(dir, pos, buf, bufsz, d);
 }
 
 
-long ext2_getdents_internal(struct fs_node_t *dir, off_t *pos, void *buf,
-                            int bufsz, int ext_dir_type)
+long ext2_getdents_internal(struct fs_node_t *dir, 
+                            off_t *pos, void *buf, int bufsz, 
+                            struct mount_info_t *d)
 {
     size_t i, count = 0;
-    size_t reclen, namelen;
-    struct cached_page_t *dbuf = NULL;
-    struct dirent *dent = NULL;
-    struct ext2_dirent_t *ent;
-    char *n, *b = (char *)buf;
-    unsigned char *blk, *end;
-    size_t offset;
-    
+    size_t offset, blocks;
+    size_t actual_bytes = 0;
+    off_t old_pos = *pos;
+    long res;
+
     if(!dir || !pos || !buf)
     {
         return -EINVAL;
     }
 
-    offset = (*pos) & ~(PAGE_SIZE - 1);
-    i = (*pos) % PAGE_SIZE;
-    
-    while(offset < dir->size)
+    offset = (*pos) / d->block_size;
+    i = (*pos) % d->block_size;
+    blocks = ((dir->size + (d->block_size - 1)) / d->block_size);
+
+    while(offset < blocks)
     {
-        KDEBUG("ext2_getdents_internal: 0 offset 0x%x, dir->size 0x%x\n", offset, dir->size);
-        
-        if(!(dbuf = get_cached_page(dir, offset, 0)))
+        res = dents_fill_buf(dir, offset, &i, buf, bufsz, d);
+
+        if(res >= 0)
         {
-            offset += PAGE_SIZE;
-            continue;
+            count += res;
+            buf = (char *)buf + res;
+            bufsz -= res;
+            actual_bytes += i;
         }
-        
-        blk = (unsigned char *)(dbuf->virt + i);
-        end = (unsigned char *)(dbuf->virt + PAGE_SIZE);
-        
-        // we use i only for the first round, as we might have been asked to
-        // read from the middle of a block
+
+        // if the buf is underfilled, we either reached end of dir
+        // or the last entry does not fit in the buf
+        if(i < d->block_size)
+        {
+            break;
+        }
+
         i = 0;
-        
-        while(blk < end)
-        {
-            KDEBUG("ext2_getdents_internal: 1 blk 0x%x, end 0x%x\n", blk, end);
-            
-            ent = (struct ext2_dirent_t *)blk;
-            *pos = offset + (blk - (unsigned char *)dbuf->virt);
-            
-            // last entry in dir
-            if(!ent->entry_size)
-            {
-                break;
-            }
-            
-            // deleted entry - skip
-            if(ent->inode == 0)
-            {
-                blk += ent->entry_size;
-                continue;
-            }
-
-            // get filename length
-            namelen = ext2_entsz(ent, ext_dir_type);
-            //KDEBUG("ext2_getdents_internal: namelen 0x%x\n", namelen);
-
-            KDEBUG("ext2_getdents_internal: namelen 0x%x\n", namelen);
-
-            // calc dirent record length
-            reclen = GET_DIRENT_LEN(namelen);
-
-            // make it 4-byte aligned
-            //ALIGN_WORD(reclen);
-            KDEBUG("ext2_getdents_internal: reclen 0x%x\n", reclen);
-            
-            // check the buffer has enough space for this entry
-            if((count + reclen) > (size_t)bufsz)
-            {
-                KDEBUG("ext2_getdents_internal: count 0x%x, reclen 0x%x\n", count, reclen);
-                release_cached_page(dbuf);
-                return count;
-            }
-            
-            n = (char *)(blk + sizeof(struct ext2_dirent_t));
-            dent = (struct dirent *)b;
-
-
-
-            /*
-            printk("ext2_getdents_internal: [%d] ", offset);
-            for(size_t x = 0; x < namelen; x++)
-            {
-                printk("%c", n[x]);
-            }
-            printk("\n");
-            */
-
-
-
-            ext2_entry_to_dirent(ent, dent, n, namelen,
-                                 (*pos) + ent->entry_size,
-                                 ext_dir_type);
-
-            dent->d_reclen = reclen;
-            b += reclen;
-            count += reclen;
-            blk += ent->entry_size;
-            KDEBUG("ext2_getdents_internal: 2 blk 0x%x, end 0x%x\n", blk, end);
-        }
-        
-        release_cached_page(dbuf);
-        offset += PAGE_SIZE;
+        offset++;
     }
-    
-    KDEBUG("ext2_getdents_internal: count 0x%x, offset 0x%x\n", count, offset);
-    
-    *pos = offset;
+
+    (*pos) = old_pos + actual_bytes;
     return count;
 }
 

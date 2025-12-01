@@ -25,7 +25,7 @@
  *  Functions for mounting and unmounting filesystems.
  */
 
-#define __DEBUG
+//#define __DEBUG
 
 #include <errno.h>
 #include <string.h>
@@ -235,6 +235,12 @@ int vfs_remount(struct fs_node_t *mpoint_node,
         return -EFAULT;
     }
 
+    // if the driver wants readonly mounts, do it (iso9660 does this)
+    if(oldd->flags & FS_SUPER_RDONLY)
+    {
+        flags |= MS_RDONLY;
+    }
+
     oldd->mountflags = flags;
     return 0;
 }
@@ -276,7 +282,7 @@ long vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options)
     long res;
     int blocksz = 0;
     int fremount = (flags & MS_REMOUNT);
-    int rdonly = (flags & MS_RDONLY);
+    //int rdonly = (flags & MS_RDONLY);
     int mounting_sysroot = 0;
 	int open_flags = OPEN_USER_CALLER | OPEN_NOFOLLOW_MPOINT;
 	volatile unsigned int refs;
@@ -320,9 +326,10 @@ long vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options)
     KDEBUG("vfs_mount[%d] - 0 - path %s\n", this_core->cpuid, path);
 
     // get the mount point's node
-    if((res = vfs_open(path, rdonly ? O_RDONLY : O_RDWR, 0777, AT_FDCWD, 
+    if((res = vfs_open(path, O_RDONLY /* rdonly ? O_RDONLY : O_RDWR */, 0777, AT_FDCWD, 
                        &mpoint_node, open_flags)) < 0)
     {
+        printk("vfs: failed to open mount point (err %d)\n", res);
         return res;
     }
     

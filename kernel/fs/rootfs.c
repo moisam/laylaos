@@ -52,8 +52,7 @@ dev_t ROOT_DEVID;
 // forward declarations
 static long rootfs_read_inode(struct fs_node_t *);
 static long rootfs_write_inode(struct fs_node_t *);
-static long rootfs_finddir(struct fs_node_t *, char *, struct dirent **, 
-                           struct cached_page_t **, size_t *);
+static long rootfs_finddir(struct fs_node_t *, char *, struct dirent **);
 static long rootfs_addir(struct fs_node_t *, struct fs_node_t *, char *);
 
 static int mount_initrd(dev_t initrd_dev);
@@ -191,28 +190,23 @@ struct fs_node_t *rootfs_init(void)
     dev_t initrd_dev;
     struct fs_node_t *initrd, *devroot = devfs_create();
     struct dirent *entry;
-    struct cached_page_t *dbuf;
-    //struct IO_buffer_s *dbuf;
-    size_t dbuf_off;
     char *path;
-    int res;
+    volatile int res;
     
     // we need these before calling vfs_mount()
     this_core->cur_task->fs->root = system_root_node;
     this_core->cur_task->fs->cwd = system_root_node;
 
     printk("Looking for initrd..\n");
-    //__asm__("xchg %%bx, %%bx"::);
     
     // check for an initrd and if found, mount it as the sysroot
-    if(devfs_finddir(devroot, "initrd", &entry, &dbuf, &dbuf_off) != 0)
+    if(devfs_finddir(devroot, "initrd", &entry) != 0)
     {
         printk("Could not find initrd..\n");
         goto load_default;
     }
 
     printk("Found initrd, trying to mount as sysroot..\n");
-    //__asm__("xchg %%bx, %%bx"::);
     
     initrd = kmalloc(sizeof(struct fs_node_t));
     initrd->inode = entry->d_ino;
@@ -239,12 +233,10 @@ struct fs_node_t *rootfs_init(void)
     if(mount_initrd(initrd_dev) < 0)
     {
         printk("Failed to mount sysroot!\n");
-        //__asm__("xchg %%bx, %%bx"::);
         empty_loop();
     }
 
     printk("Sysroot mounted successfully..\n");
-    //__asm__("xchg %%bx, %%bx"::);
 
     // adjust these to point to the mounted sysroot
     this_core->cur_task->fs->root = system_root_node;
@@ -257,37 +249,31 @@ struct fs_node_t *rootfs_init(void)
     {
         dev_t dev;
         char *base = basename(path);
+        char *rootfstype = NULL;
         struct fs_node_t *rootdisk;
 
         printk("Found root='%s'..\n", path);
 
-        /*
-        if((res = vfs_path_to_devid(path, "ext2", &dev)) < 0)
-        {
-            printk("%s: unable to resolve device path: %s (err %d)\n",
-                    "rootfs", path, res);
-        }
-        else
-        {
-            if((res = vfs_mount(dev, "/rootfs", "ext2", 
-                                         MS_RDONLY, "defaults")) != 0)
-            {
-                printk("%s: failed to mount %s on %s (err %d)\n",
-                                "rootfs", path, "/rootfs", res);
-            }
-            else
-            {
-                printk("%s: mounted %s on %s\n", "rootfs", path, "/rootfs");
-            }
-        }
-        */
-
-        if(devfs_finddir(devroot, base, &entry, &dbuf, &dbuf_off) == 0)
+        if(devfs_finddir(devroot, base, &entry) == 0)
         {
             if((rootdisk = kmalloc(sizeof(struct fs_node_t))))
             {
                 rootdisk->inode = entry->d_ino;
                 rootdisk->dev = devroot->dev;
+
+                if(has_cmdline_param("rootfs"))
+                {
+                    // we should ideally free this but its a small var
+                    // and we want to keep the logic simple
+                    rootfstype = get_cmdline_param_val("rootfs");
+                    printk("Found rootfs='%s'..\n", rootfstype);
+                }
+
+                if(!rootfstype || !*rootfstype)
+                {
+                    rootfstype = "ext2";
+                    printk("Assuming rootfs='%s'..\n", rootfstype);
+                }
 
                 if(devfs_read_inode(rootdisk) == 0)
                 {
@@ -296,7 +282,7 @@ struct fs_node_t *rootfs_init(void)
                     // get the dev id
                     dev = rootdisk->blocks[0];
 
-                    if((res = vfs_mount(dev, "/rootfs", "ext2", 
+                    if((res = vfs_mount(dev, "/rootfs", rootfstype, 
                                          MS_RDONLY, "defaults")) != 0)
                     {
                         printk("%s: failed to mount %s on %s (err %d)\n",
@@ -307,11 +293,23 @@ struct fs_node_t *rootfs_init(void)
                         printk("%s: mounted %s on %s\n", "rootfs", path, "/rootfs");
                     }
                 }
+                else
+                {
+                    printk("Could not read root inode\n");
+                }
                 
                 kfree(rootdisk);
             }
+            else
+            {
+                printk("Could not alloc memory to read root inode\n");
+            }
             
             kfree(entry);
+        }
+        else
+        {
+            printk("Could not find /dev/%s\n", base);
         }
 
         kfree(path);
@@ -609,18 +607,12 @@ STATIC_INLINE struct dirent *entry_to_dirent(int index, int off)
  * Outputs:
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long rootfs_finddir(struct fs_node_t *dir, char *filename, 
-                    struct dirent **entry,
-                    struct cached_page_t **dbuf, size_t *dbuf_off)
+                    struct dirent **entry)
 {
     if(!dir || !dir->inode || !filename || !*filename)
     {
@@ -636,8 +628,6 @@ long rootfs_finddir(struct fs_node_t *dir, char *filename,
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
     
     int i;
     

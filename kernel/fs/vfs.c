@@ -148,8 +148,6 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
     dev_t dev;
     ino_t n;
     struct dirent *entry;
-    struct cached_page_t *dbuf;
-    size_t dbuf_off;
     int symlinks = 0;
     
     if(!pathname || !*pathname)
@@ -316,7 +314,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
         KDEBUG("get_parent_dir: tmp = %s\n", tmp);
 
         // find this path segment in the current directory
-        if((res = vfs_finddir(node, tmp, &entry, &dbuf, &dbuf_off)) < 0)
+        if((res = vfs_finddir(node, tmp, &entry)) < 0)
         {
             kfree(tmp);
             release_node(node);
@@ -324,8 +322,6 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             return res;
         }
         
-        release_cached_page(dbuf);
-        //brelse(dbuf);
         dev = node->dev;
         n = entry->d_ino;
         kfree(tmp);
@@ -449,8 +445,6 @@ long vfs_open_internal(char *path, int dirfd,
     struct dirent *entry;
     char *filename;
     char *p2 = path_remove_trailing_slash(path, kernel, &trailing_slash);
-    struct cached_page_t *dbuf;
-    size_t dbuf_off;
     
     *filenode = NULL;
     
@@ -509,15 +503,13 @@ long vfs_open_internal(char *path, int dirfd,
     }
 
     // get the file entry
-    if((res = vfs_finddir(node, filename, &entry, &dbuf, &dbuf_off)) < 0)
+    if((res = vfs_finddir(node, filename, &entry)) < 0)
     {
         kfree(p2);
         release_node(node);
         return res;
     }
     
-    release_cached_page(dbuf);
-
     // and the file's node
     dev = node->dev;
     n = entry->d_ino;
@@ -601,8 +593,6 @@ long vfs_open(char *path, int flags, mode_t mode, int dirfd,
     ino_t n;
     struct fs_node_t *dnode, *fnode, *fnode2;
     struct dirent *entry;
-    struct cached_page_t *dbuf;
-    size_t dbuf_off;
     int follow_mpoints, rootdir;
     int kernel = (open_flags & OPEN_KERNEL_CALLER);
 
@@ -669,9 +659,8 @@ long vfs_open(char *path, int flags, mode_t mode, int dirfd,
     KDEBUG("vfs_open: filename = '%s'\n", filename);
 
     // find the file in the parent directory
-    if(vfs_finddir(dnode, filename, &entry, &dbuf, &dbuf_off) == 0)
+    if(vfs_finddir(dnode, filename, &entry) == 0)
     {
-        release_cached_page(dbuf);
         dev = dnode->dev;
         n = entry->d_ino;
 
@@ -863,16 +852,11 @@ long vfs_open(char *path, int flags, mode_t mode, int dirfd,
  *   0 on success, -errno on failure
  *   entry: pointer to a kmalloc()'d struct dirent representing the file. It is
  *          the caller's responsibility to call kfree() to release this struct!
- *   dbuf: pointer to the disk buffer containing the found entry. Useful for
- *         things like removing the entry from parent directory without needing
- *         to re-read the block from disk again.
- *   dbuf_off: offset of the entry in the disk buffer.
  *
  * Returns:
  *    0 on success, -errno on failure
  */
-long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                 struct cached_page_t **dbuf, size_t *dbuf_off)
+long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
 {
     long res = -EINVAL;
 
@@ -883,8 +867,6 @@ long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
     
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
     
     // not a directory
     if(!S_ISDIR(dir->mode))
@@ -894,7 +876,7 @@ long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
     
     if(dir->ops && dir->ops->finddir)
     {
-        res = dir->ops->finddir(dir, filename, entry, dbuf, dbuf_off);
+        res = dir->ops->finddir(dir, filename, entry);
         update_atime(dir);
     }
     
@@ -914,18 +896,12 @@ long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                          struct dirent **entry,
-                          struct cached_page_t **dbuf, size_t *dbuf_off)
+                          struct dirent **entry)
 {
     long res = -EINVAL;
 
@@ -936,8 +912,6 @@ long vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
     
     // not a directory
     if(!S_ISDIR(dir->mode))
@@ -947,7 +921,7 @@ long vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
     
     if(dir->ops && dir->ops->finddir_by_inode)
     {
-        res = dir->ops->finddir_by_inode(dir, node, entry, dbuf, dbuf_off);
+        res = dir->ops->finddir_by_inode(dir, node, entry);
         update_atime(dir);
     }
     
@@ -1170,8 +1144,6 @@ long vfs_linkat(int olddirfd, char *oldname,
     char *filename = NULL;
     struct fs_node_t *dnode = NULL;
     struct dirent *entry = NULL;
-    struct cached_page_t *dbuf = NULL;
-    size_t dbuf_off;
     char *name2;
     int followlink = (flags & OPEN_FOLLOW_SYMLINK /* AT_SYMLINK_FOLLOW */);
     int open_flags = OPEN_USER_CALLER |
@@ -1256,10 +1228,8 @@ long vfs_linkat(int olddirfd, char *oldname,
     }
 
     // check if the new file already exists
-    if(vfs_finddir(dnode, filename, &entry, &dbuf, &dbuf_off) == 0)
+    if(vfs_finddir(dnode, filename, &entry) == 0)
     {
-        release_cached_page(dbuf);
-        //brelse(dbuf);
         kfree(entry);
         res = -EEXIST;
         goto error;
@@ -1305,8 +1275,6 @@ long vfs_unlinkat(int dirfd, char *name, int flags)
     char *filename = NULL;
     struct fs_node_t *dnode = NULL, *fnode = NULL;
     struct dirent *entry = NULL;
-    struct cached_page_t *dbuf = NULL;
-    size_t dbuf_off;
     char *name2;
     time_t t = now();
     
@@ -1348,17 +1316,10 @@ long vfs_unlinkat(int dirfd, char *name, int flags)
     }
 
     // get the file entry
-    if((res = vfs_finddir(dnode, filename, &entry, &dbuf, &dbuf_off)) < 0)
+    if((res = vfs_finddir(dnode, filename, &entry)) < 0)
     {
         goto error;
     }
-
-    // unfortunately, we cannot hold the disk buffer for long, as we did in
-    // kernel ver < 0.0.3, because some filesystem drivers, e.g. FAT, might 
-    // need to read the node's metadata from the disk buffer in the call to
-    // get_node() below
-    release_cached_page(dbuf);
-    dbuf = NULL;
 
     // get the file's node
     if(!(fnode = get_node(dnode->dev, entry->d_ino, GETNODE_FOLLOW_MPOINTS)))
@@ -1413,11 +1374,6 @@ long vfs_unlinkat(int dirfd, char *name, int flags)
     return 0;
 
 error:
-    if(dbuf)
-    {
-        release_cached_page(dbuf);
-    }
-    
     kfree(name2);
     release_node(dnode);
     return res;
@@ -1430,8 +1386,6 @@ long vfs_rmdir(int dirfd, char *pathname, int flags)
     char *filename = NULL;
     struct fs_node_t *dnode = NULL, *fnode = NULL;
     struct dirent *entry = NULL;
-    struct cached_page_t *dbuf = NULL;
-    size_t dbuf_off;
     char *name2 = path_remove_trailing_slash(pathname, 0, NULL);
     struct mount_info_t *dinfo;
     
@@ -1455,7 +1409,7 @@ long vfs_rmdir(int dirfd, char *pathname, int flags)
     }
 
     // get the file entry
-    if((res = vfs_finddir(dnode, filename, &entry, &dbuf, &dbuf_off)) < 0)
+    if((res = vfs_finddir(dnode, filename, &entry)) < 0)
     {
         goto error;
     }
@@ -1476,13 +1430,6 @@ long vfs_rmdir(int dirfd, char *pathname, int flags)
         res = -EROFS;
         goto error;
     }
-
-    // unfortunately, we cannot hold the disk buffer for long, as we did in
-    // kernel ver < 0.0.3, because some filesystem drivers, e.g. FAT, might 
-    // need to read the node's metadata from the disk buffer in the call to
-    // get_node() below
-    release_cached_page(dbuf);
-    dbuf = NULL;
 
     // get the file's node
     if(!(fnode = get_node(dnode->dev, entry->d_ino, GETNODE_FOLLOW_MPOINTS)))
@@ -1587,11 +1534,6 @@ error2:
     release_node(fnode);
 
 error:
-    if(dbuf)
-    {
-        release_cached_page(dbuf);
-    }
-
     kfree(name2);
     release_node(dnode);
     return res;
@@ -1755,6 +1697,11 @@ long vfs_fdatasync(struct fs_node_t *node)
     size_t i, j;
     long res = 0;
 
+    if(IS_PIPE(node) || IS_SOCKET(node))
+    {
+        return -EINVAL;
+    }
+
     j = node->size;
     i = 0;
 
@@ -1783,6 +1730,11 @@ long vfs_fdatasync(struct fs_node_t *node)
 long vfs_fsync(struct fs_node_t *node)
 {
     long res, res2;
+
+    if(IS_PIPE(node) || IS_SOCKET(node))
+    {
+        return -EINVAL;
+    }
 
     // sync data
     res = vfs_fdatasync(node);

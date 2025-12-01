@@ -56,7 +56,11 @@ static void update_function(void *arg)
     while(1)
     {
         // schedule a disk update every 30 secs
-        block_task2(&update_task, PIT_FREQUENCY * 30);
+        //block_task2(&update_task, PIT_FREQUENCY * 30);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, PIT_FREQUENCY * 30);
+
         update(NODEV);
         remove_old_dentries(TWO_MINUTES);
     }

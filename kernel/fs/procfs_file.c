@@ -58,13 +58,52 @@
 
 #include "../kernel/task_funcs.c"
 
+#define BUF_SPRINTF(msg)                                \
+do {                                                    \
+    ksprintf((char *)buf, 1024, msg);                   \
+    len = strlen((char *)buf);                          \
+    buf += len;                                         \
+    buflen += len;                                      \
+} while(0)
+
 #define PAGES_TO_KBS(x)         ((x) * PAGE_SIZE / 1024)
+
 
 /*
  * Read /proc/devices.
  */
 size_t get_device_list(char **_buf)
 {
+    volatile size_t buflen = 0;
+    volatile char *buf;
+    size_t len = 0;
+
+    *_buf = NULL;
+    PR_MALLOC(buf, 1024);
+    *_buf = (char *)buf;
+
+    BUF_SPRINTF("Character devices:\n");
+    BUF_SPRINTF("  1 mem\n");
+    BUF_SPRINTF("  4 tty\n");
+    BUF_SPRINTF("  5 /dev/tty\n");
+    BUF_SPRINTF("  5 /dev/console\n");
+    BUF_SPRINTF("  5 /dev/ptmx\n");
+    BUF_SPRINTF(" 10 misc\n");
+    BUF_SPRINTF(" 13 input\n");
+    BUF_SPRINTF(" 14 audio\n");
+    BUF_SPRINTF(" 29 fb\n");
+    BUF_SPRINTF("136 pts\n");
+
+    BUF_SPRINTF("\nBlock devices:\n");
+    BUF_SPRINTF("  1 ram\n");
+    BUF_SPRINTF("  3 hd\n");
+    BUF_SPRINTF("  7 loop\n");
+    BUF_SPRINTF("  8 sd\n");
+    BUF_SPRINTF(" 22 hd\n");
+
+    return buflen;
+
+#if 0
     struct devnode_t *dev = dev_list;
     size_t len, count = 0, bufsz = 2048;
     char *buf, *p;
@@ -107,7 +146,30 @@ size_t get_device_list(char **_buf)
     
     *_buf = buf;
     return count;
+#endif
 }
+
+
+#define PRINT_INTERRUPT(i, j)                       \
+    if(count + rowlen >= bufsz) {                   \
+        *_buf = buf;                                \
+        PR_REALLOC(buf, bufsz, count);              \
+        p = buf + count;                            \
+    }                                               \
+    if(i == 123) ksprintf(p, bufsz, "LOC: ");       \
+    else if(i == 124) ksprintf(p, bufsz, "TLB: ");  \
+    else if(i == 255) ksprintf(p, bufsz, "SPU: ");  \
+    else ksprintf(p, bufsz, "%3d: ", i);            \
+    p += 5;                                         \
+    for(k = 0; k < processor_count; k++) {          \
+        ksprintf(p, bufsz, "%10d ", processor_local_data[k].irq_count[j]); \
+        p += 11;                                    \
+    }                                               \
+    ksprintf(p, bufsz, " %s\n", interrupt_handlers[i] ? \
+             interrupt_handlers[i]->short_name : "--"); \
+    len = strlen(p);                                \
+    count += (5 + (processor_count * 11) + len);    \
+    p += len;
 
 
 /*
@@ -116,20 +178,43 @@ size_t get_device_list(char **_buf)
 size_t get_interrupt_info(char **_buf)
 {
     size_t len, count = 0, bufsz = 2048;
+    size_t rowlen;
     char *buf, *p;
-    char tmp[48];
-    int i;
-    
+    //char tmp[128];
+    int i, k;
+
     PR_MALLOC(buf, bufsz);
     p = buf;
     *p = '\0';
-    
-    ksprintf(buf, bufsz, "IRQ        Hits      Ticks Name\n");
-    count = strlen(p);
-    p += count;
-    
+
+    //ksprintf(buf, bufsz, "IRQ        Hits      Ticks Name\n");
+
+    // maximum length of a single row
+    rowlen = 5 + (processor_count * 11) + 
+                sizeof(interrupt_handlers[0]->short_name) + 1;
+
+    // print the header
+    ksprintf(p, bufsz, " IRQ ");
+    count += 5;
+    p += 5;
+
+    for(i = 0; i < processor_count; i++)
+    {
+        ksprintf(p, bufsz, "     CPU%-2d ", i);
+        count += 11;
+        p += 11;
+    }
+
+    ksprintf(p, bufsz, " Name\n");
+    count += 6;
+    p += 6;
+
+    // now print the rows
     for(i = 32; i < (32 + 16); i++)
     {
+        PRINT_INTERRUPT(i, i - 32);
+
+        /*
         if(interrupt_handlers[i] == NULL)
         {
             ksprintf(tmp, sizeof(tmp), "%3d: %10d %10d %s\n", i - 32, 
@@ -153,20 +238,35 @@ size_t get_interrupt_info(char **_buf)
         }
 
         count += len;
-        
-        /*
-        if(count >= PAGE_SIZE)
-        {
-            break;
-        }
-        */
-        
         strcpy(p, tmp);
         p += len;
+        */
     }
-    
+
+    /*
+     * TODO: we should also print data for ERR and NMI interrupts.
+     */
+    PRINT_INTERRUPT(123, 16);
+    PRINT_INTERRUPT(124, 17);
+    PRINT_INTERRUPT(255, 18);
+
     *_buf = buf;
     return count;
+}
+
+
+STATIC_INLINE int is_special_fs(char *fsname)
+{
+    return (strcmp(fsname, "sysfs") == 0 ||
+            strcmp(fsname, "tmpfs") == 0 ||
+            strcmp(fsname, "procfs") == 0 ||
+            strcmp(fsname, "sockfs") == 0 ||
+            strcmp(fsname, "pipefs") == 0 ||
+            strcmp(fsname, "ramfs") == 0 ||
+            strcmp(fsname, "devpts") == 0 ||
+            strcmp(fsname, "devfs") == 0 ||
+            strcmp(fsname, "rootfs") == 0 ||
+            strcmp(fsname, "efivarfs") == 0);
 }
 
 
@@ -177,8 +277,6 @@ size_t get_fs_list(char **_buf)
 {
     struct fs_info_t *f = fstab;
     struct fs_info_t *lf = &fstab[NR_FILESYSTEMS];
-    struct mount_info_t *d;
-    struct mount_info_t *ld = &mounttab[NR_SUPER];
     size_t len, count = 0;
     // max fs name is 8 chars, plus 8 for the 'nodev' prefix and spaces
     size_t bufsz = (16 + 2) * NR_FILESYSTEMS;
@@ -195,20 +293,8 @@ size_t get_fs_list(char **_buf)
             continue;
         }
 
-        // check to see if there is at least one mount for this filesystem
-        kernel_mutex_lock(&mount_table_mutex);
+        ksprintf(p, bufsz, "%s   %s\n", is_special_fs(f->name) ? "nodev" : "     ", f->name);
 
-        for(d = mounttab; d < ld; d++)
-        {
-            if(d->dev && d->fs == f)
-            {
-                break;
-            }
-        }
-
-        kernel_mutex_unlock(&mount_table_mutex);
-
-        ksprintf(p, bufsz, "%s   %s\n", (d == ld) ? "nodev" : "     ", f->name);
         len = strlen(p);
         count += len;
         p += len;
@@ -344,6 +430,8 @@ size_t get_meminfo(char **buf)
     size_t ptables = PAGES_TO_KBS(used_pagetable_count());
     size_t cached = PAGES_TO_KBS(get_cached_page_count());
     size_t kstacks = PAGES_TO_KBS(get_kstack_count());
+    size_t dirty = PAGES_TO_KBS(get_dirty_cached_block_count());
+    size_t tmpfs = PAGES_TO_KBS(get_tmpfs_pagecount());
     size_t mapped, anon;
 
     get_mapped_pagecount(&mapped, &anon);
@@ -373,9 +461,11 @@ size_t get_meminfo(char **buf)
                       (size_t)0, (size_t)0, kstacks, ptables);
     p += strlen(p);
 
-    ksprintf(p, 1024, "AnonPages:     %lu kB\n"
-                      "Mapped:        %lu kB\n",
-                      anon, mapped);
+    ksprintf(p, 1024, "Dirty:         %lu kB\n"
+                      "AnonPages:     %lu kB\n"
+                      "Mapped:        %lu kB\n"
+                      "Shmem:         %lu kB\n",
+                      dirty, anon, mapped, tmpfs);
     p += strlen(p);
 
     //return strlen(*buf);
@@ -434,10 +524,17 @@ size_t get_modules(char **buf)
 }
 
 
+#define FORMAT_FOR_MOUNTS           1
+#define FORMAT_FOR_MOUNTINFO        2
+#define FORMAT_FOR_MOUNTSTATS       3
+
 /*
- * Read /proc/mounts.
+ * Helper function to read mount-related files:
+ *    /proc/mounts
+ *    /proc/mountinfo
+ *    /proc/mounstats
  */
-size_t get_mounts(char **buf)
+static size_t __get_mounts(char **buf, int format)
 {
     volatile size_t count = 0, bytes = 0;
     volatile struct dirent *devent;
@@ -507,13 +604,11 @@ size_t get_mounts(char **buf)
             goto cont;
         }
         
-        
         // check the device wasn't unmounted while we chased its dentry
         if(d->dev != dev)
         {
             goto cont;
         }
-
 
         fsopts = d->mountopts ? d->mountopts : "defaults";
 
@@ -531,30 +626,59 @@ size_t get_mounts(char **buf)
             p = *buf + count;
         }
 
-        /*
-        if(count >= PAGE_SIZE)
+        if(format == FORMAT_FOR_MOUNTS)
         {
-            break;
+            /*
+             * For now, we pass 0 for the dump & fsck passno fields.
+             * FIXME: see https://man.he.net/man5/procfs
+             */
+            if(devent)
+            {
+                ksprintf(p, (bufsz - count), "/dev/%s %s %s %s %d %d\n",
+                         fsname, fsmount, d->fs->name, fsopts, 0, 0);
+            }
+            else
+            {
+                ksprintf(p, (bufsz - count), "%s %s %s %s %d %d\n",
+                         fsname, fsmount, d->fs->name, fsopts, 0, 0);
+            }
         }
-        */
-
-        /*
-         * For now, we pass 0 for the dump & fsck passno fields.
-         * FIXME:
-         */
-        if(devent)
+        else if(format == FORMAT_FOR_MOUNTINFO)
         {
-            //sprintf(p, "/dev/%s %s %s %s %d %d\n",
-            ksprintf(p, (bufsz - count), "/dev/%s %s %s %s %d %d\n",
-                     fsname, fsmount, d->fs->name, fsopts, 0, 0);
+            /*
+             * For now, we pass dummy values for some fields below.
+             * FIXME: see https://man.he.net/man5/procfs
+             */
+            ksprintf(p, (bufsz - count), "%d %d %u:%u %s %s %s - %s %s %s\n",
+                         (d - mounttab) + 1, (d - mounttab) + 1,
+                         MAJOR(d->dev),     /* dummy mount ID */
+                         MINOR(d->dev),     /* dummy parent ID */
+                         "/",   /* assume this for in-mount root dir */
+                         fsmount, fsopts,
+                         d->fs->name,       /* dummy filesys-specific info */
+                         d->fs->name,       /* dummy per-superblock options */
+                         (d->mountflags & MS_RDONLY) ? "ro" : "rw");
+        }
+        else if(format == FORMAT_FOR_MOUNTSTATS)
+        {
+            /*
+             * For now, we do not report any actual statistics.
+             * FIXME: see https://man.he.net/man5/procfs
+             */
+            if(devent)
+            {
+                ksprintf(p, (bufsz - count), "device /dev/%s mounted on %s with fstype %s\n",
+                         fsname, fsmount, d->fs->name);
+            }
+            else
+            {
+                ksprintf(p, (bufsz - count), "device %s mounted on %s with fstype %s\n",
+                         fsname, fsmount, d->fs->name);
+            }
         }
         else
         {
-            //sprintf(p, "%s %s %s %s %d %d\n",
-            ksprintf(p, (bufsz - count), "%s %s %s %s %d %d\n",
-                     fsname, fsmount, d->fs->name, fsopts, 0, 0);
-
-            //kfree((void *)devent);
+            kpanic("invalid format passed to __get_mounts()\n");
         }
         
         bytes = strlen(p);
@@ -582,24 +706,54 @@ cont:
 
 
 /*
+ * Read /proc/mounts.
+ */
+size_t get_mounts(char **buf)
+{
+    return __get_mounts(buf, FORMAT_FOR_MOUNTS);
+}
+
+
+/*
+ * Read /proc/mountinfo.
+ */
+size_t get_mountinfo(char **buf)
+{
+    return __get_mounts(buf, FORMAT_FOR_MOUNTINFO);
+}
+
+
+/*
+ * Read /proc/mountstats.
+ */
+size_t get_mountstats(char **buf)
+{
+    return __get_mounts(buf, FORMAT_FOR_MOUNTSTATS);
+}
+
+
+/*
  * Read /proc/stat.
  */
 size_t get_sysstat(char **buf)
 {
     //struct task_t *idle_task = get_idle_task();
+    unsigned long tmp;
     unsigned long user = 0, sys = 0, idle = 0;
-    unsigned long irq_hits = 0, irq_ticks = 0, softirq = 0;
+    unsigned long irq_hits[19], total_irq_hits = 0;
+    unsigned long irq_ticks = 0, softirq = 0;
     unsigned int running = 0, blocked = 0;
-    int i;
+    int i, j, state;
     char *p;
 
-    PR_MALLOC(*buf, 2048);
+    PR_MALLOC(*buf, 4096);
     p = *buf;
     *p = '\0';
     
     /*
      * TODO: Collect the rest of info for /proc/stat.
      *       See: https://man7.org/linux/man-pages/man5/proc.5.html
+     *            https://man.he.net/man5/procfs
      */
     
     elevated_priority_lock(&task_table_lock);
@@ -611,16 +765,19 @@ size_t get_sysstat(char **buf)
         {
             continue;
         }
+
+        state = get_task_state(*t);
         
-        if((*t)->state == TASK_RUNNING || (*t)->state == TASK_READY)
+        if(state == TASK_RUNNING || state == TASK_READY)
         {
             running++;
         }
-        else if((*t)->state == TASK_WAITING || (*t)->state == TASK_SLEEPING)
+        else if(state == TASK_WAITING || state == TASK_SLEEPING)
         {
             blocked++;
         }
 
+#if 0
         if((*t)->properties & PROPERTY_IDLE)
         //if(*t == idle_task)
         {
@@ -635,10 +792,12 @@ size_t get_sysstat(char **buf)
             user += (*t)->user_time + (*t)->children_user_time;
             sys += (*t)->sys_time + (*t)->children_sys_time;
         }
+#endif
     }
     
     elevated_priority_unlock(&task_table_lock);
 
+#if 0
     // get IRQ stats
     for(i = 32; i < (32 + 16); i++)
     {
@@ -648,19 +807,93 @@ size_t get_sysstat(char **buf)
             irq_hits += interrupt_handlers[i]->hits;
         }
     }
+#endif
+
+    for(j = 0; j < 19; j++)
+    {
+        irq_hits[j] = 0;
+    }
+
+    for(i = 0; i < processor_count; i++)
+    {
+        sys += processor_local_data[i].sys_time;
+        user += processor_local_data[i].user_time;
+        softirq += processor_local_data[i].softirq_ticks;
+
+        if(processor_local_data[i].idle_task)
+        {
+            idle += processor_local_data[i].idle_task->sys_time;
+            idle += processor_local_data[i].idle_task->user_time;
+        }
+
+        for(j = 0; j < 19; j++)
+        {
+            irq_ticks += processor_local_data[i].irq_ticks[j];
+            total_irq_hits += processor_local_data[i].irq_count[j];
+            irq_hits[j] += processor_local_data[i].irq_count[j];
+        }
+    }
 
     // now print to the buffer
-    ksprintf(p, 1024, "cpu %lu %lu %lu %lu %lu\n",
-                      user, sys, idle, irq_ticks, softirq);
+    ksprintf(p, 4096, "cpu %lu %lu %lu %lu %lu %lu\n",
+                      user, // time spent in user mode
+                      0,    // TODO: time spent in user mode with low priority (nice)
+                      sys,  // time spent in system mode
+                      idle, // time spent in idle task
+                      irq_ticks, // time servicing IRQs
+                      softirq   // time seriving soft IRQs
+                      );
     p += strlen(p);
 
-    ksprintf(p, 1024, "intr %lu\n"
+    for(i = 0; i < processor_count; i++)
+    {
+        if(processor_local_data[i].idle_task)
+        {
+            tmp  = processor_local_data[i].idle_task->sys_time;
+            tmp += processor_local_data[i].idle_task->user_time;
+        }
+        else
+        {
+            tmp = 0;
+        }
+
+        ksprintf(p, 4096, "cpu%d %lu %lu %lu %lu ",
+                 i,
+                 processor_local_data[i].user_time,
+                 0,    // TODO: time spent in user mode with low priority (nice)
+                 processor_local_data[i].sys_time,
+                 tmp);
+        p += strlen(p);
+
+        tmp = 0;
+
+        for(j = 0; j < 19; j++)
+        {
+            tmp += processor_local_data[i].irq_ticks[j];
+        }
+
+        ksprintf(p, 4096, "%lu %lu\n",
+                 tmp,
+                 processor_local_data[i].softirq_ticks);
+        p += strlen(p);
+    }
+
+    ksprintf(p, 4096, "intr %lu ", total_irq_hits);
+    p += strlen(p);
+
+    for(j = 0; j < 19; j++)
+    {
+        ksprintf(p, 4096, "%lu%c", irq_hits[j], (j == 19 - 1) ? '\n' : ' ');
+        p += strlen(p);
+    }
+
+    ksprintf(p, 4096, "swap %u %u\n"
                       "ctxt %lu\n"
                       "btime %ld\n"
                       "processes %lu\n"
                       "procs_running %u\n"
                       "procs_blocked %u\n",
-                      irq_hits,
+                      0, 0,     // TODO: fix when we implement swapping
                       system_context_switches,
                       (long int)startup_time,
                       system_forks, running, blocked);
@@ -833,6 +1066,7 @@ size_t get_dns_list(char **buf)
 size_t get_ksyms(char **buf)
 {
     struct hashtab_item_t *hitem;
+    struct kmodule_t *mod;
     size_t len, count = 0, bufsz = 2048;
     char tmp[64];
     char *p;
@@ -847,13 +1081,17 @@ size_t get_ksyms(char **buf)
     p = *buf;
     *p = '\0';
 
+    // first print kernel symbols
     for(i = 0; i < ksymtab->count; i++)
     {
         hitem = ksymtab->items[i];
         
         while(hitem)
         {
-            ksprintf(tmp, 64, "%lx  %s\n", hitem->val, hitem->key);
+            /*
+             * TODO: report symbol types
+             */
+            ksprintf(tmp, 64, "%16lx  %s\n", hitem->val, hitem->key);
             len = strlen(tmp);
             
             if(count + len >= bufsz)
@@ -869,6 +1107,47 @@ size_t get_ksyms(char **buf)
             hitem = hitem->next;
         }
     }
+
+    // next print module symbols
+    kernel_mutex_lock(&kmod_list_mutex);
+
+    for(mod = modules_head.next; mod != NULL; mod = mod->next)
+    {
+        if(!(mod->state & MODULE_STATE_LOADED))
+        {
+            continue;
+        }
+        
+        for(i = 0; i < mod->symbols->count; i++)
+        {
+            hitem = mod->symbols->items[i];
+
+            while(hitem)
+            {
+                /*
+                 * TODO: report symbol types
+                 */
+                ksprintf(tmp, 64, "%16lx  %s\t[%s]\n", 
+                              hitem->val, hitem->key,
+                              mod->modinfo.name ? mod->modinfo.name : "??");
+                len = strlen(tmp);
+            
+                if(count + len >= bufsz)
+                {
+                    PR_REALLOC_OR_UNLOCK(*buf, bufsz, count, &kmod_list_mutex);
+                    p = *buf + count;
+                }
+
+                count += len;
+                strcpy(p, tmp);
+                p += len;
+
+                hitem = hitem->next;
+            }
+        }
+    }
+
+    kernel_mutex_unlock(&kmod_list_mutex);
 
     return count;
 }

@@ -27,14 +27,15 @@
 
 #define CALC_HASH_FUNC          calc_hash_for_pcache
 #define KEY_COMPARE_FUNC        pcache_key_compare
-#include <stdint.h>
-#include <sys/hash_inline.h>
 
 // define these so we do not have to rewrite our pcache code
 #define pcache_lookup           hashtab_fast_lookup
 #define pcache_add_hitem        hashtab_fast_add_hitem
 #define pcache_remove           hashtab_fast_remove
 #define pcache_alloc_hitem      hashtab_fast_alloc_hitem
+
+#include <stdint.h>
+#include <sys/hash_inline.h>
 
 
 /*

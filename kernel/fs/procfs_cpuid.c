@@ -23,8 +23,7 @@
  *  \file procfs_cpuid.c
  *
  *  This file implements the functions needed to read cpuid info from the
- *  /proc/cpuid file. At the moment, it only returns info about the first
- *  processor (SMP is not currently implemented).
+ *  /proc/cpuid file. Values are populated early on during SMP initialization.
  */
 
 #include <string.h>
@@ -67,7 +66,10 @@ static unsigned long long cpu_speed(void)
     unsigned long long start = 0, end = 0;
 
     __asm__ __volatile__("rdtsc" : "=a"(slow), "=d"(shigh));
-    block_task2(ecx_features, 20);
+    //block_task2(ecx_features, 20);
+    set_task_waking_signal(this_core->cur_task, 0);
+    __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+    block_task_timeout(this_core->cur_task, 20);
     __asm__ __volatile__("rdtsc" : "=a"(elow), "=d"(ehigh));
 
     start |= shigh;
@@ -297,6 +299,9 @@ size_t detect_cpu(char **buf)
          * TODO: fill this with proper values
          */
         ksprintf(p, BUFSZ, "cpu cores     : %u\n", 1);
+        p += strlen(p);
+
+        ksprintf(p, BUFSZ, "apicid        : %u\n", processor_local_data[i].lapicid);
         p += strlen(p);
 
         ksprintf(p, BUFSZ, "initial apicid: %u\n", processor_local_data[i].lapicid);

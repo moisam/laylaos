@@ -188,7 +188,19 @@ size_t get_task_stat(struct task_t *task, char **_buf)
                 task->user_time, task->sys_time,
                 task->children_user_time, task->children_sys_time);
 
-    BUF_SPRINTF("%d %d ", task->priority, task->nice ? (20 - task->nice) : 0);
+    /*
+     * First number is priority:
+     *   For real-time tasks -> negated prio - 1 (range -2 to -100)
+     *   For other tasks -> raw nice value (range 0 to 39)
+     *
+     * Second number is nice value (range 19 to -20)
+     *
+     * For details, see: https://man.he.net/man5/procfs
+     */
+    BUF_SPRINTF("%d %d ", (task->sched_policy == SCHED_OTHER) ?
+                            task->nice : (-(task->priority) - 1),
+                          task->nice ? (20 - task->nice) : 0);
+
     BUF_SPRINTF("%d %d ", threads, 0);
 
 #ifdef __x86_64__
@@ -238,11 +250,11 @@ size_t get_task_stat(struct task_t *task, char **_buf)
     BUF_SPRINTF("%lu %lu %lu %lu ", pending, blocked, sigignore, sigcatch);
 
     BUF_SPRINTF("%lu %lu %lu ",
-            (long unsigned int)((task->state == TASK_SLEEPING) ?
+            (long unsigned int)((get_task_state(task) == TASK_SLEEPING) ?
                                 task->wait_channel : 0),
             (long unsigned int)0, (long unsigned int)0);
 
-    BUF_SPRINTF("%d %d %u %u ", 0, 0, prio, task->sched_policy);
+    BUF_SPRINTF("%d %d %u %u ", 0, task->cpuid, prio, task->sched_policy);
 
     BUF_SPRINTF("%lu %lu %ld ",
             (long unsigned int)0,
@@ -257,16 +269,14 @@ size_t get_task_stat(struct task_t *task, char **_buf)
             (long unsigned int)task->arg_start,
             (long unsigned int)task->arg_end);
 
+    BUF_SPRINTF("%lu %lu ",
+            (long unsigned int)task->env_start,
+            (long unsigned int)task->env_end);
+
 #ifdef __x86_64__
-    BUF_SPRINTF("%lu %lu %u\n",
-            (long unsigned int)task->env_start,
-            (long unsigned int)task->env_end,
-            task->exit_status);
+    BUF_SPRINTF("%u\n", task->exit_status);
 #else
-    BUF_SPRINTF("%lu %lu %lu\n",
-            (long unsigned int)task->env_start,
-            (long unsigned int)task->env_end,
-            task->exit_status);
+    BUF_SPRINTF("%lu\n", task->exit_status);
 #endif      /* !__x86_64__ */
 
     return buflen;
@@ -283,6 +293,7 @@ size_t get_task_statm(struct task_t *task, char **buf)
         return 0;
     }
 
+    // all reported values are measured in pages
     size_t rss = get_task_pagecount(task);
     size_t shared = memregion_shared_pagecount(task);
     size_t text = memregion_text_pagecount(task);
@@ -311,7 +322,7 @@ size_t get_task_status(struct task_t *task, char **_buf)
     ssize_t buflen = 0;
     size_t len = 0;
     int i;
-    int threads = 0;
+    int threads = 1;
     char *buf;
     unsigned long pending = sigset_to_ulong((sigset_t *)&task->signal_pending);
     unsigned long blocked = sigset_to_ulong(&task->signal_mask);
@@ -326,37 +337,16 @@ size_t get_task_status(struct task_t *task, char **_buf)
     len = strlen(buf);
     buf += len;
     buflen += len;
-    
+
     BUF_SPRINTF("Umask:  %04o\n", task->fs ? task->fs->umask : 0);
     BUF_SPRINTF("State:  %c (%s)\n",
                 task_state_chr[task->state], task_state_str[task->state]);
     //BUF_SPRINTF("Tid:    %d\n", task->tid);
     BUF_SPRINTF("Pid:    %d\n", task->pid);
-    BUF_SPRINTF("Tgid:   %d\n", get_tgid(task) /* task->pid */);
+    BUF_SPRINTF("Tgid:   %d\n", get_tgid(task));
     BUF_SPRINTF("Pgid:   %d\n", task->pgid);
     BUF_SPRINTF("PPid:   %d\n", task->parent ? task->parent->pid : 0);
-
-    if(task->tracer_pid)
-    {
-        BUF_SPRINTF("TracerPid: %d\n", task->tracer_pid);
-
-        /*
-        struct task_t *tracer = get_task_by_tid(task->tracer_pid);
-        
-        if(tracer)
-        {
-            BUF_SPRINTF("TracerPid: %d\n", tracer->pid);
-        }
-        else
-        {
-            BUF_SPRINTF("TracerPid: %d\n", 0);
-        }
-        */
-    }
-    else
-    {
-        BUF_SPRINTF("TracerPid: %d\n", 0);
-    }
+    BUF_SPRINTF("TracerPid: %d\n", task->tracer_pid);
 
     BUF_SPRINTF("Uid:    %u\t%u\t%u\n", task->uid, task->euid, task->ssuid);
     BUF_SPRINTF("Gid:    %u\t%u\t%u\n", task->gid, task->egid, task->ssgid);
@@ -379,6 +369,8 @@ size_t get_task_status(struct task_t *task, char **_buf)
     BUF_SPRINTF("RssAnon:   %8ld kB\n",
                     PAGE_TO_KB(memregion_anon_pagecount(task)));
     BUF_SPRINTF("RssFile:   %8ld kB\n",
+                    PAGE_TO_KB(memregion_file_pagecount(task)));
+    BUF_SPRINTF("RssShmem:  %8ld kB\n",
                     PAGE_TO_KB(memregion_shared_pagecount(task)));
     BUF_SPRINTF("VmData:    %8ld kB\n",
                     PAGE_TO_KB(memregion_data_pagecount(task)));
@@ -388,11 +380,12 @@ size_t get_task_status(struct task_t *task, char **_buf)
                     PAGE_TO_KB(memregion_text_pagecount(task)));
 
     // TODO: fix when we implement shared libs
+    // See:  https://man.he.net/man5/procfs
     BUF_SPRINTF("VmLib:     %8ld kB\n", (long)0);
-    
+
     // TODO: fix when we implement swapping
     BUF_SPRINTF("VmSwap:    %8ld kB\n", (long)0);
-    
+
     // TODO: fix when we implement core dumping
     BUF_SPRINTF("CoreDumping:  %d\n", 0);
 

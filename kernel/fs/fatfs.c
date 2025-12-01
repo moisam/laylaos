@@ -2074,28 +2074,22 @@ static struct dirent *create_root_dirent(char *name)
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
  *             dirent struct (by calling ext2_entry_to_dirent() above), and the
  *             result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
-long fatfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                   struct cached_page_t **dbuf, size_t *dbuf_off)
+long fatfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
 {
     size_t stream_off;
     char *lfn = NULL;
     struct fat_dirent_t *dent;
     struct fat_private_t *priv;
+    struct cached_page_t *dbuf = NULL;
+    size_t dbuf_off = 0;
     size_t fnamelen = strlen(filename);
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
 
     if(!fnamelen)
     {
@@ -2125,25 +2119,27 @@ long fatfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
 
     KDEBUG("fatfs_finddir: dev 0x%x, ino 0x%x, file '%s'\n", dir->dev, dir->inode, filename);
 
-    if(fat_get_dirent(dir, filename, 0, dbuf, dbuf_off, &lfn, &stream_off) != 0)
+    if(fat_get_dirent(dir, filename, 0, &dbuf, &dbuf_off, &lfn, &stream_off) != 0)
     {
         KDEBUG("fatfs_finddir: fat_get_dirent res != 0\n");
         return -ENOENT;
     }
 
-    dent = (struct fat_dirent_t *)((*dbuf)->virt + (*dbuf_off));
+    dent = (struct fat_dirent_t *)(dbuf->virt + dbuf_off);
 
     if(lfn)
     {
         *entry = fatfs_entry_to_dirent(priv, dent, NULL, lfn, strlen(lfn),
-                                                stream_off + (*dbuf_off));
+                                                stream_off + dbuf_off);
         kfree(lfn);
     }
     else
     {
         *entry = fatfs_entry_to_dirent(priv, dent, NULL, filename, fnamelen,
-                                                stream_off + (*dbuf_off));
+                                                stream_off + dbuf_off);
     }
+
+    release_cached_page(dbuf);
 
     return *entry ? 0 : -ENOMEM;
 }
@@ -2161,29 +2157,23 @@ long fatfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long fatfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                            struct dirent **entry,
-                            struct cached_page_t **dbuf, size_t *dbuf_off)
+                            struct dirent **entry)
 {
     size_t stream_off;
     char *lfn = NULL;
     char namebuf[16];
     struct fat_dirent_t *dent;
     struct fat_private_t *priv;
+    struct cached_page_t *dbuf = NULL;
+    size_t dbuf_off = 0;
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
 
     if(get_priv(node->dev, &priv) < 0)
     {
@@ -2191,17 +2181,17 @@ long fatfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
     }
 
     // the inode number is the first cluster
-    if(fat_get_dirent(dir, NULL, node->inode, dbuf, dbuf_off, &lfn, &stream_off) != 0)
+    if(fat_get_dirent(dir, NULL, node->inode, &dbuf, &dbuf_off, &lfn, &stream_off) != 0)
     {
         return -ENOENT;
     }
 
-    dent = (struct fat_dirent_t *)((*dbuf)->virt + (*dbuf_off));
+    dent = (struct fat_dirent_t *)(dbuf->virt + dbuf_off);
 
     if(lfn)
     {
         *entry = fatfs_entry_to_dirent(priv, dent, NULL, lfn, strlen(lfn),
-                                                stream_off + (*dbuf_off));
+                                                stream_off + dbuf_off);
         kfree(lfn);
     }
     else
@@ -2209,8 +2199,10 @@ long fatfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
         // if no LFN, convert the short name and use it
         dos_to_unix_name(namebuf, (char *)dent);
         *entry = fatfs_entry_to_dirent(priv, dent, NULL, namebuf, strlen(namebuf),
-                                                stream_off + (*dbuf_off));
+                                                stream_off + dbuf_off);
     }
+
+    release_cached_page(dbuf);
 
     return *entry ? 0 : -ENOMEM;
 }

@@ -36,16 +36,18 @@
 #include <kernel/fcntl.h>
 #include <mm/mmngr_phys.h>
 #include <mm/kstack.h>
+#include <mm/mmap.h>
 #include <fs/pipefs.h>
 
 
-#define PIPE_SIZE               (PAGE_SIZE * 2)
+#define DEFAULT_PIPE_SIZE           (PAGE_SIZE * 2)
+#define PIPE_SIZE(node)             ((node)->blocks[2])
 
-#define EMPTY_PIPE(head, tail)  ((head) == (tail))
-#define FULL_PIPE(head, tail)   ((((tail) + 1) & (PIPE_SIZE - 1)) == (head))
+#define EMPTY_PIPE(head, tail)      ((head) == (tail))
+#define FULL_PIPE(node, head, tail) ((((tail) + 1) & (PIPE_SIZE(node) - 1)) == (head))
 
-#define PIPE_USED(head, tail)   ((tail + PIPE_SIZE - head) & (PIPE_SIZE - 1))
-#define PIPE_SPACE_FOR(head, tail, n)   ((PIPE_SIZE - PIPE_USED(head, tail)) >= n)
+#define PIPE_USED(node, head, tail) ((tail + PIPE_SIZE(node) - head) & (PIPE_SIZE(node) - 1))
+#define PIPE_SPACE_FOR(node, head, tail, n) ((PIPE_SIZE(node) - PIPE_USED(node, head, tail)) >= n)
 
 
 /*
@@ -53,12 +55,33 @@
  */
 void pipefs_free_node(struct fs_node_t *node)
 {
-    vmmngr_free_pages((virtual_addr)node->size, PIPE_SIZE);
+    /*
+     * There is an annoying subtle bug with pipes. Currently, we store the 
+     * pipe buffer's address in node->size, a leftover from our old x86 code.
+     * If I change this to use node->data (which is used by sockets to store
+     * a pointer to their internal socket struct), and use node->size to store
+     * the buffer size as it should, the code breaks. This probably means that
+     * node->size is used somewhere else in the codebase, and I should hunt
+     * this use down and fix it.
+     *
+     * At the moment, pipes use the following node fields:
+     *    node->size       => pipe buffer's address
+     *    node->blocks[0]  => pipe head pointer
+     *    node->blocks[1]  => pipe tail pointer
+     *    node->blocks[2]  => pipe size
+     *
+     * TODO: fix it!
+     */
+    if(node->size && node->blocks[2])
+    {
+        vmmngr_free_pages((virtual_addr)node->size, node->blocks[2]);
+    }
 
     node->size = 0;
     node->refs = 0;
     node->blocks[0] = 0;    // pipe head pointer
     node->blocks[1] = 0;    // pipe tail pointer
+    node->blocks[2] = 0;    // pipe size
 }
 
 
@@ -78,7 +101,7 @@ struct fs_node_t *pipefs_get_node(void)
         return NULL;
     }
     
-    if((node->size = vmmngr_alloc_and_map(PIPE_SIZE, 0,
+    if((node->size = vmmngr_alloc_and_map(DEFAULT_PIPE_SIZE, 0,
                                           flags, &phys, 
                                           REGION_PIPE)) == 0)
     {
@@ -90,6 +113,8 @@ struct fs_node_t *pipefs_get_node(void)
     node->refs = 2;
     node->blocks[0] = 0;    // pipe head pointer
     node->blocks[1] = 0;    // pipe tail pointer
+    node->blocks[2] = DEFAULT_PIPE_SIZE;
+
     node->mode = S_IFIFO;
     node->flags |= FS_NODE_PIPE;
 
@@ -100,6 +125,64 @@ struct fs_node_t *pipefs_get_node(void)
     node->write = pipefs_write;
 
     return node;
+}
+
+
+long pipefs_get_size(struct fs_node_t *node)
+{
+    return node->blocks[2];
+}
+
+
+long pipefs_set_size(struct fs_node_t *node, int __newsz)
+{
+    uintptr_t newbuf, oldbuf;
+    size_t oldsz, newsz = __newsz;
+    physical_addr phys;
+    int flags = (this_core->cur_task->user ? I86_PTE_USER : 0) |
+                  I86_PTE_PRESENT | I86_PTE_WRITABLE;
+
+    if(newsz < PAGE_SIZE)
+    {
+        newsz = PAGE_SIZE;
+    }
+
+    // Ensure we alloc in PAGE_SIZE granularity
+    newsz = align_up(newsz);
+
+    if(newsz == node->blocks[2])
+    {
+        return newsz;
+    }
+
+    // We should only fail if the new size is smaller than the amount of
+    // buffer space currently in use. Being lazy, we just fail if the new
+    // size is smaller than the old size
+    if(newsz < node->blocks[2])
+    {
+        return -EBUSY;
+    }
+
+    if((newbuf = vmmngr_alloc_and_map(newsz, 0,
+                                      flags, &phys, 
+                                      REGION_PIPE)) == 0)
+    {
+        return -EBUSY;
+    }
+
+    kernel_mutex_lock(&node->lock);
+    oldbuf = node->size;
+    oldsz = node->blocks[2];
+    node->size = newbuf;
+    node->blocks[2] = newsz;
+    kernel_mutex_unlock(&node->lock);
+
+    if(oldbuf && oldsz)
+    {
+        vmmngr_free_pages((virtual_addr)oldbuf, oldsz);
+    }
+
+    return node->blocks[2];
 }
 
 
@@ -136,7 +219,7 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
 
     // now read
     unsigned char *d = buf;
-    unsigned char *s = (unsigned char *)node->size;
+    //unsigned char *s = (unsigned char *)node->size;
     head = node->blocks[1];
     tail = node->blocks[0];
 
@@ -166,7 +249,24 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
         selrecord(&node->select_channel);
 
         // wait for writers
-        if(block_task2(&node->select_channel, PIT_FREQUENCY * 3) == EINTR)
+        set_task_waitchan(this_core->cur_task, &node->select_channel);
+        block_task_timeout(this_core->cur_task, PIT_FREQUENCY);
+        /*
+        set_task_waitchan(this_core->cur_task, &node->select_channel);
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+        scheduler();
+        */
+#if 0
+        /*
+        if(block_task2(&node->select_channel, PIT_FREQUENCY) == EINTR)
+        {
+            return -EINTR;
+        }
+        */
+        block_task(&node->select_channel, 1);
+#endif
+
+       	if(get_task_waking_signal(this_core->cur_task))
         {
             return -EINTR;
         }
@@ -175,17 +275,22 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
         tail = node->blocks[0];
     }
 
+    kernel_mutex_lock(&node->lock);
+
     while(count != 0 && !EMPTY_PIPE(head, tail))
     {
         count--;
 
-        *d = s[head];
+        // *d = s[head];
+        *d = ((unsigned char *)node->size)[head];
         d++;
 
-        head = (head + 1) & (PIPE_SIZE - 1);
+        head = (head + 1) & (PIPE_SIZE(node) - 1);
         node->blocks[1] = head;
         tail = node->blocks[0];
     }
+
+    kernel_mutex_unlock(&node->lock);
 
     selwakeup(&node->select_channel);   // wakeup writers
     return d - buf;
@@ -231,7 +336,7 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
 
     // now write
     unsigned char *d = buf;
-    unsigned char *s = (unsigned char *)node->size;
+    //unsigned char *s = (unsigned char *)node->size;
     head = node->blocks[1];
     tail = node->blocks[0];
 
@@ -267,20 +372,23 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
      *        with writes by other processes.
      */
 
-    if((f->flags & O_NONBLOCK) && !PIPE_SPACE_FOR(head, tail, count))
+    if((f->flags & O_NONBLOCK) && !PIPE_SPACE_FOR(node, head, tail, count))
     {
-        if(count <= PIPE_BUF || FULL_PIPE(head, tail))
+        if(count <= PIPE_BUF || FULL_PIPE(node, head, tail))
         {
             return -EAGAIN;
         }
     }
 
+    kernel_mutex_lock(&node->lock);
+
     while(count != 0)
     {
         count--;
 
-        while(FULL_PIPE(head, tail))
+        while(FULL_PIPE(node, head, tail))
         {
+            kernel_mutex_unlock(&node->lock);
             selwakeup(&node->select_channel);   // wakeup readers
 
             if(node->refs < 2)     // no readers
@@ -297,21 +405,43 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
             selrecord(&node->select_channel);
 
             // wait for readers
-            if(block_task2(&node->select_channel, PIT_FREQUENCY * 3) == EINTR)
+            set_task_waitchan(this_core->cur_task, &node->select_channel);
+            block_task_timeout(this_core->cur_task, PIT_FREQUENCY);
+            /*
+            set_task_waitchan(this_core->cur_task, &node->select_channel);
+            set_task_state(this_core->cur_task, TASK_SLEEPING);
+            scheduler();
+            */
+#if 0
+            /*
+            if(block_task2(&node->select_channel, PIT_FREQUENCY) == EINTR)
             {
                 return -EINTR;
             }
+            */
+            block_task(&node->select_channel, 1);
+#endif
+
+        	if(get_task_waking_signal(this_core->cur_task))
+        	{
+        	    return -EINTR;
+        	}
 
             head = node->blocks[1];
             tail = node->blocks[0];
+
+            kernel_mutex_lock(&node->lock);
         }
 
-        s[tail] = *d++;
+        //s[tail] = *d++;
+        ((unsigned char *)node->size)[tail] = *d++;
 
-        tail = (tail + 1) & (PIPE_SIZE - 1);
+        tail = (tail + 1) & (PIPE_SIZE(node) - 1);
         node->blocks[0] = tail;
         head = node->blocks[1];
     }
+
+    kernel_mutex_unlock(&node->lock);
 
     selwakeup(&node->select_channel);   // wakeup readers
 
@@ -324,10 +454,15 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
  */
 long pipefs_select(struct file_t *f, int which)
 {
+    volatile unsigned long head, tail;
+
+    head = f->node->blocks[1];
+    tail = f->node->blocks[0];
+
 	switch(which)
 	{
     	case FREAD:
-            if(!EMPTY_PIPE(f->node->blocks[1], f->node->blocks[0]))
+            if(!EMPTY_PIPE(head, tail))
     		{
     			return 1;
     		}
@@ -342,7 +477,7 @@ long pipefs_select(struct file_t *f, int which)
     		break;
 
     	case FWRITE:
-            if(!FULL_PIPE(f->node->blocks[1], f->node->blocks[0]))
+            if(!FULL_PIPE(f->node, head, tail))
     		{
     			return 1;
     		}
@@ -376,10 +511,14 @@ long pipefs_select(struct file_t *f, int which)
 long pipefs_poll(struct file_t *f, struct pollfd *pfd)
 {
     long res = 0;
+    volatile unsigned long head, tail;
+
+    head = f->node->blocks[1];
+    tail = f->node->blocks[0];
 
     if(pfd->events & POLLIN)
     {
-        if(!EMPTY_PIPE(f->node->blocks[1], f->node->blocks[0]) ||
+        if(!EMPTY_PIPE(head, tail) ||
            f->node->refs != 2)
         {
             pfd->revents |= POLLIN;
@@ -393,7 +532,7 @@ long pipefs_poll(struct file_t *f, struct pollfd *pfd)
 
     if(pfd->events & POLLOUT)
     {
-        if(!FULL_PIPE(f->node->blocks[1], f->node->blocks[0]) ||
+        if(!FULL_PIPE(f->node, head, tail) ||
            f->node->refs != 2)
         {
             pfd->revents |= POLLOUT;

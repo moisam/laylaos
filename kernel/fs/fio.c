@@ -35,6 +35,7 @@
 #include <kernel/net/socket.h>
 
 
+/*
 long fdnode(int fd, struct task_t *t, struct file_t **f, struct fs_node_t **node)
 {
     *f = NULL;
@@ -53,6 +54,7 @@ long fdnode(int fd, struct task_t *t, struct file_t **f, struct fs_node_t **node
     
     return 0;
 }
+*/
 
 
 static long fdalloc(int *res)

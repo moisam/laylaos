@@ -43,6 +43,7 @@
 #include <kernel/dev.h>
 #include <kernel/pci.h>
 #include <kernel/fio.h>
+#include <kernel/common.h>
 #include <fs/tmpfs.h>
 #include <fs/procfs.h>
 #include <fs/devfs.h>
@@ -106,6 +107,9 @@
 
 // defined in drivers/pci.c
 extern struct pci_bus_t *first_pci_bus;
+
+// defined in fs/devfs.c
+extern struct fs_node_t *devfs_root;
 
 
 #define PROCFS_BLOCK_SIZE               512
@@ -209,27 +213,31 @@ struct procfs_entry_t procfs_root_entries[] =
     { "meminfo"         , PROCFS_FILE_MODE, 0, 0, 0, get_meminfo, },
 #define PROC_MODULES        14
     { "modules"         , PROCFS_FILE_MODE, 0, 0, 0, get_modules, },
-#define PROC_MOUNTS         15
+#define PROC_MOUNTINFO      15
+    { "mountinfo"       , PROCFS_FILE_MODE, 0, 0, 0, get_mountinfo, },
+#define PROC_MOUNTSTATS     16
+    { "mountstats"      , PROCFS_FILE_MODE, 0, 0, 0, get_mountstats, },
+#define PROC_MOUNTS         17
     { "mounts"          , PROCFS_FILE_MODE, 0, 0, 0, get_mounts, },
-#define PROC_PARTITIONS     16
+#define PROC_PARTITIONS     18
     { "partitions"      , PROCFS_FILE_MODE, 0, 0, 0, get_partitions, },
-#define PROC_STAT           17
+#define PROC_STAT           19
     { "stat"            , PROCFS_FILE_MODE, 0, 0, 0, get_sysstat, },
-#define PROC_TIMER_LIST     18
+#define PROC_TIMER_LIST     20
     { "timer_list"      , PROCFS_FILE_MODE, 0, 0, 0, NULL, },
-#define PROC_UPTIME         19
+#define PROC_UPTIME         21
     { "uptime"          , PROCFS_FILE_MODE, 0, 0, 0, get_uptime, },
-#define PROC_VERSION        20
+#define PROC_VERSION        22
     { "version"         , PROCFS_FILE_MODE, 0, 0, 0, get_version, },
-#define PROC_VMSTAT         21
+#define PROC_VMSTAT         23
     { "vmstat"          , PROCFS_FILE_MODE, 0, 0, 0, get_vmstat, },
-#define PROC_KSYMS          22
+#define PROC_KSYMS          24
     { "ksyms"           , PROCFS_FILE_MODE, 0, 0, 0, get_ksyms, },
-#define PROC_SYSCALLS       23
+#define PROC_SYSCALLS       25
     { "syscalls"        , PROCFS_FILE_MODE, 0, 0, 0, get_syscalls, },
-#define PROC_SELF           24
+#define PROC_SELF           26
     { "self"            , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
-#define PROC_THREAD_SELF    25
+#define PROC_THREAD_SELF    27
     { "thread-self"     , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
 };
 
@@ -310,19 +318,25 @@ struct procfs_pid_entry_t procfs_pid_entries[] =
     { "maps"            , PROCFS_FILE_MODE, 0, 0, 0, get_task_mmaps, },
 #define PROC_PID_MEM        11
     { "mem"             , PROCFS_FILE_MODE, 0, 0, 0, NULL, },
-#define PROC_PID_MOUNTS     12
+#define PROC_PID_MOUNTINFO  12
+    { "mountinfo"       , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
+#define PROC_PID_MOUNTSTATS 13
+    { "mountstats"      , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
+#define PROC_PID_MOUNTS     14
     { "mounts"          , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
-#define PROC_PID_ROOT       13
+#define PROC_PID_ROOT       15
     { "root"            , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
-#define PROC_PID_STAT       14
+#define PROC_PID_STAT       16
     { "stat"            , PROCFS_FILE_MODE, 0, 0, 0, get_task_stat, },
-#define PROC_PID_STATM      15
+#define PROC_PID_STATM      17
     { "statm"           , PROCFS_FILE_MODE, 0, 0, 0, get_task_statm, },
-#define PROC_PID_STATUS     16
+#define PROC_PID_STATUS     18
     { "status"          , PROCFS_FILE_MODE, 0, 0, 0, get_task_status, },
-#define PROC_PID_TASK       17
+#define PROC_PID_SMAPS      19
+    { "smaps"           , PROCFS_FILE_MODE, 0, 0, 0, get_task_smaps, },
+#define PROC_PID_TASK       20
     { "task"            , PROCFS_DIR_MODE , 0, 0, 0, NULL, },
-#define PROC_PID_TIMERS     18
+#define PROC_PID_TIMERS     21
     { "timers"          , PROCFS_FILE_MODE, 0, 0, 0, get_task_posix_timers, },
 };
 
@@ -900,18 +914,12 @@ struct dirent *procfs_entry_to_dirent(ino_t ino,
  * Outputs:
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long procfs_finddir(struct fs_node_t *dirnode, char *filename,
-                    struct dirent **entry,
-                    struct cached_page_t **dbuf, size_t *dbuf_off)
+                    struct dirent **entry)
 {
     if(!valid_procfs_node(dirnode))
     {
@@ -920,8 +928,6 @@ long procfs_finddir(struct fs_node_t *dirnode, char *filename,
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
 
     int dir = INODE_DIR_BITS(dirnode->inode);
     int subdir = INODE_SUBDIR_BITS(dirnode->inode);
@@ -1293,18 +1299,12 @@ long procfs_finddir(struct fs_node_t *dirnode, char *filename,
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
-                             struct dirent **entry,
-                             struct cached_page_t **dbuf, size_t *dbuf_off)
+                             struct dirent **entry)
 {
     if(!valid_procfs_node(dirnode))
     {
@@ -1313,8 +1313,6 @@ long procfs_finddir_by_inode(struct fs_node_t *dirnode, struct fs_node_t *node,
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
 
     int dir = INODE_DIR_BITS(dirnode->inode);
     int subdir = INODE_SUBDIR_BITS(dirnode->inode);
@@ -2212,6 +2210,22 @@ long copy_internal(char *__dest, char *__src, size_t destsz,
 }
 
 
+static long get_devfs_path(struct fs_node_t *node, char *buf, size_t bufsz)
+{
+    struct dirent *entry;
+    int res;
+
+    if((res = devfs_finddir_by_inode(devfs_root, node, &entry)) < 0)
+    {
+        return res;
+    }
+
+    ksprintf(buf, bufsz, "/dev/%s", entry->d_name);
+    kfree(entry);
+    return strlen(buf);
+}
+
+
 /*
  * Read the contents of a symbolic link. As different filesystems might have
  * different ways of storing symlinks (e.g. ext2 stores links < 60 chars in
@@ -2260,23 +2274,23 @@ long procfs_read_symlink(struct fs_node_t *link, char *buf,
             switch(file)
             {
                 case PROC_SELF       :   /* /proc/self */
-                    if(!(p = (char *)kmalloc(32)))
+                    if(!(p = (char *)kmalloc(64)))
                     {
                         return -ENOMEM;
                     }
 
-                    ksprintf(p, 32, "/proc/%u", tgid(this_core->cur_task));
+                    ksprintf(p, 64, "/proc/%u", tgid(this_core->cur_task));
                     res = copy_string_internal(buf, p, bufsz, kernel);
                     kfree(p);
                     return res;
 
                 case PROC_THREAD_SELF:   /* /proc/thread-self */
-                    if(!(p = (char *)kmalloc(32)))
+                    if(!(p = (char *)kmalloc(64)))
                     {
                         return -ENOMEM;
                     }
 
-                    ksprintf(p, 32, "/proc/%u/task/%u", 
+                    ksprintf(p, 64, "/proc/%u/task/%u", 
                             tgid(this_core->cur_task), this_core->cur_task->pid);
                     res = copy_string_internal(buf, p, bufsz, kernel);
                     kfree(p);
@@ -2314,6 +2328,7 @@ long procfs_read_symlink(struct fs_node_t *link, char *buf,
                                              buf, bufsz, kernel);
 
                 case PROC_PID_EXE       :   /* /proc/[pid]/exe */
+                    /*
                     if(!task->exe_dev || !task->exe_inode)
                     {
                         *buf = '\0';
@@ -2322,6 +2337,15 @@ long procfs_read_symlink(struct fs_node_t *link, char *buf,
 
                     return copy_task_dirpath(task->exe_dev, task->exe_inode,
                                              buf, bufsz, kernel);
+                    */
+                    if(!task->exe_path)
+                    {
+                        *buf = '\0';
+                        return 0;
+                    }
+
+                    ksprintf(buf, bufsz, "%s", task->exe_path);
+                    return strlen(buf);
 
                 case PROC_PID_ROOT      :   /* /proc/[pid]/root */
                     if(!task->fs || !task->fs->root)
@@ -2335,8 +2359,15 @@ long procfs_read_symlink(struct fs_node_t *link, char *buf,
                                              buf, bufsz, kernel);
 
                 case PROC_PID_MOUNTS    :   /* /proc/[pid]/mounts */
-                    //sprintf(buf, "/proc/mounts");
                     ksprintf(buf, bufsz, "/proc/mounts");
+                    return strlen(buf);
+
+                case PROC_PID_MOUNTSTATS:   /* /proc/[pid]/mountstats */
+                    ksprintf(buf, bufsz, "/proc/mountstats");
+                    return strlen(buf);
+
+                case PROC_PID_MOUNTINFO :   /* /proc/[pid]/mountinfo */
+                    ksprintf(buf, bufsz, "/proc/mountinfo");
                     return strlen(buf);
 
                 default:
@@ -2367,41 +2398,65 @@ long procfs_read_symlink(struct fs_node_t *link, char *buf,
 
             KDEBUG("%s: dev 0x%x, inode 0x%x\n", __func__, node->dev, node->inode);
 
-            //__asm__ __volatile__("xchg %%bx, %%bx"::);
+            /*
+             * First handle special files, e.g. sockets, pipes, ...
+             */
 
             //if(S_ISSOCK(node->mode))
             if(IS_SOCKET(node))
             {
+                /*
+                 * TODO: fix this when we implement socket node numbers.
+                 */
                 ksprintf(buf, bufsz, "socket:[%d]", node->inode);
                 return strlen(buf);
             }
 
             if(IS_PIPE(node))
             {
+                /*
+                 * TODO: fix this when we implement pipe node numbers.
+                 */
                 ksprintf(buf, bufsz, "pipe:[%d]", node->inode);
                 return strlen(buf);
             }
-            
-            if(S_ISCHR(node->mode) && MAJOR(node->blocks[0]) == PTY_MASTER_MAJ)
+
+            if(S_ISCHR(node->mode))
             {
-                /*
-                 * TODO: fix this to return a link to the proper /dev/ptmx.
-                 */
-                ksprintf(buf, bufsz, "/dev/ptmx");
-                return strlen(buf);
+                if(MAJOR(node->blocks[0]) == PTY_MASTER_MAJ)
+                {
+                    ksprintf(buf, bufsz, "/dev/ptmx");
+                    return strlen(buf);
+                }
+
+                if(MAJOR(node->blocks[0]) == PTY_SLAVE_MAJ)
+                {
+                    ksprintf(buf, bufsz, "/dev/pts/%d", MINOR(node->blocks[0]));
+                    return strlen(buf);
+                }
             }
+
+            if(node->dev == DEV_DEVID)
+            {
+                res = get_devfs_path(node, buf, bufsz);
+                return res;
+            }
+
+            /*
+             * Next handle normal files
+             */
 
             if((node = get_node(node->dev, node->inode, GETNODE_FOLLOW_MPOINTS)) == NULL)
             {
                 __asm__ __volatile__("xchg %%bx, %%bx":::);
-                KDEBUG("%s: no node %d\n", __func__, 1);
+                KDEBUG("%s: no node, dev 0x%x, ino 0x%x\n", __func__, node->dev, node->inode);
                 return -EINVAL;
             }
 
             if((res = get_dentry(node, &dent)) < 0)
             {
                 __asm__ __volatile__("xchg %%bx, %%bx":::);
-                KDEBUG("%s: no dent %d\n", __func__, 2);
+                KDEBUG("%s: no dent %d, dev 0x%x, ino 0x%x\n", __func__, res, node->dev, node->inode);
                 release_node(node);
                 return res;
             }
@@ -2411,7 +2466,7 @@ long procfs_read_symlink(struct fs_node_t *link, char *buf,
             if(!dent->path)
             {
                 __asm__ __volatile__("xchg %%bx, %%bx":::);
-                KDEBUG("%s: no path %d\n", __func__, 3);
+                KDEBUG("%s: no path, dev 0x%x, ino 0x%x\n", __func__, node->dev, node->inode);
                 release_dentry(dent);
                 release_node(node);
                 return -ENOENT;
@@ -2514,9 +2569,6 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
     size_t buflen = 0, j, i = *pos;
     char *procbuf = NULL;
     volatile struct task_t *task;
-    
-    //KDEBUG("procfs_read_file: pid 0x%x, file 0x%x\n", pid, file);
-    KDEBUG("procfs_read_inode: dir %d, subdir %d, file %d\n", dir, subdir, file);
 
     switch(dir)
     {
@@ -2543,6 +2595,8 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                 case PROC_MEMINFO    :   /* /proc/meminfo     */
                 case PROC_MODULES    :   /* /proc/modules     */
                 case PROC_MOUNTS     :   /* /proc/mounts      */
+                case PROC_MOUNTSTATS :   /* /proc/mountstats  */
+                case PROC_MOUNTINFO  :   /* /proc/mountinfo   */
                 case PROC_PARTITIONS :   /* /proc/partitions  */
                 case PROC_STAT       :   /* /proc/stat        */
                 case PROC_UPTIME     :   /* /proc/uptime      */
@@ -2635,7 +2689,7 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
             switch(file)
             {
                 case PROC_PID_CMDLINE   :   /* /proc/[pid]/cmdline */
-                    if(task->state == TASK_ZOMBIE)
+                    if(get_task_state(task) == TASK_ZOMBIE)
                     {
                         break;
                     }
@@ -2656,6 +2710,7 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                     break;
 
                 case PROC_PID_EXE       :   /* /proc/[pid]/exe */
+                    /*
                     if(!task->exe_dev || !task->exe_inode)
                     {
                         break;
@@ -2666,10 +2721,21 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                                                task->exe_inode, procbuf,
                                                2048, 1);
                     break;
+                    */
+                    if(!task->exe_path)
+                    {
+                        break;
+                    }
+
+                    PR_MALLOC(procbuf, 2048);
+                    ksprintf(procbuf, 2048, "%s", task->exe_path);
+                    buflen = strlen(procbuf);
+                    break;
 
                 case PROC_PID_IO        :   /* /proc/[pid]/io */
                 case PROC_PID_LIMITS    :   /* /proc/[pid]/limits */
                 case PROC_PID_MAPS      :   /* /proc/[pid]/maps */
+                case PROC_PID_SMAPS     :   /* /proc/[pid]/smaps */
                 case PROC_PID_STAT      :   /* /proc/[pid]/stat */
                 case PROC_PID_STATM     :   /* /proc/[pid]/statm */
                 case PROC_PID_STATUS    :   /* /proc/[pid]/status */
@@ -2679,9 +2745,18 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
 
                 case PROC_PID_MEM       :   /* /proc/[pid]/mem */
                     /*
-                     * TODO:
+                     * TODO: check this works.
                      */
-                    break;
+                    j = read_other_taskmem((struct task_t *)task, *pos,
+                                           0, KERNEL_MEM_START,
+                                           (char *)buf, count);
+
+                    if(j != 0)
+                    {
+                        (*pos) += j;
+                    }
+
+                    return j;
 
                 case PROC_PID_CWD       :   /* /proc/[pid]/cwd */
                     if(!task->fs || !task->fs->cwd)

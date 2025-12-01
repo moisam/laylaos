@@ -49,6 +49,9 @@
 
 extern time_t timegm(struct tm *tm);
 
+static long copy_symlink(struct iso9660_dirent_t *dent, 
+                         char *buf, size_t bufsz, int size_only);
+
 /*
  * See: https://wiki.osdev.org/ISO_9660
  */
@@ -63,6 +66,18 @@ extern time_t timegm(struct tm *tm);
 # define GET_WORD(w)            ((w).big)
 #endif      /* BYTE_ORDER */
 
+#define SYMLINK_COMPONENT_FLAG_CONTINUE     (1 << 0)
+#define SYMLINK_COMPONENT_FLAG_CURRENT      (1 << 1)
+#define SYMLINK_COMPONENT_FLAG_PARENT       (1 << 2)
+#define SYMLINK_COMPONENT_FLAG_ROOT         (1 << 3)
+
+#define ALTNAME_FLAG_CONTINUE               (1 << 0)
+#define ALTNAME_FLAG_CURRENT                (1 << 1)
+#define ALTNAME_FLAG_PARENT                 (1 << 2)
+
+#define MAY_FREE(need_free, n)  \
+    if(need_free) { kfree(n); n = NULL; }
+
 
 /*
  * As ISO9660 has no notion of inode numbers, we cheat by using LBA addresses
@@ -73,9 +88,8 @@ extern time_t timegm(struct tm *tm);
  */
 struct lba_cacheent_t
 {
-    uint32_t lba;
-    uint32_t lba_parent;
-    uint32_t llba_parent;
+    ino_t ino, parent_ino;
+    size_t lba_parent, llba_parent;
     struct lba_cacheent_t *next;
 };
 
@@ -131,7 +145,7 @@ struct fs_ops_t iso9660fs_ops =
 };
 
 
-static uint32_t iso9660_timedate_to_posix_time(unsigned char *date)
+static uint32_t iso9660_timedate_to_posix_time(uint8_t *date)
 {
     struct tm ftm;
     ftm.tm_year = date[0];
@@ -145,43 +159,153 @@ static uint32_t iso9660_timedate_to_posix_time(unsigned char *date)
 }
 
 
-static void set_node_flags(struct fs_node_t *node, struct iso9660_dirent_t *dent)
+static uint32_t iso9660_long_timedate_to_posix_time(uint8_t *date)
 {
-    node->mode = 0;
-    
-    if(IS_ISO9660_DIR(dent->flags))
-    {
-        node->mode |= S_IFDIR;
-        node->mode |= (S_IXUSR | S_IXGRP | S_IXOTH);
-        
-        // give directories a link count of 2 at least, to account for dot and
-        // dot-dot entries
-        node->links = 2;
-    }
-    else
-    {
-        node->mode |= S_IFREG;
+    struct tm ftm;
 
-        // give files a link count of 1, as we don't support hard links on CDs
-        node->links = 1;
-    }
-    
-    node->ctime = iso9660_timedate_to_posix_time(dent->datetime);
-    node->mtime = node->ctime;
-    node->atime = node->ctime;
-    
-    /*
-     * TODO: read the extended attribute record (if any) for user/group 
-     *       permissions.
-     */
-    
-    node->uid = 0;
-    node->gid = 0;
-    node->mode |= (S_IRUSR | S_IRGRP | S_IROTH);
+#define __DIGIT(b, i, s)    (b[i] >= '0' && b[i] <= '9') ?  \
+                                    ((b[i] - '0') * s) : 0
+
+    ftm.tm_year = __DIGIT(date, 0, 1000) + __DIGIT(date, 1, 100) +
+                  __DIGIT(date, 2, 10) + __DIGIT(date, 3, 1);
+    ftm.tm_mon  = __DIGIT(date, 4, 10) + __DIGIT(date, 5, 1) - 1;
+    ftm.tm_mday = __DIGIT(date, 6, 10) + __DIGIT(date, 7, 1);
+    ftm.tm_hour = __DIGIT(date, 8, 10) + __DIGIT(date, 9, 1);
+    ftm.tm_min  = __DIGIT(date, 10, 10) + __DIGIT(date, 11, 1);
+    ftm.tm_sec  = __DIGIT(date, 12, 10) + __DIGIT(date, 13, 1);
+
+#undef __DIGIT
+
+    uint32_t res = (uint32_t)timegm(&ftm);
+    return res;
 }
 
 
-static struct lba_cacheent_t *get_cacheent(dev_t dev, uint32_t lba)
+/*
+ * Get a System Use Sharing Protocol (SUSP) field given its signature.
+ */
+static 
+struct iso9660_susp_field_t *get_susp_field(struct iso9660_dirent_t *dent,
+                                            uint8_t sig1, uint8_t sig2, uint8_t ver)
+{
+    size_t x = (sizeof(struct iso9660_dirent_t) + dent->namelen + 1) & ~1;
+    char *s = (char *)dent + x;
+    char *s2 = (char *)dent + dent->reclen;
+
+    while(s < s2)
+    {
+        if(s[0] == sig1 && s[1] == sig2 && s[3] == ver)
+        {
+            return (struct iso9660_susp_field_t *)s;
+        }
+
+        s += s[2];
+    }
+
+    return NULL;
+}
+
+
+static void set_node_flags(struct fs_node_t *node, 
+                           struct iso9660_dirent_t *dent, int is_root)
+{
+    struct iso9660_susp_field_t *field;
+
+    // If the CD supports the RockRidge extension, use it to get POSIX file
+    // attributes (PX) field. The root node is stored in the superblock and
+    // does not have a System Use area.
+    // See: https://people.freebsd.org/~emaste/rrip112.pdf
+    if(!is_root && (field = get_susp_field(dent, 'P', 'X', 1)))
+    {
+        struct iso9660_rrip_px_t *px = (struct iso9660_rrip_px_t *)field;
+
+        node->mode = GET_DWORD(px->mode);
+        node->links = GET_DWORD(px->links);
+        node->uid = GET_DWORD(px->uid);
+        node->gid = GET_DWORD(px->gid);
+
+        // If this is a char or block device, get its device number
+        if(S_ISBLK(node->mode) || S_ISCHR(node->mode))
+        {
+            if((field = get_susp_field(dent, 'P', 'N', 1)))
+            {
+                struct iso9660_rrip_pn_t *pn = (struct iso9660_rrip_pn_t *)field;
+
+                node->blocks[0] = GET_DWORD(pn->devlo);
+
+                if(sizeof(size_t) > 4)
+                {
+                    node->blocks[0] |= (size_t)GET_DWORD(pn->devhi) << 32;
+                }
+            }
+        }
+        // If its a symbolic link, get its size, as the dirent does not
+        // record symlink sizes in ISO9660
+        else if(S_ISLNK(node->mode))
+        {
+            node->size = copy_symlink(dent, NULL, 0, 1);
+        }
+    }
+    else
+    {
+        node->mode = 0;
+
+        if(IS_ISO9660_DIR(dent->flags))
+        {
+            node->mode |= S_IFDIR;
+            node->mode |= (S_IXUSR | S_IXGRP | S_IXOTH);
+
+            // give directories a link count of 2 at least, to account for dot and
+            // dot-dot entries
+            node->links = 2;
+        }
+        else
+        {
+            node->mode |= S_IFREG;
+
+            // give files a link count of 1, as we don't support hard links on CDs
+            node->links = 1;
+        }
+
+        node->uid = 0;
+        node->gid = 0;
+        node->mode |= (S_IRUSR | S_IRGRP | S_IROTH);
+    }
+
+    node->ctime = iso9660_timedate_to_posix_time(dent->datetime);
+
+    // If the CD supports the RockRidge extension, use it to get the Time
+    // Fields (TF) field. The root node is stored in the superblock and
+    // does not have a System Use area.
+    // See: https://people.freebsd.org/~emaste/rrip112.pdf
+    if(!is_root && (field = get_susp_field(dent, 'T', 'F', 1)))
+    {
+        struct iso9660_rrip_tf_t *tf = (struct iso9660_rrip_tf_t *)field;
+        size_t sz = (tf->flags & (1 << 7)) ? 17 : 7;
+
+#define NODE_GET_TIME(which, off)                                             \
+    if(tf->flags & (1 << off)) {                                              \
+        uint8_t *tmp = (uint8_t *)tf + 5 + (sz * off);                        \
+        node->which = (sz == 17) ? iso9660_long_timedate_to_posix_time(tmp) : \
+                                   iso9660_timedate_to_posix_time(tmp);       \
+    } else node->which = node->ctime;
+
+        NODE_GET_TIME(ctime, 0);
+        NODE_GET_TIME(mtime, 1);
+        NODE_GET_TIME(atime, 2);
+
+#undef NODE_GET_TIME
+
+    }
+    else
+    {
+        node->mtime = node->ctime;
+        node->atime = node->ctime;
+    }
+}
+
+
+static struct lba_cacheent_t *get_cacheent(dev_t dev, ino_t ino)
 {
     struct lba_cache_t *c;
     struct lba_cacheent_t *cent;
@@ -198,7 +322,7 @@ static struct lba_cacheent_t *get_cacheent(dev_t dev, uint32_t lba)
         
         for(cent = c->lba_cache_head.next; cent != NULL; cent = cent->next)
         {
-            if(cent->lba != lba)
+            if(cent->ino != ino)
             {
                 continue;
             }
@@ -215,8 +339,8 @@ static struct lba_cacheent_t *get_cacheent(dev_t dev, uint32_t lba)
 }
 
 
-static struct lba_cacheent_t *alloc_cacheent(uint32_t lba, uint32_t lba_parent,
-                                             uint32_t llba_parent)
+static struct lba_cacheent_t *alloc_cacheent(ino_t ino, ino_t parent_ino,
+                                             size_t lba_parent, size_t llba_parent)
 {
     struct lba_cacheent_t *cent;
 
@@ -226,30 +350,31 @@ static struct lba_cacheent_t *alloc_cacheent(uint32_t lba, uint32_t lba_parent,
     }
     
     A_memset(cent, 0, sizeof(struct lba_cacheent_t));
-    cent->lba = lba;
+    cent->ino = ino;
+    cent->parent_ino = parent_ino;
     cent->lba_parent = lba_parent;
     cent->llba_parent = llba_parent;
-    
+
     return cent;
 }
 
 
-static int add_cacheent(struct fs_node_t *dir, uint32_t lba, uint32_t block_size)
+static int add_cacheent(struct fs_node_t *dir, ino_t ino, uint32_t block_size)
 {
     struct lba_cache_t *c;
     struct lba_cacheent_t *cent;
-    uint32_t lba_parent, llba_parent;
+    size_t lba_parent, llba_parent;
     dev_t dev = dir->dev;
     size_t blocks = dir->size / block_size;
-    
+
     if(dir->size % block_size)
     {
         blocks++;
     }
-    
-    lba_parent = dir->blocks[0];
+
+    lba_parent = dir->blocks[1];
     llba_parent = lba_parent + blocks;
-    
+
     // try to find a cache queue with the same dev id
     for(c = lba_cache; c < &lba_cache[MAX_ISO9660_DEVICES]; c++)
     {
@@ -260,7 +385,7 @@ static int add_cacheent(struct fs_node_t *dir, uint32_t lba, uint32_t block_size
             // find out if this lba is already cached
             for(cent = c->lba_cache_head.next; cent != NULL; cent = cent->next)
             {
-                if(cent->lba == lba)
+                if(cent->ino == ino)
                 {
                     // it is, don't do anything
                     kernel_mutex_unlock(&c->lock);
@@ -269,7 +394,7 @@ static int add_cacheent(struct fs_node_t *dir, uint32_t lba, uint32_t block_size
             }
             
             // it isn't, add a new entry
-            if(!(cent = alloc_cacheent(lba, lba_parent, llba_parent)))
+            if(!(cent = alloc_cacheent(ino, dir->inode, lba_parent, llba_parent)))
             {
                 kernel_mutex_unlock(&c->lock);
                 return -ENOMEM;
@@ -295,7 +420,7 @@ static int add_cacheent(struct fs_node_t *dir, uint32_t lba, uint32_t block_size
             continue;
         }
 
-        if(!(cent = alloc_cacheent(lba, lba_parent, llba_parent)))
+        if(!(cent = alloc_cacheent(ino, dir->inode, lba_parent, llba_parent)))
         {
             kernel_mutex_unlock(&c->lock);
             return -ENOMEM;
@@ -356,6 +481,8 @@ static void iso9660_strncpy(char *dest, char *src, size_t len, int isdir)
 }
 
 
+#if 0
+
 /*
  * ISO9660 filenames take the format: 'FILENAME;ID'.
  *
@@ -391,6 +518,8 @@ static int iso9660_strncmp(char *cdname, char *origname, size_t len, int isdir)
     return strcmp(buf, origname);
 }
 
+#endif
+
 
 /*
  * Initialise and register the ISO9660 filesystem.
@@ -416,9 +545,9 @@ long iso9660fs_read_super(dev_t dev, struct mount_info_t *d,
     physical_addr ignored;
     int maj = MAJOR(dev);
     char *buf;
-    ino_t root;
-    struct iso9660_dirent_t *dent;
-    
+    //ino_t root;
+    //struct iso9660_dirent_t *dent;
+
     if(maj >= NR_DEV || !bdev_tab[maj].strategy)
     {
         return -EIO;
@@ -489,11 +618,15 @@ read:
         d->block_size = buf[128] | (buf[129] << 8);
         d->super = super;
         d->mountflags |= MS_RDONLY;
+        d->flags |= FS_SUPER_RDONLY;
         
         // the root node is stored in the Primary Volume Descriptor (PVD)
+        /*
         dent = (struct iso9660_dirent_t *)(buf + 156);
         root = GET_DWORD(dent->lba);
         d->root = get_node(dev, root, 0);
+        */
+        d->root = get_node(dev, 2, 0);
 
         KDEBUG("iso9660fs_read_super: d->block_size 0x%x\n", d->block_size);
         KDEBUG("iso9660fs_read_super: got root node - lba 0x%x\n", dent->lba);
@@ -563,6 +696,35 @@ void iso9660fs_put_super(dev_t dev, struct superblock_t *super)
 }
 
 
+static ino_t get_inode_number(struct iso9660_dirent_t *dent,
+                              size_t parent_block, size_t parent_off)
+{
+    struct iso9660_susp_field_t *field;
+
+    // If the CD supports the RockRidge extension, use it to get POSIX file
+    // attributes (PX) field, which should contain an inode number.
+    // See: https://people.freebsd.org/~emaste/rrip112.pdf
+    if((field = get_susp_field(dent, 'P', 'X', 1)) && field->len >= 44)
+    {
+        struct iso9660_rrip_px_t *px = (struct iso9660_rrip_px_t *)field;
+        ino_t ino = GET_DWORD(px->ino);
+
+        KDEBUG("get_inode_number: ino 0x%lx (lba 0x%lx)\n", ino, GET_DWORD(dent->lba));
+
+        if(ino != 0)
+        {
+            return ino;
+        }
+    }
+
+    //KDEBUG("get_inode_number: fallback ino 0x%lx (b 0x%lx, o 0x%lx)\n", (parent_block << 16) | (parent_off & 0xffff), parent_block, parent_off);
+
+    // Fall back to the made up inode number, which we create from the block
+    // containing the dirent in the parent, and the dirent's offset in block
+    return (parent_block << 16) | (parent_off & 0xffff);
+}
+
+
 /*
  * Reads inode data structure from disk.
  */
@@ -571,12 +733,12 @@ long iso9660fs_read_inode(struct fs_node_t *node)
     struct mount_info_t *d;
     char *buf, *lbuf;
     ino_t root;
-    uint32_t lba, lba_parent;
+    size_t lba_parent;
     size_t block_size;
     struct iso9660_dirent_t *dent;
     struct lba_cacheent_t *cent;
     struct cached_page_t *blk;
-    
+
     if((d = get_mount_info(node->dev)) == NULL || !(d->super))
     {
         return -EINVAL;
@@ -588,15 +750,14 @@ long iso9660fs_read_inode(struct fs_node_t *node)
     buf = (char *)d->super->data + 156;
     dent = (struct iso9660_dirent_t *)buf;
     root = GET_DWORD(dent->lba);
-
-    KDEBUG("iso9660fs_read_inode: got root node - n 0x%x, root 0x%x\n", node->inode, root);
     
-    if(node->inode == root)
+    if(node->inode == 2 /* root */)
     {
-        KDEBUG("iso9660fs_read_inode: got root node - lba 0x%x, sz 0x%x\n", root, dent->size);
-        node->blocks[0] = root;
+        // Store the LBA in blocks[1] as blocks[0] may be used by the VFS for
+        // block and char device numbers 
+        node->blocks[1] = root;
         node->size = GET_DWORD(dent->size);
-        set_node_flags(node, dent);
+        set_node_flags(node, dent, 1);
         return 0;
     }
 
@@ -624,13 +785,31 @@ long iso9660fs_read_inode(struct fs_node_t *node)
             while(buf < lbuf)
             {
                 dent = (struct iso9660_dirent_t *)buf;
-                lba = GET_DWORD(dent->lba);
-                
-                if(node->inode == lba)
+
+                // end of sector might be zero-padded if:
+                //   - we reached the end of directory
+                //   - the next entry cannot fit in the remaining space in the
+                //     sector
+                //
+                // in both cases, we skip to the next sector. if it past the 
+                // directory size, our work is done (case 1 above), otherwise 
+                // we continue reading the next sector to get the next entry
+                // (case 2 above).
+                if(dent->reclen == 0)
                 {
-                    node->blocks[0] = lba;
+                    buf = lbuf;
+                    continue;
+                }
+
+                if(node->inode == get_inode_number(dent, lba_parent, (uintptr_t)buf - blk->virt))
+                //if(node->inode == lba)
+                {
+                    // Store the LBA in blocks[1] as blocks[0] may be used by 
+                    // the VFS for block and char device numbers 
+                    node->blocks[1] = GET_DWORD(dent->lba);
+
                     node->size = GET_DWORD(dent->size);
-                    set_node_flags(node, dent);
+                    set_node_flags(node, dent, 0);
                     release_cached_page(blk);
                     return 0;
                 }
@@ -642,7 +821,7 @@ long iso9660fs_read_inode(struct fs_node_t *node)
             lba_parent++;
         }
     }
-        
+
     return -ENOENT;
 }
 
@@ -665,7 +844,14 @@ size_t iso9660fs_bmap(struct fs_node_t *node, size_t lblock,
                       size_t block_size, int flags)
 {
     UNUSED(flags);
-    
+
+    // Node size for symlinks is made up by us, ISO9660 does not actually
+    // store a node size here
+    if(S_ISLNK(node->mode))
+    {
+        return 0;
+    }
+
     size_t blocks = node->size / block_size;
     
     if(node->size % block_size)
@@ -677,8 +863,8 @@ size_t iso9660fs_bmap(struct fs_node_t *node, size_t lblock,
     {
         return 0;
     }
-    
-    return node->blocks[0] + lblock;
+
+    return node->blocks[1] + lblock;
 }
 
 
@@ -742,13 +928,6 @@ struct dirent *iso9660_entry_to_dirent(struct dirent *__ent, ino_t inode,
 {
     unsigned short reclen = GET_DIRENT_LEN(namelen);
     unsigned char d_type = DT_UNKNOWN;
-    
-    // account for special entries '\0' and '\1', which stand for '.' and '..'
-    if(*name == '\0' || *name == '\1')
-    {
-        namelen++;
-    }
-    
     struct dirent *entry = __ent ? __ent : kmalloc(reclen);
 
     if(!entry)
@@ -769,27 +948,149 @@ struct dirent *iso9660_entry_to_dirent(struct dirent *__ent, ino_t inode,
     entry->d_ino = inode;
     entry->d_off = off;
     entry->d_type = d_type;
+
+    memcpy(entry->d_name, name, namelen + 1);
     
-    // account for special entries '\0' and '\1', which stand for '.' and '..'
-    if(*name == '\0')
+    return entry;
+}
+
+
+static ino_t inode_for_dirent(struct fs_node_t *dir, 
+                              struct iso9660_dirent_t *dent, 
+                              char *n, size_t block, size_t offset)
+{
+    ino_t ino;
+
+    if(n[0] == '.' && n[1] == '\0')
     {
-        entry->d_name[0] = '.';
-        entry->d_name[1] = '\0';
+        ino = dir->inode;
     }
-    else if(*name == '\1')
+    else if(n[0] == '.' && n[1] == '.' && n[2] == '\0')
     {
-        entry->d_name[0] = '.';
-        entry->d_name[1] = '.';
-        entry->d_name[2] = '\0';
+        struct lba_cacheent_t *cent;
+
+        if((cent = get_cacheent(dir->dev, dir->inode)) != NULL)
+        {
+            ino = cent->parent_ino;
+        }
+        else
+        {
+            // XXX: this reparents everything that's broken to root
+            ino = 2;
+        }
     }
     else
     {
-        //// name might not be null-terminated
-        iso9660_strncpy(entry->d_name, name, namelen, IS_ISO9660_DIR(flags));
-        //entry->d_name[namelen] = '\0';
+        //ino = GET_DWORD(dent->lba);
+        ino = get_inode_number(dent, block, offset);
     }
-    
-    return entry;
+
+    return ino;
+}
+
+
+static int copy_altname(struct iso9660_dirent_t *dent, char *namebuf, size_t *namelen)
+{
+    struct iso9660_susp_field_t *field;
+    struct iso9660_rrip_nm_t *nm;
+    char *end = (char *)dent + dent->reclen;
+    char *p = namebuf;
+    uint8_t nm_len;
+
+    // If the CD supports the RockRidge extension, use it to
+    // get the Alternate Name (NM) field.
+    // See: https://people.freebsd.org/~emaste/rrip112.pdf
+
+    if(!(field = get_susp_field(dent, 'N', 'M', 1)))
+    {
+        return -EINVAL;
+    }
+
+read:
+
+    nm = (struct iso9660_rrip_nm_t *)field;
+    nm_len = nm->hdr.len;
+
+    if(nm_len < 5)
+    {
+        return -EINVAL;
+    }
+
+    if(nm->flags & ALTNAME_FLAG_CURRENT)
+    {
+        *p++ = '.';
+        *p = '\0';
+    }
+    else if(nm->flags & ALTNAME_FLAG_PARENT)
+    {
+        *p++ = '.';
+        *p++ = '.';
+        *p = '\0';
+    }
+    else
+    {
+        memcpy(p, (char *)nm + 5, nm->hdr.len - 5);
+        p += (nm->hdr.len - 5);
+        *p = '\0';
+    }
+
+    // If this NM entry has its CONTINUE flag set, search for the next
+    // NM entry and parse it
+    if(nm->flags & ALTNAME_FLAG_CONTINUE)
+    {
+        char *tmp = (char *)nm + nm_len;
+
+        while(tmp < end)
+        {
+            if(tmp[0] == 'N' && tmp[1] == 'M')
+            {
+                field = (struct iso9660_susp_field_t *)tmp;
+                goto read;
+            }
+
+            // Skip to the next entry
+            tmp += tmp[2];
+        }
+    }
+
+    //switch_tty(1);
+    //printk("*** namebuf '%s'\n", namebuf);
+
+    *namelen = p - namebuf;
+    return 0;
+}
+
+
+static size_t get_name(struct iso9660_dirent_t *dent, char *namebuf, uint8_t flags)
+{
+    char *n = (char *)dent + sizeof(struct iso9660_dirent_t);
+    size_t len = 0;
+
+    // An empty string signifies '.' and a '\1' string signifies '..'
+    if(n[0] == '\0')
+    {
+        namebuf[0] = '.';
+        namebuf[1] = '\0';
+        len = 1;
+    }
+    else if(n[0] == '\1')
+    {
+        namebuf[0] = '.';
+        namebuf[1] = '.';
+        namebuf[2] = '\0';
+        len = 2;
+    }
+    else
+    {
+        if(copy_altname(dent, namebuf, &len) < 0)
+        {
+            // No Alternate Name (NM) entry or no memory. Use the 8.3 name
+            iso9660_strncpy(namebuf, n, dent->namelen, IS_ISO9660_DIR(flags));
+            len = dent->namelen;
+        }
+    }
+
+    return len;
 }
 
 
@@ -803,32 +1104,28 @@ struct dirent *iso9660_entry_to_dirent(struct dirent *__ent, ino_t inode,
  * Outputs:
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
-                       struct dirent **entry, struct cached_page_t **dbuf,
-                       size_t *dbuf_off)
+                       struct dirent **entry)
 {
-    size_t offset = 0;
-    size_t fnamelen;
-    uint32_t lba;
+    size_t offset, namelen, last_block;
+    size_t fnamelen, blocksz;
+    ino_t lba;
     unsigned char *blk, *end;
-    char *n;
+    char *namebuf;
     struct cached_page_t *buf;
     struct mount_info_t *d;
     struct iso9660_dirent_t *dent;
+    struct fs_node_header_t tmpnode;
+
+    tmpnode.inode = PCACHE_NOINODE;
+    tmpnode.dev = dir->dev;
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
 
     if(!dir || !filename)
     {
@@ -850,26 +1147,28 @@ long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
         return -EINVAL;
     }
 
-    while(offset < dir->size)
+    if(!(namebuf = kmalloc(1024)))
     {
-        KDEBUG("iso9660fs_finddir: offset 0x%x, dir->size 0x%x\n", offset, dir->size);
-        KDEBUG("iso9660fs_finddir: block 0x%x\n", block);
+        return -ENOMEM;
+    }
 
-        if(!(buf = get_cached_page(dir, offset, 0)))
+    offset = dir->blocks[1];
+    blocksz = d->block_size;
+    last_block = offset + ((dir->size + (blocksz - 1)) / blocksz);
+
+    while(offset < last_block)
+    {
+        if(!(buf = get_cached_page((struct fs_node_t *)&tmpnode, offset, 0)))
         {
-            offset += PAGE_SIZE;
+            offset++;
             continue;
         }
 
-        KDEBUG("iso9660fs_finddir: buf @ 0x%x\n", buf);
-        
         blk = (unsigned char *)buf->virt;
-        end = blk + PAGE_SIZE;
-        
+        end = blk + blocksz;
+
         while(blk < end)
         {
-            n = (char *)(blk + sizeof(struct iso9660_dirent_t));
-            KDEBUG("iso9660fs_finddir: blk 0x%x, end 0x%x\n", blk, end);
             dent = (struct iso9660_dirent_t *)blk;
 
             // end of sector might be zero-padded if:
@@ -884,18 +1183,30 @@ long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
                 continue;
             }
 
-            if(iso9660_strncmp(n, filename, dent->namelen,
-                               IS_ISO9660_DIR(dent->flags)) == 0)
+            namelen = get_name(dent, namebuf, dent->flags);
+
+            /*
+            if(memcmp(filename, "calcapp", 7) == 0)
             {
-                lba = GET_DWORD(dent->lba);
+                switch_tty(1);
+                printk("*** filename '%s', namebuf '%s', namelen %ld\n", filename, namebuf, namelen);
+            }
+            */
 
-                add_cacheent(dir, lba, d->block_size);
+            if(fnamelen == namelen && memcmp(namebuf, filename, namelen) == 0)
+            {
+                //printk("*** filename '%s', namebuf '%s', namelen %ld -- match\n", filename, namebuf, namelen);
+                lba = inode_for_dirent(dir, dent, namebuf, offset,
+                                       (uintptr_t)blk - buf->virt);
 
-                *entry = iso9660_entry_to_dirent(NULL, lba, n, dent->namelen,
-                                  offset + (blk - (unsigned char *)buf->virt),
+                add_cacheent(dir, lba, blocksz);
+
+                *entry = iso9660_entry_to_dirent(NULL, lba, namebuf, namelen,
+                                  (offset * blocksz) + (blk - (unsigned char *)buf->virt),
                                   dent->flags);
-                *dbuf = buf;
-                *dbuf_off = (size_t)(blk - buf->virt);
+
+                kfree(namebuf);
+                release_cached_page(buf);
                 return 0;
             }
 
@@ -903,9 +1214,10 @@ long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
         }
         
         release_cached_page(buf);
-        offset += PAGE_SIZE;
+        offset++;
     }
-    
+
+    kfree(namebuf);
     return -ENOENT;
 }
 
@@ -922,31 +1234,27 @@ long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                                struct dirent **entry,
-                                struct cached_page_t **dbuf, size_t *dbuf_off)
+                                struct dirent **entry)
 {
-    size_t offset = 0;
-    uint32_t lba;
+    size_t offset = 0, blocksz, namelen, last_block;
+    ino_t lba;
     unsigned char *blk, *end;
-    char *n;
+    char *namebuf;
     struct cached_page_t *buf;
     struct mount_info_t *d;
     struct iso9660_dirent_t *dent;
+    struct fs_node_header_t tmpnode;
+
+    tmpnode.inode = PCACHE_NOINODE;
+    tmpnode.dev = dir->dev;
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
 
     if(!dir || !node)
     {
@@ -958,22 +1266,29 @@ long iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
         return -EINVAL;
     }
 
-    while(offset < dir->size)
+    if(!(namebuf = kmalloc(1024)))
     {
-        if(!(buf = get_cached_page(dir, offset, 0)))
+        return -ENOMEM;
+    }
+
+    offset = dir->blocks[1];
+    blocksz = d->block_size;
+    last_block = offset + ((dir->size + (blocksz - 1)) / blocksz);
+
+    while(offset < last_block)
+    {
+        if(!(buf = get_cached_page((struct fs_node_t *)&tmpnode, offset, 0)))
         {
-            offset += PAGE_SIZE;
+            offset++;
             continue;
         }
         
         blk = (unsigned char *)buf->virt;
-        end = blk + PAGE_SIZE;
-        
+        end = blk + blocksz;
+
         while(blk < end)
         {
-            n = (char *)(blk + sizeof(struct iso9660_dirent_t));
             dent = (struct iso9660_dirent_t *)blk;
-            lba = GET_DWORD(dent->lba);
 
             // end of sector might be zero-padded if:
             //   - we reached the end of directory
@@ -989,16 +1304,21 @@ long iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
                 blk = end;
                 continue;
             }
-            
+
+            namelen = get_name(dent, namebuf, dent->flags);
+            lba = inode_for_dirent(dir, dent, namebuf, offset,
+                                   (uintptr_t)blk - buf->virt);
+
             if(matching_node(dir->dev, lba, node))
             {
-                add_cacheent(dir, lba, d->block_size);
+                add_cacheent(dir, lba, blocksz);
 
-                *entry = iso9660_entry_to_dirent(NULL, lba, n, dent->namelen,
-                                 offset + (blk - (unsigned char *)buf->virt),
+                *entry = iso9660_entry_to_dirent(NULL, lba, namebuf, namelen,
+                                 (offset * blocksz) + (blk - (unsigned char *)buf->virt),
                                  dent->flags);
-                *dbuf = buf;
-                *dbuf_off = (size_t)(blk - buf->virt);
+
+                kfree(namebuf);
+                release_cached_page(buf);
                 return 0;
             }
 
@@ -1006,9 +1326,10 @@ long iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
         }
         
         release_cached_page(buf);
-        offset += PAGE_SIZE;
+        offset++;
     }
-    
+
+    kfree(namebuf);
     return -ENOENT;
 }
 
@@ -1058,67 +1379,59 @@ long iso9660fs_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir)
  */
 long iso9660fs_dir_empty(struct fs_node_t *dir)
 {
-    char *p;
+    size_t offset, blocksz, last_block;
+    uint32_t lba;
+    unsigned char *blk, *end;
+    char *n;
     struct cached_page_t *buf;
     struct mount_info_t *d;
     struct iso9660_dirent_t *ent;
-    size_t offset;
-    size_t sz = sizeof(struct iso9660_dirent_t);
-    uint32_t lba;
-    unsigned char *blk, *end;
+    struct fs_node_header_t tmpnode;
+
+    tmpnode.inode = PCACHE_NOINODE;
+    tmpnode.dev = dir->dev;
 
     if((d = get_mount_info(dir->dev)) == NULL || !(d->super))
     {
         return 0;
     }
     
-    if(!dir->size || !dir->blocks[0] || !(buf = get_cached_page(dir, 0, 0)))
+    if(!dir->size || !dir->blocks[1])
     {
         printk("iso9660: bad directory inode at 0x%x:0x%x\n",
                dir->dev, dir->inode);
-        return 0;
+        return 1;
     }
 
-    // check '.'
-    ent = (struct iso9660_dirent_t *)buf->virt;
-    lba = GET_DWORD(ent->lba);
-    //p = (char *)(buf->data + sz);
-    
-    if(!ent->reclen || lba != dir->inode /* || ent->namelen != 0 */)
-    {
-        printk("iso9660: bad directory inode at 0x%x:0x%x\n",
-               dir->dev, dir->inode);
-        return 0;
-    }
+    offset = dir->blocks[1];
+    blocksz = d->block_size;
+    last_block = offset + ((dir->size + (blocksz - 1)) / blocksz);
 
-    // check '..'
-    ent = (struct iso9660_dirent_t *)(buf->virt + ent->reclen);
-    lba = GET_DWORD(ent->lba);
-    p = (char *)(ent) + sz;
-
-    if(!ent->reclen || !lba ||
-       /* ent->namelen != 2 || */ strncmp(p, "\1", 1))
+    while(offset < last_block)
     {
-        printk("iso9660: bad directory inode at 0x%x:0x%x\n",
-               dir->dev, dir->inode);
-        return 0;
-    }
-    
-    blk = (unsigned char *)ent + ent->reclen;
-    end = (unsigned char *)buf->virt + PAGE_SIZE;
-    offset = 0;
+        if(!(buf = get_cached_page((struct fs_node_t *)&tmpnode, offset, 0)))
+        {
+            return 1;
+        }
 
-    while(offset < dir->size)
-    {
+        blk = (unsigned char *)buf->virt;
+        end = (unsigned char *)buf->virt + blocksz;
+
         while(blk < end)
         {
+            n = (char *)(blk + sizeof(struct iso9660_dirent_t));
             ent = (struct iso9660_dirent_t *)blk;
-            lba = GET_DWORD(ent->lba);
 
-            if(lba)
+            // do not check '.' and '..' special entries
+            if(n[0] != '\0' && n[0] != '\1')
             {
-                release_cached_page(buf);
-                return 0;
+                lba = GET_DWORD(ent->lba);
+
+                if(lba)
+                {
+                    release_cached_page(buf);
+                    return 0;
+                }
             }
 
             // end of sector might be zero-padded if:
@@ -1140,28 +1453,7 @@ long iso9660fs_dir_empty(struct fs_node_t *dir)
         }
 
         release_cached_page(buf);
-        offset += PAGE_SIZE;
-
-        if(offset >= dir->size)
-        {
-            break;
-        }
-
-        if(!(buf = get_cached_page(dir, offset, 0)))
-        {
-            break;
-        }
-
-        blk = (unsigned char *)buf->virt;
-
-        if(offset + PAGE_SIZE > dir->size)
-        {
-            end = blk + (dir->size % PAGE_SIZE);
-        }
-        else
-        {
-            end = blk + PAGE_SIZE;
-        }
+        offset++;
     }
     
     return 1;
@@ -1183,17 +1475,22 @@ long iso9660fs_dir_empty(struct fs_node_t *dir)
 long iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
                         void *buf, int bufsz)
 {
-    size_t i, count = 0;
-    size_t reclen;
+    volatile int done = 0;
+    size_t i, count = 0, bytes = 0;
+    size_t reclen, blocksz, last_block;
     struct cached_page_t *dbuf = NULL;
     struct dirent *dent = NULL;
     char *b = (char *)buf;
     unsigned char *blk, *end;
-    char *n;
-    size_t offset;
-    uint32_t lba;
+    char *namebuf;
+    size_t offset, namelen;
+    ino_t lba;
     struct mount_info_t *d;
     struct iso9660_dirent_t *ent;
+    struct fs_node_header_t tmpnode;
+
+    tmpnode.inode = PCACHE_NOINODE;
+    tmpnode.dev = dir->dev;
 
     if(!dir || !pos || !buf || !bufsz)
     {
@@ -1205,31 +1502,35 @@ long iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
         return 0;
     }
 
-    offset = (*pos) & ~(PAGE_SIZE - 1);
-    i = (*pos) % PAGE_SIZE;
-    
-    while(offset < dir->size)
+    if(!(namebuf = kmalloc(1024)))
     {
-        KDEBUG("iso9660fs_getdents: 0 offset 0x%x, dir->size 0x%x\n", offset, dir->size);
+        return -ENOMEM;
+    }
 
-        if(!(dbuf = get_cached_page(dir, offset, 0)))
+    blocksz = d->block_size;
+    offset = dir->blocks[1] + ((*pos) / blocksz);
+    i = (*pos) % blocksz;
+    last_block = dir->blocks[1] + ((dir->size + (blocksz - 1)) / blocksz);
+
+    while(offset < last_block)
+    {
+        if(!(dbuf = get_cached_page((struct fs_node_t *)&tmpnode, offset, 0)))
         {
-            offset += PAGE_SIZE;
+            offset++;
+            bytes += blocksz;
             continue;
         }
         
         blk = (unsigned char *)(dbuf->virt + i);
-        end = (unsigned char *)(dbuf->virt + d->block_size);
-        
+        end = (unsigned char *)(dbuf->virt + blocksz);
+
         // we use i only for the first round, as we might have been asked to
         // read from the middle of a block
         i = 0;
-        
+
         while(blk < end)
         {
-            KDEBUG("iso9660fs_getdents: 1 blk 0x%x, end 0x%x\n", blk, end);
             ent = (struct iso9660_dirent_t *)blk;
-            *pos = offset + (blk - (unsigned char *)dbuf->virt);
 
             // end of sector might be zero-padded if:
             //   - we reached the end of directory
@@ -1242,49 +1543,53 @@ long iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
             // (case 2 above).
             if(ent->reclen == 0)
             {
+                bytes += blocksz - (blk - (unsigned char *)dbuf->virt);
                 blk = end;
                 continue;
             }
 
-            // calc dirent record length
-            reclen = GET_DIRENT_LEN(ent->namelen);
+            namelen = get_name(ent, namebuf, ent->flags);
 
-            // make it 4-byte aligned
-            //ALIGN_WORD(reclen);
-            //KDEBUG("ext2_getdents_internal: reclen 0x%x\n", reclen);
+            // calc dirent record length
+            reclen = GET_DIRENT_LEN(namelen);
 
             // check the buffer has enough space for this entry
             if((count + reclen) > (size_t)bufsz)
             {
-                KDEBUG("iso9660fs_getdents: count 0x%x, reclen 0x%x\n", count, reclen);
-                release_cached_page(dbuf);
-                return count;
+                done = 1;
+                break;
             }
             
-            n = (char *)(blk + sizeof(struct iso9660_dirent_t));
             dent = (struct dirent *)b;
-            lba = GET_DWORD(ent->lba);
-            add_cacheent(dir, lba, d->block_size);
 
-            iso9660_entry_to_dirent(dent, lba, n, ent->namelen,
-                                 (*pos) + ent->reclen, ent->flags);
+            lba = inode_for_dirent(dir, ent, namebuf, offset,
+                                   (uintptr_t)blk - dbuf->virt);
 
-            KDEBUG("iso9660fs_getdents: name '%s'\n", dent->d_name);
-            
-            dent->d_reclen = reclen;
+            add_cacheent(dir, lba, blocksz);
+
+            iso9660_entry_to_dirent(dent, lba, namebuf, namelen,
+                                 (offset * blocksz) + (blk - (unsigned char *)dbuf->virt), 
+                                 ent->flags);
+
             b += reclen;
             count += reclen;
             blk += ent->reclen;
-            KDEBUG("iso9660fs_getdents: 2 blk 0x%x, end 0x%x\n", blk, end);
+            bytes += ent->reclen;
         }
         
         release_cached_page(dbuf);
-        offset += PAGE_SIZE;
+
+        if(done)
+        {
+            break;
+        }
+
+        offset++;
     }
-    
-    KDEBUG("iso9660fs_getdents: count 0x%x, offset 0x%x\n", count, offset);
-    
-    *pos = offset;
+
+    *pos += bytes;
+    kfree(namebuf);
+
     return count;
 }
 
@@ -1353,6 +1658,103 @@ long iso9660fs_statfs(struct mount_info_t *d, struct statfs *statbuf)
 }
 
 
+static long copy_symlink(struct iso9660_dirent_t *dent, 
+                         char *buf, size_t bufsz, int size_only)
+{
+    struct iso9660_susp_field_t *field;
+    struct iso9660_rrip_sl_t *sl;
+    char *comp, *lcomp;
+    char *end = (char *)dent + dent->reclen;
+    char *p = buf, *lp = buf + bufsz;
+    uint8_t sl_len, cont = 1;
+
+    // If the CD supports the RockRidge extension, use it to
+    // get the Symbolic Link (SL) field.
+    // See: https://people.freebsd.org/~emaste/rrip112.pdf
+
+    if(!(field = get_susp_field(dent, 'S', 'L', 1)))
+    {
+        return -EINVAL;
+    }
+
+read:
+
+    sl = (struct iso9660_rrip_sl_t *)field;
+    sl_len = sl->hdr.len;
+    comp = (char *)sl + 5;
+    lcomp = (char *)sl + sl_len;
+
+    KDEBUG("*** sl_len = %d, sl->flags 0x%x\n", sl_len, sl->flags);
+    KDEBUG("*** bufsz = %ld\n", bufsz);
+
+    if(sl_len < 5)
+    {
+        return -EINVAL;
+    }
+
+#define APPEND_TO_BUF(s, l)             \
+    if(size_only) p += l;               \
+    else {                              \
+        if(p + l > lp) return p - buf;  \
+        memcpy(p, s, l);                \
+        p += l;                         \
+    }
+
+    while(comp < lcomp)
+    {
+        KDEBUG("*** cont %d, comp[0] 0x%x\n", cont, comp[0]);
+
+        if(!cont)
+        {
+            APPEND_TO_BUF("/", 1);
+        }
+
+        if(comp[0] & SYMLINK_COMPONENT_FLAG_CURRENT)
+        {
+            APPEND_TO_BUF(".", 1);
+        }
+        else if(comp[0] & SYMLINK_COMPONENT_FLAG_PARENT)
+        {
+            APPEND_TO_BUF("..", 2);
+        }
+        else if(comp[0] & SYMLINK_COMPONENT_FLAG_ROOT)
+        {
+            APPEND_TO_BUF("/", 1);
+        }
+        else
+        {
+            APPEND_TO_BUF(comp + 2, comp[1]);
+        }
+
+        cont = (comp[0] & SYMLINK_COMPONENT_FLAG_CONTINUE);
+        comp += comp[1] + 2;
+    }
+
+#undef APPEND_TO_BUF
+
+    // If this SL entry has its CONTINUE flag set, search for the next
+    // SL entry and parse it
+    if(sl->flags & (1 << 0))
+    {
+        comp = lcomp;
+
+        while(comp < end)
+        {
+            if(comp[0] == 'S' && comp[1] == 'L')
+            {
+                field = (struct iso9660_susp_field_t *)comp;
+                goto read;
+            }
+
+            // Skip to the next entry
+            comp += comp[2];
+        }
+    }
+
+    return p - buf;
+}
+
+
 /*
  * Read the contents of a symbolic link. As different filesystems might have
  * different ways of storing symlinks (e.g. ext2 stores links < 60 chars in
@@ -1369,15 +1771,98 @@ long iso9660fs_statfs(struct mount_info_t *d, struct statfs *statbuf)
  * Returns:
  *    number of chars read on success, -errno on failure
  */
-long iso9660fs_read_symlink(struct fs_node_t *link, char *buf,
-                            size_t bufsz, int kernel)
+long iso9660fs_read_symlink(struct fs_node_t *link,
+                            char *target, size_t targetsz, int kernel)
 {
-    UNUSED(link);
-    UNUSED(buf);
-    UNUSED(bufsz);
+    struct mount_info_t *d;
+    char *buf, *lbuf;
+    ino_t root;
+    uint32_t lba, lba_parent;
+    size_t block_size;
+    struct iso9660_dirent_t *dent;
+    struct lba_cacheent_t *cent;
+    struct cached_page_t *blk;
+
     UNUSED(kernel);
+
+    if((d = get_mount_info(link->dev)) == NULL || !(d->super))
+    {
+        return -EINVAL;
+    }
     
-    return -ENOSYS;
+    // the root node is stored in the Primary Volume Descriptor (PVD)
+    buf = (char *)d->super->data + 156;
+    dent = (struct iso9660_dirent_t *)buf;
+    root = GET_DWORD(dent->lba);
+
+    KDEBUG("*** root 0x%lx, ino 0x%lx\n", root, link->inode);
+
+    if(link->inode == root)
+    {
+        return -EINVAL;
+    }
+
+    // other nodes (not root)
+    if((cent = get_cacheent(link->dev, link->inode)) != NULL)
+    {
+        struct fs_node_header_t tmpnode;
+
+        tmpnode.inode = PCACHE_NOINODE;
+        tmpnode.dev = link->dev;
+
+        lba_parent = cent->lba_parent;
+        block_size = d->block_size;
+        
+        while(lba_parent < cent->llba_parent)
+        {
+            if(!(blk = get_cached_page((struct fs_node_t *)&tmpnode, lba_parent, 0)))
+            {
+                return -EIO;
+            }
+            
+            buf = (char *)blk->virt;
+            lbuf = buf + block_size;
+            
+            while(buf < lbuf)
+            {
+                dent = (struct iso9660_dirent_t *)buf;
+
+                // end of sector might be zero-padded if:
+                //   - we reached the end of directory
+                //   - the next entry cannot fit in the remaining space in the
+                //     sector
+                //
+                // in both cases, we skip to the next sector. if it past the 
+                // directory size, our work is done (case 1 above), otherwise 
+                // we continue reading the next sector to get the next entry
+                // (case 2 above).
+                if(dent->reclen == 0)
+                {
+                    buf = lbuf;
+                    continue;
+                }
+
+                //lba = GET_DWORD(dent->lba);
+                lba = get_inode_number(dent, lba_parent, (uintptr_t)buf - blk->virt);
+
+                if(link->inode == lba)
+                {
+                    long res = copy_symlink(dent, target, targetsz, 0);
+
+                    release_cached_page(blk);
+
+                    return res;
+                }
+                
+                buf += dent->reclen;
+            }
+            
+            release_cached_page(blk);
+            lba_parent++;
+        }
+    }
+
+    return -ENOENT;
 }
 
 

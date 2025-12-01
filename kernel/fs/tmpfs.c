@@ -129,7 +129,7 @@ static int tmpfs_options_are_valid(char *module,
                                    size_t block_count, size_t block_size,
                                    size_t max_blocks, int report_errs);
 
-//static struct fs_node_t *tmpfs_create_fsnode(void);
+static struct fs_node_t *tmpfs_create_fsnode(void);
 static void tmpfs_free_fsnode(struct fs_node_t *node);
 static size_t tmpfs_get_frames(virtual_addr *blocks, size_t count);
 static void tmpfs_release_frames(virtual_addr *blocks, size_t count);
@@ -898,7 +898,7 @@ long tmpfs_alloc_inode(struct fs_node_t *node)
 /*
  * Helper function to allocate a new node struct and zero its memory.
  */
-struct fs_node_t *tmpfs_create_fsnode(void)
+static struct fs_node_t *tmpfs_create_fsnode(void)
 {
     struct fs_node_t *node = kmalloc(sizeof(struct fs_node_t));
     
@@ -1036,18 +1036,13 @@ uint32_t tmpfs_alloc(dev_t dev)
  * Outputs:
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
-long tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                   struct cached_page_t **dbuf, size_t *dbuf_off)
+long tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
 {
+    struct mount_info_t *d;
     size_t min = MINOR(dir->dev) - 1;
     
     if(!valid_tmpfs_node(dir, min))
@@ -1055,8 +1050,13 @@ long tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
         return -EINVAL;
     }
 
-    return ext2_finddir_internal(dir, filename, entry,
-                                 dbuf, dbuf_off, 0);
+    if((d = get_mount_info(dir->dev)) == NULL)
+    {
+        return -EINVAL;
+    }
+
+    //return ext2_finddir_internal(dir, filename, entry, 0, 0);
+    return ext2_finddir_internal(dir, filename, entry, d, 0);
 }
 
 
@@ -1072,19 +1072,14 @@ long tmpfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  * Outputs:
  *    entry => if the node is found, its entry is converted to a kmalloc'd
  *             dirent struct, and the result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long tmpfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                            struct dirent **entry,
-                            struct cached_page_t **dbuf, size_t *dbuf_off)
+                            struct dirent **entry)
 {
+    struct mount_info_t *d;
     size_t min = MINOR(dir->dev) - 1;
     
     if(!valid_tmpfs_node(dir, min))
@@ -1092,8 +1087,13 @@ long tmpfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
         return -EINVAL;
     }
 
-    return ext2_finddir_by_inode_internal(dir, node, entry,
-                                          dbuf, dbuf_off, 0);
+    if((d = get_mount_info(dir->dev)) == NULL)
+    {
+        return -EINVAL;
+    }
+
+    //return ext2_finddir_by_inode_internal(dir, node, entry, 0);
+    return ext2_finddir_by_inode_internal(dir, node, entry, d, 0);
 }
 
 
@@ -1110,6 +1110,7 @@ long tmpfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
  */
 long tmpfs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
 {
+    struct mount_info_t *d;
     size_t min = MINOR(dir->dev) - 1;
     
     if(!valid_tmpfs_node(dir, min))
@@ -1117,7 +1118,13 @@ long tmpfs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
         return -EINVAL;
     }
 
-    return ext2_addir_internal(dir, file, filename, 0, tmpfs_dev[min].block_size);
+    if((d = get_mount_info(dir->dev)) == NULL)
+    {
+        return -EINVAL;
+    }
+
+    //return ext2_addir_internal(dir, file, filename, 0, tmpfs_dev[min].block_size);
+    return ext2_addir_internal(dir, file, filename, d);
 }
 
 
@@ -1138,6 +1145,7 @@ long tmpfs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
  */
 long tmpfs_mkdir(struct fs_node_t *dir, struct fs_node_t *parent)
 {
+    struct mount_info_t *d;
     size_t min = MINOR(dir->dev) - 1;
     
     if(!valid_tmpfs_node(dir, min))
@@ -1145,7 +1153,13 @@ long tmpfs_mkdir(struct fs_node_t *dir, struct fs_node_t *parent)
         return -EINVAL;
     }
 
-    return ext2_mkdir_internal(dir, parent->inode, 0, tmpfs_dev[min].block_size);
+    if((d = get_mount_info(dir->dev)) == NULL)
+    {
+        return -EINVAL;
+    }
+
+    //return ext2_mkdir_internal(dir, parent->inode, 0, tmpfs_dev[min].block_size);
+    return ext2_mkdir_internal(dir, parent->inode, d, 0);
 }
 
 
@@ -1167,8 +1181,17 @@ long tmpfs_mkdir(struct fs_node_t *dir, struct fs_node_t *parent)
  */
 long tmpfs_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir)
 {
+    struct mount_info_t *d;
+
     UNUSED(is_dir);
-    return ext2_deldir_internal(dir, entry, 0);
+
+    if((d = get_mount_info(dir->dev)) == NULL)
+    {
+        return -EINVAL;
+    }
+
+    //return ext2_deldir_internal(dir, entry, 0);
+    return ext2_deldir_internal(dir, entry, d, 0);
 }
 
 
@@ -1177,6 +1200,7 @@ long tmpfs_deldir(struct fs_node_t *dir, struct dirent *entry, int is_dir)
  */
 long tmpfs_dir_empty(struct fs_node_t *dir)
 {
+    struct mount_info_t *d;
     size_t min = MINOR(dir->dev) - 1;
     
     if(!valid_tmpfs_node(dir, min))
@@ -1184,7 +1208,12 @@ long tmpfs_dir_empty(struct fs_node_t *dir)
         return -EINVAL;
     }
 
-    return ext2_dir_empty_internal("tmpfs", dir);
+    if((d = get_mount_info(dir->dev)) == NULL)
+    {
+        return -EINVAL;
+    }
+
+    return ext2_dir_empty_internal("tmpfs", dir, d);
 }
 
 
@@ -1202,6 +1231,7 @@ long tmpfs_dir_empty(struct fs_node_t *dir)
  */
 long tmpfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
 {
+    struct mount_info_t *d;
     size_t min = MINOR(dir->dev) - 1;
     
     if(!valid_tmpfs_node(dir, min))
@@ -1209,7 +1239,12 @@ long tmpfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
         return -EINVAL;
     }
 
-    return ext2_getdents_internal(dir, pos, buf, bufsz, 0);
+    if((d = get_mount_info(dir->dev)) == NULL)
+    {
+        return -EINVAL;
+    }
+
+    return ext2_getdents_internal(dir, pos, buf, bufsz, d);
 }
 
 
@@ -1675,5 +1710,24 @@ long tmpfs_statfs(struct mount_info_t *d, struct statfs *statbuf)
     statbuf->f_flags = d->mountflags;
 
     return 0;
+}
+
+
+size_t get_tmpfs_pagecount(void)
+{
+    int i;
+    size_t count = 0;
+
+    for(i = 0; i < NR_TMPFS; i++)
+    {
+        if(tmpfs_dev[i].root == NULL)
+        {
+            continue;
+        }
+
+        count += tmpfs_needed_pages(tmpfs_dev[i].block_size, tmpfs_dev[i].block_count);
+    }
+
+    return count;
 }
 

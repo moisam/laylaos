@@ -298,18 +298,18 @@ void release_node(struct fs_node_t *node)
 
     if(expected_refs)
     {
+        /*
         //__sync_bool_compare_and_swap(&node->refs, 0, expected_refs);
         __lock_xchg_int(&node->refs, expected_refs);
         //node->refs = expected_refs;
         __asm__ __volatile__("":::"memory");
         kernel_mutex_unlock(&node->lock);
         return;
-        /*
+        */
         switch_tty(1);
         printk("\n\n*** dev 0x%x, node 0x%x, refs %d, flags 0x%x, links %d\n", node->dev, node->inode, node->refs, node->flags, node->links);
         printk("\n\n*** expected_refs %d, file_refs %d, mem_refs %d, pcache_refs %d\n", expected_refs, file_refs, mem_refs, pcache_refs);
         kpanic("*** trying to free a referenced node\n");
-        */
     }
 
     

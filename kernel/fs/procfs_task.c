@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: procfs_task.c
  *    This file is part of LaylaOS.
@@ -60,7 +60,7 @@ int copy_task_dirpath(dev_t dev, ino_t ino,
     {
         return -ENOENT;
     }
-    
+
     if((res = get_dentry(dir, &dent)) < 0)
     {
         release_node(dir);
@@ -393,15 +393,171 @@ size_t get_task_rlimits(struct task_t *task, char **_buf)
 # define _F6_                   10
 
 
+struct page_details_t
+{
+    int shclean;
+    int shdirty;
+    int prclean;
+    int prdirty;
+    int referenced;
+    int anon;
+    int anonhuge;
+    int swap;
+    int locked;
+    int rss;
+    int size;
+};
+
+
+static void __memregion_breakdown(struct task_t *task,
+                                  struct memregion_t *memregion, 
+                                  struct page_details_t *res)
+{
+    virtual_addr start = memregion->addr;
+    virtual_addr end = start + (memregion->size * PAGE_SIZE);
+
+    res->shclean = 0;
+    res->shdirty = 0;
+    res->prclean = 0;
+    res->prdirty = 0;
+    res->anonhuge = 0;
+    res->swap = 0;
+    res->rss = 0;
+    res->referenced = 0;
+    res->anon = 0;
+    res->size = (memregion->size * PAGE_SIZE) / 1024;
+
+    /*
+     * XXX: Our memory lock process is currently a no-op
+     */
+    res->locked = (memregion->flags & MEMREGION_FLAG_STICKY_BIT) ? memregion->size : 0;
+
+    if(memregion->type == MEMREGION_TYPE_KERNEL)
+    {
+        res->size = 0;
+    }
+    else if(!memregion->inode)
+    {
+        /*
+         * TODO: return correct information for anonymous mappings
+         */
+        res->rss = memregion->size;
+        res->referenced = res->rss;
+        res->anon = res->rss;
+    }
+    else
+    {
+        pdirectory *pml4_src = (pdirectory *)task->pd_virt;
+        volatile pt_entry *e;
+        virtual_addr addr;
+
+        for(addr = start; addr < end; addr += PAGE_SIZE)
+        {
+            if(!(e = __get_page_entry_pd(pml4_src, (void *)addr, 0)))
+            {
+                continue;
+            }
+
+            if(PTE_PRESENT(*e))
+            {
+                res->rss++;
+            }
+
+            if(PTE_ACCESSED(*e))
+            {
+                res->referenced++;
+            }
+
+            if(PTE_DIRTY(*e))
+            {
+                if(memregion->flags & MEMREGION_FLAG_PRIVATE)
+                {
+                    res->prdirty++;
+                }
+                else
+                {
+                    res->shdirty++;
+                }
+            }
+            else
+            {
+                if(memregion->flags & MEMREGION_FLAG_PRIVATE)
+                {
+                    res->prclean++;
+                }
+                else
+                {
+                    res->shclean++;
+                }
+            }
+        }
+    }
+
+    // convert values from multiples of PAGE_SIZE to kB
+    size_t i = PAGE_SIZE / 1024;
+
+    res->shclean *= i;
+    res->shdirty *= i;
+    res->prclean *= i;
+    res->prdirty *= i;
+    res->anonhuge *= i;
+    res->swap *= i;
+    res->rss *= i;
+    res->referenced *= i;
+    res->anon *= i;
+}
+
+
+#define APPEND_TWO_LETTERS(buf, c1, c2) \
+    *buf++ = c1; *buf++ = c2; *buf++ = ' ';
+
+
+static void __print_flags(struct memregion_t *memregion, char *buf)
+{
+    if(memregion->prot & PROT_READ)
+    {
+        APPEND_TWO_LETTERS(buf, 'r', 'd');
+    }
+
+    if(memregion->prot & PROT_WRITE)
+    {
+        APPEND_TWO_LETTERS(buf, 'w', 'r');
+    }
+
+    if(memregion->prot & PROT_EXEC)
+    {
+        APPEND_TWO_LETTERS(buf, 'e', 'x');
+    }
+
+    if(!(memregion->flags & MEMREGION_FLAG_PRIVATE))
+    {
+        APPEND_TWO_LETTERS(buf, 's', 'h');
+    }
+
+    if(memregion->type == MEMREGION_TYPE_STACK)
+    {
+        APPEND_TWO_LETTERS(buf, 'g', 'd');
+    }
+
+    if(memregion->flags & MEMREGION_FLAG_STICKY_BIT)
+    {
+        APPEND_TWO_LETTERS(buf, 'l', 'o');
+    }
+
+    *buf = '\0';
+}
+
+
 /*
- * Read /proc/[pid]/maps.
+ * Helper function to read task mmap files:
+ *    /proc/[pid]/maps
+ *    /proc/[pid]/smaps
  */
-size_t get_task_mmaps(struct task_t *task, char **_buf)
+static size_t __get_task_mmaps(struct task_t *task, char **_buf, int extra_info)
 {
     struct memregion_t *memregion;
     virtual_addr start;
     virtual_addr end;
-    //virtual_addr data_end;
     struct fs_node_t *node = NULL;
     char *path = NULL;
     struct dentry_t *dent = NULL;
@@ -409,9 +565,9 @@ size_t get_task_mmaps(struct task_t *task, char **_buf)
     volatile size_t len = 0;
     ino_t ino;
     dev_t dev;
-    char tmp[16];
+    char tmp[128];
     char *buf, *p;
-    
+
     if(!task || !task->mem || !_buf)
     {
         return 0;
@@ -425,17 +581,24 @@ size_t get_task_mmaps(struct task_t *task, char **_buf)
     PR_MALLOC(buf, bufsz);
     *_buf = buf;
     p = buf;
+
+    /* 
+     * No header for /proc/[pid]/smaps
+     */
+    if(!extra_info)
+    {
     
 #ifdef __x86_64__
-    ksprintf(p, bufsz, "address                           perms offset"
-                       "   dev   inode     pathname\n");
+        ksprintf(p, bufsz, "address                           perms offset"
+                           "   dev   inode     pathname\n");
 #else
-    ksprintf(p, bufsz, "address           perms offset   dev   "
-                        "inode     pathname\n");
+        ksprintf(p, bufsz, "address           perms offset   dev   "
+                           "inode     pathname\n");
 #endif
 
-    buflen = strlen(p);
-    p += buflen;
+        buflen = strlen(p);
+        p += buflen;
+    }
 
     for(memregion = task->mem->first_region;
         memregion != NULL;
@@ -445,7 +608,7 @@ size_t get_task_mmaps(struct task_t *task, char **_buf)
         if(buflen + _F1_ + _F2_ + _F3_ + _F4_ + _F5_ + _F6_ >= bufsz)
         {
             *_buf = buf;
-            PR_REALLOC(buf, bufsz, buflen);
+            PR_REALLOC_OR_UNLOCK(buf, bufsz, buflen, &(task->mem->mutex));
             *_buf = buf;
             p = buf + buflen;
         }
@@ -543,7 +706,7 @@ size_t get_task_mmaps(struct task_t *task, char **_buf)
                         if(buflen + x + 1 >= bufsz)
                         {
                             *_buf = buf;
-                            PR_REALLOC(buf, bufsz, buflen);
+                            PR_REALLOC_OR_UNLOCK(buf, bufsz, buflen, &(task->mem->mutex));
                             *_buf = buf;
                             p = buf + buflen;
                         }
@@ -565,10 +728,94 @@ size_t get_task_mmaps(struct task_t *task, char **_buf)
 
         len += (_F1_ + _F2_ + _F3_ + _F4_);
         buflen += len;
+
+        /* 
+         * Stuff for /proc/[pid]/smaps
+         */
+        if(extra_info)
+        {
+            struct page_details_t res;
+
+            // 30 is the length of each line,
+            // 16 is the number of lines plus 1 to account for the (possibly 
+            // long) last line
+            if(buflen + (30 * 16) + 1 >= bufsz)
+            {
+                *_buf = buf;
+                PR_REALLOC_OR_UNLOCK(buf, bufsz, buflen, &(task->mem->mutex));
+                *_buf = buf;
+                p = buf + buflen;
+            }
+
+            __memregion_breakdown(task, memregion, &res);
+            __print_flags(memregion, tmp);
+
+            ksprintf(p, (bufsz - buflen), 
+                     "Size:          %8d kB\n"
+                     "Rss:           %8d kB\n"
+                     "Pss:           %8d kB\n"
+                     "Shared_Clean:  %8d kB\n"
+                     "Shared_Dirty:  %8d kB\n"
+                     , res.size,
+                       res.rss, 
+                       res.rss,    /* XXX: dummy value for Pss */
+                       res.shclean, res.shdirty);
+
+            tmpsz = strlen(p);
+            buflen += tmpsz;
+            p += tmpsz;
+
+            ksprintf(p, (bufsz - buflen), 
+                     "Private_Clean: %8d kB\n"
+                     "Private_Dirty: %8d kB\n"
+                     "Referenced:    %8d kB\n"
+                     "Anonymous:     %8d kB\n"
+                     "AnonHugePages: %8d kB\n"
+                     , res.prclean, res.prdirty,
+                       res.referenced, 
+                       res.anon, res.anonhuge);
+
+            tmpsz = strlen(p);
+            buflen += tmpsz;
+            p += tmpsz;
+
+            ksprintf(p, (bufsz - buflen), 
+                     "Swap:          %8d kB\n"
+                     "KernelPageSize:%8d kB\n"
+                     "MMUPageSie:    %8d kB\n"
+                     "Locked:        %8d kB\n"
+                     "VmFlags: %s\n\n"
+                     , res.swap,
+                       PAGE_SIZE, PAGE_SIZE,
+                       res.locked,
+                       tmp);
+
+            tmpsz = strlen(p);
+            buflen += tmpsz;
+            p += tmpsz;
+        }
     }
 
     kernel_mutex_unlock(&(task->mem->mutex));
     return buflen;
+}
+
+
+/*
+ * Read /proc/[pid]/maps.
+ */
+size_t get_task_mmaps(struct task_t *task, char **_buf)
+{
+    return __get_task_mmaps(task, _buf, 0);
+}
+
+
+/*
+ * Read /proc/[pid]/smaps.
+ */
+size_t get_task_smaps(struct task_t *task, char **_buf)
+{
+    return __get_task_mmaps(task, _buf, 1);
 }
 
 
@@ -653,13 +900,14 @@ size_t get_task_io(struct task_t *task, char **buf)
     PR_MALLOC(*buf, 128);
     p = *buf;
 
-    ksprintf(p, 128, "rchar: %lu\nwchar: %lu\n",
+    ksprintf(p, 128, "rchar: %10lu\nwchar: %10lu\n",
                      task->read_count, task->write_count);
     p += strlen(p);
 
-    ksprintf(p, 128, "syscr: %u\nsyscw: %u\n",
+    ksprintf(p, 128, "syscr: %10u\nsyscw: %10u\n",
                      task->read_calls, task->write_calls);
 
+    //switch_tty(1);
     //printk("*** %s\n", *buf);
 
     return strlen(*buf);

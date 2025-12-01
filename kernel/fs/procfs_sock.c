@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: procfs_sock.c
  *    This file is part of LaylaOS.
@@ -56,14 +56,14 @@ static size_t get_non_unix(char **buf, int proto)
 {
     struct socket_t *so;
     size_t len, count = 0, bufsz = 1024;
-    char tmp[84];
+    char tmp[128];
     char *p;
     int i = 0;
 
     PR_MALLOC(*buf, bufsz);
     p = *buf;
 
-    ksprintf(p, 84, "Num  LocalAddr     RemoteAddr    St   Fl   TxQueue:RxQueue\n");
+    ksprintf(p, 128, "Num  LocalAddr     RemoteAddr    St   Fl   TxQueue:RxQueue  Uid\n");
     len = strlen(p);
     count += len;
     p += len;
@@ -77,36 +77,27 @@ static size_t get_non_unix(char **buf, int proto)
             continue;
         }
 
-        ksprintf(tmp, 84, "%3d: ", i++);
+        ksprintf(tmp, 128, "%3d: ", i++);
 
-        print_addr(tmp + 5, 84 - 5,
+        print_addr(tmp + 5, 128 - 5,
                        so->local_addr.ipv4, so->local_port);
         len = strlen(tmp);
 
-        print_addr(tmp + len, 84 - len,
+        print_addr(tmp + len, 128 - len,
                        so->remote_addr.ipv4, so->remote_port);
         len = strlen(tmp);
 
-        ksprintf(tmp + len, 84 - len, "%04x %02x  ", 
+        ksprintf(tmp + len, 128 - len, "%04x %02x  ", 
                        so->state, so->flags);
         len = strlen(tmp);
 
-        ksprintf(tmp + len, 84 - len, "%08x:%08x\n", 
-                       so->outq.count, so->inq.count);
+        ksprintf(tmp + len, 128 - len, "%08x:%08x %d\n", 
+                       so->outq.count, so->inq.count, so->uid);
         len = strlen(tmp);
 
         if(count + len >= bufsz)
         {
-            char *tmp;
-
-            if(!(tmp = krealloc(*buf, bufsz * 2)))
-            {
-                kernel_mutex_unlock(&sock_lock);
-                return count;
-            }
-
-            bufsz *= 2;
-            *buf = tmp;
+            PR_REALLOC_OR_UNLOCK(*buf, bufsz, count, &sock_lock);
             p = *buf + count;
         }
 
@@ -161,7 +152,7 @@ size_t get_net_unix(char **buf)
     PR_MALLOC(*buf, bufsz);
     p = *buf;
 
-    ksprintf(p, 128, "Num  Type St   Fl Path\n");
+    ksprintf(p, 128, "Num  RefCount Protocol Flags    Type St Inode Path\n");
     len = strlen(p);
     count += len;
     p += len;
@@ -175,26 +166,22 @@ size_t get_net_unix(char **buf)
             continue;
         }
 
-        // we print sun_path as a string here because we trust the unix
+        ksprintf(tmp, 128, "%3d: %08x %08x %08x ",
+                    i++, so->refs, 0, // XXX: protocol alwats zero
+                    so->flags);
+        len = strlen(tmp);
+
+        // we print sun_path as a string here because we trust the Unix
         // socket layer has ensured the name is null-terminated
-        ksprintf(tmp, 128, "%3d: %04x %04x %02x %s\n",
-                    i++, so->type, so->state, so->flags,
+        ksprintf(tmp + len, 128 - len, "%04x %02x %04x  %s\n",
+                    so->type, so->state, 0, // XXX: inode always zero
                          so->local_addr.sun.sun_path[0] ? 
                               so->local_addr.sun.sun_path : " ");
         len = strlen(tmp);
 
         if(count + len >= bufsz)
         {
-            char *tmp;
-
-            if(!(tmp = krealloc(*buf, bufsz * 2)))
-            {
-                kernel_mutex_unlock(&sock_lock);
-                return count;
-            }
-
-            bufsz *= 2;
-            *buf = tmp;
+            PR_REALLOC_OR_UNLOCK(*buf, bufsz, count, &sock_lock);
             p = *buf + count;
         }
 

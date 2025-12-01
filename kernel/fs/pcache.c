@@ -267,7 +267,7 @@ loop:
             __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_WANTED);
             kernel_mutex_unlock(&pcachetab_lock);
 
-            if(++tries >= 500000)
+            if(++tries >= 5000000)
             {
                 switch_tty(1);
                 printk("pcache: busy page dev 0x%x, ino 0x%x, flags 0x%x, pid %d, curpid %d\n", key.dev, key.ino, pcache->flags, pcache->pid, this_core->cur_task ? this_core->cur_task->pid : 0);
@@ -276,8 +276,15 @@ loop:
                 kpanic("pcache: infinite loop\n");
             }
 
-            //block_task(pcache, 0);
-            block_task2(pcache, 300);
+            /*
+            block_task(pcache, 0);
+            //block_task2(pcache, 300);
+            */
+            set_task_waitchan(this_core->cur_task, pcache);
+            block_task_timeout(this_core->cur_task, PIT_FREQUENCY);
+            //set_task_state(this_core->cur_task, TASK_SLEEPING);
+            //scheduler();
+
             goto loop;
         }
 
@@ -349,8 +356,11 @@ loop:
     while(get_next_addr(&pcache->phys, &pcache->virt, 
                         PTE_FLAGS_PW, REGION_PCACHE) != 0)
     {
-        kpanic("pcache: failed to allocate memory, retrying in 10 secs\n");
-        block_task2(pcache, PIT_FREQUENCY * 10);
+        printk("pcache: failed to allocate memory, retrying in 2 secs\n");
+        //block_task2(pcache, PIT_FREQUENCY * 2);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, PIT_FREQUENCY * 2);
     }
 
     if(pcache->virt < PCACHE_MEM_START || pcache->virt >= PCACHE_MEM_END)
@@ -861,7 +871,15 @@ loop:
             {
                 __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_WANTED);
                 kernel_mutex_unlock(&pcachetab_lock);
-                block_task2(pcache, 30);
+
+                /*
+                block_task(pcache, 0);
+                //block_task2(pcache, 30);
+                */
+                set_task_waitchan(this_core->cur_task, pcache);
+                set_task_state(this_core->cur_task, TASK_SLEEPING);
+                scheduler();
+
                 kernel_mutex_lock(&pcachetab_lock);
                 hitem = pcachetab->items[i];
                 //prev = NULL;
@@ -885,7 +903,7 @@ loop:
             // we can flush the page the next round. If we turn the 
             // PCACHE_FLAG_DIRTY flag, we will loop forever as we jump to 
             // the beginning of the loop. If we try to continue the loop from
-            // this point, we may walk down a corrup cache as we unlocked the
+            // this point, we may walk down a corrupt cache as we unlocked the
             // cache mutex while we updated the page. The best thing here is
             // to turn the PCACHE_FLAG_ALWAYS_DIRTY flag and leave the page for
             // now. The worst case scenario is that a few pages, linked to the
@@ -902,6 +920,7 @@ loop:
 
             if(wanted)
             {
+                //printk("flush_dirty_pages: res %d\n", res);
                 printk("flush_dirty_pages: waking up sleepers on 0x%lx\n", pcache);
                 unblock_tasks(pcache);
             }

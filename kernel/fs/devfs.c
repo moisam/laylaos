@@ -55,7 +55,7 @@ struct fs_ops_t devfs_ops =
     .alloc_inode = NULL,
     .free_inode = NULL,
     .bmap = NULL,
-    .read_symlink = NULL,
+    .read_symlink = devfs_read_symlink,
     .write_symlink = NULL,
 
     // directory operations
@@ -438,10 +438,18 @@ long devfs_write_inode(struct fs_node_t *node)
 }
 
 
-STATIC_INLINE struct dirent *entry_to_dirent(int index,
-                                             struct devnode_t *dnode)
+STATIC_INLINE char devfs_to_dirent_type(mode_t mode)
 {
-    int namelen = strlen(dnode->name);
+    return S_ISDIR(mode) ? DT_DIR :
+            (S_ISBLK(mode) ? DT_BLK : 
+             (S_ISLNK(mode) ? DT_LNK : DT_CHR));
+}
+
+
+STATIC_INLINE struct dirent *entry_to_dirent(int index,
+                                             volatile struct devnode_t *dnode)
+{
+    int namelen = strlen((char *)dnode->name);
     unsigned int reclen = GET_DIRENT_LEN(namelen);
 
     struct dirent *entry = kmalloc(reclen);
@@ -453,9 +461,8 @@ STATIC_INLINE struct dirent *entry_to_dirent(int index,
     
     entry->d_ino = dnode->inode;
     entry->d_off = index;
-    entry->d_type = S_ISDIR(dnode->mode) ? DT_DIR :
-                    (S_ISBLK(dnode->mode) ? DT_BLK : DT_CHR);
-    strcpy(entry->d_name, dnode->name);
+    entry->d_type = devfs_to_dirent_type(dnode->mode);
+    strcpy(entry->d_name, (char *)dnode->name);
     entry->d_reclen = reclen;
     
     return entry;
@@ -488,17 +495,11 @@ STATIC_INLINE struct dirent *fs_node_to_dirent(int index, char *name,
  *    entry => if the filename is found, its entry is converted to a kmalloc'd
  *             dirent struct (by calling entry_to_dirent() above), and the
  *             result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
-long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
-                   struct cached_page_t **dbuf, size_t *dbuf_off)
+long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
 {
     if(!dir)
     {
@@ -507,8 +508,6 @@ long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
     
     if(filename[0] == '.')
     {
@@ -521,13 +520,13 @@ long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
     }
     
     int i = 2;
-    struct devnode_t *dnode = dev_list;
+    volatile struct devnode_t *dnode = dev_list;
     
     while(dnode)
     {
         //printk("devfs_finddir: dnode->name '%s'\n", dnode->name);
 
-        if(strcmp(dnode->name, filename) == 0)
+        if(strcmp((char *)dnode->name, filename) == 0)
         {
             *entry = entry_to_dirent(i, dnode);
             return *entry ? 0 : -ENOMEM;
@@ -554,18 +553,12 @@ long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry,
  *    entry => if the node is found, its entry is converted to a kmalloc'd
  *             dirent struct (by calling entry_to_dirent() above), and the
  *             result is stored in this field
- *    dbuf => the disk buffer representing the disk block containing the found
- *            filename, this is useful if the caller wants to delete the file
- *            after finding it (vfs_unlink(), for example)
- *    dbuf_off => the offset in dbuf->data at which the caller can find the
- *                file's entry
  *
  * Returns:
  *    0 on success, -errno on failure
  */
 long devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
-                            struct dirent **entry,
-                            struct cached_page_t **dbuf, size_t *dbuf_off)
+                            struct dirent **entry)
 {
     if(!dir || !devfs_root || dir->inode != devfs_root->inode || !node)
     {
@@ -574,8 +567,6 @@ long devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
 
     // for safety
     *entry = NULL;
-    *dbuf = NULL;
-    *dbuf_off = 0;
 
     // devfs root node
     if(node->inode == devfs_root->inode)
@@ -586,7 +577,7 @@ long devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
     
     // device nodes
     int i = 2;
-    struct devnode_t *dnode = dev_list;
+    volatile struct devnode_t *dnode = dev_list;
     
     while(dnode)
     {
@@ -707,8 +698,7 @@ long devfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
 
         dent->d_ino = ent->inode;
         dent->d_off = offset;
-        dent->d_type = S_ISDIR(ent->mode) ? DT_DIR :
-                        (S_ISBLK(ent->mode) ? DT_BLK : DT_CHR);
+        dent->d_type = devfs_to_dirent_type(ent->mode);
         strcpy(dent->d_name, ent->name);
 
         dent->d_reclen = reclen;
@@ -733,7 +723,7 @@ long devfs_getdents(struct fs_node_t *dir, off_t *pos, void *buf, int bufsz)
 int devfs_find_deventry(dev_t dev, int blk, struct dirent **entry)
 {
     int i = 2;
-    struct devnode_t *dnode = dev_list;
+    volatile struct devnode_t *dnode = dev_list;
     
     if(!dev)
     {
@@ -756,6 +746,59 @@ int devfs_find_deventry(dev_t dev, int blk, struct dirent **entry)
         }
         
         i++;
+        dnode = dnode->next;
+    }
+    
+    return -ENOENT;
+}
+
+
+/*
+ * Read the contents of a symbolic link. As different filesystems might have
+ * different ways of storing symlinks (e.g. ext2 stores links < 60 chars in
+ * length in the inode struct itself), so we hand over this task to the
+ * filesystem.
+ *
+ * Inputs:
+ *    link => the symlink's inode
+ *    buf => the buffer in which we will read and store the symlink's target
+ *    bufsz => size of buffer above 
+ *    kernel => set if the caller is a kernel function (i.e. 'buf' address
+ *              is in kernel memory), 0 if 'buf' is a userspace address
+ *
+ * Returns:
+ *    number of chars read on success, -errno on failure
+ */
+long devfs_read_symlink(struct fs_node_t *link, char *buf,
+                        size_t bufsz, int kernel)
+{
+    struct devnode_t *dnode = dev_list;
+
+    if(!buf || !bufsz)
+    {
+        return -EINVAL;
+    }
+    
+    while(dnode)
+    {
+        if(dnode->inode == link->inode)
+        {
+            if(strcmp(dnode->name, "stderr") == 0)
+            {
+                return copy_string_internal(buf, "/proc/self/fd/2", bufsz, kernel);
+            }
+            else if(strcmp(dnode->name, "stdin") == 0)
+            {
+                return copy_string_internal(buf, "/proc/self/fd/0", bufsz, kernel);
+            }
+            else if(strcmp(dnode->name, "stdout") == 0)
+            {
+                return copy_string_internal(buf, "/proc/self/fd/1", bufsz, kernel);
+            }
+
+            return -EINVAL;
+        }
+        
         dnode = dnode->next;
     }
     
