@@ -76,7 +76,9 @@ int count = 0;
 #define SCREEN_RECTS_NOT_EXTERNS
 #include "inlines.c"
 
-#define GLOB        __global_gui_data
+#define GLOB                        __global_gui_data
+#define DESKTOP_EXE                 "/bin/desktop/desktop"
+#define SERVER_SOCKET_PATH          "/var/run/guiserver"
 
 // defined in server-window-mouse.c
 extern int root_mouse_x, root_mouse_y;
@@ -471,7 +473,10 @@ void process_mouse(struct mouse_packet_t *packet)
 #endif
 
     if(old_mouseover_child && 
-       old_mouseover_child != root_window->mouseover_child)
+       old_mouseover_child != root_window->mouseover_child /* &&
+       !(root_window->mouseover_child &&
+         root_window->mouseover_child->type == WINDOW_TYPE_MENU_FRAME &&
+         root_window->mouseover_child->owner_winid == old_mouseover_child->winid) */)
     {
         mouse_exit(gc, old_mouseover_child, 
                        mstate.x, mstate.y, mstate.buttons);
@@ -846,7 +851,6 @@ void cancel_active_child(struct server_window_t *parent,
         grabbed_keyboard_window = NULL;
     }
 
-
     if(grabbed_mouse_window == win)
     {
         ungrab_mouse();
@@ -867,7 +871,7 @@ void may_draw_mouse_cursor(struct server_window_t *win)
        (root_mouse_y + cursor[cur_cursor].h) >= top)
     {
 
-        draw_mouse_cursor(0);
+        draw_mouse_cursor(1);
     }
 }
 
@@ -1042,15 +1046,18 @@ void process_win_create_request(struct clientfd_t *clientfd,
                           WINDOW_SKIPTASKBAR);
         ev->win.flags &= ~WINDOW_NOFOCUS;
 
-        // the passed x & y coordinates are relative to the
-        // owner window -- fix them now
-        ev->win.x += server_window_screen_x(owner);
-        ev->win.y += server_window_screen_y(owner);
-
-        if(!(owner->flags & WINDOW_NODECORATION))
+        if(!(ev->win.flags & WINDOW_ABSOLUTE_COORDS))
         {
-            ev->win.x += WINDOW_BORDERWIDTH;
-            ev->win.y += WINDOW_TITLEHEIGHT;
+            // the passed x & y coordinates are relative to the
+            // owner window -- fix them now
+            ev->win.x += server_window_screen_x(owner);
+            ev->win.y += server_window_screen_y(owner);
+
+            if(!(owner->flags & WINDOW_NODECORATION))
+            {
+                ev->win.x += WINDOW_BORDERWIDTH;
+                ev->win.y += WINDOW_TITLEHEIGHT;
+            }
         }
     }
 
@@ -1424,7 +1431,8 @@ try:
             case REQUEST_WINDOW_SET_POS:
                 GET_WINDOW_SILENT(win, ev->src);
                 
-                if(win->type == WINDOW_TYPE_MENU_FRAME)
+                if((win->type == WINDOW_TYPE_MENU_FRAME) &&
+                   !(win->flags & WINDOW_ABSOLUTE_COORDS))
                 {
                     // the passed x & y coordinates are relative to the
                     // owner window -- fix them now
@@ -1489,7 +1497,8 @@ try:
             case REQUEST_WINDOW_RESIZE:
                 GET_WINDOW(win, ev->src, EVENT_WINDOW_RESIZE_OFFER);
 
-                if(win->type == WINDOW_TYPE_MENU_FRAME)
+                if((win->type == WINDOW_TYPE_MENU_FRAME) &&
+                   !(win->flags & WINDOW_ABSOLUTE_COORDS))
                 {
                     // the passed x & y coordinates are relative to the
                     // owner window -- fix them now
@@ -2386,6 +2395,16 @@ int main(int argc, char **argv)
 {
     uintptr_t backbuf_addr;
     struct sigaction act;
+    struct stat st;
+
+    if(stat(SERVER_SOCKET_PATH, &st) == 0)
+    {
+        fprintf(stderr, "%s: the server seems to already be running\n", argv[0]);
+        fprintf(stderr, "%s: if you think this is an error, try removing "
+                        SERVER_SOCKET_PATH, argv[0]);
+        fprintf(stderr, "%s: and try again\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
 
     memset(&act, 0, sizeof(struct sigaction));
     act.sa_flags = SA_RESTART;
@@ -2522,8 +2541,6 @@ int main(int argc, char **argv)
     
     server_login(argv[0]);
 
-#define DESKTOP_EXE             "/bin/desktop/desktop"
-
     if(!fork())
     {
         char *argv[] = { DESKTOP_EXE, NULL };
@@ -2561,10 +2578,10 @@ int main(int argc, char **argv)
                         argv[0], strerror(errno));
         exit(EXIT_FAILURE);
     }
-    
+
     server_addr.sun_family = AF_UNIX;
-    strcpy(server_addr.sun_path, "/var/run/guiserver");
-    
+    strcpy(server_addr.sun_path, SERVER_SOCKET_PATH);
+
     if(bind(server_sockfd, (struct sockaddr *)&server_addr, 
             sizeof(struct sockaddr_un)) != 0)
     {
@@ -2602,7 +2619,6 @@ int main(int argc, char **argv)
         int i;
         struct mouse_packet_t mouse_packet;
         struct timeval tv;
-
 
         if(received_sigwinch)
         {

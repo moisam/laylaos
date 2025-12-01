@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: cursor.c
  *    This file is part of LaylaOS.
@@ -75,17 +75,17 @@ uint32_t cursor_we[MOUSE_BUFSZ] =
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, CA, C_, C_, C_, C_, C_, CA, C_, C_, C_, C_, C_, C_,
-    C_, C_, CA, CA, C_, C_, C_, C_, C_, CA, CA, C_, C_, C_, C_, C_,
-    C_, CA, CB, CA, CA, CA, CA, CA, CA, CA, CB, CA, C_, C_, C_, C_,
-    CA, CB, CB, CB, CB, CB, CB, CB, CB, CB, CB, CB, CA, C_, C_, C_,
-    C_, CA, CB, CA, CA, CA, CA, CA, CA, CA, CB, CA, C_, C_, C_, C_,
-    C_, C_, CA, CA, C_, C_, C_, C_, C_, CA, CA, C_, C_, C_, C_, C_,
-    C_, C_, C_, CA, C_, C_, C_, C_, C_, CA, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    C_, C_, C_, C_, C_, CA, C_, C_, C_, C_, CA, C_, C_, C_, C_, C_,
+    C_, C_, C_, C_, CA, CA, C_, C_, C_, C_, CA, CA, C_, C_, C_, C_,
+    C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_,
+    C_, C_, CA, CB, CB, CA, C_, C_, C_, C_, CA, CB, CB, CA, C_, C_,
+    C_, CA, CB, CB, CB, CA, CA, CA, CA, CA, CA, CB, CB, CB, CA, C_,
+    CA, CB, CB, CB, CB, CB, CB, CB, CB, CB, CB, CB, CB, CB, CB, CA,
+    C_, CA, CB, CB, CB, CA, CA, CA, CA, CA, CA, CB, CB, CB, CA, C_,
+    C_, C_, CA, CB, CB, CA, C_, C_, C_, C_, CA, CB, CB, CA, C_, C_,
+    C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_,
+    C_, C_, C_, C_, CA, CA, C_, C_, C_, C_, CA, CA, C_, C_, C_, C_,
+    C_, C_, C_, C_, C_, CA, C_, C_, C_, C_, CA, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
@@ -103,21 +103,21 @@ uint32_t cursor_ns[MOUSE_BUFSZ] =
     C_, C_, C_, C_, C_, C_, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, CA, CB, CB, CB, CA, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, CA, CA, CA, CB, CA, CA, CA, C_, C_, C_, C_, C_, C_,
+    C_, C_, C_, CA, CB, CB, CB, CB, CB, CA, C_, C_, C_, C_, C_, C_,
+    C_, C_, CA, CB, CB, CB, CB, CB, CB, CB, CA, C_, C_, C_, C_, C_,
+    C_, CA, CA, CA, CA, CA, CB, CA, CA, CA, CA, CA, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, CA, CA, CA, CB, CA, CA, CA, C_, C_, C_, C_, C_, C_,
+    C_, CA, CA, CA, CA, CA, CB, CA, CA, CA, CA, CA, C_, C_, C_, C_,
+    C_, C_, CA, CB, CB, CB, CB, CB, CB, CB, CA, C_, C_, C_, C_, C_,
+    C_, C_, C_, CA, CB, CB, CB, CB, CB, CA, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, CA, CB, CB, CB, CA, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
@@ -128,21 +128,21 @@ uint32_t cursor_nwse[MOUSE_BUFSZ] =
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    CA, CA, CA, CA, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, CA, CA, CA, CA, CA, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, CB, CB, CB, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, CB, CB, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     CA, CB, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    CA, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    CA, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, CB, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, CA, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, CA, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, CA, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, CA, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, CB, CA, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CB, CA, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, CA, CA, CA, CA, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CB, CB, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, C_, CA, CB, CB, CB, CB, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, CA, CA, CA, CA, CA, CA, CA, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
@@ -156,21 +156,21 @@ uint32_t cursor_nesw[MOUSE_BUFSZ] =
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, CA, CA, CA, CA, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, CA, CA, CA, CA, CA, CA, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, C_, CA, CB, CB, CB, CB, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CB, CB, CA, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CB, CA, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, CA, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, CA, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, CB, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, CA, CA, C_, C_, C_,
+    C_, C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, CA, C_, C_, C_,
     C_, C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    CA, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    CA, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, C_, C_, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, CA, C_, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, CB, CA, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     CA, CB, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
-    CA, CA, CA, CA, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, CB, CB, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, CB, CB, CB, CB, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    CA, CA, CA, CA, CA, CA, CA, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
     C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
@@ -394,14 +394,14 @@ void prep_mouse_cursor(struct gc_t *gc)
     cursor[CURSOR_NORMAL].h = MOUSE_HEIGHT;
 
     cursor[CURSOR_WE].data = cursor_we;
-    cursor[CURSOR_WE].hotx = 6;
-    cursor[CURSOR_WE].hoty = 10;
+    cursor[CURSOR_WE].hotx = 7;
+    cursor[CURSOR_WE].hoty = 11;
     cursor[CURSOR_WE].w = MOUSE_WIDTH;
     cursor[CURSOR_WE].h = MOUSE_HEIGHT;
 
     cursor[CURSOR_NS].data = cursor_ns;
     cursor[CURSOR_NS].hotx = 6;
-    cursor[CURSOR_NS].hoty = 10;
+    cursor[CURSOR_NS].hoty = 11;
     cursor[CURSOR_NS].w = MOUSE_WIDTH;
     cursor[CURSOR_NS].h = MOUSE_HEIGHT;
 
