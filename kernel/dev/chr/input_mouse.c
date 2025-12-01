@@ -37,7 +37,6 @@
 #include <kernel/user.h>
 #include <kernel/fcntl.h>
 
-extern struct selinfo mouse_ssel;
 
 // NOTE: ensure this is a multiple of 2!
 #define NR_PACKETS          2048
@@ -80,8 +79,13 @@ void mouse_task_func(void *arg)
             selwakeup(&mouse_ssel);
         }
 
+        /*
         //block_task(incoming_mouse_packets, 0);
         block_task2(incoming_mouse_packets, PIT_FREQUENCY);
+        */
+        set_task_waitchan(this_core->cur_task, incoming_mouse_packets);
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+        scheduler();
     }
 }
 

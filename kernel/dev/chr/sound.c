@@ -140,35 +140,6 @@ long snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
                     hda->flags &= ~HDA_FLAG_ERROR;
                 }
 
-                #if 0
-                if(info.output_muted)
-                {
-                    hda_set_volume(hda, 0, 0);      // mute
-                    /*
-                    uint32_t codec = (hda->nodes[hda->speaker_node] >> 16) & 0xff;
-                    uint32_t node = hda->nodes[hda->speaker_node] & 0xff;
-                    hda->volume = 0;
-                    hda_set_volume(hda, codec, node);
-                    */
-                }
-                //else if(info.play.gain)
-                else if(info.play.gain &&
-                        info.play.gain <= 255 /* && hda->speaker_node != 0xffffffff */)
-                {
-                    hda_set_volume(hda, info.play.gain, 1);
-                    /*
-                    uint32_t codec = (hda->nodes[hda->speaker_node] >> 16) & 0xff;
-                    uint32_t node = hda->nodes[hda->speaker_node] & 0xff;
-                    hda->volume = info.play.gain;
-                    hda_set_volume(hda, codec, node);
-                    */
-                }
-                else if(hda->out)
-                {
-                    hda_set_volume(hda, hda->out->vol, 0);   // unmute
-                }
-                #endif
-
                 //hda_config_out_widgets(hda);
 
                 /*
@@ -311,30 +282,6 @@ long snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
                 return 0;
             }
 
-#if 0
-
-            if(hda->out)
-            {
-                volatile struct hda_buf_t *buf;
-
-                elevated_priority_lock(&hda->outq.lock);
-
-                while(hda->outq.head)
-                {
-                    buf = hda->outq.head;
-                    hda->outq.head = buf->next;
-                    kfree((void *)buf);
-                }
-
-                hda->outq.tail = NULL;
-                hda->outq.queued = 0;
-                hda->outq.bytes = 0;
-
-                elevated_priority_unlock(&hda->outq.lock);
-            }
-
-#endif
-
             /*
              * TODO: flush input (microphone/recording) buffers as well.
              */
@@ -347,28 +294,6 @@ long snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
             {
                 return 0;
             }
-
-#if 0
-
-            if(hda->out)
-            {
-                volatile int queued;
-
-                elevated_priority_lock(&hda->outq.lock);
-                queued = hda->outq.queued;
-
-                while(queued)
-                {
-                    elevated_priority_unlock(&hda->outq.lock);
-                    scheduler();
-                    elevated_priority_relock(&hda->outq.lock);
-                    queued = hda->outq.queued;
-                }
-
-                elevated_priority_unlock(&hda->outq.lock);
-            }
-
-#endif
 
             /*
              * TODO: drain input (microphone/recording) buffers as well.
@@ -392,21 +317,6 @@ long snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
 
 
 /*
-static inline void free_bufs(struct hda_buf_t *head)
-{
-    struct hda_buf_t *hdabuf, *next;
-
-    for(hdabuf = head; hdabuf; )
-    {
-        next = hdabuf->next;
-        kfree(hdabuf);
-        hdabuf = next;
-    }
-}
-*/
-
-
-/*
  * Write to a sound device (major = 14).
  */
 ssize_t snddev_write(struct file_t *f, off_t *pos,
@@ -416,11 +326,6 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
     UNUSED(kernel);
 
     struct hda_dev_t *hda;
-    //struct hda_buf_t *hdabuf /* , *head, *tail */;
-    //volatile size_t pending;
-    ////volatile int queued;
-    ////int bufcount;
-    ////size_t left, len;
     dev_t dev = f->node->blocks[0];
 
     if(!(hda = hda_for_devid(dev)))
@@ -448,131 +353,6 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
 
 
     return hda_write_buf(hda, (char *)buf, count);
-
-
-#if 0
-
-    elevated_priority_lock(&hda->outq.lock);
-
-#if 0
-
-    if(hda->outq.bytes >= MAX_BYTES)
-    {
-        elevated_priority_unlock(&hda->outq.lock);
-        unblock_kernel_task(hda->task);
-        return -EAGAIN;
-    }
-
-#endif
-
-    pending = hda->outq.bytes;
-    
-    while(pending + count /* + bufcount */ >= MAX_BYTES /* MAX_QUEUED */)
-    {
-        elevated_priority_unlock(&hda->outq.lock);
-        //block_task2(&hda->outq, PIT_FREQUENCY);
-        scheduler();
-        elevated_priority_relock(&hda->outq.lock);
-        pending = hda->outq.bytes;
-    }
-
-    elevated_priority_unlock(&hda->outq.lock);
-
-    // The HDA driver expects buffers <= BDL_BUFSZ in length. If the data
-    // is larger, break it down into multiple buffers and then them to the
-    // device's queue.
-
-    if(!(hdabuf = kmalloc(sizeof(struct hda_buf_t) + count)))
-    {
-        return -ENOMEM;
-    }
-
-    A_memset(hdabuf, 0, sizeof(struct hda_buf_t));
-
-    hdabuf->size = count;
-    hdabuf->curptr = hdabuf->buf;
-    /*
-    __lock_xchg_ptr(&hdabuf->size, count);
-    __lock_xchg_ptr(&hdabuf->curptr, (uintptr_t)hdabuf->buf);
-    */
-
-    if(copy_from_user(hdabuf->buf, buf, count) != 0)
-    {
-        return -EFAULT;
-    }
-
-    /*
-    left = count;
-    bufcount = 0;
-    head = NULL;
-    tail = NULL;
-
-    while(left != 0)
-    {
-        len = (left > BDL_BUFSZ) ? BDL_BUFSZ : left;
-
-        if(!(hdabuf = kmalloc(sizeof(struct hda_buf_t) + len)))
-        {
-            free_bufs(head);
-            return -ENOMEM;
-        }
-
-        A_memset(hdabuf, 0, sizeof(struct hda_buf_t));
-        hdabuf->size = len;
-        hdabuf->curptr = hdabuf->buf;
-
-        if(copy_from_user(hdabuf->buf, buf, len) != 0)
-        {
-            free_bufs(head);
-            return -EFAULT;
-        }
-
-        if(head == NULL)
-        {
-            head = hdabuf;
-            tail = hdabuf;
-        }
-        else
-        {
-            tail->next = hdabuf;
-        }
-
-        buf += len;
-        left -= len;
-        bufcount++;
-    }
-    */
-    
-    elevated_priority_relock(&hda->outq.lock);
-    
-    if(hda->outq.head == NULL)
-    {
-        hda->outq.head = hdabuf /* head */;
-        hda->outq.tail = hdabuf /* tail */;
-    }
-    else
-    {
-        hda->outq.tail->next = hdabuf /* head */;
-        hda->outq.tail = hdabuf /* tail */;
-    }
-
-    hda->outq.queued++;
-    //hda->outq.queued += bufcount;
-    hda->outq.bytes += count;
-    hda->bytes_played += count;
-    /*
-    __sync_fetch_and_add(&hda->outq.queued, 1);
-    __sync_fetch_and_add(&hda->outq.bytes, count);
-    __sync_fetch_and_add(&hda->bytes_played, count);
-    */
-
-    elevated_priority_unlock(&hda->outq.lock);
-    unblock_kernel_task(hda->task);
-    
-    return count;
-
-#endif
-
 }
 
 
@@ -642,14 +422,7 @@ long snddev_select(struct file_t *f, int which)
              */
             return 0;
 
-    	case FWRITE: ;
-            /*
-            elevated_priority_lock(&hda->outq.lock);
-            //res = !(hda->outq.queued >= MAX_QUEUED);
-            res = !(hda->outq.bytes >= MAX_BYTES);
-            elevated_priority_unlock(&hda->outq.lock);
-            return res;
-            */
+    	case FWRITE:
             return 1;
     	    
     	case 0:
