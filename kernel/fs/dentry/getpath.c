@@ -42,16 +42,13 @@ long get_dot_dot(struct fs_node_t **dir, struct fs_node_t **dotdot)
 {
     KDEBUG("get_dot_dot:\n");
     struct dirent *entry;
-    struct cached_page_t *dbuf;
-    //struct IO_buffer_s *dbuf;
     struct fs_node_t *tmp;
-    size_t dbuf_off;
     long i;
     ino_t ino;
     
     *dotdot = NULL;
-    
-    if((i = vfs_finddir(*dir, "..", &entry, &dbuf, &dbuf_off)) < 0)
+
+    if((i = vfs_finddir(*dir, "..", &entry)) < 0)
     {
         return i;
     }
@@ -59,8 +56,6 @@ long get_dot_dot(struct fs_node_t **dir, struct fs_node_t **dotdot)
     
     ino = entry->d_ino;
     kfree(entry);
-    release_cached_page(dbuf);
-    //brelse(dbuf);
     
     // if the inode number for this dir and '..' is the same, the dir is
     // the root dir of this device
@@ -111,9 +106,6 @@ long getpath(struct fs_node_t *dir, char **__path)
     size_t ptsize;
     char *pt, *ept;
     struct fs_node_t *node, *parent;
-    struct cached_page_t *dbuf;
-    //struct IO_buffer_s *dbuf;
-    size_t dbuf_off;
     long res;
 
     if(!__path)
@@ -222,14 +214,10 @@ long getpath(struct fs_node_t *dir, char **__path)
 
         KDEBUG("getpath: node @ 0x%x, parent @ 0x%x\n", node, parent);
 
-        if((res = vfs_finddir_by_inode(parent, node,
-                                       &dp, &dbuf, &dbuf_off)) < 0)
+        if((res = vfs_finddir_by_inode(parent, node, &dp)) < 0)
         {
             goto err2;
         }
-        
-        release_cached_page(dbuf);
-        //brelse(dbuf);
 
         KDEBUG("getpath: 2 node @ 0x%x, parent @ 0x%x\n", node, parent);
 
