@@ -313,7 +313,18 @@ retry:
     }
     */
 
+    set_task_waking_signal(this_core->cur_task, 0);
+    __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+
     error = selscan(ibits, obits, nd);
+
+    /*
+    if(memcmp(this_core->cur_task->command, "sdl2-do", 7) == 0)
+    //if(this_core->cur_task->pid >= 63 && this_core->cur_task->pid != 64)
+    {
+        printk("select: err %ld, timo %ld\n", error, timo);
+    }
+    */
 
     /*
     kernel_mutex_unlock(&cur_task->ofiles->mutex);
@@ -343,13 +354,77 @@ retry:
         
         if(ticks >= (oticks + timo))
         {
-            goto done;
+            return 0;
         }
-        
+
         timo -= (ticks - oticks);
+        oticks = ticks;
     }
 
-    error = block_task2(&selwait, timo);
+
+    /*
+    if(timo)
+    {
+        prep_wait(timo);
+    }
+
+    if(get_task_properties(this_core->cur_task) & PROPERTY_SELECT_EVENT)
+    {
+        if(timo)
+        {
+            end_wait();
+        }
+
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        goto retry;
+    }
+
+    set_task_state(this_core->cur_task, TASK_SLEEPING);
+    scheduler();
+
+    if(timo)
+    {
+        end_wait();
+    }
+    */
+
+    if(timo)
+    {
+        block_task_timeout(this_core->cur_task, timo);
+    }
+    else
+    {
+        set_task_waitchan(this_core->cur_task, &selwait);
+
+        if(get_task_properties(this_core->cur_task) & PROPERTY_SELECT_EVENT)
+        {
+            __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+            goto retry;
+        }
+
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+        scheduler();
+    }
+
+    if(get_task_waking_signal(this_core->cur_task))
+    {
+        return -EINTR;
+    }
+
+    goto retry;
+
+#if 0
+    if(timo < 100)
+    {
+        error = block_task2(&selwait, timo);
+    }
+    else
+    {
+        if((error = block_task2(&selwait, 100)) != EINTR)
+        {
+            goto retry;
+        }
+    }
 
     if(error == 0)
     {
@@ -357,7 +432,8 @@ retry:
     }
     
     error = -error;
-    
+#endif
+
 done:
 
     /* select is not restarted after signals... */
@@ -526,7 +602,7 @@ static long selscan(fd_set *ibits, fd_set *obits, int nfd)
                     {
                         continue;
                     }
-                
+
                     if(f->node->select(f, flag[msk]))
                     {
                         FD_SET(fd, &obits[msk]);
@@ -707,6 +783,8 @@ void selwakeup(struct selinfo *sip)
 {
     struct seltab_entry_t *se;
     struct task_t **w, **lw, *t;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
+    //volatile int runs;
     
     if(!sip)
     {
@@ -736,17 +814,33 @@ void selwakeup(struct selinfo *sip)
             *w = NULL;
             se->nwaiters--;
 
-            //KDEBUG("selwakeup: pid %d\n", t->pid);
-
-            if(t->state == TASK_READY || t->state == TASK_RUNNING)
+            //printk("selwakeup: pid %d, %d, %lx (this %d)\n", t->pid, t->state, t->saved_context.rip, ct->pid);
+            if(ct == t)
             {
                 continue;
             }
 
-            t->state = TASK_READY;
-            t->wait_channel = NULL;
+            __sync_or_and_fetch(&t->properties, PROPERTY_SELECT_EVENT);
+            unblock_task_no_preempt(t);
+#if 0
+            // do two runs to ensure any task that has slept just before we 
+            // came in and entered the inner loop is not missed
+            for(runs = 0; runs < 2; runs++)
+            {
+                if(t->state == TASK_READY || t->state == TASK_RUNNING)
+                {
+                    __asm__ __volatile__("pause":::);
+                    continue;
+                }
 
-            append_to_ready_queue_locked(t, 1);
+                t->state = TASK_READY;
+                t->wait_channel = NULL;
+
+                append_to_ready_queue_locked(t, 1);
+                break;
+            }
+#endif
+
         }
     }
 

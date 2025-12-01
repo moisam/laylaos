@@ -54,7 +54,8 @@
  */
 static void get_regs(volatile struct task_t *tracee, struct user_regs_struct *rdest)
 {
-    volatile struct regs *rsrc = &tracee->saved_context;
+    //volatile struct regs *rsrc = &tracee->saved_context;
+    volatile struct regs *rsrc = /* tracee->irq_regs ? tracee->irq_regs : */ tracee->syscall_regs;
 
     // NOTE: this shouldn't happen
     if(!rsrc)
@@ -127,7 +128,7 @@ static void get_fpregs(volatile struct task_t *tracee, struct user_fpregs_struct
 
     // http://www.jaist.ac.jp/iscenter-new/mpc/altix/altixdata/opt/intel/vtune/doc/users_guide/mergedProjects/analyzer_ec/mergedProjects/reference_olh/mergedProjects/instructions/instruct32_hh/vc129.htm
 
-    A_memcpy(r, (void *)&tracee->fpregs, 512);
+    A_memcpy(r, (void *)tracee->fpregs, 512);
 
 #else
 
@@ -152,7 +153,8 @@ static void get_fpregs(volatile struct task_t *tracee, struct user_fpregs_struct
  */
 static void set_regs(volatile struct task_t *tracee, struct user_regs_struct *rsrc)
 {
-    volatile struct regs *rdest = &tracee->saved_context;
+    //volatile struct regs *rdest = &tracee->saved_context;
+    volatile struct regs *rdest = /* tracee->irq_regs ? tracee->irq_regs : */ tracee->syscall_regs;
 
     // NOTE: this shouldn't happen
     if(!rdest)
@@ -204,7 +206,7 @@ static void set_fpregs(volatile struct task_t *tracee, struct user_fpregs_struct
     /*
      * TODO: validate input before copying it blindly.
      */
-    A_memcpy((void *)&tracee->fpregs, r, 512);
+    A_memcpy((void *)tracee->fpregs, r, 512);
 
 #else
 
@@ -1156,7 +1158,14 @@ static long ptrace_singlestep(pid_t pid, void *data)
         return -EFAULT;
     }
 
-    volatile struct regs *rdest = &tracee->saved_context;
+    //volatile struct regs *rdest = &tracee->saved_context;
+    volatile struct regs *rdest = /* tracee->irq_regs ? tracee->irq_regs : */ tracee->syscall_regs;
+
+    // NOTE: this shouldn't happen
+    if(!rdest)
+    {
+        kpanic("Invalid regs pointer in task struct (in ptrace_singlestep)");
+    }
 
 #ifdef __x86_64__
     rdest->rflags |= 0x100;
@@ -1196,7 +1205,14 @@ static long ptrace_sysemu_singlestep(pid_t pid, void *data)
         return -EFAULT;
     }
 
-    volatile struct regs *rdest = &tracee->saved_context;
+    //volatile struct regs *rdest = &tracee->saved_context;
+    volatile struct regs *rdest = /* tracee->irq_regs ? tracee->irq_regs : */ tracee->syscall_regs;
+
+    // NOTE: this shouldn't happen
+    if(!rdest)
+    {
+        kpanic("Invalid regs pointer in task struct (in ptrace_sysemu_singlestep)");
+    }
 
     __sync_or_and_fetch(&tracee->properties, PROPERTY_TRACE_SYSEMU);
     __sync_and_and_fetch(&tracee->properties, ~PROPERTY_TRACE_SYSCALLS);
@@ -1244,7 +1260,14 @@ static long ptrace_set_syscall(pid_t pid, void *data)
     }
     */
 
-    volatile struct regs *rdest = &tracee->saved_context;
+    //volatile struct regs *rdest = &tracee->saved_context;
+    volatile struct regs *rdest = /* tracee->irq_regs ? tracee->irq_regs : */ tracee->syscall_regs;
+
+    // NOTE: this shouldn't happen
+    if(!rdest)
+    {
+        kpanic("Invalid regs pointer in task struct (in ptrace_set_syscall)");
+    }
 
     if(tracee->user_in_kernel_mode &&
        (tracee->properties & PROPERTY_IN_SYSCALL))
@@ -1300,12 +1323,19 @@ static long ptrace_get_syscall_info(pid_t pid, void *addr, void *data)
         return -EFAULT;
     }
 
-    volatile struct regs *rdest = &tracee->saved_context;
-
     if(!tracee->user_in_kernel_mode ||
        !(tracee->properties & PROPERTY_IN_SYSCALL))
     {
         return -ESRCH;
+    }
+
+    //volatile struct regs *rdest = &tracee->saved_context;
+    volatile struct regs *rdest = /* tracee->irq_regs ? tracee->irq_regs : */ tracee->syscall_regs;
+
+    // NOTE: this shouldn't happen
+    if(!rdest)
+    {
+        kpanic("Invalid regs pointer in task struct (in ptrace_get_syscall_info)");
     }
     
     if(sz > sizeof(struct ptrace_syscall_info))

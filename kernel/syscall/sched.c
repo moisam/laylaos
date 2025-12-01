@@ -289,6 +289,10 @@ long syscall_sched_get_priority_min(int policy)
 long syscall_sched_yield(void)
 {
     /*
+     * XXX: This is done in the scheduler.
+     */
+#if 0
+    /*
      * The sched (7) manpage says:
      *    A [SCHED_FIFO] thread calling sched_yield(2) will be put at the end
      *    of the list.
@@ -299,6 +303,7 @@ long syscall_sched_yield(void)
         KDEBUG("%s: pid %d\n", __func__, this_core->cur_task->pid);
         move_to_queue_end_locked(this_core->cur_task);
     }
+#endif
 
     scheduler();
 

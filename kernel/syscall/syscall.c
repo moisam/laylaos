@@ -607,7 +607,11 @@ void syscall_dispatcher(struct regs *r)
     {
         /* Kill task with SIGSYS signal */
         user_add_task_signal(ct, SIGSYS, 1);
-        MAY_CHECK_SIGNALS(ct, r);
+
+        if(!(ct->properties & PROPERTY_HANDLING_SIG))
+        {
+            MAY_CHECK_SIGNALS(ct, r);
+        }
 
         /* We came back, that means the task handled the signal.
          * In this case, return -ENOSYS to the caller.
@@ -618,7 +622,7 @@ void syscall_dispatcher(struct regs *r)
     
     syscall_profiles[syscall_num].hits++;
     __set_syscall_flags(ct);
-    //ct->syscall_regs = r;
+    ct->syscall_regs = r;
 
     /* enable interrupts, so that if the syscall takes too long, we don't 
      * end up with a spurious interrupt because we missed something like the
@@ -1094,20 +1098,44 @@ long syscall_pause(struct regs *r)
 {
     while(1)
     {
-    	struct task_t *ct = (struct task_t *)this_core->cur_task;
+    	volatile struct task_t *ct = this_core->cur_task;
+
+        set_task_waking_signal(ct, 0);
+        set_task_waitchan(ct, ct);
+        set_task_state(ct, TASK_SLEEPING);
+        scheduler();
+
+        if(get_task_waking_signal(ct))
+        {
+            return -EINTR;
+        }
+
+#if 0
+    	volatile struct task_t *ct = this_core->cur_task;
         volatile sigset_t ocaught, ncaught;
-        int signum;
-        
-        block_task(ct, 1);
+        volatile int signum;
+
+        /*
+        //block_task(ct, 1);
+        block_task2((struct task_t *)ct, 100);
+        */
+        set_task_waitchan(ct, ct);
+        set_task_state(ct, TASK_SLEEPING);
+        scheduler();
 
         ksigemptyset((sigset_t *)&ocaught);
         ksigorset((sigset_t *)&ocaught, (sigset_t *)&ocaught, 
-                                                    &ct->signal_caught);
-        check_pending_signals(r);
+                                        (sigset_t *)&ct->signal_caught);
+
+        struct regs rtmp;
+        A_memcpy(&rtmp, r, sizeof(struct regs));
+        __atomic_store_n(&(ct->interrupted_syscall), __NR_pause, __ATOMIC_SEQ_CST);
+        check_pending_signals(&rtmp);
+
         //ksigemptyset(&ncaught);
         ksignotset((sigset_t *)&ncaught, (sigset_t *)&ocaught);
         ksigandset((sigset_t *)&ncaught, (sigset_t *)&ncaught, 
-                                                    &ct->signal_caught);
+                                         (sigset_t *)&ct->signal_caught);
 
         for(signum = 1; signum < NSIG; signum++)
         {
@@ -1122,6 +1150,7 @@ long syscall_pause(struct regs *r)
                 }
             }
         }
+#endif
     }
     
     KDEBUG("syscall_pause: done\n");

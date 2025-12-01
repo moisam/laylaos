@@ -98,6 +98,14 @@ long syscall_syncfs(int fd)
         return -EBADF;
     }
 
+    /*
+     * TODO: We should sync sockets on mounted disks
+     */
+    if(IS_PIPE(node) || IS_SOCKET(node))
+    {
+        return -EINVAL;
+    }
+
     remove_unreferenced_cached_pages(NULL);
     // defined in fs/update.c
     update(node->dev);

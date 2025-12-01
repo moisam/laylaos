@@ -145,6 +145,12 @@ long syscall_write(int fd, unsigned char *buf, size_t count, ssize_t *copied)
 	    f->pos = node->size;
 	}
 
+    // this filesystem flag forces append mode
+    if(node->flags & FS_NODE_APPEND_ONLY)
+	{
+	    f->pos = node->size;
+	}
+
     res = write_internal(f, buf, count, &(f->pos), copied);
 
     update_file_node(f);
@@ -180,6 +186,12 @@ long syscall_pwrite(int fd, void *buf, size_t count, off_t _offset,
     {
         return -EINVAL;
     }
+
+    // this filesystem flag forces append mode
+    if(node->flags & FS_NODE_APPEND_ONLY)
+	{
+	    offset = node->size;
+	}
 
     res = write_internal(f, (unsigned char *)buf, count, &offset, copied);
 
@@ -223,6 +235,12 @@ long syscall_writev(int fd, struct iovec *iov, int count, ssize_t *copied)
 
 	// seek to EOF if the file was opened with O_APPEND
 	if((f->flags & O_APPEND) == O_APPEND && (node->dev != PROCFS_DEVID))
+	{
+	    f->pos = node->size;
+	}
+
+    // this filesystem flag forces append mode
+    if(node->flags & FS_NODE_APPEND_ONLY)
 	{
 	    f->pos = node->size;
 	}
@@ -292,6 +310,12 @@ long syscall_pwritev(int fd, struct iovec *iov, int count,
     {
         return -EINVAL;
     }
+
+    // this filesystem flag forces append mode
+    if(node->flags & FS_NODE_APPEND_ONLY)
+	{
+	    offset = node->size;
+	}
 
     for(i = 0; i < count; i++)
     {

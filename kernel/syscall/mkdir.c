@@ -51,9 +51,6 @@ long syscall_mkdirat(int dirfd, char *pathname, mode_t mode)
 	char *filename = NULL;
     struct fs_node_t *dnode = NULL, *fnode = NULL;
     struct dirent *entry = NULL;
-    struct cached_page_t *dbuf = NULL;
-    //struct IO_buffer_s *dbuf = NULL;
-    size_t dbuf_off;
     char *name2 = path_remove_trailing_slash(pathname, 0, NULL);
     struct mount_info_t *dinfo;
     
@@ -98,10 +95,8 @@ long syscall_mkdirat(int dirfd, char *pathname, mode_t mode)
     }
     
     // check if the new dir already exists
-    if(vfs_finddir(dnode, filename, &entry, &dbuf, &dbuf_off) == 0)
+    if(vfs_finddir(dnode, filename, &entry) == 0)
     {
-        release_cached_page(dbuf);
-        //brelse(dbuf);
         kfree(entry);
         res = -EEXIST;
         goto error;

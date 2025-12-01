@@ -46,10 +46,12 @@
 #include <kernel/ipc.h>
 #include <kernel/ksigset.h>
 #include <kernel/msr.h>
+#include <kernel/common.h>
 #include <mm/kheap.h>
 #include <mm/kstack.h>
 #include <mm/mmap.h>
 #include <fs/procfs.h>
+#include <fs/dentry.h>
 #include <gui/vbe.h>
 
 
@@ -258,10 +260,10 @@ static int may_alloc_page(uintptr_t addr)
 static uintptr_t copy_strs(int argc, char **argv, uintptr_t stack, 
                            size_t tlen, int dyn_loaded)
 {
-    uintptr_t tmp, arr, *parr;
+    volatile uintptr_t tmp, arr, *parr;
     volatile char *p, *p2;
-    int i = 0;
-    
+    volatile int i = 0;
+
     // calculate offsets
     p2 = (char *)(stack - tlen);
     arr = (uintptr_t)p2 - ((argc + 1) * sizeof(uintptr_t));
@@ -335,19 +337,6 @@ static uintptr_t copy_strs(int argc, char **argv, uintptr_t stack,
 }
 
 
-static inline void *malloced_copy(void *p, int count)
-{
-    void *buf = (void *)kmalloc(count + 1);
-    
-    if(buf)
-    {
-        A_memcpy(buf, p, count);
-    }
-    
-    return buf;
-}
-
-
 static long parse_interpreter_line(char *line, char *end, char **resarg, int maxargs)
 {
     char *nl, *p, *p2;
@@ -395,7 +384,7 @@ static long parse_interpreter_line(char *line, char *end, char **resarg, int max
             }
         }
 
-        if(!(resarg[i] = malloced_copy(p, p2 - p)))
+        if(!(resarg[i] = kernel_strdup(p, p2 - p)))
         {
             while(i--)
             {
@@ -485,6 +474,7 @@ long syscall_execveat(int dirfd, char *path,
     struct fs_node_t *filenode = NULL;
     struct cached_page_t *buf = NULL;
     struct mount_info_t *dinfo;
+    struct dentry_t *dent = NULL;
     pid_t oldtid;
     int followlink = !(flags & AT_SYMLINK_NOFOLLOW);
     
@@ -536,8 +526,7 @@ long syscall_execveat(int dirfd, char *path,
     // get a kernel stack (if we don't already have one)
     if(!this_core->cur_task->kstack_virt)
     {
-        if(get_kstack((physical_addr *)&this_core->cur_task->kstack_phys, 
-                      (virtual_addr *)&this_core->cur_task->kstack_virt) != 0)
+        if(get_kstack(this_core->cur_task) != 0)
         {
             res = -ENOMEM;
             goto die;
@@ -626,7 +615,7 @@ long syscall_execveat(int dirfd, char *path,
         kfree(new_argv[i + 1]);
         len = strlen(new_invk[0]);
 
-        if(!(new_argv[i + 1] = malloced_copy(new_invk[0], len)))
+        if(!(new_argv[i + 1] = kernel_strdup(new_invk[0], len)))
         {
             res = -ENOMEM;
             goto die;
@@ -812,8 +801,25 @@ long syscall_execveat(int dirfd, char *path,
         goto die;
     }
     
-    this_core->cur_task->exe_dev = filenode->dev;
-    this_core->cur_task->exe_inode = filenode->inode;
+    //this_core->cur_task->exe_dev = filenode->dev;
+    //this_core->cur_task->exe_inode = filenode->inode;
+
+    if(this_core->cur_task->exe_path)
+    {
+        kfree(this_core->cur_task->exe_path);
+        this_core->cur_task->exe_path = NULL;
+    }
+
+    if(get_dentry(filenode, &dent) == 0)
+    {
+        if(dent->path != NULL)
+        {
+            this_core->cur_task->exe_path = 
+                        kernel_strdup(dent->path, strlen(dent->path));
+        }
+
+        release_dentry(dent);
+    }
 
     // change task's permissions if executable is suid and:
     //    - the underlying filesystem is not mounted nosuid
@@ -1004,8 +1010,10 @@ long syscall_execveat(int dirfd, char *path,
     ksigemptyset((sigset_t *)&this_core->cur_task->signal_caught);
     //ksigemptyset((sigset_t *)&this_core->cur_task->signal_mask);
     ksigemptyset((sigset_t *)&this_core->cur_task->signal_timer);
-    this_core->cur_task->woke_by_signal = 0;
-    //this_core->cur_task->sigreturn = 0;
+
+    set_task_waking_signal(this_core->cur_task, 0);
+    //this_core->cur_task->woke_by_signal = 0;
+
     A_memset((void *)&this_core->cur_task->signal_stack, 0, sizeof(stack_t));
 
     // close open files that are marked close-on-exec
@@ -1045,7 +1053,7 @@ long syscall_execveat(int dirfd, char *path,
     {
         __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_VFORK);
 
-        if(this_core->cur_task->parent->state == TASK_WAITING)
+        if(get_task_state(this_core->cur_task->parent) == TASK_WAITING)
         {
             unblock_task(this_core->cur_task->parent);
         }

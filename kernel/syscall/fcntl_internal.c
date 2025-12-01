@@ -177,12 +177,17 @@ loop:
             {
                 //kernel_mutex_unlock(&lock->lock_mutex);
                 kernel_mutex_unlock(&node->lock);
-                block_task(node->alocks, 1);
-                
-                if(this_core->cur_task->woke_by_signal)
+
+                set_task_waitchan(this_core->cur_task, node->alocks);
+                set_task_state(this_core->cur_task, TASK_SLEEPING);
+                scheduler();
+                //block_task(node->alocks, 1);
+
+                if(get_task_waking_signal(this_core->cur_task))
+                //if(this_core->cur_task->woke_by_signal)
                 {
                     return -ERESTARTSYS;
-                    //return -EINTR;
+                    ////return -EINTR;
                 }
                 
                 goto loop;

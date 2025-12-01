@@ -81,7 +81,7 @@ static int poll_internal(struct pollfd *fds, nfds_t nfds,
     unsigned long long oticks;
     nfds_t i;
     struct pollfd fdcopy[nfds];
-    
+
     //printk("poll_internal: fds 0x%lx, nfds %d, tm 0x%lx, mask 0x%lx\n", fds, nfds, tmo_p, sigmask);
 
     if(fds && nfds)
@@ -119,7 +119,18 @@ static int poll_internal(struct pollfd *fds, nfds_t nfds,
 
 retry:
 
+    set_task_waking_signal(this_core->cur_task, 0);
+    __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+
     error = pollscan(fdcopy, nfds);
+
+    /*
+    if(memcmp(this_core->cur_task->command, "sdl2-do", 7) == 0)
+    //if(this_core->cur_task->pid >= 63 && this_core->cur_task->pid != 64)
+    {
+        printk("poll: err %ld, timo %ld\n", error, timo);
+    }
+    */
 
     /*
      * Negative result is error, positive result is fd count.
@@ -143,13 +154,77 @@ retry:
         
         if(ticks >= (oticks + timo))
         {
-            goto done;
+            return 0;
         }
-        
+
         timo -= (ticks - oticks);
+        oticks = ticks;
     }
 
-    error = block_task2(&pollwait, timo);
+
+    /*
+    if(timo)
+    {
+        prep_wait(timo);
+    }
+
+    if(get_task_properties(this_core->cur_task) & PROPERTY_SELECT_EVENT)
+    {
+        if(timo)
+        {
+            end_wait();
+        }
+
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        goto retry;
+    }
+
+    set_task_state(this_core->cur_task, TASK_SLEEPING);
+    scheduler();
+
+    if(timo)
+    {
+        end_wait();
+    }
+    */
+
+    if(timo)
+    {
+        block_task_timeout(this_core->cur_task, timo);
+    }
+    else
+    {
+        set_task_waitchan(this_core->cur_task, &pollwait);
+
+        if(get_task_properties(this_core->cur_task) & PROPERTY_SELECT_EVENT)
+        {
+            __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+            goto retry;
+        }
+
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+        scheduler();
+    }
+
+    if(get_task_waking_signal(this_core->cur_task))
+    {
+        return -EINTR;
+    }
+
+    goto retry;
+
+#if 0
+    if(timo < 100)
+    {
+        error = block_task2(&pollwait, timo);
+    }
+    else
+    {
+        if((error = block_task2(&pollwait, 100)) != EINTR)
+        {
+            goto retry;
+        }
+    }
 
     if(error == 0)
     {
@@ -157,6 +232,7 @@ retry:
     }
     
     error = -error;
+#endif
     
 done:
 

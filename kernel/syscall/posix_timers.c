@@ -128,12 +128,20 @@ long syscall_timer_settime(ktimer_t timerid, int flags,
         head = &waiter_head[(timer->clockid == CLOCK_REALTIME) ? 1 : 0];
         timer_unwait(head, tgid(ct), timer->timerid);
         //timer_unwait(head, ct, timer->timerid);
+
+        A_memcpy(&timer->val, &newval, sizeof(struct itimerspec));
+        timer->flags = flags;
+        timer->cur_overruns = 0;
+        timer->saved_overruns = 0;
+        //timer->interval_ticks = timespec_to_ticks(&newval.it_interval);
         
         // arm the new timer if needed
         if(newval.it_value.tv_sec || newval.it_value.tv_nsec)
         {
-            KDEBUG("syscall_timer_settime: sec %ld\n", newval.it_value.tv_sec);
-            KDEBUG("syscall_timer_settime: nsec %ld\n", newval.it_value.tv_nsec);
+            KDEBUG("syscall_timer_settime: sec %ld\n", timer->val.it_value.tv_sec);
+            KDEBUG("syscall_timer_settime: nsec %ld\n", timer->val.it_value.tv_nsec);
+            KDEBUG("syscall_timer_settime: isec %ld\n", timer->val.it_interval.tv_sec);
+            KDEBUG("syscall_timer_settime: insec %ld\n", timer->val.it_interval.tv_nsec);
 
             res = do_clock_nanosleep(tgid(ct), timer->clockid, flags,
             //res = do_clock_nanosleep(ct, timer->clockid, flags,
@@ -142,19 +150,13 @@ long syscall_timer_settime(ktimer_t timerid, int flags,
             KDEBUG("syscall_timer_settime: res %d, id %d\n", res, timer->timerid);
 
             // time has already passed (otherwise we should get -EINTR)
-            if(res == 0 || res == -EINVAL)
+            if(/* res == 0 || */ res == -EINVAL)
             {
                 A_memset(&timer->val, 0, sizeof(struct itimerspec));
                 kernel_mutex_unlock(&ct->common->mutex);
                 return 0;
             }
         }
-
-        A_memcpy(&timer->val, &newval, sizeof(struct itimerspec));
-        timer->flags = flags;
-        timer->cur_overruns = 0;
-        timer->saved_overruns = 0;
-        //timer->interval_ticks = timespec_to_ticks(&newval.it_interval);
     }
 
     kernel_mutex_unlock(&ct->common->mutex);

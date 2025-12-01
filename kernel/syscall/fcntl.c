@@ -399,8 +399,6 @@ long syscall_fcntl(int fd, int cmd, void *arg)
             // return error (res != 0) or the result
             return res ? res : pid;
 
-#if 0
-
         /**************************************
          * (6) changing the capacity of a pipe
          **************************************/
@@ -409,9 +407,7 @@ long syscall_fcntl(int fd, int cmd, void *arg)
             return pipefs_get_size(node);
 
         case F_SETPIPE_SZ:
-            return pipefs_set_size(node, (int)arg);
-
-#endif
+            return pipefs_set_size(node, (int)(uintptr_t)arg);
 
         /*********************************
          * TODO: Handle the other fcntl flags (see link below).
