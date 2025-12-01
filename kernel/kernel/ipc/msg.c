@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: msg.c
  *    This file is part of LaylaOS.
@@ -47,7 +47,7 @@
 #define MSGTYPE(msgh)       *(long *)MSGBUF(msgh)
 
 struct ipcq_t *ipc_msg;
-struct kernel_mutex_t ipc_msg_lock;
+volatile struct kernel_mutex_t ipc_msg_lock;
 
 
 /*
@@ -78,11 +78,11 @@ void msg_init(void)
 /*
  * Handler for syscall msgctl().
  */
-int syscall_msgctl(int msqid, int cmd, struct msqid_ds *buf)
+long syscall_msgctl(int msqid, int cmd, struct msqid_ds *buf)
 {
     int index;
     struct msqid_ds tmp;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(msqid < 0 || !buf || !ipc_msg)
     {
@@ -215,10 +215,10 @@ int syscall_msgctl(int msqid, int cmd, struct msqid_ds *buf)
 /*
  * Handler for syscall msgget().
  */
-int syscall_msgget(key_t key, int msgflg)
+long syscall_msgget(key_t key, int msgflg)
 {
     int i, qid;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(!ipc_msg)
     {
@@ -322,12 +322,12 @@ int syscall_msgget(key_t key, int msgflg)
 /*
  * Handler for syscall msgget().
  */
-int syscall_msgsnd(int msqid, void *msgp, size_t msgsz, int msgflg)
+long syscall_msgsnd(int msqid, void *msgp, size_t msgsz, int msgflg)
 {
     int index;
     size_t actual_msgsz = msgsz + sizeof(long); // sizeof mtype
     struct msgmap_hdr_t *msgh;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(msqid < 0 || !msgp || !ipc_msg)
     {
@@ -376,13 +376,23 @@ check:
         {
             return -EAGAIN;
         }
-        
+
+        set_task_waitchan(ct, &MSGQ(index));
+        set_task_state(ct, TASK_SLEEPING);
+        scheduler();
+
+        if(get_task_waking_signal(ct))
+        {
+            return -EINTR;
+        }
+#if 0
         /* sleep and wait */
         if(block_task(&MSGQ(index), 1) != 0)
         {
             /* sleep interrupted by a signal */
             return -EINTR;
         }
+#endif
 
         MSGQLOCK(index);
 
@@ -453,10 +463,10 @@ check:
  *       which is of type size_t, while the C library function msgrcv() returns
  *       the count in its return value, of type ssize_t.
  */
-int syscall_msgrcv(struct syscall_args *__args)
+long syscall_msgrcv(struct syscall_args *__args)
 {
     struct syscall_args a;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
     struct msgmap_hdr_t *msgh;
     size_t actual_msgsz;
     int res, index;
@@ -559,11 +569,21 @@ int syscall_msgrcv(struct syscall_args *__args)
             }
         
             /* sleep and wait */
+            set_task_waitchan(ct, &MSGQ(index));
+            set_task_state(ct, TASK_SLEEPING);
+            scheduler();
+
+            if(get_task_waking_signal(ct))
+            {
+                return -EINTR;
+            }
+#if 0
             if(block_task(&MSGQ(index), 1) != 0)
             {
                 /* sleep interrupted by a signal */
                 return -EINTR;
             }
+#endif
 
             MSGQLOCK(index);
 

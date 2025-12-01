@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: sem.c
  *    This file is part of LaylaOS.
@@ -55,7 +55,7 @@
 
 
 struct ipcq_t *ipc_sem;
-struct kernel_mutex_t ipc_sem_lock;
+volatile struct kernel_mutex_t ipc_sem_lock;
 
 /* undo struct */
 struct semadj_t
@@ -69,12 +69,12 @@ struct semadj_t
 /* system-wide array for undoing semaphore operations, indexed by task */
 struct task_semadj_t
 {
-    struct task_t *task;
+    volatile struct task_t *task;
     struct semadj_t *head, *tail;
     struct task_semadj_t *prev, *next;
 } semadj_head;
 
-struct kernel_mutex_t semadj_lock;
+volatile struct kernel_mutex_t semadj_lock;
 
 
 static void remove_semadj(int semid, unsigned short sem_num)
@@ -133,7 +133,7 @@ static void remove_semadj(int semid, unsigned short sem_num)
 
 
 static int add_sem_undo(int semid, unsigned short sem_num,
-                        short val, struct task_t *task)
+                        short val, volatile struct task_t *task)
 {
     struct task_semadj_t *sa;
     struct semadj_t *undo;
@@ -326,9 +326,9 @@ void sem_init(void)
 #define FIELD_SEMPID        3
 #define FIELD_SEMVAL        4
 
-static int get_field(struct task_t *ct, int index, int semnum, int which)
+static long get_field(volatile struct task_t *ct, int index, int semnum, int which)
 {
-    int res;
+    long res;
 
     if(!ipc_has_perm(&SEMQPERM(index), ct, READ_PERMISSION))
     {
@@ -369,13 +369,13 @@ static int get_field(struct task_t *ct, int index, int semnum, int which)
 /*
  * Handler for syscall semctl().
  */
-int syscall_semctl(int semid, int semnum, int cmd, union semun *arg)
+long syscall_semctl(int semid, int semnum, int cmd, union semun *arg)
 {
     int index;
     unsigned long i;
     struct semid_ds tmp;
     struct semaphore_t *sem, *lsem;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(semid < 0 || !ipc_sem)
     {
@@ -609,11 +609,11 @@ int syscall_semctl(int semid, int semnum, int cmd, union semun *arg)
 /*
  * Handler for syscall semget().
  */
-int syscall_semget(key_t key, int nsems, int semflg)
+long syscall_semget(key_t key, int nsems, int semflg)
 {
     int i, qid;
     struct semaphore_t *sems;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(!ipc_sem)
     {
@@ -724,12 +724,12 @@ int syscall_semget(key_t key, int nsems, int semflg)
 /*
  * Handler for syscall semop().
  */
-int syscall_semop(int semid, struct sembuf *__sops, size_t nsops)
+long syscall_semop(int semid, struct sembuf *__sops, size_t nsops)
 {
     int index, interrupted;
     struct sembuf sops[nsops];
     struct sembuf *op, *op2, *lop;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(semid < 0 || !ipc_sem)
     {
@@ -841,6 +841,23 @@ start:
             SEMQUNLOCK(index);
             
             /* sleep and wait */
+            set_task_waitchan(ct, &sem->semncnt);
+            set_task_state(ct, TASK_SLEEPING);
+            scheduler();
+
+            if(get_task_waking_signal(ct))
+            {
+                /*
+                 * Set a flag and return -EINTR below. We do it this way to
+                 * ensure we decrement semzcnt on the right queue, as the
+                 * queue might have been removed by another task while we
+                 * slept.
+                 */
+                //return -EINTR;
+                interrupted = 1;
+            }
+
+#if 0
             if(block_task(&sem->semncnt, 1) != 0)
             {
                 /*
@@ -852,6 +869,7 @@ start:
                 //return -EINTR;
                 interrupted = 1;
             }
+#endif
 
             SEMQLOCK(index);
 
@@ -897,6 +915,23 @@ start:
                 interrupted = 0;
                 SEMQUNLOCK(index);
 
+                set_task_waitchan(ct, &sem->semncnt);
+                set_task_state(ct, TASK_SLEEPING);
+                scheduler();
+
+                if(get_task_waking_signal(ct))
+                {
+                    /*
+                     * Set a flag and return -EINTR below. We do it this way to
+                     * ensure we decrement semzcnt on the right queue, as the
+                     * queue might have been removed by another task while we
+                     * slept.
+                     */
+                    //return -EINTR;
+                    interrupted = 1;
+                }
+
+#if 0
                 /* sleep and wait */
                 if(block_task(&sem->semzcnt, 1) != 0)
                 {
@@ -909,6 +944,7 @@ start:
                     //return -EINTR;
                     interrupted = 1;
                 }
+#endif
 
                 SEMQLOCK(index);
 

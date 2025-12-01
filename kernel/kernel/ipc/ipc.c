@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ipc.c
  *    This file is part of LaylaOS.
@@ -46,7 +46,7 @@ void ipc_init(void)
 /*
  * Check SysV IPC permissions.
  */
-int ipc_has_perm(struct ipc_perm *perm, struct task_t *task, int what)
+int ipc_has_perm(struct ipc_perm *perm, volatile struct task_t *task, int what)
 {
     int umode = 0, gmode = 0, omode = 0;
 
@@ -119,7 +119,7 @@ static int argsz[25] =
 /*
  * Handler for syscall ipc().
  */
-int syscall_ipc(int call, unsigned long *args)
+long syscall_ipc(int call, unsigned long *args)
 {
     KDEBUG("syscall_ipc:\n");
     //__asm__ __volatile__("xchg %%bx, %%bx"::);

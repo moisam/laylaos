@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
  * 
  *    file: shm.c
  *    This file is part of LaylaOS.
@@ -41,7 +41,7 @@
 #define SHMQUNLOCK(index)   kernel_mutex_unlock(&ipc_shm[index].lock)
 
 struct ipcq_t *ipc_shm;
-struct kernel_mutex_t ipc_shm_lock;
+volatile struct kernel_mutex_t ipc_shm_lock;
 
 
 /*
@@ -72,11 +72,11 @@ void shm_init(void)
 /*
  * Handler for syscall shmctl().
  */
-int syscall_shmctl(int shmid, int cmd, struct shmid_ds *buf)
+long syscall_shmctl(int shmid, int cmd, struct shmid_ds *buf)
 {
     int index;
     struct shmid_ds tmp;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(shmid < 0 /* || !buf */ || !ipc_shm)
     {
@@ -184,12 +184,12 @@ int syscall_shmctl(int shmid, int cmd, struct shmid_ds *buf)
 /*
  * Handler for syscall shmget().
  */
-int syscall_shmget(key_t key, size_t size, int shmflg)
+long syscall_shmget(key_t key, size_t size, int shmflg)
 {
     int i, qid;
     size_t shmhsz;
     struct shmmap_hdr_t *shmh;
-    struct task_t *ct = cur_task;
+	volatile struct task_t *ct = this_core->cur_task;
 
     if(!ipc_shm)
     {
@@ -312,15 +312,16 @@ int syscall_shmget(key_t key, size_t size, int shmflg)
 /*
  * Handler for syscall shmat().
  */
-int syscall_shmat(int shmid, void *shmaddr, int shmflg, volatile void **result)
+long syscall_shmat(int shmid, void *shmaddr, int shmflg, volatile void **result)
 {
+    long res;
     int index;
-    int prot, res;
+    int prot;
     int flags;
     size_t sz;
     virtual_addr virt, virt2, end;
     physical_addr phys;
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
 
     if(shmid < 0 || !ipc_shm)
     {
@@ -495,10 +496,10 @@ static void shm_destroy(int i)
 /*
  * Attach shared memory region.
  */
-int shmat_internal(struct task_t *task, struct memregion_t *memregion,
-                                        void *shmaddr)
+long shmat_internal(struct task_t *task, struct memregion_t *memregion,
+                                         void *shmaddr)
 {
-    int i, res = 0;
+    long i, res = 0;
 
     if((i = memregion_to_shmid(shmaddr, memregion)) < 0)
     {
@@ -528,10 +529,10 @@ int shmat_internal(struct task_t *task, struct memregion_t *memregion,
 /*
  * Detach shared memory region.
  */
-int shmdt_internal(struct task_t *task, struct memregion_t *memregion,
-                                        void *shmaddr)
+long shmdt_internal(struct task_t *task, struct memregion_t *memregion,
+                                         void *shmaddr)
 {
-    int i;
+    long i;
 
     if((i = memregion_to_shmid(shmaddr, memregion)) < 0)
     {
@@ -558,10 +559,10 @@ int shmdt_internal(struct task_t *task, struct memregion_t *memregion,
 /*
  * Handler for syscall shmdt().
  */
-int syscall_shmdt(void *shmaddr)
+long syscall_shmdt(void *shmaddr)
 {
     virtual_addr virt = (virtual_addr)shmaddr;
-    struct task_t *ct = cur_task;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
     struct memregion_t *memregion = NULL;
     
     if(!(memregion = memregion_containing(ct, virt)))
