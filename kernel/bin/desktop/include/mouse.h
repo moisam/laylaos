@@ -30,7 +30,7 @@
 #define CLIENT_MOUSE_H
 
 #define WHEEL_DELTA                 120
-#define DOUBLE_CLICK_THRESHOLD      500     /* millisecs */
+#define DOUBLE_CLICK_THRESHOLD      800 /* 500 */     /* millisecs */
 
 #ifdef __cplusplus
 extern "C" {

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: window-defs.h
  *    This file is part of LaylaOS.
@@ -29,7 +29,7 @@
 #define WINDOW_DEFS_H
 
 #define WINDOW_TITLEHEIGHT          32 
-#define WINDOW_BORDERWIDTH          2
+#define WINDOW_BORDERWIDTH          3
 #define WINDOW_ICONWIDTH            16
 
 #define WINDOW_MIN_WIDTH            10
@@ -52,11 +52,9 @@
 #define WINDOW_NOMINIMIZE           0x80
 #define WINDOW_ALWAYSONTOP          0x100
 #define WINDOW_SKIPTASKBAR          0x200
-
-#ifdef GUI_SERVER
-# define CONTROLBOX_FLAG_CLIP       0x01
-# define CONTROLBOX_FLAG_INVALIDATE 0x02
-#endif
+#define WINDOW_ABSOLUTE_COORDS      0x4000   // for dialogs & frames, 
+                                             // coordinates are not relative
+                                             // to parent window
 
 // Flags for use by client applications
 #ifndef GUI_SERVER
@@ -64,6 +62,11 @@
 # define WINDOW_SHOWMENU            0x800
 # define WINDOW_HASSTATUSBAR        0x1000
 # define WINDOW_3D_WIDGET           0x2000  // 3d-looking widgets, not windows
+#endif
+
+#ifdef GUI_SERVER
+# define CONTROLBOX_FLAG_CLIP       0x01
+# define CONTROLBOX_FLAG_INVALIDATE 0x02
 #endif
 
 // Window gravity types
