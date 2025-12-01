@@ -780,8 +780,13 @@ long syscall_connect(int fd, struct sockaddr *_name, socklen_t namelen)
         {
             selrecord(&so->sleep);
             SOCKET_UNLOCK(so);
-            //block_task2(so, PIT_FREQUENCY / 2);
-            block_task(so, 1);
+
+            ////block_task2(so, PIT_FREQUENCY / 2);
+            //block_task(so, 1);
+            set_task_waitchan(this_core->cur_task, so);
+            set_task_state(this_core->cur_task, TASK_SLEEPING);
+            scheduler();
+
             SOCKET_LOCK(so);
         }
 
@@ -1738,10 +1743,14 @@ try:
             kfree(name);
             return -EAGAIN;
         }
-        
-        block_task(&so->pending_connections, 1);
 
-        if(this_core->cur_task->woke_by_signal)
+        set_task_waitchan(this_core->cur_task, &so->pending_connections);
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+        scheduler();
+        //block_task(&so->pending_connections, 1);
+
+        if(get_task_waking_signal(this_core->cur_task))
+        //if(this_core->cur_task->woke_by_signal)
         {
             kfree(name);
             return -EINTR;

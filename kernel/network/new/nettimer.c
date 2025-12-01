@@ -75,7 +75,10 @@ static void nettimer_func(void *arg)
 
     while(1)
     {
-        block_task2(&nettimer_task, PIT_FREQUENCY / 5);
+        //block_task2(&nettimer_task, PIT_FREQUENCY / 5);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, PIT_FREQUENCY / 5);
 
         kernel_mutex_lock(&nettimer_lock);
 

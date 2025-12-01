@@ -278,11 +278,20 @@ static long tcp_read(struct socket_t *so, struct msghdr *msg, unsigned int flags
             // blocking socket -- wait for data
             selrecord(&so->selrecv);
             SOCKET_UNLOCK(so);
+
+            /*
             this_core->cur_task->woke_by_signal = 0;
             block_task(so, 1);
+            */
+            set_task_waking_signal(this_core->cur_task, 0);
+            set_task_waitchan(this_core->cur_task, so);
+            set_task_state(this_core->cur_task, TASK_SLEEPING);
+            scheduler();
+
             SOCKET_LOCK(so);
 
-            if(this_core->cur_task->woke_by_signal)
+            if(get_task_waking_signal(this_core->cur_task))
+            //if(this_core->cur_task->woke_by_signal)
             {
                 // TODO: should we return -ERESTARTSYS and restart the read?
                 return -EINTR;

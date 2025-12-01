@@ -40,7 +40,7 @@ void route_init(void)
 void route_add_ipv4(uint32_t dest, uint32_t gateway, uint32_t netmask,
                     uint8_t flags, uint32_t metric, struct netif_t *ifp)
 {
-    struct rtentry_t *rt, *newrt;
+    volatile struct rtentry_t *rt, *newrt;
 
     if(!(newrt = kmalloc(sizeof(struct rtentry_t))))
     {
@@ -62,7 +62,7 @@ void route_add_ipv4(uint32_t dest, uint32_t gateway, uint32_t netmask,
         ;
     }
 
-    rt->next = newrt;
+    rt->next = (struct rtentry_t *)newrt;
 
     kernel_mutex_unlock(&route_lock);
 }
@@ -70,7 +70,7 @@ void route_add_ipv4(uint32_t dest, uint32_t gateway, uint32_t netmask,
 
 struct rtentry_t *route_for_ipv4(uint32_t addr)
 {
-    struct rtentry_t *rt;
+    volatile struct rtentry_t *rt;
 
     kernel_mutex_lock(&route_lock);
 
@@ -79,7 +79,7 @@ struct rtentry_t *route_for_ipv4(uint32_t addr)
         if((addr & rt->netmask) == (rt->dest & rt->netmask))
         {
             kernel_mutex_unlock(&route_lock);
-            return rt;
+            return (struct rtentry_t *)rt;
         }
     }
 
@@ -89,7 +89,7 @@ struct rtentry_t *route_for_ipv4(uint32_t addr)
         if(rt->flags & RT_GATEWAY)
         {
             kernel_mutex_unlock(&route_lock);
-            return rt;
+            return (struct rtentry_t *)rt;
         }
     }
 
@@ -100,7 +100,7 @@ struct rtentry_t *route_for_ipv4(uint32_t addr)
 
 struct rtentry_t *route_for_ifp(struct netif_t *ifp)
 {
-    struct rtentry_t *rt;
+    volatile struct rtentry_t *rt;
 
     kernel_mutex_lock(&route_lock);
 
@@ -109,7 +109,7 @@ struct rtentry_t *route_for_ifp(struct netif_t *ifp)
         if(rt->ifp == ifp)
         {
             kernel_mutex_unlock(&route_lock);
-            return rt;
+            return (struct rtentry_t *)rt;
         }
     }
 
@@ -145,17 +145,23 @@ void route_free_ipv4(uint32_t dest, uint32_t gateway, uint32_t netmask)
 
 void route_free_for_ifp(struct netif_t *ifp)
 {
-    struct rtentry_t *rt, *next;
+    volatile struct rtentry_t *rt, *next, *prev = &route_head;
 
     kernel_mutex_lock(&route_lock);
 
-    for(rt = &route_head; rt->next != NULL; rt = rt->next)
+    for(rt = route_head.next; rt != NULL; )
     {
-        if(rt->next->ifp == ifp)
+        if(rt->ifp == ifp)
         {
             next = rt->next;
-            rt->next = next->next;
-            kfree(next);
+            prev->next = (struct rtentry_t *)next;
+            kfree((void *)rt);
+            rt = next;
+        }
+        else
+        {
+            prev = rt;
+            rt = rt->next;
         }
     }
 

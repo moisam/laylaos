@@ -140,7 +140,10 @@ static void arp_timer(void *unused)
             }
         }
 
-        block_task2(&arp_entries, ARP_PRUNE);
+        //block_task2(&arp_entries, ARP_PRUNE);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, ARP_PRUNE);
     }
 }
 
@@ -598,7 +601,7 @@ static void check_delayed_packets(void)
 size_t get_arp_list(char **buf)
 {
     size_t len, count = 0, bufsz = 1024;
-    char tmp[64];
+    char tmp[128];
     char *p;
     int i;
 
@@ -606,7 +609,7 @@ size_t get_arp_list(char **buf)
     p = *buf;
     *p = '\0';
 
-    ksprintf(p, 64, "IP address      HW type   HW address          Device\n");
+    ksprintf(p, 128, "IP address      HW type   Flags   HW address          Mask   Device\n");
     len = strlen(p);
     count += len;
     p += len;
@@ -620,11 +623,11 @@ size_t get_arp_list(char **buf)
             continue;
         }
 
-        ksprintf(tmp, 64, "%u.%u.%u.%u",
-                          ADDR_BYTE(arp_entries[i].ip_addr,  0),
-                          ADDR_BYTE(arp_entries[i].ip_addr,  8),
-                          ADDR_BYTE(arp_entries[i].ip_addr, 16),
-                          ADDR_BYTE(arp_entries[i].ip_addr, 24));
+        ksprintf(tmp, 128, "%u.%u.%u.%u",
+                           ADDR_BYTE(arp_entries[i].ip_addr,  0),
+                           ADDR_BYTE(arp_entries[i].ip_addr,  8),
+                           ADDR_BYTE(arp_entries[i].ip_addr, 16),
+                           ADDR_BYTE(arp_entries[i].ip_addr, 24));
         len = strlen(tmp);
 
         while(len < 16)
@@ -633,8 +636,8 @@ size_t get_arp_list(char **buf)
             tmp[len] = '\0';
         }
 
-        ksprintf(tmp + len, 64 - len,
-                 "0x1       %02x:%02x:%02x:%02x:%02x:%02x",
+        ksprintf(tmp + len, 128 - len,
+                 "0x1       0x0     %02x:%02x:%02x:%02x:%02x:%02x   *   ",
                  arp_entries[i].hwaddr[0],
                  arp_entries[i].hwaddr[1],
                  arp_entries[i].hwaddr[2],
@@ -643,7 +646,7 @@ size_t get_arp_list(char **buf)
                  arp_entries[i].hwaddr[5]);
         len = strlen(tmp);
 
-        ksprintf(tmp + len, 64 - len, "   %s\n",
+        ksprintf(tmp + len, 128 - len, "   %s\n",
                  arp_entries[i].ifp ? arp_entries[i].ifp->name : "?");
         len = strlen(tmp);
 

@@ -86,7 +86,10 @@ static void loopback_func(void *unused)
         }
         else
         {
-            block_task(&loopback_outq, 1);
+            //block_task(&loopback_outq, 1);
+            set_task_waitchan(this_core->cur_task, &loopback_outq);
+            set_task_state(this_core->cur_task, TASK_SLEEPING);
+            scheduler();
         }
     }
 }

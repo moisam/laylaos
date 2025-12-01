@@ -126,7 +126,10 @@ static void ip_slowtimo(void *arg)
         kernel_mutex_unlock(&fragq.lock);
 
         // schedule every 500ms
-        block_task2(&ip_slowtimo_task, PIT_FREQUENCY / 2);
+        //block_task2(&ip_slowtimo_task, PIT_FREQUENCY / 2);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, PIT_FREQUENCY / 2);
     }
 }
 

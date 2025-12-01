@@ -854,7 +854,11 @@ static void dhcp_sock_func(void *unused)
     while(1)
     {
         selrecord(&(dhcp_sock->selrecv));
-        block_task(&dhcp_sock_task, 1);
+
+        //block_task(&dhcp_sock_task, 1);
+        set_task_waitchan(this_core->cur_task, &dhcp_sock_task);
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+        scheduler();
 
         SOCKET_LOCK(dhcp_sock);
 
@@ -962,6 +966,11 @@ static inline void dhcp_release_timers(struct dhcp_binding_t *binding)
     nettimer_release(binding->dhcp_declining_timer);
     nettimer_release(binding->dhcp_requesting_timer);
     nettimer_release(binding->dhcp_checking_timer);
+    binding->dhcp_renewing_timer = NULL;
+    binding->dhcp_rebinding_timer = NULL;
+    binding->dhcp_declining_timer = NULL;
+    binding->dhcp_requesting_timer = NULL;
+    binding->dhcp_checking_timer = NULL;
 }
 
 void dhcp_handle_offer(struct dhcp_binding_t *binding)
@@ -1211,7 +1220,11 @@ void dhcp_task_func(void *unused)
             printk("dhcp: cannot find binding for task %d\n", this_core->cur_task->pid);
             //kpanic("dhcp failed");
 
-            block_task(&dhcp_bindings, 0);
+            //block_task(&dhcp_bindings, 0);
+            set_task_waitchan(this_core->cur_task, &dhcp_bindings);
+            set_task_state(this_core->cur_task, TASK_WAITING);
+            scheduler();
+
             continue;
         }
 
@@ -1349,7 +1362,10 @@ void dhcp_task_func(void *unused)
             binding->events &= ~DHCP_EVENT_LEASE_TIMEOUT;
         }
 
-        block_task(&dhcp_bindings, 0);
+        //block_task(&dhcp_bindings, 0);
+        set_task_waitchan(this_core->cur_task, &dhcp_bindings);
+        set_task_state(this_core->cur_task, TASK_WAITING);
+        scheduler();
     }
 }
 
