@@ -80,7 +80,11 @@ static void wait_until_sent(struct tty_t *tty)
 
     while(count)
     {
-        block_task2(&tty->write_q, 20);
+        //block_task2(&tty->write_q, 20);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, 20);
+
         count = ttybuf_used(&tty->write_q);
     }
 }

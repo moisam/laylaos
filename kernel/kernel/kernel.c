@@ -332,6 +332,8 @@ void kernel_main(unsigned long magic, unsigned long addr)
     
     fpu_state_save(idle);
     //idle->syscall_regs = &r;
+    idle->syscall_regs = NULL;
+    idle->irq_regs = NULL;
 
     save_context(idle);
     memcpy(&r, (void *)&idle->saved_context, sizeof(struct regs));
@@ -357,8 +359,9 @@ void do_init(void)
     volatile struct task_t *ct = this_core->cur_task /* get_cur_task() */;
 
     sti();
-    
-    printk("cpu[%d]: %d\n", this_core->cpuid, scheduler_holding_cpu);
+
+    //printk("cpu[%d]: %d\n", this_core->cpuid, scheduler_holding_cpu);
+
     // init the soft interrupt table before anyone schedules a softint
     //printk("Initializing soft interrupts..\n");
     //softint_init();
@@ -395,12 +398,14 @@ void do_init(void)
     pci_check_all_buses();
     printk("cpu[%d]: Finished checking PCI buses..\n", this_core->cpuid);
     screen_refresh(NULL);
-    
+
+#if 0
     // fork the disk read/write task AFTER enumerating PCI buses to avoid
     // intervening with IRQs that disks/cdrom devices might need in order
     // to initialize
     (void)start_kernel_task("disk", disk_task_func, NULL,
                             &disk_task, KERNEL_TASK_ELEVATED_PRIORITY);
+#endif
 
     printk("cpu[%d]: Initializing filesystems..\n", this_core->cpuid);
     init_fstab();

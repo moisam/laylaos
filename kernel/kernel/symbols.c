@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: symbols.c
  *    This file is part of LaylaOS.
@@ -35,9 +35,9 @@
 #endif
 
 #define OSNAME          "LaylaOS"
-#define OSRELEASE       "0.0.3"
+#define OSRELEASE       "0.0.4"
 #define OSREVISION      1
-#define OSVERSION       "0.0.3"
+#define OSVERSION       "0.0.4"
 
 char osrelease[] = OSRELEASE;
 char ostype[] = OSNAME;

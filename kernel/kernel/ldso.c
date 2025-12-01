@@ -67,6 +67,7 @@ long ldso_load(size_t *auxv)
     
     if(!filenode)
     {
+        printk("Kernel: failed to load ld.so (1, errno %d)\n", ENOENT);
         return -ENOENT;
     }
 
@@ -74,7 +75,7 @@ long ldso_load(size_t *auxv)
     if(!S_ISREG(filenode->mode))
     {
         KDEBUG("ldso_load - filenode->mode = %d\n", filenode->mode);
-        printk("Kernel: failed to load ld.so (1, errno %d)\n", EACCES);
+        printk("Kernel: failed to load ld.so (2, errno %d)\n", EACCES);
         release_node(filenode);
         return -EACCES;
     }
@@ -83,7 +84,7 @@ long ldso_load(size_t *auxv)
     if(!(buf = get_cached_page(filenode, 0, 0)))
     {
         release_node(filenode);
-        printk("Kernel: failed to load ld.so (2, errno %d)\n", EACCES);
+        printk("Kernel: failed to load ld.so (3, errno %d)\n", EACCES);
         return -EACCES;
 	}
 
@@ -95,7 +96,7 @@ long ldso_load(size_t *auxv)
     if(res != 0)
     {
         KDEBUG("ldso_load - 9a - res = %d\n", res);
-        printk("Kernel: failed to load ld.so (3, errno %d)\n", -res);
+        printk("Kernel: failed to load ld.so (4, errno %d)\n", -res);
         return res;
     }
     

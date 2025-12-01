@@ -46,7 +46,8 @@ long copy_str_from_user(char *str, char **res, size_t *reslen)
 {
 	volatile struct task_t *ct = this_core->cur_task;
     char *dest, *s = str;
-    int oldsig = ct->woke_by_signal;
+    int oldsig = get_task_waking_signal(ct);
+    //int oldsig = ct->woke_by_signal;
     size_t sz;
 
     if(!str || !res)
@@ -58,11 +59,13 @@ long copy_str_from_user(char *str, char **res, size_t *reslen)
     
     *res = NULL;
     *reslen = 0;
-    ct->woke_by_signal = 0;
-    
+    set_task_waking_signal(ct, 0);
+    //ct->woke_by_signal = 0;
+
     while(*s)
     {
-        if(ct->woke_by_signal == SIGSEGV)
+        if(get_task_waking_signal(ct) == SIGSEGV)
+        //if(ct->woke_by_signal == SIGSEGV)
         {
             goto fault;
         }
@@ -70,12 +73,14 @@ long copy_str_from_user(char *str, char **res, size_t *reslen)
         s++;
     }
 
-    if(ct->woke_by_signal == SIGSEGV)
+    if(get_task_waking_signal(ct) == SIGSEGV)
+    //if(ct->woke_by_signal == SIGSEGV)
     {
         goto fault;
     }
-    
-    ct->woke_by_signal = oldsig;
+
+    set_task_waking_signal(ct, oldsig);
+    //ct->woke_by_signal = oldsig;
     sz = s - str + 1;
     
     if(!(dest = kmalloc(sz)))
@@ -91,7 +96,8 @@ long copy_str_from_user(char *str, char **res, size_t *reslen)
 
 fault:
 
-    ct->woke_by_signal = oldsig;
+    set_task_waking_signal(ct, oldsig);
+    //ct->woke_by_signal = oldsig;
     add_task_segv_signal(ct, SEGV_MAPERR, s);
     return -EFAULT;
 }

@@ -48,6 +48,55 @@ void init_kernel_mutex(volatile struct kernel_mutex_t *mutex)
 }
 
 
+uint32_t __kernel_mutex_trylock(volatile struct kernel_mutex_t *mutex, const char *func, int line)
+{
+    (void)func;
+    (void)line;
+
+    if(!__atomic_exchange_n(&mutex->lock, 1, __ATOMIC_ACQUIRE))
+    {
+        __atomic_store_n(&mutex->holder, this_core->cur_task, __ATOMIC_SEQ_CST);
+        return 0;
+    }
+
+    return 1;
+}
+
+
+void __kernel_mutex_lock(volatile struct kernel_mutex_t *mutex, const char *func, int line)
+{
+    (void)func;
+    (void)line;
+
+    volatile long tries = 0;
+
+    while(__atomic_exchange_n(&mutex->lock, 1, __ATOMIC_ACQUIRE) && ++tries < 0x2FFFFFFF)
+    {
+        __asm__ __volatile__("pause":::"memory");
+    }
+
+    if(tries >= 0x2FFFFFFF)
+    {
+        switch_tty(1);
+        printk("\nmutex: mutex " _XPTR_ ", holder " _XPTR_ " (pid %d), this pid %d\n",
+                mutex, mutex->holder, mutex->holder ? mutex->holder->pid : 0, this_core->cur_task->pid);
+        kpanic("mutex: waiting forever\n");
+    }
+
+    __atomic_store_n(&mutex->holder, this_core->cur_task, __ATOMIC_SEQ_CST);
+}
+
+
+void kernel_mutex_unlock(volatile struct kernel_mutex_t *mutex)
+{
+    __atomic_store_n(&mutex->lock, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&mutex->holder, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&mutex->recursive_count, 0, __ATOMIC_SEQ_CST);
+}
+
+
+#if 0
+
 /*
  * Try to lock a kernel mutex.
  */
@@ -56,6 +105,8 @@ uint32_t __kernel_mutex_trylock(volatile struct kernel_mutex_t *mutex, const cha
     //if(__sync_lock_test_and_set(&mutex->lock, 1) == 0)
     if(__sync_bool_compare_and_swap(&mutex->lock, 0, 1))
     {
+        uintptr_t s = int_off();
+
         if(this_core->cur_task)
         {
             //this_core->cur_task->lock_held = mutex;
@@ -71,6 +122,7 @@ uint32_t __kernel_mutex_trylock(volatile struct kernel_mutex_t *mutex, const cha
         mutex->from_line = line;
         */
         __asm__ __volatile__("":::"memory");
+        int_on(s);
 
         return 0;
     }
@@ -177,6 +229,8 @@ void __kernel_mutex_lock(volatile struct kernel_mutex_t *mutex, const char *func
         scheduler();
     }
 
+    uintptr_t s = int_off();
+
     if(this_core->cur_task)
     {
         /*
@@ -201,6 +255,7 @@ void __kernel_mutex_lock(volatile struct kernel_mutex_t *mutex, const char *func
     mutex->from_line = line;
     */
     __asm__ __volatile__("":::"memory");
+    int_on(s);
 }
 
 
@@ -233,4 +288,6 @@ void kernel_mutex_unlock(volatile struct kernel_mutex_t *mutex)
     __asm__ __volatile__("":::"memory");
     int_on(s);
 }
+
+#endif
 

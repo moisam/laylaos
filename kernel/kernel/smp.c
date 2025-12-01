@@ -79,23 +79,6 @@ volatile int scheduler_holding_cpu = -1;
 ///volatile int cpus_pending_invlpg = 0;
 
 
-static inline void smp_wait(int msecs)
-{
-    volatile unsigned long long last_ticks = ticks;
-
-    while(msecs)
-    {
-        if(ticks != last_ticks)
-        {
-            msecs--;
-            last_ticks = ticks;
-        }
-
-        __asm__ __volatile__("nop" ::: "memory");
-    }
-}
-
-
 #define cpuid(in, a, b, c, d)   \
     __asm__ __volatile__ ("cpuid": "=a" (a), "=b" (b), "=c" (c), "=d" (d) : "a" (in));
 
@@ -216,6 +199,7 @@ void ap_main(void)
     idle_task->cpuid = this_core->cpuid;
     this_core->idle_task = idle_task;
     this_core->cur_task = idle_task;
+    this_core->prev_ticks = ticks;
 
     printk("smp[%d]: Initializing the syscall interface..\n", ap_current);
     syscall_init();
@@ -346,6 +330,7 @@ void smp_init(void)
             __asm__ __volatile__("pause" ::: "memory");
         } while(*((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) & (1 << 12));
 
+        printk("smp: selecting processor %d\n", i);
         // select AP
         *((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRH)) = (i << 24);
 
@@ -359,8 +344,9 @@ void smp_init(void)
             __asm__ __volatile__("pause" ::: "memory");
         } while(*((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) & (1 << 12));
 
+        printk("smp: delay on processor %d\n", i);
         // wait 10 msec XXX
-        smp_wait(2);
+        tick_delay(2);
 
         // send STARTUP IPI twice
         printk("smp: sending STARTUP IPI to processor %d\n", i);
@@ -378,7 +364,7 @@ void smp_init(void)
                (*((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) & 0xfff0f800) | 0x000608;
 
             // wait 200 usec XXX
-            smp_wait(1);
+            tick_delay(1);
 
             // wait for delivery
             do
@@ -464,20 +450,15 @@ void handle_tlb_shootdown(void)
     volatile virtual_addr addr;
     volatile int old_bitmap;
     int bit = (1 << this_core->cpuid);
-
-    /*
-    while(!__sync_bool_compare_and_swap(&tlb_holding_cpu, -1, this_core->cpuid))
-    {
-        if(tlb_holding_cpu == this_core->cpuid)
-        {
-            __asm__ __volatile__("xchg %%bx, %%bx":::);
-            printk("handle_tlb_shootdown[%d]: self locked\n", this_core->cpuid);
-        }
-    }
-    */
+    unsigned long long oticks = ticks;
 
     for(ent = invlpg_entries; ent < &invlpg_entries[INVLPG_ENTRY_COUNT]; ent++)
     {
+        if(ent->addr == 0)
+        {
+            continue;
+        }
+
         addr = ent->addr;
         old_bitmap = __sync_fetch_and_and(&ent->cpus_pending, ~bit);
 
@@ -486,36 +467,48 @@ void handle_tlb_shootdown(void)
             __asm__ __volatile__("invlpg (%0)"::"r"(addr):"memory");
             __asm__ __volatile__("" ::: "memory");
         }
-
-        /*
-        if(ent->cpus_pending & (1 << this_core->cpuid))
-        {
-            __asm__ __volatile__("invlpg (%0)"::"r"(ent->addr):"memory");
-            __sync_fetch_and_and(&ent->cpus_pending, ~(1 << this_core->cpuid));
-            __asm__ __volatile__("" ::: "memory");
-        }
-        */
     }
 
-    //__sync_bool_compare_and_swap(&tlb_holding_cpu, this_core->cpuid, -1);
+    this_core->irq_count[17]++;
+    this_core->irq_ticks[17] += (ticks - oticks);
 }
 
 
 /*
  * Send a TLB shootdown to other processors.
- *
- * This function is taken from ToaruOS:
- *   https://github.com/klange/toaruos/blob/a24e4e524a33a2630ceed28d98c3e9e77e8e6abd/kernel/arch/x86_64/smp.c
  */
 void tlb_shootdown(uintptr_t vaddr)
 {
+    /*
+    if(lapic_virt == 0 || online_processor_count <= 1)
+    {
+        return;
+    }
+
+    */
+    /*
+    volatile uintptr_t s = int_off();
+    volatile int i;
+    //volatile struct invlpg_entry_t *ent;
+    volatile uint32_t bitmap = online_processor_bitmap & ~(1 << this_core->cpuid);
+    */
+
     volatile struct invlpg_entry_t *ent;
-    volatile int i, unlock;
+    volatile int i /* , unlock */;
     volatile int old_flags;
-    uint32_t bitmap = online_processor_bitmap & ~(1 << this_core->cpuid);
+    //volatile uintptr_t s;
+    volatile uint32_t bitmap = online_processor_bitmap & ~(1 << this_core->cpuid);
+
+    old_flags = __set_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
 
     if(lapic_virt == 0 || online_processor_count <= 1)
     {
+        if(!(old_flags & SMP_FLAG_SCHEDULER_BUSY))
+        {
+            __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+        }
+
+        //int_on(s);
         return;
     }
 
@@ -528,37 +521,46 @@ void tlb_shootdown(uintptr_t vaddr)
         }
     }
 
-    old_flags = __set_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+    if(bitmap == 0)
+    {
+        if(!(old_flags & SMP_FLAG_SCHEDULER_BUSY))
+        {
+            __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+        }
+
+        //int_on(s);
+        return;
+    }
 
 try:
 
+    /*
     unlock = 1;
+    s = int_off();
 
     while(!__sync_bool_compare_and_swap(&tlb_holding_cpu, -1, this_core->cpuid))
     {
         if(tlb_holding_cpu == this_core->cpuid)
         {
+            switch_tty(1);
             printk("tlb_shootdown[%d]: self locked (flags 0x%x, vaddr 0x%lx)\n", this_core->cpuid, this_core->flags, vaddr);
-            //screen_refresh(NULL);
-            //__asm__ __volatile__("xchg %%bx, %%bx":::);
-            //return;
+            screen_refresh(NULL);
+            kpanic("******\n");
+
             unlock = 0;
             break;
         }
-    }
 
-    //printk("tlb_shootdown[%d]: vaddr 0x%lx\n", this_core->cpuid, vaddr);
-    //address_for_invlpg = vaddr;
-    //cpus_pending_invlpg = count - 1;
-    uintptr_t s = int_off();
+        int_on(s);
+        __asm__ __volatile__("pause" ::: "memory");
+        s = int_off();
+    }
+    */
 
     for(ent = invlpg_entries; ent < &invlpg_entries[INVLPG_ENTRY_COUNT]; ent++)
     {
         if(__sync_bool_compare_and_swap(&ent->cpus_pending, 0, bitmap))
-        //if(ent->cpus_pending == 0)
         {
-            //ent->addr = vaddr;
-            //ent->cpus_pending = bitmap;
             __lock_xchg_ptr(&ent->addr, vaddr);
             __asm__ __volatile__("":::"memory");
             break;
@@ -567,28 +569,33 @@ try:
 
     if(ent == &invlpg_entries[INVLPG_ENTRY_COUNT])
     {
+        //kpanic("***********************\n");
         //__asm__ __volatile__("xchg %%bx, %%bx":::);
         //__asm__ __volatile__("xchg %%bx, %%bx":::);
 
+        /*
         if(unlock)
         {
             __sync_bool_compare_and_swap(&tlb_holding_cpu, this_core->cpuid, -1);
         }
 
         int_on(s);
+        */
         __asm__ __volatile__("pause" ::: "memory");
         goto try;
     }
 
+    /*
     // clear APIC errors
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_ERR_STATUS)) = 0;
 
     // select AP
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRH)) = 0;
+    */
 
     // trigger IPI
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) = 
-           (*((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) & 0xfff00000) | (3 << 18) | 124;
+           /* (*((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) & 0xfff00000) | */ (3 << 18) | 124;
 
     // wait for delivery
     do
@@ -597,24 +604,19 @@ try:
     } while(*((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) & (1 << 12));
 
     /*
-    // now wait for confirmation
-    do
-    {
-        __asm__ __volatile__("pause" ::: "memory");
-    } while(cpus_pending_invlpg != 0);
-    */
-
     if(unlock)
     {
         __sync_bool_compare_and_swap(&tlb_holding_cpu, this_core->cpuid, -1);
     }
+    */
 
     if(!(old_flags & SMP_FLAG_SCHEDULER_BUSY))
     {
         __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
     }
 
-    int_on(s);
+    //int_on(s);
+    //printk("tlb_shootdown[%d]: vaddr 0x%lx - done\n", this_core->cpuid, vaddr);
 }
 
 

@@ -61,11 +61,86 @@ int spurious_callback(struct regs *r, int arg)
 }
 
 
+unsigned long long get_tscMHz(void)
+{
+    unsigned long long end, start;
+    static unsigned long long tsc = 0;
+    volatile uint8_t k;
+
+    printk("get_tscMHz: tsc %llu\n", tsc);
+
+    if(tsc)
+    {
+        return tsc;
+    }
+
+    k = inb(0x61);
+    k &= 0xDD;
+    k |= 0x01;
+    outb(0x61, k);
+
+    outb(0x43, 0xb2);
+
+    // 1193180/100 Hz = 11931 = 2e9bh
+    outb(0x42, 0x9b);   // MSB to Channel 2 data port
+    k = inb(0x60);      // short delay
+    outb(0x42, 0x2e);   // LSB to Channel 2 data port
+    k = inb(0x60);      // short delay
+
+    // Reset PIT one-shot counter (start counting)
+    k = inb(0x61);
+    k &= 0xde;
+    outb(0x61, k);      // gate low
+    k |= 1;
+    outb(0x61, k);      // gate high
+
+    k = inb(0x61);
+
+    start = rdtsc();
+
+    // Now wait until PIT counter reaches zero
+    //printk("apic: loop -- k 0x%x\n", k);
+
+    if((k & 0x20) == 0)
+    {
+        while((k & 0x20) == 0)
+        {
+            //i = *((volatile uint32_t *)(lapic_virt + LAPIC_REG_CUR_COUNT));
+            k = inb(0x61);
+            //printk("apic: loop -- counter value %u, k 0x%x\n", i, k);
+        }
+    }
+    else
+    {
+        while((k & 0x20) != 0)
+        {
+            //i = *((volatile uint32_t *)(lapic_virt + LAPIC_REG_CUR_COUNT));
+            k = inb(0x61);
+            //printk("apic: loop -- counter value %u, k 0x%x\n", i, k);
+        }
+    }
+
+    end = rdtsc();
+    tsc = (end - start) / 10000;
+
+    if(!tsc)
+    {
+        tsc = 2000;
+    }
+
+    return tsc;
+}
+
+
 void lapic_timer_init(int timer_irq)
 {
     uint32_t i;
     uint64_t j;
+#if 0
     volatile uint8_t k;
+#endif
+
+    printk("lapic_timer_init: irq %d\n", timer_irq);
 
     // Initialize LAPIC to a well known state
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_DEST_FORMAT)) = 0xFFFFFFFF;
@@ -92,6 +167,46 @@ void lapic_timer_init(int timer_irq)
     // Map APIC timer to an interrupt, and by that enable it in one-shot mode
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_LVT_TIMER)) = timer_irq;
 
+
+    // Due to issues with miscalculated timer frequency on QEmu, I switched
+    // to this code, which times APIC using the TSC. It is based on the code
+    // in ToaruOS.
+    printk("apic: checking timer frequency\n");
+
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_DIVIDE_CONFIG)) = 1;
+
+    unsigned long long before = rdtsc();
+
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_INIT_COUNT)) = 1000000;
+
+    while(*((volatile uint32_t *)(lapic_virt + LAPIC_REG_CUR_COUNT)))
+    {
+        ;
+    }
+
+    unsigned long long after = rdtsc();
+    unsigned long long t = 10000000000UL / ((after - before) / get_tscMHz());
+
+    // Stop APIC timer
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_LVT_TIMER)) = APIC_DISABLE;
+
+    printk("apic: frequency %llu ticks\n", t);
+    //screen_refresh(NULL);
+    //for(;;);
+
+    // Finally re-enable timer in periodic mode
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_LVT_TIMER)) = timer_irq | APIC_PERIODIC;
+
+    // Set divide value register again
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_DIVIDE_CONFIG)) = 1;
+
+    // Now i holds appropriate number of ticks, use it as APIC timer 
+    // counter initializer
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_INIT_COUNT)) = t;
+
+    printk("apic: timer enabled\n");
+
+#if 0
     // Set up divide value to 16
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_DIVIDE_CONFIG)) = 3;
 
@@ -191,7 +306,7 @@ void lapic_timer_init(int timer_irq)
 
     printk("apic: frequency %u ticks\n", i);
     screen_refresh(NULL);
-    //for(;;);
+    for(;;);
 
     // Now i holds appropriate number of ticks, use it as APIC timer 
     // counter initializer
@@ -202,6 +317,7 @@ void lapic_timer_init(int timer_irq)
 
     // Set divide value register again
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_DIVIDE_CONFIG)) = 3;
+#endif
 
     apic_running = 1;
 }

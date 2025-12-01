@@ -149,6 +149,8 @@ pid_t start_kernel_task(char *name, void (*func)(void *), void *func_arg,
 
     fpu_state_save(ct);
     //ct->syscall_regs = &r;
+    ct->syscall_regs = NULL;
+    ct->irq_regs = NULL;
     save_context(ct);
     memcpy(&r, &ct->saved_context, sizeof(struct regs));
 
@@ -192,6 +194,8 @@ pid_t start_kernel_task(char *name, void (*func)(void *), void *func_arg,
 }
 
 
+#if 0
+
 void unblock_kernel_task(volatile struct task_t *task)
 {
     if(!task)
@@ -199,28 +203,8 @@ void unblock_kernel_task(volatile struct task_t *task)
         return;
     }
 
-    /*
-    uintptr_t s = int_off();
-    
-    if(task->state == TASK_READY || task->state == TASK_RUNNING ||
-       task->state == TASK_ZOMBIE)
-    {
-        // task is already unblocked
-        int_on(s);
-        return;
-    }
-
-    task->state = TASK_READY;
-    task->wait_channel = NULL;
-    
-    KDEBUG("%s: pid %d\n", __func__, task->pid);
-
-    remove_from_queue(task);
-    append_to_ready_queue(task);
-    
-    int_on(s);
-    */
-
     unblock_task_no_preempt(task);
 }
+
+#endif
 

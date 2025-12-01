@@ -416,7 +416,7 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
     size_t min;
     int time;
     volatile size_t count = _count;
-    volatile int has_signal = 0;
+    //volatile int has_signal = 0;
 	volatile struct task_t *ct = this_core->cur_task;
     
     /*
@@ -466,11 +466,18 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
     }
 
     q = ispty ? &tty->write_q : &tty->secondary;
-    ct->woke_by_signal = 0;
-    
+    set_task_waking_signal(ct, 0);
+    //ct->woke_by_signal = 0;
+
     // read input
     while(count > 0)
     {
+        // stop if we receive a signal
+        if(get_task_waking_signal(ct))
+        {
+            break;
+        }
+        /*
         has_signal = ct->woke_by_signal;
         
         // stop if we receive a signal
@@ -478,6 +485,7 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
         {
             break;
         }
+        */
 
         int canon = (tty->termios.c_lflag & ICANON);
 
@@ -550,7 +558,8 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
     }
     
     // check if we were interrupted by a signal and no chars read
-    if(ct->woke_by_signal && (p - buf) == 0)
+    if(get_task_waking_signal(ct) && (p - buf) == 0)
+    //if(ct->woke_by_signal && (p - buf) == 0)
     {
         return -ERESTARTSYS;
     }
@@ -588,7 +597,7 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
     //struct selinfo *sel;
     unsigned char c, *p = buf;
     volatile size_t count = _count;
-    volatile int has_signal = 0;
+    //volatile int has_signal = 0;
 	volatile struct task_t *ct = this_core->cur_task;
     
     /*
@@ -624,10 +633,14 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
     // hang if writing to a stopped tty
     while(tty->flags & TTY_FLAG_STOPPED)
     {
-        block_task(tty, 1);
+        //block_task(tty, 1);
+        set_task_waitchan(ct, tty);
+        set_task_state(ct, TASK_SLEEPING);
+        scheduler();
     }
 
-    ct->woke_by_signal = 0;
+    set_task_waking_signal(ct, 0);
+    //ct->woke_by_signal = 0;
 
     // write output
     while(count > 0)
@@ -635,6 +648,12 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
         // wait until output buffer has space
         sleep_if_full(q);
 
+        // stop if we receive a signal
+        if(get_task_waking_signal(ct))
+        {
+            break;
+        }
+        /*
         has_signal = ct->woke_by_signal;
         
         // stop if we receive a signal
@@ -642,6 +661,7 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
         {
             break;
         }
+        */
         
         // copy output as long as there is space in the output buffer
         while(count > 0 && !ttybuf_is_full(q))
@@ -715,7 +735,8 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
     }
     
     // check if we were interrupted by a signal and no chars written
-    if(ct->woke_by_signal && (p - buf) == 0)
+    if(get_task_waking_signal(ct) && (p - buf) == 0)
+    //if(ct->woke_by_signal && (p - buf) == 0)
     {
         return -ERESTARTSYS;
     }

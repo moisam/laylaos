@@ -97,7 +97,8 @@ int other_threads_dead(volatile struct task_t *task)
             continue;
         }
         
-        if(t->state != TASK_ZOMBIE)
+        if(get_task_state(t) != TASK_ZOMBIE)
+        //if(t->state != TASK_ZOMBIE)
         {
             return 0;
         }
@@ -161,7 +162,7 @@ void __terminate_thread_group(void)
 
         for_each_thread(t, this_core->cur_task)
         {
-            if(t == this_core->cur_task || t->state == TASK_ZOMBIE)
+            if(t == this_core->cur_task || get_task_state(t) == TASK_ZOMBIE)
             {
                 continue;
             }

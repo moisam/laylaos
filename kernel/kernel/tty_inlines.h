@@ -65,36 +65,36 @@ STATIC_INLINE void tty_adjust_indices(struct tty_t *tty)
  * Input:
  *    q => terminal device queue to sleep on
  */
-STATIC_INLINE int sleep_if_empty(/* struct tty_t *tty, */ struct kqueue_t *q, int timeout_ticks)
+STATIC_INLINE int sleep_if_empty(struct kqueue_t *q, int timeout_ticks)
 {
-    volatile int sig = this_core->cur_task->woke_by_signal;
+    //volatile int sig = this_core->cur_task->woke_by_signal;
+    volatile int sig = get_task_waking_signal(this_core->cur_task);
     volatile int empty = ttybuf_is_empty(q);
     
     // sleep until we get a signal then check if buffer is still empty
     while(!sig && empty)
     {
-        //tty->waiting_task = ct;
-
         if(timeout_ticks)
         {
-            if(clock_wait(&waiter_head[0], this_core->cur_task->pid, timeout_ticks, 0) == 0)
+            if(__clock_wait(&waiter_head[0], this_core->cur_task->pid, timeout_ticks, 0) <= 0)
             {
                 empty = ttybuf_is_empty(q);
                 return empty ? -ETIMEDOUT : 0;
-                //tty->waiting_task = NULL;
-                //return -ETIMEDOUT;
             }
         }
         else
         {
             selrecord(&q->sel);
-            //block_task2(q, PIT_FREQUENCY);
-            block_task(q, 1);
+
+            ////block_task2(q, PIT_FREQUENCY);
+            //block_task(q, 1);
+            set_task_waitchan(this_core->cur_task, q);
+            set_task_state(this_core->cur_task, TASK_SLEEPING);
+            scheduler();
         }
 
-        //tty->waiting_task = NULL;
-
-        sig = this_core->cur_task->woke_by_signal;
+        //sig = this_core->cur_task->woke_by_signal;
+        sig = get_task_waking_signal(this_core->cur_task);
         empty = ttybuf_is_empty(q);
     }
     
@@ -116,17 +116,23 @@ STATIC_INLINE void sleep_if_full(struct kqueue_t *q)
         return;
     }
 
-    volatile int sig = this_core->cur_task->woke_by_signal;
+    //volatile int sig = this_core->cur_task->woke_by_signal;
+    volatile int sig = get_task_waking_signal(this_core->cur_task);
     volatile int space = ttybuf_has_space_for(q, 128);
-    
+
     // make sure we have space for at least 128 more chars (arbitrary number)
     while(!sig && !space)
     {
         selrecord(&q->sel);
-        //block_task2(q, PIT_FREQUENCY);
-        block_task(q, 1);
 
-        sig = this_core->cur_task->woke_by_signal;
+        ////block_task2(q, PIT_FREQUENCY);
+        //block_task(q, 1);
+        set_task_waitchan(this_core->cur_task, q);
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+        scheduler();
+
+        //sig = this_core->cur_task->woke_by_signal;
+        sig = get_task_waking_signal(this_core->cur_task);
         space = ttybuf_has_space_for(q, 128);
     }
 }

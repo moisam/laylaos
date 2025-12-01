@@ -49,7 +49,7 @@
 
 
 unsigned long long ticks = 0;
-unsigned long long prev_ticks = 0;
+//unsigned long long prev_ticks = 0;
 unsigned long avenrun[3];
 
 
@@ -129,7 +129,7 @@ STATIC_INLINE int need_schedule(void)
     volatile struct task_t *cur_task = this_core->cur_task;
 
     /* decrement task's virtual timer, if any */
-    if(cur_task->itimer_virt.rel_ticks)
+    if(cur_task->common && cur_task->itimer_virt.rel_ticks)
     {
         /* only count ticks when running in user mode */
         if(cur_task->user && !cur_task->user_in_kernel_mode)
@@ -175,9 +175,30 @@ STATIC_INLINE void fix_limits_and_schedule(void)
     }
 
     //printk("cpu[%d]: scheduling\n", this_core->cpuid);
-    if(!(this_core->flags & SMP_FLAG_SCHEDULER_BUSY))
+    if(!(this_core->flags & SMP_FLAG_SCHEDULER_BUSY) &&
+        !__atomic_load_n(&(cur_task->irq_regs), __ATOMIC_SEQ_CST))
     {
+        // This hack is to fix a very obscure bug that happens with some Qt5
+        // applications that use the SSE registers. The values in some of the
+        // registers get trashed and we end up with bogus values that often
+        // result in segfaults. Not sure how this affects the overall speed
+        // of the system but it seems to be working so far.
+        uint64_t *fpregs, __fpregs[64 + 1];
+    
+        if((uintptr_t)__fpregs & 0x0f)
+        {
+            fpregs = (uint64_t *)((uintptr_t)__fpregs + 16 - ((uintptr_t)__fpregs & 0x0f));
+        }
+        else
+        {
+            fpregs = __fpregs;
+        }
+    
+        __asm__ __volatile__("fxsave (%0)" : : "r"(fpregs));
+
         scheduler();
+
+        __asm__ __volatile__("fxrstor (%0)" : : "r"(fpregs));
     }
     //printk("cpu[%d]: done scheduling\n", this_core->cpuid);
 }
@@ -193,6 +214,11 @@ int bsp_timer_callback(struct regs *r, int arg)
     ticks++;
 
     monotonic_time.tv_nsec += NSECS_PER_TICK;
+
+    if(this_core->cpuid != 0)
+    {
+        kpanic("IRQ 32 on the wrong processor\n");
+    }
 
     /* calculate the load average (every 5 seconds) */
     calc_load();

@@ -42,6 +42,7 @@
 #include <kernel/syscall.h>
 #include <kernel/ksigset.h>
 #include <kernel/user.h>
+#include <kernel/common.h>
 #include <mm/kstack.h>
 #include <mm/kheap.h>
 #include <fs/procfs.h>
@@ -79,6 +80,12 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
     new_task->sig = sig;
     new_task->threads = threads;
     new_task->common = common;
+
+    if(parent->exe_path)
+    {
+        new_task->exe_path = 
+                    kernel_strdup(parent->exe_path, strlen(parent->exe_path));
+    }
     
     init_kernel_mutex(&new_task->task_mutex);
 
@@ -202,7 +209,9 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
     /* clear pending signals */
     ksigemptyset((sigset_t *)&new_task->signal_pending);
     ksigemptyset(&new_task->signal_caught);
-    new_task->woke_by_signal = 0;
+
+    set_task_waking_signal(new_task, 0);
+    //new_task->woke_by_signal = 0;
     
     /* reset counters */
     new_task->read_count = 0;
@@ -211,6 +220,7 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
     new_task->write_calls = 0;
 
     new_task->cpuid = -1;
+    new_task->prev_cpuid = -1;
     ptrace_clear_state(new_task);
 
     /* get rid of uninheritable properties */
@@ -296,7 +306,7 @@ long syscall_fork(struct regs *parent_regs)
     }
 
     /* create a new kstack */
-    if(get_kstack(&new_task->kstack_phys, &new_task->kstack_virt) != 0)
+    if(get_kstack(new_task) != 0)
     {
         free_pd(new_task->pd_virt);
 
@@ -315,7 +325,7 @@ long syscall_fork(struct regs *parent_regs)
     }
 
     // get a pointer to the new task's stack
-    uintptr_t sp = (uintptr_t)new_task->kstack_virt;
+    volatile uintptr_t sp = (volatile uintptr_t)new_task->kstack_virt;
 
     /* first fork - init task */
     if(first_fork)
@@ -327,8 +337,10 @@ long syscall_fork(struct regs *parent_regs)
         first_fork = 0;
     }
 
+/*
 #define PUSH(v)             sp -= sizeof(uintptr_t);        \
                             *(volatile uintptr_t *)sp = (uintptr_t)(v);
+*/
 
     if(!new_task->user)
     {
@@ -351,16 +363,22 @@ long syscall_fork(struct regs *parent_regs)
     // bootstrap new task's stack
     sp -= sizeof(struct regs);
     A_memcpy((void *)sp, &r, sizeof(struct regs));
-    //new_task->syscall_regs = (struct regs *)sp;
-    PUSH(resume_user);
+    new_task->syscall_regs = (struct regs *)sp;
+    new_task->irq_regs = NULL;
+    //PUSH(resume_user);
 
-#undef PUSH
+    //printk("cpu[%d]: %s - rdx %lx\n", this_core->cpuid, new_task->command, r.rdx);
+
+//#undef PUSH
 
 #ifdef __x86_64__
+    new_task->saved_context.rdi = (uintptr_t)new_task;
+    new_task->saved_context.rip = (uintptr_t)resume_user;
     new_task->saved_context.rsp = (uintptr_t)sp;
     new_task->saved_context.rbp = (uintptr_t)new_task->kstack_virt;
     new_task->saved_context.rflags &= ~0x200;
 #else
+    new_task->saved_context.eip = (uintptr_t)resume_user;
     new_task->saved_context.esp = (unsigned int)sp;
     new_task->saved_context.ebp = (unsigned int)new_task->kstack_virt;
     new_task->saved_context.eflags &= ~0x200;
@@ -371,10 +389,11 @@ long syscall_fork(struct regs *parent_regs)
 
     /* add to the end of ready queue */
     new_task->timeslice = get_task_timeslice(new_task);
-    new_task->state = TASK_READY;
+    //new_task->state = TASK_READY;
+    set_task_state(new_task, TASK_READY);
     reset_task_timeslice(new_task);
 
-    append_to_ready_queue_locked(new_task, 0);
+    append_to_ready_queue_locked(new_task /* , 0 */);
 
     if(parent->properties & PROPERTY_TRACE_SIGNALS)
     {
@@ -453,7 +472,10 @@ long syscall_fork(struct regs *parent_regs)
     /* if vforking, block the parent */
     if(vforking)
     {
-        block_task(parent, 0);
+        //block_task(parent, 0);
+        set_task_waitchan(parent, parent);
+        set_task_state(parent, TASK_SLEEPING);
+        scheduler();
 
         if((parent->properties & PROPERTY_TRACE_SIGNALS) &&
            (parent->ptrace_options & PTRACE_O_TRACEVFORKDONE))

@@ -129,7 +129,8 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     struct regs rtmp;
     struct sigaction *action = &ct->sig->signal_actions[signum];
 
-    if(ct->state == TASK_ZOMBIE)
+    if(get_task_state(ct) == TASK_ZOMBIE)
+    //if(ct->state == TASK_ZOMBIE)
     {
         return 1;
     }
@@ -196,7 +197,10 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
                 //KDEBUG("Task %d (%d) blocking\n", ct->pid, ct->pgid);
 
                 /* block me */
-                block_task(ct, 1);
+                //block_task(ct, 1);
+                set_task_waitchan(ct, ct);
+                set_task_state(ct, TASK_SLEEPING);
+                scheduler();
 
                 //KDEBUG("Task %d (%d) waking up\n", ct->pid, ct->pgid);
 
@@ -327,7 +331,7 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     context->uc_mcontext.gregs[REG_RBX] = r->rbx;
     context->uc_mcontext.gregs[REG_RAX] = r->rax;
     context->uc_mcontext.gregs[REG_RIP] = r->rip;
-    context->uc_mcontext.fpregs = (void *)(stack + sizeof(ucontext_t));
+    context->uc_mcontext.fpregs = (void *)(stack + sizeof(ucontext_t) + sizeof(uintptr_t));
 #ifdef __x86_64__
     context->uc_mcontext.gregs[REG_RSP] = r->userrsp;
     context->uc_mcontext.gregs[REG_EFL] = r->rflags;
@@ -550,6 +554,8 @@ long syscall_sigreturn(struct regs *r, uintptr_t __user_stack)
      * change this number in the code below!
      */
 
+    cli();
+
 	struct task_t *ct = (struct task_t *)this_core->cur_task;
     struct regs rtmp;
     volatile uintptr_t user_stack = __user_stack;
@@ -557,7 +563,6 @@ long syscall_sigreturn(struct regs *r, uintptr_t __user_stack)
     volatile unsigned interrupted_syscall;
 
     restore_sigmask();
-    cli();
 
     //user_stack += sizeof(uintptr_t) * 3;
     //user_stack += sizeof(siginfo_t);
@@ -616,6 +621,8 @@ long syscall_sigreturn(struct regs *r, uintptr_t __user_stack)
                                 interrupted_syscall, __ATOMIC_SEQ_CST);
     //ct->interrupted_syscall = *(volatile uintptr_t *)user_stack;
 
+    A_memcpy(&rtmp, r, sizeof(struct regs));
+
 #ifdef __x86_64__
     user_stack += sizeof(uintptr_t);
     A_memcpy(ct->fpregs, (void *)user_stack, sizeof(uintptr_t) * 64);
@@ -624,7 +631,19 @@ long syscall_sigreturn(struct regs *r, uintptr_t __user_stack)
 
     __asm__ __volatile__("":::"memory");
 
-    A_memcpy(&rtmp, r, sizeof(struct regs));
+    if(__atomic_load_n(&(ct->irq_regs), __ATOMIC_SEQ_CST))
+    {
+        extern void resume_user_after_irq(struct regs *r);
+
+        __sync_and_and_fetch(&ct->properties, ~PROPERTY_HANDLING_SIG);
+        ct->signal_stack.ss_flags &= ~SS_ONSTACK;
+        __atomic_store_n(&(ct->irq_regs), 0, __ATOMIC_SEQ_CST);
+        unset_syscall_flags(ct);
+
+        resume_user_after_irq(r);
+        __builtin_unreachable();
+    }
+
     sti();
     restart_syscall(ct, &rtmp);
 
@@ -640,17 +659,17 @@ long syscall_sigreturn(struct regs *r, uintptr_t __user_stack)
 }
 
 
-// defined in arch/XXX/irq.c
-extern volatile int nested_irqs;
-
 void check_signals_after_irq(struct regs *r)
 {
+    //if(this_core->cur_task && this_core->cur_task->pid >= 54) __asm__ __volatile__("xchg %%bx, %%bx":::);
+    /*
     // don't process signals if we are serving an IRQ that occurred while we 
     // were serving another IRQ (i.e. nested IRQs)
-    if(nested_irqs)
+    if(this_core->nested_irqs)
     {
         return;
     }
+    */
     
     // don't process signals while in a syscall, as we will do this after we
     // finish the syscall
@@ -662,13 +681,17 @@ void check_signals_after_irq(struct regs *r)
 
     // process signals after an IRQ if this is a timer IRQ and we come from
     // user space
-    if(r->int_no == 32 && USERSP(r) < USER_MEM_END)
+    if(USERSP(r) < USER_MEM_END && (r->int_no == 32 || r->int_no == 123))
     {
+        //struct regs rtmp;
         __atomic_store_n(&(this_core->cur_task->interrupted_syscall), 0, __ATOMIC_SEQ_CST);
         //cur_task->interrupted_syscall = 0;
-        //cur_task->irq_regs = r;
+        //A_memcpy(&rtmp, r, sizeof(struct regs));
+        __atomic_store_n(&(this_core->cur_task->irq_regs), r, __ATOMIC_SEQ_CST);
+        //this_core->cur_task->irq_regs = r;
         check_pending_signals(r);
-        //cur_task->irq_regs = NULL;
+        __atomic_store_n(&(this_core->cur_task->irq_regs), 0, __ATOMIC_SEQ_CST);
+        //this_core->cur_task->irq_regs = NULL;
     }
 }
 
@@ -825,7 +848,7 @@ long syscall_sigtimedwait(sigset_t *set, siginfo_t *info,
     struct timespec ats;
     sigset_t pending, wanted, blocked;
     int signum;
-    long error = 0;
+    //long error = 0;
     unsigned long timo;
     unsigned long long oticks;
 
@@ -916,18 +939,51 @@ retry:
     {
         if(ats.tv_sec == 0 && ats.tv_nsec == 0)
         {
-            goto done;
+            return -EAGAIN;
         }
         
         if(ticks >= (oticks + timo))
         {
-            goto done;
+            return -EAGAIN;
         }
-        
+
         timo -= (ticks - oticks);
+        oticks = ticks;
     }
 
-    error = block_task2(ct, timo);
+
+    if(timo)
+    {
+        set_task_waking_signal(ct, 0);
+        __sync_and_and_fetch(&ct->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(ct, timo);
+    }
+    else
+    {
+        set_task_waitchan(ct, ct);
+        set_task_state(ct, TASK_SLEEPING);
+        scheduler();
+    }
+
+    if(get_task_waking_signal(ct))
+    {
+        return -EINTR;
+    }
+
+    goto retry;
+
+#if 0
+    if(timo < 100)
+    {
+        error = block_task2(ct, timo);
+    }
+    else
+    {
+        if((error = block_task2(ct, 100)) != EINTR)
+        {
+            goto retry;
+        }
+    }
 
     if(error == 0)
     {
@@ -938,6 +994,7 @@ retry:
 
 done:
     return (error == -EWOULDBLOCK) ? -EAGAIN : error;
+#endif
 }
 
 
@@ -1178,7 +1235,7 @@ long add_task_signal(struct task_t *task, int signum,
 {
 	struct task_t *ct = (struct task_t *)this_core->cur_task;
     
-    if(!task)
+    if(!task || !task->sig)
     {
         return -ESRCH;
     }
@@ -1245,18 +1302,19 @@ long add_task_signal(struct task_t *task, int signum,
     }
     
     task->siginfo[signum].si_signo = signum;
-    
 
 out:
 
     /* a sleeping task must be woken up to receive the KILL signal */
-    if((task->state == TASK_SLEEPING) &&
+    if(/* (task->state == TASK_SLEEPING) && */
        task->sig->signal_actions[signum].sa_handler != SIG_IGN &&
        !ksigismember(&task->signal_mask, signum))
     {
         KDEBUG("add_task_signal: waking task with signum %d\n", signum);
-        task->woke_by_signal = signum;
-        //unblock_task(task);
+
+        set_task_waking_signal(task, signum);
+        //task->woke_by_signal = signum;
+
         unblock_task_no_preempt(task);
     }
 

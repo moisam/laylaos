@@ -103,7 +103,7 @@ repeat:
              *         (1) child is being traced
              *         (2) child is not being traced and WUNTRACED is specified
              */
-            if(((*t)->state == TASK_ZOMBIE && (options & WEXITED)) ||
+            if((get_task_state(*t) == TASK_ZOMBIE && (options & WEXITED)) ||
               ((WIFCONTINUED((*t)->exit_status)) && (options & WCONTINUED)) ||
               ((WIFSTOPPED  ((*t)->exit_status)) && (options & WSTOPPED) &&
                (((*t)->properties & PROPERTY_TRACE_SIGNALS) || 
@@ -174,7 +174,7 @@ repeat:
                 flag = (*t)->pid;
                 (*t)->exit_status = 0;
 
-                if((*t)->state == TASK_ZOMBIE)
+                if(get_task_state(*t) == TASK_ZOMBIE)
                 {
                     KDEBUG("waitpid_internal: pid %d\n", (*t)->pid);
                     reap_zombie(*t);
@@ -205,11 +205,17 @@ repeat:
     KDEBUG("waitpid_internal: pid %d going to sleep\n", ct->pid);
 
     __sync_or_and_fetch(&ct->properties, PROPERTY_IN_WAIT);
-    //block_task(ct, 1);
-    block_task2(ct, 200);
+
+    ////block_task(ct, 1);
+    //block_task2(ct, 100);
+    set_task_waitchan(ct, ct);
+    set_task_state(ct, TASK_SLEEPING);
+    scheduler();
+
     __sync_and_and_fetch(&ct->properties, ~PROPERTY_IN_WAIT);
 
-    if(ct->woke_by_signal)
+    if(get_task_waking_signal(ct))
+    //if(ct->woke_by_signal)
     {
         KDEBUG("waitpid_internal: awoken by signal (pid %d)\n", ct->pid);
         return -ERESTARTSYS;

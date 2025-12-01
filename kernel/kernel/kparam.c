@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: kparam.c
  *    This file is part of LaylaOS.
@@ -95,7 +95,7 @@ char *get_cmdline_param_val(char *name)
 
 int has_cmdline_param(char *name)
 {
-    char *p, *p2, c;
+    char *p, c;
     size_t namelen = 0;
 
     KDEBUG("has_cmdline_param: name '%s', cmdline '%s'\n", name, kernel_cmdline);
@@ -114,21 +114,21 @@ int has_cmdline_param(char *name)
 
     while(*p)
     {
-        if(!(p2 = strstr(p, name)))
+        if(memcmp(name, p, namelen) == 0)
         {
-            return 0;
+            c = p[namelen];
+
+            if(c == '\0' || c == ' ' || c == '\t' || c == '\n' || c == '=')
+            {
+                KDEBUG("has_cmdline_param: name '%s' was found\n", name);
+                return 1;
+            }
         }
 
-        c = p2[namelen];
-
-        if(c == '\0' || c == ' ' || c == '\t' || c == '\n' || c == '=')
-        {
-            return 1;
-        }
-
-        p = p2 + namelen;
+        p++;
     }
 
+    KDEBUG("has_cmdline_param: name '%s' not found\n", name);
     return 0;
 }
 

@@ -28,6 +28,7 @@
 //#define __DEBUG
 #include <kernel/laylaos.h>
 #include <kernel/task.h>
+#include <kernel/softint.h>
 
 
 #define TIMESLICE_RR(t)                                                 \
@@ -154,9 +155,9 @@ STATIC_INLINE void move_to_queue_end(volatile struct task_t *task)
 
 STATIC_INLINE void update_task_times(volatile struct task_t *t)
 {
-    unsigned long elapsed = ticks - prev_ticks;
+    unsigned long elapsed = ticks - this_core->prev_ticks;
 
-    prev_ticks = ticks;
+    this_core->prev_ticks = ticks;
 
     if(elapsed == 0)
     {
@@ -164,13 +165,20 @@ STATIC_INLINE void update_task_times(volatile struct task_t *t)
     }
 
     /* update user and system times */
+    if(t == softsleep_task)
+    {
+        this_core->softirq_ticks += elapsed;
+    }
+
     if(t->user && !t->user_in_kernel_mode)
     {
         t->user_time += elapsed;
+        this_core->user_time += elapsed;
     }
     else
     {
         t->sys_time += elapsed;
+        this_core->sys_time += elapsed;
     }
 }
 
@@ -238,6 +246,7 @@ STATIC_INLINE volatile struct task_t *get_task_by_tid(pid_t tid)
 STATIC_INLINE int get_running_task_count(void)
 {
     int running = 0;
+    int state;
 
     for_each_taskptr(t)
     {
@@ -246,7 +255,9 @@ STATIC_INLINE int get_running_task_count(void)
             continue;
         }
 
-        if((*t)->state == TASK_RUNNING || (*t)->state == TASK_READY)
+        state = get_task_state(*t);
+
+        if(state == TASK_RUNNING || state == TASK_READY)
         {
             running++;
         }
@@ -262,6 +273,7 @@ STATIC_INLINE int get_running_task_count(void)
 STATIC_INLINE int get_blocked_task_count(void)
 {
     int blocked = 0;
+    int state;
 
     for_each_taskptr(t)
     {
@@ -270,7 +282,9 @@ STATIC_INLINE int get_blocked_task_count(void)
             continue;
         }
 
-        if((*t)->state == TASK_WAITING || (*t)->state == TASK_SLEEPING)
+        state = get_task_state(*t);
+
+        if(state == TASK_WAITING || state == TASK_SLEEPING)
         {
             blocked++;
         }

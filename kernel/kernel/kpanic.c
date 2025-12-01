@@ -156,6 +156,9 @@ void kpanic(const char *s)
 
 	printk("Kernel panic: %s\n", s);
 	kernel_stack_trace();
+
+    // force screen update
+    repaint_screen = 1;
     screen_refresh(NULL);
     __asm__ __volatile__("xchg %%bx, %%bx"::);
 
