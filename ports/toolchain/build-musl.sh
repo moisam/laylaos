@@ -13,6 +13,8 @@ DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 PATCH_FILE=musl.diff
 PATCH2_FILE=musl2.diff
 PATCH3_FILE=musl3.diff
+PATCH4_FILE=musl4.diff
+PATCH5_FILE=musl5.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -43,9 +45,14 @@ download_and_extract
 # patch and copy our extra files
 echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH2_FILE} -p0 && cd ${CWD}
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH3_FILE} -p0 && cd ${CWD}
+
+cd ${DOWNLOAD_PORTS_PATH}
+patch -i ${CWD}/${PATCH_FILE} -p0
+patch -i ${CWD}/${PATCH2_FILE} -p0
+patch -i ${CWD}/${PATCH3_FILE} -p0
+patch -i ${CWD}/${PATCH4_FILE} -p0
+patch -i ${CWD}/${PATCH5_FILE} -p0
+cd ${CWD}
 
 # we will replace some of musl's original files with our own
 rm ${DOWNLOAD_SRCDIR}/src/process/x86_64/vfork.s
@@ -92,7 +99,8 @@ ${DOWNLOAD_SRCDIR}/configure --prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \
     AS=${CROSSTOOLS_PREFIX}-as AR=${CROSSTOOLS_PREFIX}-ar \
     RANLIB=${CROSSTOOLS_PREFIX}-ranlib LD=${CROSSTOOLS_PREFIX}-ld \
     STRIP=${CROSSTOOLS_PREFIX}-strip RANLIB=${CROSSTOOLS_PREFIX}-ranlib \
-    NM=${CROSSTOOLS_PREFIX}-nm OBJDUMP=${CROSSTOOLS_PREFIX}-objdump
+    NM=${CROSSTOOLS_PREFIX}-nm OBJDUMP=${CROSSTOOLS_PREFIX}-objdump \
+    --with-malloc=oldmalloc
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 make install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"

@@ -84,6 +84,9 @@ make install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 # Fix libSDL2_mixer.la for the future generations
 #sed -i "s/dependency_libs=.*/dependency_libs='-lSDL2 -lfreetype -liconv -ldl -lgui -lpng16 -lz -lrt -lm'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libSDL2_mixer.la
 
+# set the SONAME so everybody else can link to it without using the full pathname
+patchelf --set-soname libSDL2_mixer.so ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libSDL2_mixer.so
+
 # Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}

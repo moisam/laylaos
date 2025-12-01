@@ -1,0 +1,44 @@
+diff -rub ./musl-1.2.4/src/malloc/oldmalloc/malloc.c ./musl-1.2.4/src/malloc/oldmalloc/malloc.c
+--- ./musl-1.2.4/src/malloc/oldmalloc/malloc.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/malloc/oldmalloc/malloc.c	2025-11-13 18:39:57.046729998 +0000
+@@ -19,6 +19,11 @@
+ #define inline inline __attribute__((always_inline))
+ #endif
+ 
++#ifdef __laylaos__
++extern void *sbrk(intptr_t inc);
++#undef brk
++#endif
++
+ static struct {
+ 	volatile uint64_t binmap;
+ 	struct bin bins[64];
+@@ -172,16 +177,26 @@
+ 	n += -n & PAGE_SIZE-1;
+ 
+ 	if (!brk) {
++#ifdef __laylaos__
++		brk = (uintptr_t)sbrk(0);
++#else
+ 		brk = __syscall(SYS_brk, 0);
+ 		brk += -brk & PAGE_SIZE-1;
++#endif
+ 	}
+ 
+-	if (n < SIZE_MAX-brk && !traverses_stack_p(brk, brk+n)
+-	    && __syscall(SYS_brk, brk+n)==brk+n) {
++	if (n < SIZE_MAX-brk && !traverses_stack_p(brk, brk+n)) {
++#ifdef __laylaos__
++		sbrk(n);
++		if ((uintptr_t)sbrk(0)==brk+n) {
++#else
++	    if (__syscall(SYS_brk, brk+n)==brk+n) {
++#endif
+ 		*pn = n;
+ 		brk += n;
+ 		return (void *)(brk-n);
+ 	}
++	}
+ 
+ 	size_t min = (size_t)PAGE_SIZE << mmap_step/2;
+ 	if (n < min) n = min;

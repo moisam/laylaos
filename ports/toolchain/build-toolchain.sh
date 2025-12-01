@@ -102,7 +102,8 @@ ${MUSL_SRCDIR}/configure --prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \
     AS=${CROSSTOOLS_PREFIX}-as AR=${CROSSTOOLS_PREFIX}-ar \
     RANLIB=${CROSSTOOLS_PREFIX}-ranlib LD=${CROSSTOOLS_PREFIX}-ld \
     STRIP=${CROSSTOOLS_PREFIX}-strip RANLIB=${CROSSTOOLS_PREFIX}-ranlib \
-    NM=${CROSSTOOLS_PREFIX}-nm OBJDUMP=${CROSSTOOLS_PREFIX}-objdump
+    NM=${CROSSTOOLS_PREFIX}-nm OBJDUMP=${CROSSTOOLS_PREFIX}-objdump \
+    --with-malloc=oldmalloc
 
 make || exit_failure "$0: failed to build musl (second pass)"
 make install || exit_failure "$0: failed to install musl (second pass)"

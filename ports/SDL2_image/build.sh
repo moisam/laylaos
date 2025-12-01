@@ -71,6 +71,9 @@ make install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 # Fix libSDL2_image.la for the future generations
 #sed -i "s/dependency_libs=.*/dependency_libs='-lavif -lwebpdemux -lwebp -lSDL2 -lfreetype -liconv -ldl -lgui -lfreetype -lpng16 -lz -lm -lrt'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libSDL2_image.la
 
+# set the SONAME so everybody else can link to it without using the full pathname
+patchelf --set-soname libSDL2_image.so ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libSDL2_image.so
+
 # Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}
