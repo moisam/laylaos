@@ -13,7 +13,7 @@ SOURCES = \
     qlaylaosrasterbackingstore.cpp \
     qlaylaosscreen.cpp \
     qlaylaoswindow.cpp \
-    qlaylaoseventlooper.cpp
+    qlaylaossocketmonitor.cpp
 
 HEADERS = \
     main.h \
@@ -25,7 +25,7 @@ HEADERS = \
     qlaylaosrasterbackingstore.h \
     qlaylaosscreen.h \
     qlaylaoswindow.h \
-    qlaylaoseventlooper.h
+    qlaylaossocketmonitor.h
 
 LIBS += -lgui -lfreetype
 

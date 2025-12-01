@@ -1,6 +1,6 @@
 /***************************************************************************
 **
-** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
+** Copyright (C) 2024, 2025 Mohammed Isam <mohammed_isam1984@yahoo.com>
 ** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
 ** Contact: https://www.qt.io/licensing/
 **
@@ -40,7 +40,8 @@
 
 #include "qlaylaoswindow.h"
 #include "qlaylaoskeymapper.h"
-#include "qlaylaoseventlooper.h"
+//#include "qlaylaoseventlooper.h"
+#include "qlaylaossocketmonitor.h"
 
 #include "private/qguiapplication_p.h"
 
@@ -86,7 +87,7 @@ static uint32_t toLaylaOSFlags(Qt::WindowFlags flags)
     }
 
     if (isPopup) {
-        wflag = NODECORATION_FLAGS;
+        wflag = NODECORATION_FLAGS | WINDOW_ABSOLUTE_COORDS;
         flags |= Qt::WindowStaysOnTopHint;
     }
 
@@ -96,7 +97,7 @@ static uint32_t toLaylaOSFlags(Qt::WindowFlags flags)
     }
 
     if (isToolTip) {
-        wflag = NODECORATION_FLAGS;
+        wflag = NODECORATION_FLAGS | WINDOW_NOFOCUS | WINDOW_ABSOLUTE_COORDS;
         flags |= Qt::WindowStaysOnTopHint;
     }
 
@@ -121,17 +122,22 @@ static uint32_t toLaylaOSFlags(Qt::WindowFlags flags)
     return wflag;
 }
 
-QLaylaOSWindow::QLaylaOSWindow(QWindow *window, QLaylaOSEventLooper *eventlooper)
+QLaylaOSWindow::QLaylaOSWindow(QWindow *window, QLaylaOSSocketMonitor *socketmonitor /* QLaylaOSEventLooper *eventlooper */)
     : QPlatformWindow(window)
     , m_window(nullptr)
     , m_windowState(Qt::WindowNoState)
+    , m_mouse_grabbed(false)
+    , m_kbd_grabbed(false)
 {
     QWindow *p = window->parent();
     const QRect rect = initialGeometry(window, window->geometry(), DefaultWindowWidth, DefaultWindowHeight);
     struct window_attribs_t attribs;
     uint32_t flags = toLaylaOSFlags(window->flags());
     const Qt::WindowType type = getWindowType(window->flags());
+    const bool isPopup = (type == Qt::Popup);
+    const bool isToolTip = (type == Qt::ToolTip);
     const bool isDialog = ((type == Qt::Dialog) || (type == Qt::Sheet) || (type == Qt::MSWindowsFixedSizeDialogHint));
+    bool tried = false;
 
     attribs.gravity = WINDOW_ALIGN_ABSOLUTE;
     attribs.x = rect.x();
@@ -140,27 +146,55 @@ QLaylaOSWindow::QLaylaOSWindow(QWindow *window, QLaylaOSEventLooper *eventlooper
     attribs.h = rect.height();
     attribs.flags = flags;
 
-    //qDebug("QLaylaOSWindow::QLaylaOSWindow: x %d, y %d, w %u, h %u, fl 0x%x", attribs.x, attribs.y, attribs.w, attribs.h, attribs.flags);
+    qDebug("QLaylaOSWindow::QLaylaOSWindow: x %d, y %d, w %u, h %u, fl 0x%x", attribs.x, attribs.y, attribs.w, attribs.h, attribs.flags);
+    qDebug() << "QLaylaOSWindow::QLaylaOSWindow: type " << type;
 
     if (!p)
         p = QGuiApplication::focusWindow();
 
-    //qDebug() << "QLaylaOSWindow::QLaylaOSWindow: isDialog " << isDialog << ", p " << p;
+    qDebug() << "QLaylaOSWindow::QLaylaOSWindow: isDialog " << isDialog << ", isPopup " << isPopup << ", isToolTip " << isToolTip << ", p " << p;
 
-    if (isDialog && p) {
-        QLaylaOSWindow *parent = static_cast<QLaylaOSWindow*>(p->handle());
+    if (p) {
+        if (isDialog) {
+            QLaylaOSWindow *parent = static_cast<QLaylaOSWindow*>(p->handle());
 
-        if (parent) {
-            struct window_t *pwin = parent->nativeHandle();
+            if (parent) {
+                struct window_t *pwin = parent->nativeHandle();
 
-            //qDebug("QLaylaOSWindow::QLaylaOSWindow: parent type %d, ownerid %ld", pwin->type, pwin->winid);
-            m_window = __window_create(&attribs, WINDOW_TYPE_DIALOG, pwin->winid);
-        } else {
-            m_window = window_create(&attribs);
+                qDebug("QLaylaOSWindow::QLaylaOSWindow: parent type %d, ownerid %ld", pwin->type, pwin->winid);
+                m_window = __window_create(&attribs, WINDOW_TYPE_DIALOG, pwin->winid);
+                tried = true;
+            }
         }
-    } else {
-        m_window = window_create(&attribs);
+
+        if (isPopup || isToolTip) {
+            QLaylaOSWindow *parent = static_cast<QLaylaOSWindow*>(p->handle());
+
+            if (parent) {
+                struct window_t *pwin = parent->nativeHandle();
+
+                /*
+                // x & y coordinates should be relative to parent
+                attribs.x -= pwin->x;
+                attribs.y -= pwin->y;
+
+                if (!(pwin->flags & WINDOW_NODECORATION)) {
+                    attribs.x -= WINDOW_BORDERWIDTH;
+                    attribs.y -= WINDOW_TITLEHEIGHT;
+                }
+                */
+
+                qDebug("QLaylaOSWindow::QLaylaOSWindow: parent type %d, ownerid %ld", pwin->type, pwin->winid);
+                qDebug("QLaylaOSWindow::QLaylaOSWindow: x %d, y %d, w %u, h %u, fl 0x%x --", attribs.x, attribs.y, attribs.w, attribs.h, attribs.flags);
+
+                m_window = __window_create(&attribs, WINDOW_TYPE_MENU_FRAME, pwin->winid);
+                tried = true;
+            }
+        }
     }
+
+    if (!tried)
+        m_window = window_create(&attribs);
 
     if (Q_UNLIKELY(!m_window))
         qFatal("QLaylaOS: failed to create window: %s", strerror(errno));
@@ -168,40 +202,93 @@ QLaylaOSWindow::QLaylaOSWindow(QWindow *window, QLaylaOSEventLooper *eventlooper
     if (!window->title().isEmpty())
         window_set_title(m_window, (char *)window->title().toUtf8().constData());
 
-    QPlatformWindow::setGeometry(rect);
+    //QPlatformWindow::setGeometry(rect);
 
+    /*
     m_eventlooper = eventlooper;
     m_eventlooper->addWindow(m_window->winid, window);
+    */
+    m_socketmonitor = socketmonitor;
+    m_socketmonitor->addWindow(m_window->winid, window);
+    qDebug() << "QLaylaOSWindow::QLaylaOSWindow: done";
+
+    // libgui has functions that call get_server_reply() internally.
+    // This call leads to event pooling in libgui, which can lead to missed
+    // events as our socker monitor will not fire an activated() event until
+    // a new event occurs, e.g. the mouse is moved.
+    // To avoid this, we make the below call to process any pooled events.
+    emit m_socketmonitor->gonow();
+    //m_socketmonitor->readyRead();
 }
 
 QLaylaOSWindow::~QLaylaOSWindow()
 {
+    /*
     if (m_eventlooper) {
         m_eventlooper->removeWindow(m_window->winid);
         m_eventlooper = nullptr;
     }
+    */
+    if (m_socketmonitor) {
+        m_socketmonitor->removeWindow(m_window->winid);
+        m_socketmonitor = nullptr;
+    }
 
-    window_destroy(m_window);
+    if (m_window)
+        window_destroy(m_window);
+
     m_window = nullptr;
 }
 
+/*
 void QLaylaOSWindow::detachFromLooper()
 {
     m_eventlooper = nullptr;
 }
+*/
 
 void QLaylaOSWindow::setGeometry(const QRect &rect)
 {
-    //qDebug() << "QLaylaOSWindow::setGeometry: 1 " << rect;
+    qDebug() << "QLaylaOSWindow::setGeometry: 1 " << rect;
     //QPlatformWindow::setGeometry(rect);
     //qDebug() << "QLaylaOSWindow::setGeometry: 2 " << rect;
 
-    window_set_size(m_window, rect.x(), rect.y(), rect.width(), rect.height());
+    if (m_window) {
+        /*
+        QWindow *p = window()->parent();
+        int x = rect.x();
+        int y = rect.y();
+
+        if (!p)
+            p = QGuiApplication::focusWindow();
+
+        if (p && m_window->type == WINDOW_TYPE_MENU_FRAME) {
+            // x & y coordinates should be relative to parent
+            QLaylaOSWindow *parent = static_cast<QLaylaOSWindow*>(p->handle());
+            struct window_t *pwin = parent->nativeHandle();
+
+            x -= pwin->x;
+            y -= pwin->y;
+
+            if (!(pwin->flags & WINDOW_NODECORATION)) {
+                x -= WINDOW_BORDERWIDTH;
+                y -= WINDOW_TITLEHEIGHT;
+            }
+        }
+
+        window_set_size(m_window, x, y, rect.width(), rect.height());
+        */
+        window_set_size(m_window, rect.x(), rect.y(), rect.width(), rect.height());
+    }
+    //qDebug() << "QLaylaOSWindow::setGeometry: 2 " << rect;
 }
 
 QRect QLaylaOSWindow::geometry() const
 {
-    if(m_window->flags & WINDOW_NODECORATION)
+    if (!m_window)
+        qFatal("QLaylaOS: requesting geometry() on a destroyed window");
+
+    if (m_window->flags & WINDOW_NODECORATION)
         return QRect(QPoint(m_window->x, m_window->y), QSize(m_window->w, m_window->h));
 
     return QRect(QPoint(m_window->x + WINDOW_BORDERWIDTH, m_window->y + WINDOW_TITLEHEIGHT),
@@ -213,10 +300,10 @@ QRect QLaylaOSWindow::geometry() const
 //
 QMargins QLaylaOSWindow::frameMargins() const
 {
-    if(m_window->flags & WINDOW_NODECORATION)
+    if (m_window && m_window->flags & WINDOW_NODECORATION)
         return QMargins(0, 0, 0, 0);
 
-    return QMargins(WINDOW_BORDERWIDTH,     //left
+    return QMargins(WINDOW_BORDERWIDTH,     // left
                     WINDOW_TITLEHEIGHT,     // top
                     WINDOW_BORDERWIDTH,     // right
                     WINDOW_BORDERWIDTH);    // bottom
@@ -224,6 +311,10 @@ QMargins QLaylaOSWindow::frameMargins() const
 
 void QLaylaOSWindow::setVisible(bool visible)
 {
+    if (!m_window) return;
+
+    qDebug() << "QLaylaOSWindow::setVisible: winid " << m_window->winid << visible;
+
     if (visible) {
         window_show(m_window);
 
@@ -233,19 +324,43 @@ void QLaylaOSWindow::setVisible(bool visible)
                     QRect(QPoint(0, 0), window()->geometry().size()));
     } else {
         window_hide(m_window);
+
+        qDebug() << "QLaylaOSWindow::setVisible: winid " << m_window->winid << " m_mouse_grabbed" << m_mouse_grabbed;
+
+        if (m_mouse_grabbed) {
+            mouse_ungrab();
+            m_mouse_grabbed = false;
+        }
+
+        qDebug() << "QLaylaOSWindow::setVisible: winid " << m_window->winid << " m_kbd_grabbed" << m_kbd_grabbed;
+
+        if (m_kbd_grabbed) {
+            keyboard_ungrab();
+            m_kbd_grabbed = false;
+        }
     }
+    //qDebug() << "QLaylaOSWindow::setVisible: 2 winid " << m_window->winid << visible;
 }
 
 bool QLaylaOSWindow::isExposed() const
 {
-    //qDebug() << "isExposed: " << !(m_windowState == Qt::WindowMinimized);
+    //qDebug() << "isExposed: winid " << m_window->winid << !(m_windowState == Qt::WindowMinimized);
     return !(m_windowState == Qt::WindowMinimized);
 }
 
 bool QLaylaOSWindow::isActive() const
 {
-    //qDebug() << "isActive: " << !(get_input_focus() == m_window->winid);
-    return (get_input_focus() == m_window->winid);
+    if (!m_window) return false;
+    winid_t focus = get_input_focus();
+
+    //qDebug() << "isActive: winid " << m_window->winid << ", focus " << focus << ", " << (focus == m_window->winid);
+
+    // see the comment at the end of QLaylaOSWindow::QLaylaOSWindow() for
+    // why this call is important here
+    emit m_socketmonitor->gonow();
+    //m_socketmonitor->readyRead();
+
+    return (focus == m_window->winid);
 }
 
 WId QLaylaOSWindow::winId() const
@@ -260,11 +375,15 @@ struct window_t *QLaylaOSWindow::nativeHandle() const
 
 void QLaylaOSWindow::requestActivateWindow()
 {
-    if(m_window) window_raise(m_window);
+    qDebug() << "QLaylaOSWindow::requestActivateWindow: " << m_window->winid;
+    if(m_window) {
+        window_raise(m_window);
+    }
 }
 
 void QLaylaOSWindow::setWindowState(Qt::WindowStates state)
 {
+    qDebug() << "QLaylaOSWindow::setWindowState: " << state;
     if (m_windowState == state)
         return;
 
@@ -286,6 +405,8 @@ void QLaylaOSWindow::setWindowFlags(Qt::WindowFlags flags)
 {
     uint32_t wflag = toLaylaOSFlags(flags);
 
+    if (!m_window) return;
+
     if ((wflag & WINDOW_NODECORATION) != (m_window->flags & WINDOW_NODECORATION))
         window_set_bordered(m_window, !!(wflag & WINDOW_NODECORATION));
 
@@ -300,11 +421,14 @@ void QLaylaOSWindow::setWindowFlags(Qt::WindowFlags flags)
 
 void QLaylaOSWindow::setWindowTitle(const QString &title)
 {
-    window_set_title(m_window, (char *)title.toLocal8Bit().constData());
+    if (m_window)
+        window_set_title(m_window, (char *)title.toLocal8Bit().constData());
 }
 
 void QLaylaOSWindow::propagateSizeHints()
 {
+    if (!m_window) return;
+
     // TODO: process max size and zoom size as well
     window_set_min_size(m_window, window()->minimumSize().width(),
                                   window()->minimumSize().height());
@@ -312,31 +436,55 @@ void QLaylaOSWindow::propagateSizeHints()
 
 void QLaylaOSWindow::raise()
 {
+    qDebug() << "QLaylaOSWindow::raise: " << m_window->winid;
     if (m_window) window_raise(m_window);
 }
 
 void QLaylaOSWindow::lower()
 {
+    qDebug() << "QLaylaOSWindow::lower: " << m_window->winid;
     // TODO: this should lower, not minimize, the window
     if (m_window) window_minimize(m_window);
 }
 
 bool QLaylaOSWindow::setKeyboardGrabEnabled(bool grab)
 {
+    qDebug() << "QLaylaOSWindow::setKeyboardGrabEnabled: " << m_window->winid << grab;
+
     if (grab) {
-        return keyboard_grab(m_window);
+        int res = keyboard_grab(m_window);
+
+        // see the comment at the end of QLaylaOSWindow::QLaylaOSWindow() for
+        // why this call is important here
+        emit m_socketmonitor->gonow();
+        //m_socketmonitor->readyRead();
+
+        m_kbd_grabbed = res;
+        return res;
     } else {
         keyboard_ungrab();
+        m_kbd_grabbed = false;
         return true;
     }
 }
 
 bool QLaylaOSWindow::setMouseGrabEnabled(bool grab)
 {
+    qDebug() << "QLaylaOSWindow::setMouseGrabEnabled: " << m_window->winid << grab;
+
     if (grab) {
-        return mouse_grab(m_window, 0);
+        int res = mouse_grab(m_window, 0);
+
+        // see the comment at the end of QLaylaOSWindow::QLaylaOSWindow() for
+        // why this call is important here
+        emit m_socketmonitor->gonow();
+        //m_socketmonitor->readyRead();
+
+        m_mouse_grabbed = res;
+        return res;
     } else {
         mouse_ungrab();
+        m_mouse_grabbed = false;
         return true;
     }
 }

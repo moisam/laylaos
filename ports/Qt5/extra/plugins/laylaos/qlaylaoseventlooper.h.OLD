@@ -1,7 +1,6 @@
 /***************************************************************************
 **
 ** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
-** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
 ** Contact: https://www.qt.io/licensing/
 **
 ** This file is part of the plugins of the Qt Toolkit.
@@ -38,35 +37,76 @@
 **
 ****************************************************************************/
 
-#ifndef QLAYLAOSBUFFER_H
-#define QLAYLAOSBUFFER_H
+#ifndef QLAYLAOSEVENTLOOPER_H
+#define QLAYLAOSEVENTLOOPER_H
 
-#include <QtGui/QImage>
+#include <qpa/qplatformintegration.h>
+#include <QThread>
+#include <QHash>
+#include <QtCore/QMutex>
 
-#include <gui/gui.h>
-#include <gui/bitmap.h>
+#include <gui/client/window.h>
+#include <gui/event.h>
 
 QT_BEGIN_NAMESPACE
 
-class QLaylaOSBuffer
+class ButtonState
 {
 public:
-    QLaylaOSBuffer();
-    QLaylaOSBuffer(struct bitmap32_t *buffer);
+    Qt::MouseButtons state;
+    Qt::MouseButton pressed, released;
+};
 
-    struct bitmap32_t *nativeBuffer() const;
-    const QImage *image() const;
-    QImage *image();
 
-    QRect rect() const;
+//class QLaylaOSIntegration;
 
-    bool usesNativeFormat;
+class QLaylaOSEventLooper : public QThread
+{
+    Q_OBJECT
+
+public:
+    QLaylaOSEventLooper();
+    //virtual ~QLaylaOSEventLooper();
+    void addWindow(winid_t winid, QWindow *platformWindow);
+    void removeWindow(winid_t winid);
+
+    //void setPlatformIntegration(QLaylaOSIntegration *platformIntegration);
+    void stopInputEventLoop();
+
+    ButtonState getMouseButtons(struct event_t *ev);
+    //Qt::MouseButtons getMouseButtons(struct event_t *ev) const;
+    Qt::KeyboardModifiers getModifiers(char modkeys) const;
+    //void checkWindowState(struct event_t *ev);
+    void updateWindowState(struct event_t *ev);
+
+    void handleWindowMovedEvent(struct event_t *ev);
+    void handleWindowResizedEvent(struct event_t *ev);
+    void handleDrawRequest(QWindow *win, winid_t winid);
+    void handleWindowActivatedEvent(struct event_t *ev, bool activated);
+    void handleWindowMinimizedEvent(struct event_t *ev, bool minimize);
+    void handleWindowZoomedEvent(struct event_t *ev);
+    void handleQuitRequestEvent(struct event_t *ev);
+    void handleMouseEvent(struct event_t *ev);
+    void handleKeyEvent(struct event_t *ev, QEvent::Type type);
+    void handleEnteredViewEvent(struct event_t *ev);
+    void handleExitedViewEvent(struct event_t *ev);
+
+Q_SIGNALS:
+    void done();
+
+private Q_SLOTS:
+    void terminateThread();
+
+protected:
+    void run();
 
 private:
-    struct bitmap32_t *m_buffer;
-    QImage m_image;
+    bool m_shouldStop;
+    QHash<winid_t, QWindow *>m_winmap;
+    //QLaylaOSIntegration *m_platformIntegration;
+    QMutex m_mapMutex;
 };
 
 QT_END_NAMESPACE
 
-#endif
+#endif  // QLAYLAOSEVENTLOOPER_H

@@ -1,6 +1,6 @@
 /***************************************************************************
 **
-** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
+** Copyright (C) 2024, 2025 Mohammed Isam <mohammed_isam1984@yahoo.com>
 ** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
 ** Contact: https://www.qt.io/licensing/
 **
@@ -50,14 +50,15 @@
 
 QT_BEGIN_NAMESPACE
 
-class QLaylaOSEventLooper;
+//class QLaylaOSEventLooper;
+class QLaylaOSSocketMonitor;
 
 class QLaylaOSWindow : public QObject, public QPlatformWindow
 {
     Q_OBJECT
 
 public:
-    explicit QLaylaOSWindow(QWindow *window, QLaylaOSEventLooper *eventlooper);
+    explicit QLaylaOSWindow(QWindow *window, QLaylaOSSocketMonitor *socketmonitor /* QLaylaOSEventLooper *eventlooper */);
     virtual ~QLaylaOSWindow();
 
     QRect geometry() const override;
@@ -83,14 +84,17 @@ public:
     void lower() override;
     void propagateSizeHints() override;
 
-    void detachFromLooper();
+    //void detachFromLooper();
 
 protected:
     struct window_t *m_window;
-    QLaylaOSEventLooper *m_eventlooper;
+    //QLaylaOSEventLooper *m_eventlooper;
+    QLaylaOSSocketMonitor *m_socketmonitor;
 
 private:
     Qt::WindowStates m_windowState;
+    bool m_mouse_grabbed;
+    bool m_kbd_grabbed;
 };
 
 QT_END_NAMESPACE

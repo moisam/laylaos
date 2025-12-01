@@ -1,10 +1,10 @@
-/***************************************************************************
+/****************************************************************************
 **
-** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
-** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
+** Copyright (C) 2025 Mohammed Isam
+** Copyright (C) 2016 Research In Motion
 ** Contact: https://www.qt.io/licensing/
 **
-** This file is part of the plugins of the Qt Toolkit.
+** This file is part of the Qt Toolkit.
 **
 ** $QT_BEGIN_LICENSE:LGPL$
 ** Commercial License Usage
@@ -38,35 +38,55 @@
 **
 ****************************************************************************/
 
-#ifndef QLAYLAOSBUFFER_H
-#define QLAYLAOSBUFFER_H
+#include "laylaosaudioplugin.h"
 
-#include <QtGui/QImage>
+#include "laylaosaudiodeviceinfo.h"
+#include "laylaosaudioinput.h"
+#include "laylaosaudiooutput.h"
 
-#include <gui/gui.h>
-#include <gui/bitmap.h>
+#include <sys/audioio.h>
+
+static const char *INPUT_ID = "LaylaOSAudioInput";
+static const char *OUTPUT_ID = "LaylaOSAudioOutput";
 
 QT_BEGIN_NAMESPACE
 
-class QLaylaOSBuffer
+LaylaOSAudioPlugin::LaylaOSAudioPlugin(QObject *parent)
+    : QAudioSystemPlugin(parent)
 {
-public:
-    QLaylaOSBuffer();
-    QLaylaOSBuffer(struct bitmap32_t *buffer);
+}
 
-    struct bitmap32_t *nativeBuffer() const;
-    const QImage *image() const;
-    QImage *image();
+QByteArray LaylaOSAudioPlugin::defaultDevice(QAudio::Mode mode) const
+{
+    return (mode == QAudio::AudioOutput) ? OUTPUT_ID : INPUT_ID;
+}
 
-    QRect rect() const;
+QList<QByteArray> LaylaOSAudioPlugin::availableDevices(QAudio::Mode mode) const
+{
+    if (mode == QAudio::AudioOutput)
+        return QList<QByteArray>() << OUTPUT_ID;
+    else
+        return QList<QByteArray>() << INPUT_ID;
+}
 
-    bool usesNativeFormat;
+QAbstractAudioInput *LaylaOSAudioPlugin::createInput(const QByteArray &device)
+{
+    Q_ASSERT(device == INPUT_ID);
+    Q_UNUSED(device);
+    return new LaylaOSAudioInput();
+}
 
-private:
-    struct bitmap32_t *m_buffer;
-    QImage m_image;
-};
+QAbstractAudioOutput *LaylaOSAudioPlugin::createOutput(const QByteArray &device)
+{
+    Q_ASSERT(device == OUTPUT_ID);
+    Q_UNUSED(device);
+    return new LaylaOSAudioOutput();
+}
+
+QAbstractAudioDeviceInfo *LaylaOSAudioPlugin::createDeviceInfo(const QByteArray &device, QAudio::Mode mode)
+{
+    Q_ASSERT(device == OUTPUT_ID || device == INPUT_ID);
+    return new LaylaOSAudioDeviceInfo(device, mode);
+}
 
 QT_END_NAMESPACE
-
-#endif

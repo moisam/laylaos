@@ -1,10 +1,10 @@
-/***************************************************************************
+/****************************************************************************
 **
-** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
-** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
+** Copyright (C) 2025 Mohammed Isam
+** Copyright (C) 2016 Research In Motion
 ** Contact: https://www.qt.io/licensing/
 **
-** This file is part of the plugins of the Qt Toolkit.
+** This file is part of the Qt Toolkit.
 **
 ** $QT_BEGIN_LICENSE:LGPL$
 ** Commercial License Usage
@@ -38,34 +38,18 @@
 **
 ****************************************************************************/
 
-#ifndef QLAYLAOSBUFFER_H
-#define QLAYLAOSBUFFER_H
+#ifndef LAYLAOSAUDIOUTILS_H
+#define LAYLAOSAUDIOUTILS_H
 
-#include <QtGui/QImage>
-
-#include <gui/gui.h>
-#include <gui/bitmap.h>
+#include "qaudiosystem.h"
+#include <sys/audioio.h>
 
 QT_BEGIN_NAMESPACE
 
-class QLaylaOSBuffer
+namespace LaylaOSAudioUtils
 {
-public:
-    QLaylaOSBuffer();
-    QLaylaOSBuffer(struct bitmap32_t *buffer);
-
-    struct bitmap32_t *nativeBuffer() const;
-    const QImage *image() const;
-    QImage *image();
-
-    QRect rect() const;
-
-    bool usesNativeFormat;
-
-private:
-    struct bitmap32_t *m_buffer;
-    QImage m_image;
-};
+    void formatToChannelParams(const QAudioFormat &format, audio_info_t *info, QAudio::Mode mode);
+}
 
 QT_END_NAMESPACE
 

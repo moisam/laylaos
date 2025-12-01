@@ -1,6 +1,6 @@
 /***************************************************************************
 **
-** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
+** Copyright (C) 2024, 2025 Mohammed Isam <mohammed_isam1984@yahoo.com>
 ** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
 ** Contact: https://www.qt.io/licensing/
 **
@@ -63,10 +63,12 @@ QLaylaOSRasterBackingStore::QLaylaOSRasterBackingStore(QWindow *window)
 
 QLaylaOSRasterBackingStore::~QLaylaOSRasterBackingStore()
 {
-    if(m_bitmap->data) free(m_bitmap->data);
-    m_bitmap->data = nullptr;
-    free(m_bitmap);
-    m_bitmap = nullptr;
+    if (m_bitmap) {
+        if(m_bitmap->data) free(m_bitmap->data);
+        m_bitmap->data = nullptr;
+        free(m_bitmap);
+        m_bitmap = nullptr;
+    }
 }
 
 QPaintDevice *QLaylaOSRasterBackingStore::paintDevice()
@@ -93,6 +95,7 @@ void QLaylaOSRasterBackingStore::flush(QWindow *window, const QRegion &region, c
     int w = m_bitmap->width;
     int h = m_bitmap->height;
     int rshift, bshift, gshift;
+    int lwin_bpp = lwin->gc->pixel_width;
     int bpl = (((int)m_bitmap->width * 32) + 7) / 8;
 
     bpl = (bpl + 4) & ~3;   // align to 4 bytes
@@ -100,6 +103,10 @@ void QLaylaOSRasterBackingStore::flush(QWindow *window, const QRegion &region, c
     rshift = GLOB.screen.red_pos;
     gshift = GLOB.screen.green_pos;
     bshift = GLOB.screen.blue_pos;
+
+    if (w != lwin->w || h != lwin->h) {
+        return;
+    }
 
     for (const QRect &rect : region) {
         x1 = rect.x() + offset.x();
@@ -119,10 +126,28 @@ void QLaylaOSRasterBackingStore::flush(QWindow *window, const QRegion &region, c
 
         if (x1 >= x2 || y1 >= y2) continue;
 
-        src = ((char *)m_bitmap->data + (bpl * y1) + (4 * x1));
-        dest = ((char *)lwin->gc->buffer + (lwin->gc->pitch * y1) + (4 * x1));
+        // source buffer uses same pixel format as destination, so copy directly
+        if (m_buffer.usesNativeFormat) {
+            //fprintf(stderr, "Using native pixel format\n");
+            int bytes_tocopy = (x2 - x1) * lwin_bpp;
 
-        if (lwin->gc->pixel_width == 1) {
+            src = ((char *)m_bitmap->data + (bpl * y1) + (lwin_bpp * x1));
+            dest = ((char *)lwin->gc->buffer + (lwin->gc->pitch * y1) + (lwin_bpp * x1));
+
+            for ( ; y1 <= y2; y1++) {
+                __builtin_memcpy(dest, src, bytes_tocopy);
+                src += bpl;
+                dest += lwin->gc->pitch;
+            }
+
+            continue;
+        }
+
+        // source buffer is RGBA while destination is something else
+        src = ((char *)m_bitmap->data + (bpl * y1) + (4 * x1));
+        dest = ((char *)lwin->gc->buffer + (lwin->gc->pitch * y1) + (lwin_bpp * x1));
+
+        if (lwin_bpp == 1) {
             // destination is 8bit RGB
 
             uint32_t *src32;
@@ -137,7 +162,7 @@ void QLaylaOSRasterBackingStore::flush(QWindow *window, const QRegion &region, c
                     *dest8 = gc_comp_to_rgb8(lwin->gc,
                                              (*src32 & 0xff),
                                              ((*src32 & 0xff00) >> 8),
-                                             ((*src32 & 0xff00) >> 16));
+                                             ((*src32 & 0xff0000) >> 16));
                     src32++;
                     dest8++;
                 }
@@ -145,7 +170,7 @@ void QLaylaOSRasterBackingStore::flush(QWindow *window, const QRegion &region, c
                 src += bpl;
                 dest += lwin->gc->pitch;
             }
-        } else if (lwin->gc->pixel_width == 2) {
+        } else if (lwin_bpp == 2) {
             // destination is 16bit RGB
 
             uint32_t *src32;
@@ -160,7 +185,7 @@ void QLaylaOSRasterBackingStore::flush(QWindow *window, const QRegion &region, c
                     *dest16 = gc_comp_to_rgb16(lwin->gc,
                                                (*src32 & 0xff),
                                                ((*src32 & 0xff00) >> 8),
-                                               ((*src32 & 0xff00) >> 16));
+                                               ((*src32 & 0xff0000) >> 16));
                     src32++;
                     dest16++;
                 }
@@ -168,7 +193,7 @@ void QLaylaOSRasterBackingStore::flush(QWindow *window, const QRegion &region, c
                 src += bpl;
                 dest += lwin->gc->pitch;
             }
-        } else if (lwin->gc->pixel_width == 3) {
+        } else if (lwin_bpp == 3) {
             // destination is 24bit RGB
 
             uint32_t tmp, j;
@@ -192,6 +217,9 @@ void QLaylaOSRasterBackingStore::flush(QWindow *window, const QRegion &region, c
                 dest += lwin->gc->pitch;
             }
         } else {
+            //qDebug("QLaylaOSRasterBackingStore::flush: bpp 4 - %p, %p, %dx%d\n", src, dest, w, h);
+            //qDebug("QLaylaOSRasterBackingStore::flush: bpp 4 - %d, %d, %d, %d\n", x1, y1, x2, y2);
+
             // destination is 32bit RGBA
             uint32_t *src32, *dest32;
 
@@ -207,6 +235,8 @@ void QLaylaOSRasterBackingStore::flush(QWindow *window, const QRegion &region, c
                 src32 = (uint32_t *)src;
                 dest32 = (uint32_t *)dest;
                 x = x1;
+
+                //qDebug("QLaylaOSRasterBackingStore::flush: bpp 4 - %p, %p, %d, %d, %d, %d\n", src32, dest32, x, y1, bpl, lwin->gc->pitch);
 
 #ifdef __x86_64__
                 for ( ; x < x2 - 3; x += 4) {
@@ -276,7 +306,9 @@ void QLaylaOSRasterBackingStore::resize(const QSize &size, const QRegion &static
     bpl = (bpl + 4) & ~3;   // align to 4 bytes
 
     if (m_bitmap) {
+        //qDebug("QLaylaOSRasterBackingStore::resize: old %p, %p\n", m_bitmap, m_bitmap->data);
         if(m_bitmap->data) free(m_bitmap->data);
+        m_bitmap->data = nullptr;
         free(m_bitmap);
         m_bitmap = nullptr;
     }
@@ -295,6 +327,7 @@ void QLaylaOSRasterBackingStore::resize(const QSize &size, const QRegion &static
     m_bitmap->height = size.height();
     m_buffer = QLaylaOSBuffer(m_bitmap);
     m_bufferSize = size;
+    //qDebug("QLaylaOSRasterBackingStore::resize: new %p, %p, %d, %d, %d\n", m_bitmap, m_bitmap->data, m_bitmap->width, m_bitmap->height, bpl * size.height());
 }
 
 QImage QLaylaOSRasterBackingStore::toImage() const

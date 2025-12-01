@@ -1,10 +1,10 @@
-/***************************************************************************
+/****************************************************************************
 **
-** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
-** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
+** Copyright (C) 2025 Mohammed Isam
+** Copyright (C) 2016 Research In Motion
 ** Contact: https://www.qt.io/licensing/
 **
-** This file is part of the plugins of the Qt Toolkit.
+** This file is part of the Qt Toolkit.
 **
 ** $QT_BEGIN_LICENSE:LGPL$
 ** Commercial License Usage
@@ -38,33 +38,29 @@
 **
 ****************************************************************************/
 
-#ifndef QLAYLAOSBUFFER_H
-#define QLAYLAOSBUFFER_H
+#ifndef LAYLAOSAUDIOPLUGIN_H
+#define LAYLAOSAUDIOPLUGIN_H
 
-#include <QtGui/QImage>
-
-#include <gui/gui.h>
-#include <gui/bitmap.h>
+#include <QtMultimedia/qaudiosystemplugin.h>
+#include <QtMultimedia/private/qaudiosystempluginext_p.h>
 
 QT_BEGIN_NAMESPACE
 
-class QLaylaOSBuffer
+class LaylaOSAudioPlugin : public QAudioSystemPlugin, public QAudioSystemPluginExtension
 {
+    Q_OBJECT
+    Q_PLUGIN_METADATA(IID "org.qt-project.qt.audiosystemfactory/5.0" FILE "laylaos_audio.json")
+    Q_INTERFACES(QAudioSystemPluginExtension)
+
 public:
-    QLaylaOSBuffer();
-    QLaylaOSBuffer(struct bitmap32_t *buffer);
+    explicit LaylaOSAudioPlugin(QObject *parent = 0);
+    ~LaylaOSAudioPlugin() {}
 
-    struct bitmap32_t *nativeBuffer() const;
-    const QImage *image() const;
-    QImage *image();
-
-    QRect rect() const;
-
-    bool usesNativeFormat;
-
-private:
-    struct bitmap32_t *m_buffer;
-    QImage m_image;
+    QByteArray defaultDevice(QAudio::Mode mode) const override;
+    QList<QByteArray> availableDevices(QAudio::Mode mode) const override;
+    QAbstractAudioInput *createInput(const QByteArray &device) override;
+    QAbstractAudioOutput *createOutput(const QByteArray &device) override;
+    QAbstractAudioDeviceInfo *createDeviceInfo(const QByteArray &device, QAudio::Mode mode) override;
 };
 
 QT_END_NAMESPACE

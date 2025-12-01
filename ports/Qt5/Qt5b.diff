@@ -1,0 +1,288 @@
+diff -rub ./qt5/qtbase/src/corelib/codecs/qtextcodec.cpp ./qt5/qtbase/src/corelib/codecs/qtextcodec.cpp
+--- ./qt5/qtbase/src/corelib/codecs/qtextcodec.cpp	2024-05-31 21:57:41.000582000 +0100
++++ ./qt5/qtbase/src/corelib/codecs/qtextcodec.cpp	2025-11-15 11:21:02.740858234 +0000
+@@ -259,6 +259,13 @@
+     if (!locale)
+         locale = QTextCodec::codecForName("ISO 8859-1");
+     globalData->codecForLocale.storeRelease(locale);
++
++#ifdef Q_OS_LAYLAOS
++    // XXX: for some reason returning a result gives us a segfault
++    // TODO: investigate and fix this
++    return 0;
++#endif
++
+     return locale;
+ }
+ 
+diff -rub ./qt5/qtbase/src/corelib/global/qlogging.cpp ./qt5/qtbase/src/corelib/global/qlogging.cpp
+--- ./qt5/qtbase/src/corelib/global/qlogging.cpp	2024-05-31 21:57:41.028582000 +0100
++++ ./qt5/qtbase/src/corelib/global/qlogging.cpp	2025-11-16 04:20:45.776347763 +0000
+@@ -114,7 +114,12 @@
+ #endif
+ 
+ #ifndef QT_BOOTSTRAPPED
+-#if defined(Q_OS_LINUX) && (defined(__GLIBC__) || QT_HAS_INCLUDE(<sys/syscall.h>))
++#if defined(Q_OS_LAYLAOS)
++static long qt_gettid()
++{
++    return gettid();
++}
++#elif defined(Q_OS_LINUX) && (defined(__GLIBC__) || QT_HAS_INCLUDE(<sys/syscall.h>))
+ #  include <sys/syscall.h>
+ 
+ # if defined(Q_OS_ANDROID) && !defined(SYS_gettid)
+@@ -125,6 +130,8 @@
+ {
+     // no error handling
+     // this syscall has existed since Linux 2.4.11 and cannot fail
++    fprintf(stderr, "qt_gettid:\n");
++    exit(0);
+     return syscall(SYS_gettid);
+ }
+ #elif defined(Q_OS_DARWIN)
+diff -rub ./qt5/qtbase/src/corelib/io/qlockfile_unix.cpp ./qt5/qtbase/src/corelib/io/qlockfile_unix.cpp
+--- ./qt5/qtbase/src/corelib/io/qlockfile_unix.cpp	2024-05-31 21:57:41.040582000 +0100
++++ ./qt5/qtbase/src/corelib/io/qlockfile_unix.cpp	2025-11-11 21:33:53.324972922 +0000
+@@ -70,7 +70,7 @@
+ 
+ #if defined(Q_OS_OSX)
+ #   include <libproc.h>
+-#elif defined(Q_OS_LINUX)
++#elif defined(Q_OS_LINUX) || defined(Q_OS_LAYLAOS)
+ #   include <unistd.h>
+ #   include <cstdio>
+ #elif defined(Q_OS_HAIKU)
+@@ -226,7 +226,7 @@
+     char name[1024];
+     proc_name(pid, name, sizeof(name) / sizeof(char));
+     return QFile::decodeName(name);
+-#elif defined(Q_OS_LINUX)
++#elif defined(Q_OS_LINUX) || defined(Q_OS_LAYLAOS)
+     if (!qt_haveLinuxProcfs())
+         return QString();
+ 
+diff -rub ./qt5/qtbase/src/corelib/io/qstorageinfo_unix.cpp ./qt5/qtbase/src/corelib/io/qstorageinfo_unix.cpp
+--- ./qt5/qtbase/src/corelib/io/qstorageinfo_unix.cpp	2024-05-31 21:57:41.048582000 +0100
++++ ./qt5/qtbase/src/corelib/io/qstorageinfo_unix.cpp	2025-11-02 13:12:09.457607254 +0000
+@@ -57,7 +57,7 @@
+ #  include <sys/mount.h>
+ #  include <sys/vfs.h>
+ #  include <mntent.h>
+-#elif defined(Q_OS_LINUX) || defined(Q_OS_HURD)
++#elif defined(Q_OS_LINUX) || defined(Q_OS_HURD) || defined(Q_OS_LAYLAOS)
+ #  include <mntent.h>
+ #  include <sys/statvfs.h>
+ #elif defined(Q_OS_SOLARIS)
+@@ -144,7 +144,7 @@
+     QByteArray m_fileSystemType;
+     QByteArray m_device;
+     QByteArray m_options;
+-#elif defined(Q_OS_LINUX) || defined(Q_OS_HURD)
++#elif defined(Q_OS_LINUX) || defined(Q_OS_HURD) || defined(Q_OS_LAYLAOS)
+     struct mountinfoent : public mntent {
+         // Details from proc(5) section from /proc/<pid>/mountinfo:
+         //(1)  mount ID: a unique ID for the mount (may be reused after umount(2)).
+@@ -382,7 +382,7 @@
+ {
+     return QByteArray();
+ }
+-#elif defined(Q_OS_LINUX) || defined(Q_OS_HURD)
++#elif defined(Q_OS_LINUX) || defined(Q_OS_HURD) || defined(Q_OS_LAYLAOS)
+ 
+ static const int bufferSize = 1024; // 2 paths (mount point+device) and metainfo;
+                                     // should be enough
+@@ -392,7 +392,7 @@
+ {
+     fp = nullptr;
+ 
+-#ifdef Q_OS_LINUX
++#if defined(Q_OS_LINUX) || defined(Q_OS_LAYLAOS)
+     // first, try to open /proc/self/mountinfo, which has more details
+     fp = ::fopen("/proc/self/mountinfo", "re");
+ #endif
+diff -rub ./qt5/qtbase/src/widgets/kernel/qtooltip.cpp ./qt5/qtbase/src/widgets/kernel/qtooltip.cpp
+--- ./qt5/qtbase/src/widgets/kernel/qtooltip.cpp	2025-10-26 18:31:08.489232000 +0000
++++ ./qt5/qtbase/src/widgets/kernel/qtooltip.cpp	2025-11-16 11:20:56.833102329 +0000
+@@ -180,7 +180,7 @@
+     : QLabel(w, Qt::ToolTip | Qt::BypassGraphicsProxyWidget), widget(0)
+ #endif
+ {
+-    delete instance;
++    //delete instance;
+     instance = this;
+     setForegroundRole(QPalette::ToolTipText);
+     setBackgroundRole(QPalette::ToolTipBase);
+@@ -218,7 +218,10 @@
+ 
+     setText(text);
+     updateSize(pos);
++
++#if !defined(Q_OS_LAYLAOS)
+     restartExpireTimer(msecDisplayTime);
++#endif
+ }
+ 
+ void  QTipLabel::updateSize(const QPoint &pos)
+@@ -291,8 +294,12 @@
+ 
+ void QTipLabel::hideTip()
+ {
++#if !defined(Q_OS_LAYLAOS)
+     if (!hideTimer.isActive())
+         hideTimer.start(300, this);
++#else
++    hideTipImmediately();
++#endif
+ }
+ 
+ void QTipLabel::hideTipImmediately()
+@@ -352,7 +359,8 @@
+         break;
+ 
+ 
+-#if defined (Q_OS_QNX) // On QNX the window activate and focus events are delayed and will appear
++#if defined (Q_OS_QNX) || defined(Q_OS_LAYLAOS)
++                       // On QNX the window activate and focus events are delayed and will appear
+                        // after the window is shown.
+     case QEvent::WindowActivate:
+     case QEvent::FocusIn:
+diff -rub ./qt5/qtbase/src/widgets/widgets/qcombobox.cpp ./qt5/qtbase/src/widgets/widgets/qcombobox.cpp
+--- ./qt5/qtbase/src/widgets/widgets/qcombobox.cpp	2024-05-31 21:57:41.572583000 +0100
++++ ./qt5/qtbase/src/widgets/widgets/qcombobox.cpp	2025-11-16 10:38:38.371466217 +0000
+@@ -398,7 +398,6 @@
+         container->setLayoutDirection(dir);
+ }
+ 
+-
+ void QComboBoxPrivateContainer::timerEvent(QTimerEvent *timerEvent)
+ {
+     if (timerEvent->timerId() == adjustSizeTimer.timerId()) {
+@@ -2786,7 +2785,7 @@
+     container->hideScrollers();
+     container->setGeometry(listRect);
+ 
+-#ifndef Q_OS_MAC
++#if !defined(Q_OS_MAC) && !defined(Q_OS_LAYLAOS)
+     const bool updatesEnabled = container->updatesEnabled();
+ #endif
+ 
+@@ -2802,7 +2801,7 @@
+ // If updates are disabled at this point we'll miss our chance at painting the popup
+ // menu before it's shown, causing flicker since the window then displays the standard gray
+ // background.
+-#ifndef Q_OS_MAC
++#if !defined(Q_OS_MAC) && !defined(Q_OS_LAYLAOS)
+     container->setUpdatesEnabled(false);
+ #endif
+ 
+@@ -2833,7 +2832,7 @@
+                              ? QAbstractItemView::PositionAtCenter
+                              : QAbstractItemView::EnsureVisible);
+ 
+-#ifndef Q_OS_MAC
++#if !defined(Q_OS_MAC) && !defined(Q_OS_LAYLAOS)
+     container->setUpdatesEnabled(updatesEnabled);
+ #endif
+ 
+@@ -3020,8 +3019,9 @@
+         // ### need to update scrollers etc. as well here
+         break;
+     case QEvent::EnabledChange:
+-        if (!isEnabled())
++        if (!isEnabled()) {
+             hidePopup();
++        }
+         break;
+     case QEvent::PaletteChange: {
+         d->updateViewContainerPaletteAndOpacity();
+@@ -3165,7 +3165,11 @@
+         // If it was not called the viewContainer would ignore event since it didn't have
+         // a mousePressEvent first.
+         if (viewContainer()) {
++#if defined(Q_OS_LAYLAOS)
++            viewContainer()->blockMouseReleaseTimer.start(QApplication::doubleClickInterval() * 2);
++#else
+             viewContainer()->blockMouseReleaseTimer.start(QApplication::doubleClickInterval());
++#endif
+             viewContainer()->maybeIgnoreMouseButtonRelease = false;
+         }
+     } else {
+diff -rub ./qt5/qtdeclarative/src/qml/jit/qv4assemblercommon_p.h ./qt5/qtdeclarative/src/qml/jit/qv4assemblercommon_p.h
+--- ./qt5/qtdeclarative/src/qml/jit/qv4assemblercommon_p.h	2024-05-31 21:57:42.892586000 +0100
++++ ./qt5/qtdeclarative/src/qml/jit/qv4assemblercommon_p.h	2025-11-12 21:08:37.556835202 +0000
+@@ -66,7 +66,7 @@
+ namespace JIT {
+ 
+ #if defined(Q_PROCESSOR_X86_64) || defined(ENABLE_ALL_ASSEMBLERS_FOR_REFACTORING_PURPOSES)
+-#if defined(Q_OS_LINUX) || defined(Q_OS_QNX) || defined(Q_OS_FREEBSD) || defined(Q_OS_DARWIN)
++#if defined(Q_OS_LINUX) || defined(Q_OS_QNX) || defined(Q_OS_FREEBSD) || defined(Q_OS_DARWIN) || defined(Q_OS_LAYLAOS)
+ 
+ class PlatformAssembler_X86_64_SysV : public JSC::MacroAssembler<JSC::MacroAssemblerX86_64>
+ {
+diff -rub ./qt5/qtdeclarative/src/qml/jsruntime/qv4global_p.h ./qt5/qtdeclarative/src/qml/jsruntime/qv4global_p.h
+--- ./qt5/qtdeclarative/src/qml/jsruntime/qv4global_p.h	2024-05-31 21:57:42.900587000 +0100
++++ ./qt5/qtdeclarative/src/qml/jsruntime/qv4global_p.h	2025-11-12 21:13:17.251765930 +0000
+@@ -89,10 +89,10 @@
+ // NOTE: This should match the logic in qv4targetplatform_p.h!
+ 
+ #if defined(Q_PROCESSOR_X86_32) && (QT_POINTER_SIZE == 4) \
+-    && (defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_QNX) || defined(Q_OS_FREEBSD))
++    && (defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_QNX) || defined(Q_OS_FREEBSD) || defined(Q_OS_LAYLAOS))
+ #  define V4_ENABLE_JIT
+ #elif defined(Q_PROCESSOR_X86_64) && (QT_POINTER_SIZE == 8) \
+-    && (defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_QNX) || defined(Q_OS_MAC) || defined(Q_OS_FREEBSD))
++    && (defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_QNX) || defined(Q_OS_MAC) || defined(Q_OS_FREEBSD) || defined(Q_OS_LAYLAOS))
+ #  define V4_ENABLE_JIT
+ #elif defined(Q_PROCESSOR_ARM_32) && (QT_POINTER_SIZE == 4) \
+     && (defined(Q_OS_LINUX) || defined(Q_OS_QNX) || defined(Q_OS_FREEBSD) || defined(Q_OS_INTEGRITY))
+diff -rub ./qt5/qtdeclarative/src/qml/qml/qqmlplatform.cpp ./qt5/qtdeclarative/src/qml/qml/qqmlplatform.cpp
+--- ./qt5/qtdeclarative/src/qml/qml/qqmlplatform.cpp	2024-05-31 21:57:42.928587000 +0100
++++ ./qt5/qtdeclarative/src/qml/qml/qqmlplatform.cpp	2025-11-12 21:09:25.677325249 +0000
+@@ -72,6 +72,8 @@
+     return QStringLiteral("windows");
+ #elif defined(Q_OS_LINUX)
+     return QStringLiteral("linux");
++#elif defined(Q_OS_LAYLAOS)
++    return QStringLiteral("laylaos");
+ #elif defined(Q_OS_QNX)
+     return QStringLiteral("qnx");
+ #elif defined(Q_OS_UNIX)
+diff -rub ./qt5/qtmultimedia/src/plugins/plugins.pro ./qt5/qtmultimedia/src/plugins/plugins.pro
+--- ./qt5/qtmultimedia/src/plugins/plugins.pro	2025-11-27 18:19:24.796424066 +0000
++++ ./qt5/qtmultimedia/src/plugins/plugins.pro	2025-11-27 18:19:28.064461477 +0000
+@@ -65,6 +65,13 @@
+     qtConfig(avfoundation): SUBDIRS += avfoundation
+ }
+ 
++laylaos {
++    qtConfig(gstreamer) {
++       SUBDIRS += gstreamer
++    }
++   SUBDIRS += laylaos
++}
++
+ qtConfig(resourcepolicy) {
+     SUBDIRS += resourcepolicy
+ }
+diff -rub ./qt5/qtbase/src/corelib/io/qfilesystemengine_unix.cpp ./qt5/qtbase/src/corelib/io/qfilesystemengine_unix.cpp
+--- ./qt5/qtbase/src/corelib/io/qfilesystemengine_unix.cpp	2025-11-27 17:53:30.120084516 +0000
++++ ./qt5/qtbase/src/corelib/io/qfilesystemengine_unix.cpp	2025-11-27 17:53:34.000133537 +0000
+@@ -95,7 +95,7 @@
+ #endif
+ #endif
+ 
+-#if defined(Q_OS_ANDROID)
++#if defined(Q_OS_ANDROID) || defined(Q_OS_LAYLAOS)
+ // statx() is disabled on Android because quite a few systems
+ // come with sandboxes that kill applications that make system calls outside a
+ // whitelist and several Android vendors can't be bothered to update the list.
+@@ -547,7 +547,7 @@
+             }
+         }
+     }
+-#elif defined(_DIRENT_HAVE_D_TYPE) || defined(Q_OS_BSD4)
++#elif defined(_DIRENT_HAVE_D_TYPE) || defined(Q_OS_BSD4) || defined(Q_OS_LAYLAOS)
+     // BSD4 includes OS X and iOS
+ 
+     // ### This will clear all entry flags and knownFlagsMask

@@ -1,6 +1,6 @@
 /***************************************************************************
 **
-** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
+** Copyright (C) 2024, 2025 Mohammed Isam <mohammed_isam1984@yahoo.com>
 ** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
 ** Contact: https://www.qt.io/licensing/
 **
@@ -40,6 +40,10 @@
 
 #include "qlaylaoscursor.h"
 #include "qlaylaoswindow.h"
+#include "qlaylaosintegration.h"
+#include "qlaylaossocketmonitor.h"
+
+#include <private/qguiapplication_p.h>
 
 QLaylaOSCursor::QLaylaOSCursor()
 {
@@ -87,6 +91,13 @@ QPoint QLaylaOSCursor::pos() const
     struct cursor_info_t curinfo = { 0, 0, 0, 0, 0, };
     
     cursor_get_info(&curinfo);
+
+    // see the comment at the end of QLaylaOSWindow::QLaylaOSWindow() for
+    // why this call is important here
+    auto *laylaos_integration = static_cast<QLaylaOSIntegration *>(QGuiApplicationPrivate::platformIntegration());
+    QLaylaOSSocketMonitor *monitor = laylaos_integration->getSocketMonitor();
+    emit monitor->gonow();
+    //m_socketmonitor->readyRead();
 
     return QPoint(curinfo.x, curinfo.y);
 }

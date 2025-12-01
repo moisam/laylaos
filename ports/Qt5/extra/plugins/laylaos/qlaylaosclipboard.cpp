@@ -1,6 +1,6 @@
 /***************************************************************************
 **
-** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
+** Copyright (C) 2024, 2025 Mohammed Isam <mohammed_isam1984@yahoo.com>
 ** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
 ** Contact: https://www.qt.io/licensing/
 **
@@ -41,7 +41,10 @@
 #if !defined(QT_NO_CLIPBOARD)
 
 #include "qlaylaosclipboard.h"
+#include "qlaylaosintegration.h"
+#include "qlaylaossocketmonitor.h"
 
+#include <private/qguiapplication_p.h>
 #include <QMimeData>
 #include <QThread>
 
@@ -86,6 +89,13 @@ QMimeData *QLaylaOSClipboard::mimeData(QClipboard::Mode mode)
         }
     }
 
+    // see the comment at the end of QLaylaOSWindow::QLaylaOSWindow() for
+    // why this call is important here
+    auto *laylaos_integration = static_cast<QLaylaOSIntegration *>(QGuiApplicationPrivate::platformIntegration());
+    QLaylaOSSocketMonitor *monitor = laylaos_integration->getSocketMonitor();
+    emit monitor->gonow();
+    //m_socketmonitor->readyRead();
+
     return m_systemMimeData;
 }
 
@@ -119,6 +129,13 @@ void QLaylaOSClipboard::setMimeData(QMimeData *mimeData, QClipboard::Mode mode)
     m_userMimeData = mimeData;
 
     emitChanged(QClipboard::Clipboard);
+
+    // see the comment at the end of QLaylaOSWindow::QLaylaOSWindow() for
+    // why this call is important here
+    auto *laylaos_integration = static_cast<QLaylaOSIntegration *>(QGuiApplicationPrivate::platformIntegration());
+    QLaylaOSSocketMonitor *monitor = laylaos_integration->getSocketMonitor();
+    emit monitor->gonow();
+    //m_socketmonitor->readyRead();
 }
 
 bool QLaylaOSClipboard::supportsMode(QClipboard::Mode mode) const

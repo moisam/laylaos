@@ -48,7 +48,8 @@ QT_BEGIN_NAMESPACE
 
 class QLaylaOSClipboard;
 class QLaylaOSScreen;
-class QLaylaOSEventLooper;
+//class QLaylaOSEventLooper;
+class QLaylaOSSocketMonitor;
 
 class QLaylaOSIntegration : public QPlatformIntegration
 {
@@ -69,10 +70,13 @@ public:
     QPlatformClipboard *clipboard() const override;
 #endif
 
+    QLaylaOSSocketMonitor *getSocketMonitor() { return m_socketmonitor; }
+
 private:
     QLaylaOSClipboard *m_clipboard;
     QLaylaOSScreen *m_screen;
-    QLaylaOSEventLooper *m_eventlooper;
+    //QLaylaOSEventLooper *m_eventlooper;
+    QLaylaOSSocketMonitor *m_socketmonitor;
     QScopedPointer<QPlatformFontDatabase> m_fontDb;
     QScopedPointer<QPlatformServices> m_services;
 };

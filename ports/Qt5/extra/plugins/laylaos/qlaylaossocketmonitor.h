@@ -1,7 +1,6 @@
 /***************************************************************************
 **
-** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
-** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
+** Copyright (C) 2024, 2025 Mohammed Isam <mohammed_isam1984@yahoo.com>
 ** Contact: https://www.qt.io/licensing/
 **
 ** This file is part of the plugins of the Qt Toolkit.
@@ -38,35 +37,56 @@
 **
 ****************************************************************************/
 
-#ifndef QLAYLAOSBUFFER_H
-#define QLAYLAOSBUFFER_H
+#ifndef QLAYLAOSSOCKETMONITOR_H
+#define QLAYLAOSSOCKETMONITOR_H
 
-#include <QtGui/QImage>
+#include <qpa/qplatformintegration.h>
+#include <QObject>
+#include <QHash>
+#include <QtCore/QMutex>
+#include <QSocketNotifier>
 
-#include <gui/gui.h>
-#include <gui/bitmap.h>
+#include <gui/client/window.h>
+#include <gui/event.h>
 
 QT_BEGIN_NAMESPACE
 
-class QLaylaOSBuffer
+class ButtonState
 {
 public:
-    QLaylaOSBuffer();
-    QLaylaOSBuffer(struct bitmap32_t *buffer);
+    Qt::MouseButtons state;
+    Qt::MouseButton pressed, released;
+};
 
-    struct bitmap32_t *nativeBuffer() const;
-    const QImage *image() const;
-    QImage *image();
 
-    QRect rect() const;
+class QLaylaOSSocketMonitor : public QObject
+{
+    Q_OBJECT
 
-    bool usesNativeFormat;
+public:
+    QLaylaOSSocketMonitor();
+    void startMonitoring();
+    bool isMonitoring();
+
+    void addWindow(winid_t winid, QWindow *platformWindow);
+    void removeWindow(winid_t winid);
+    void updateWindowState(struct event_t *ev);
+    void handleKeyEvent(struct event_t *ev, QEvent::Type type);
+
+Q_SIGNALS:
+    void gonow();
+
+private Q_SLOTS:
+    void readyRead();
 
 private:
-    struct bitmap32_t *m_buffer;
-    QImage m_image;
+    QSocketNotifier *m_read_notifier;
+    QHash<winid_t, QWindow *>m_winmap;
+    QMutex m_mapMutex;
+    //QTimer *m_timer;
+    bool m_monitoring;
 };
 
 QT_END_NAMESPACE
 
-#endif
+#endif  // QLAYLAOSSOCKETMONITOR_H

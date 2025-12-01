@@ -1,10 +1,10 @@
-/***************************************************************************
+/****************************************************************************
 **
-** Copyright (C) 2024 Mohammed Isam <mohammed_isam1984@yahoo.com>
-** Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Tobias Koenig <tobias.koenig@kdab.com>
+** Copyright (C) 2025 Mohammed Isam
+** Copyright (C) 2016 Research In Motion
 ** Contact: https://www.qt.io/licensing/
 **
-** This file is part of the plugins of the Qt Toolkit.
+** This file is part of the Qt Toolkit.
 **
 ** $QT_BEGIN_LICENSE:LGPL$
 ** Commercial License Usage
@@ -38,33 +38,36 @@
 **
 ****************************************************************************/
 
-#ifndef QLAYLAOSBUFFER_H
-#define QLAYLAOSBUFFER_H
+#ifndef LAYLAOSAUDIODEVICEINFO_H
+#define LAYLAOSAUDIODEVICEINFO_H
 
-#include <QtGui/QImage>
+#include "qaudiosystem.h"
 
-#include <gui/gui.h>
-#include <gui/bitmap.h>
+#define DEFAULT_DEVICE_PATH         "/dev/dsp"
 
 QT_BEGIN_NAMESPACE
 
-class QLaylaOSBuffer
+class LaylaOSAudioDeviceInfo : public QAbstractAudioDeviceInfo
 {
+    Q_OBJECT
+
 public:
-    QLaylaOSBuffer();
-    QLaylaOSBuffer(struct bitmap32_t *buffer);
+    LaylaOSAudioDeviceInfo(const QString &deviceName, QAudio::Mode mode);
+    ~LaylaOSAudioDeviceInfo();
 
-    struct bitmap32_t *nativeBuffer() const;
-    const QImage *image() const;
-    QImage *image();
-
-    QRect rect() const;
-
-    bool usesNativeFormat;
+    QAudioFormat preferredFormat() const override;
+    bool isFormatSupported(const QAudioFormat &format) const override;
+    QString deviceName() const override;
+    QStringList supportedCodecs() override;
+    QList<int> supportedSampleRates() override;
+    QList<int> supportedChannelCounts() override;
+    QList<int> supportedSampleSizes() override;
+    QList<QAudioFormat::Endian> supportedByteOrders() override;
+    QList<QAudioFormat::SampleType> supportedSampleTypes() override;
 
 private:
-    struct bitmap32_t *m_buffer;
-    QImage m_image;
+    const QString m_name;
+    const QAudio::Mode m_mode;
 };
 
 QT_END_NAMESPACE

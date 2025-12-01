@@ -43,7 +43,8 @@
 #include "qlaylaosrasterbackingstore.h"
 #include "qlaylaoswindow.h"
 #include "qlaylaosscreen.h"
-#include "qlaylaoseventlooper.h"
+//#include "qlaylaoseventlooper.h"
+#include "qlaylaossocketmonitor.h"
 
 #include <QCoreApplication>
 #include <qpa/qplatformwindow.h>
@@ -52,6 +53,7 @@
 #include <QtFontDatabaseSupport/private/qgenericunixfontdatabase_p.h>
 #include <QtServiceSupport/private/qgenericunixservices_p.h>
 
+#include <fcntl.h>
 #include <gui/gui.h>
 
 QT_BEGIN_NAMESPACE
@@ -68,24 +70,41 @@ QLaylaOSIntegration::QLaylaOSIntegration(const QStringList &parameters)
 
     gui_init_no_fonts(1, dummy_argv);
 
+    // libgui sets the close-on-exec flag on the server file descriptor,
+    // but we need it open in order for dialogs that spawn their own 
+    // event loop to work correctly
+    int oldflags = fcntl(__global_gui_data.serverfd, F_GETFD, 0);
+    oldflags &= ~FD_CLOEXEC;
+    fcntl(__global_gui_data.serverfd, F_SETFD, oldflags);
+
     m_screen = new QLaylaOSScreen;
-    m_eventlooper = new QLaylaOSEventLooper;
+    //m_eventlooper = new QLaylaOSEventLooper;
+    m_socketmonitor = new QLaylaOSSocketMonitor;
 
     // notify system about available screen
     QWindowSystemInterface::handleScreenAdded(m_screen);
 
+    /*
     QObject::connect(QCoreApplication::instance(), SIGNAL(aboutToQuit()), m_eventlooper, SLOT(terminateThread()));
     QObject::connect(m_eventlooper, SIGNAL(done()), m_eventlooper, SLOT(deleteLater()));
 
     m_eventlooper->start();
+    */
 }
 
 QLaylaOSIntegration::~QLaylaOSIntegration()
 {
+    /*
     if (m_eventlooper) {
         m_eventlooper->stopInputEventLoop();
         m_eventlooper->wait();
         m_eventlooper = nullptr;
+    }
+    */
+
+    if (m_socketmonitor) {
+        delete m_socketmonitor;
+        m_socketmonitor = nullptr;
     }
 
     QWindowSystemInterface::handleScreenRemoved(m_screen);
@@ -120,7 +139,10 @@ QPlatformClipboard *QLaylaOSIntegration::clipboard() const
 
 QPlatformWindow *QLaylaOSIntegration::createPlatformWindow(QWindow *window) const
 {
-    QPlatformWindow *platformWindow = new QLaylaOSWindow(window, m_eventlooper);
+    if (m_socketmonitor->isMonitoring() == false)
+        m_socketmonitor->startMonitoring();
+
+    QPlatformWindow *platformWindow = new QLaylaOSWindow(window, m_socketmonitor /* , m_eventlooper */);
     //platformWindow->requestActivateWindow();
     return platformWindow;
 }

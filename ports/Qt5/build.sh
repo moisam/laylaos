@@ -6,6 +6,7 @@
 
 DOWNLOAD_NAME="Qt5"
 PATCH_FILE=${DOWNLOAD_NAME}.diff
+PATCH2_FILE=${DOWNLOAD_NAME}b.diff
 PATCH_FILE_NATIVE_BUILD=${DOWNLOAD_NAME}.laylaos.diff
 CWD=`pwd`
 
@@ -52,6 +53,7 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 cp -r ${CWD}/extra/mkspecs/laylaos-g++ ${DOWNLOAD_PORTS_PATH}/qt5/qtbase/mkspecs/
 cp -r ${CWD}/extra/plugins/laylaos ${DOWNLOAD_PORTS_PATH}/qt5/qtbase/src/plugins/platforms/
+cp -r ${CWD}/extra/qtmultimedia/laylaos ${DOWNLOAD_PORTS_PATH}/qt5/qtmultimedia/src/plugins/
 cp ${CWD}/extra/corelib/qstandardpaths_laylaos.cpp ${DOWNLOAD_PORTS_PATH}/qt5/qtbase/src/corelib/io/
 cp ${CWD}/extra/qtlocation/laylaos.hpp ${DOWNLOAD_PORTS_PATH}/qt5/qtlocation/src/3rdparty/mapbox-gl-native/deps/boost/1.65.1/include/boost/config/platform/
 cp ${CWD}/extra/qtlocation/laylaos.h ${DOWNLOAD_PORTS_PATH}/qt5/qtlocation/src/3rdparty/mapbox-gl-native/deps/boost/1.65.1/include/boost/predef/os/
@@ -60,7 +62,9 @@ cp ${CWD}/extra/qtlocation/laylaos.h ${DOWNLOAD_PORTS_PATH}/qt5/qtlocation/src/3
 ${CWD}/fix_qmake_conf.sh ${DOWNLOAD_PORTS_PATH}/qt5/qtbase/mkspecs/laylaos-g++
 
 # apply the rest of the patches
-cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0
+cd ${DOWNLOAD_PORTS_PATH}
+patch -i ${CWD}/${PATCH_FILE} -p0
+patch -i ${CWD}/${PATCH2_FILE} -p0
 
 # copy our cross tools
 [ -d "${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/build-crosstools" ] && \

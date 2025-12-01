@@ -42,25 +42,37 @@
 
 #include <QDebug>
 
+#define GLOB                    __global_gui_data
+
 QT_BEGIN_NAMESPACE
 
 QLaylaOSBuffer::QLaylaOSBuffer()
     : m_buffer(nullptr)
 {
+    usesNativeFormat = false;
 }
 
 QLaylaOSBuffer::QLaylaOSBuffer(struct bitmap32_t *buffer)
     : m_buffer(buffer)
 {
+    QImage::Format format = QImage::Format_RGBA8888;
+    int bppixel = GLOB.screen.pixel_width;
     int bpl = (((int)m_buffer->width * 32) + 7) / 8;
 
     bpl = (bpl + 4) & ~3;   // align to 4 bytes
+    usesNativeFormat = false;
+
+    // try to use the native format if possible
+    if (bppixel == 4) {
+        if (GLOB.screen.blue_pos == 16 && GLOB.screen.green_pos == 8 && GLOB.screen.red_pos == 0)
+            usesNativeFormat = true;
+    }
 
     // wrap buffer in an image
     m_image = QImage((uchar*)(m_buffer->data),
                      (int)m_buffer->width, (int)m_buffer->height,
                      bpl,
-                     QImage::Format_RGBA8888);
+                     format);
 }
 
 struct bitmap32_t *QLaylaOSBuffer::nativeBuffer() const
