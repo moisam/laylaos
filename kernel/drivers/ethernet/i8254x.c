@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2024 (c)
+ *    Copyright 2024, 2025 (c)
  * 
  *    file: i8254x.c
  *    This file is part of LaylaOS.
@@ -56,23 +56,6 @@ struct i8254x_t i8254x_dev[I8254x_DEVS];
 static void i8254x_func(void *arg);
 
 
-static inline void device_wait(int msecs)
-{
-    volatile unsigned long long last_ticks = ticks;
-
-    while(msecs)
-    {
-        if(ticks != last_ticks)
-        {
-            msecs--;
-            last_ticks = ticks;
-        }
-
-        __asm__ __volatile__("nop" ::: "memory");
-    }
-}
-
-
 static uint16_t i8254x_eeprom_read(struct i8254x_t *dev, uint8_t i)
 {
     volatile uint32_t tmp;
@@ -82,7 +65,7 @@ static uint16_t i8254x_eeprom_read(struct i8254x_t *dev, uint8_t i)
 
     while(!(tmp & (1 << 4)))
     {
-        device_wait(1);
+        tick_delay(1);
         tmp = pcidev_inl(dev, i8254x_REG_EERD);
     }
 
@@ -193,7 +176,7 @@ int i8254x_init(struct pci_dev_t *pci)
     // reset
     dword = pcidev_inl(dev, i8254x_REG_CTRL);
     pcidev_outl(dev, i8254x_REG_CTRL, dword | CTRL_RST);
-    device_wait(1);
+    tick_delay(1);
 
     // set up link
     dword = pcidev_inl(dev, i8254x_REG_CTRL);
@@ -457,9 +440,18 @@ int i8254x_intr(struct regs *r, int unit)
 
 int i8254x_transmit(struct netif_t *ifp, struct packet_t *p)
 {
+    volatile int old_flags;
+
     if(!ifp)
     {
         return -EINVAL;
+    }
+
+    old_flags = __set_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+
+    while(!__sync_bool_compare_and_swap(&ifp->sending, 0, 1))
+    {
+        ;
     }
 
     cli();
@@ -475,6 +467,13 @@ int i8254x_transmit(struct netif_t *ifp, struct packet_t *p)
     if(tx_head == tx_next)
     {
         // transmit buffer is full
+        __sync_bool_compare_and_swap(&ifp->sending, 1, 0);
+
+        if(!(old_flags & SMP_FLAG_SCHEDULER_BUSY))
+        {
+            __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+        }
+
         sti();
         return -ENOMEM;
     }
@@ -494,12 +493,19 @@ int i8254x_transmit(struct netif_t *ifp, struct packet_t *p)
     // update the tail so the hardware knows it's ready
     pcidev_outl(dev, i8254x_REG_TDT, tx_next);
 
+    __sync_bool_compare_and_swap(&ifp->sending, 1, 0);
+
+    if(!(old_flags & SMP_FLAG_SCHEDULER_BUSY))
+    {
+        __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+    }
+
     sti();
 
     /*
     while(!(dev->tx_desc[tx_tail].sta & 0x0f))
     {
-        device_wait(1);
+        tick_delay(1);
     }
 
     printk("i8254x_transmit: sent\n");
@@ -516,7 +522,8 @@ int i8254x_transmit(struct netif_t *ifp, struct packet_t *p)
 
 static inline void err_drop(struct i8254x_t *dev, 
                             volatile uint16_t rx_cur,
-                            volatile uint16_t rx_tail, uint16_t datalen)
+                            volatile uint16_t rx_tail, 
+                            volatile uint16_t datalen)
 {
     printk("%s: packet dropped\n", dev->netif.name);
     dev->netif.stats.rx_over_errors++;
@@ -545,8 +552,8 @@ int i8254x_process_input(struct netif_t *ifp)
                             (rx_head - rx_tail - 1);
     volatile uint32_t rx_cur;
     volatile uintptr_t data;
-    uint16_t datalen;
-    int drop;
+    volatile uint16_t datalen;
+    volatile int drop;
 
     while(diff != 0)
     {
@@ -628,7 +635,10 @@ static void i8254x_func(void *arg)
             i8254x_process_input(&dev->netif);
         }
 
-        block_task2(dev, PIT_FREQUENCY);
+        //block_task2(dev, PIT_FREQUENCY);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, PIT_FREQUENCY);
     }
 }
 

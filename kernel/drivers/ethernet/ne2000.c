@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025 (c)
  * 
  *    file: ne2000.c
  *    This file is part of LaylaOS.
@@ -695,7 +695,10 @@ static void ne2000_func(void *arg)
             ne2000_process_input(&ne->netif);
         }
 
-        block_task(ne, 1);
+        //block_task(ne, 1);
+        set_task_waitchan(this_core->cur_task, ne);
+        set_task_state(this_core->cur_task, TASK_SLEEPING);
+        scheduler();
     }
 }
 
