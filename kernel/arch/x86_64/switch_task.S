@@ -70,8 +70,8 @@ save_context:
     //xchg %bx, %bx
 
     movq %rax, TASK_RAX_FIELD(%rdi)
-    //leaq 8(%rsp), %rax
-    movq %rsp, %rax
+    leaq 8(%rsp), %rax
+    //movq %rsp, %rax
     movq %rax, TASK_RSP_FIELD(%rdi)
     movq %rbp, TASK_RBP_FIELD(%rdi)
     movq (%rsp), %rax
@@ -120,9 +120,10 @@ save_context:
  *  0(%esp) - return address
  */
 restore_context:
-    //movabsq $cur_task, %rax
-    //movq %rdi, (%rax)
-    movq %rdi, %gs:24               // this_core->cur_task
+    ////movabsq $cur_task, %rax
+    ////movq %rdi, (%rax)
+    //movq %rdi, %gs:24               // this_core->cur_task
+    //xchg %bx, %bx
 
     movq TASK_RBX_FIELD(%rdi), %rbx
     movq TASK_RDX_FIELD(%rdi), %rdx
@@ -149,6 +150,7 @@ restore_context:
     pushq TASK_RDI_FIELD(%rdi)
     
     movq TASK_KSTACK_VIRT(%rdi), %rax       // rax = address for the top of
+    //movq TASK_TSS_STACK_VIRT(%rdi), %rax    // rax = address for the top of
                                             // the next task's kernel stack
     
     movq %gs:0, %rcx                // get this processor's TSS
@@ -160,10 +162,10 @@ restore_context:
     movq TASK_PDIR_PHYS(%rdi), %rax         // rax = address of page directory 
                                             // for next task
 
-    movq %cr3, %rcx             // rcx = previous task's virtual address space
+    //movq %cr3, %rcx             // rcx = previous task's virtual address space
     
-    cmpq %rcx, %rax             // Does the virtual address space need to be changed?
-    je 1f                       // no, virtual address space is the same, so
+    //cmpq %rcx, %rax             // Does the virtual address space need to be changed?
+    //je 1f                       // no, virtual address space is the same, so
                                 // don't reload it and cause TLB flushes
 
     movq %rax, %cr3             // yes, load the next task's virtual address space
@@ -174,23 +176,33 @@ restore_context:
     // in mmngr_virtual.c
 
     movq %rax, %gs:16
-    //movabsq $_cur_directory_phys, %rcx
-    //movq %rax, (%rcx)
+    ////movabsq $_cur_directory_phys, %rcx
+    ////movq %rax, (%rcx)
 
-    movq 48(%rdi), %rax
+    //movq 48(%rdi), %rax
+    movq TASK_PDIR_VIRT(%rdi), %rax
     movq %rax, %gs:8
-    //movabsq $_cur_directory_virt, %rcx
-    //movq %rax, (%rcx)
+    ////movabsq $_cur_directory_virt, %rcx
+    ////movq %rax, (%rcx)
 
     // set TS in CR0 so the FPU will trap to exception #7
     //movq %cr0, %rax
     //orq  $CR0_TS, %rax
     //movq %rax, %cr0
 
+    // release the previous task
+    movq %gs:24, %rcx               // this_core->cur_task
+    movl $0xffffffff, %eax
+    xchg %eax, TASK_CPUID_FIELD(%rcx)
+
+    // update our cur_task pointer
+    movq %rdi, %gs:24               // this_core->cur_task
+
     popq %rdi
     popq %rcx
     
     movq $1, %rax
 
-    retq                        // Load next task's RIP from its kernel stack
+    //retq                        // Load next task's RIP from its kernel stack
+    jmpq *TASK_RIP_FIELD(%rdi)
 

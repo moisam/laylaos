@@ -84,12 +84,16 @@ syscall_entry64:
     mov %rsp, %r9
 
     // move to the task's kernel stack, using ESP0 field of the TSS
+    /*
     //movabsq $tss_entry, %rsp
     xor %rsp, %rsp                  // ensure no trash in upper bits
     movq %gs:0, %rsp                // get this processor's TSS
 
     movq 4(%rsp), %rsp
-    
+    */
+    movq %gs:24, %rsp               // this_core->cur_task
+    movq TASK_KSTACK_VIRT(%rsp), %rsp
+
     // push the values the processor usually pushes on an interrupt
     pushq $0x23     // SS
     pushq %r9       // USERRSP
@@ -200,7 +204,7 @@ resume_user:
     popq %rbx
     popq %rax
     addq $16, %rsp
-    
+
     /*
      * Go out this way, instead of via sysret, as the first fork (init) will
      * not work in the initial phase (while we are still in kernel land) if

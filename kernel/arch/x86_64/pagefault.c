@@ -50,7 +50,7 @@
 #include <mm/mmap.h>
 #include <gui/vbe.h>
 
-//#include <fs/dentry.h>
+#include <fs/dentry.h>
 
 
 static void print_err(struct regs *r, struct task_t *ct, 
@@ -86,6 +86,7 @@ static void print_err(struct regs *r, struct task_t *ct,
         printk("Current task (%d - %s) at 0x%lx\n", ct->pid, ct->command, ct);
     }
 
+    printk("cpu: %d\n", this_core->cpuid);
     dump_regs(r);
 }
 
@@ -181,7 +182,7 @@ int page_fault(struct regs *r, int arg)
 	{
         switch_tty(1);
         printk("page_fault: faulting_address " _XPTR_ "\n", faulting_address);
-	    printk("pagefault handler cannot find current task!\n");
+	    printk("pagefault handler cannot find current task or its mem ptr (task = " _XPTR_ ", mem " _XPTR_ ")\n", ct, ct->mem);
 	    print_err(r, NULL, faulting_address);
 	    screen_refresh(NULL);
 	    __asm__ __volatile__("xchg %%bx, %%bx"::);
@@ -430,24 +431,86 @@ finalize:
 
 
 unresolved:
-    
-    __pagefault_cleanup(ct, fpregs, recursive_pagefault);
-    kfree(__fpregs);
 
     // unresolved page fault in a kernel task
     // output an error message
-    if(!ct->user)
+    //if(!ct->user)
     {
         switch_tty(1);
-        printk("cpu %d:\n", this_core->cpuid);
+        printk("cpu %d (cur %d, prev %d):\n", this_core->cpuid, ct->cpuid, ct->prev_cpuid);
+
+
+        volatile int i;
+
+        for(i = 0; i < processor_count; i++)
+        {
+            if(processor_local_data[i].cur_task == ct && processor_local_data[i].cpuid != this_core->cpuid)
+            {
+                printk("task also running on cpu %d!\n", processor_local_data[i].cpuid);
+            }
+        }
+
+
         print_err(r, ct, faulting_address);
-        kernel_stack_trace();
+
+        printk("bytes: ");
+        for(int z = 0; z < 8; z++) printk("%02x ", ((char *)r->rip)[z]);
+        printk("\n");
+
+        //kernel_stack_trace();
         printk("pid %d, prop 0x%x, threads %d, children %d, tlead %d\n", ct->pid, ct->properties, ct->threads->thread_count, ct->children, ct->threads->thread_group_leader->pid);
+
+    	if(faulting_address > KERNEL_MEM_START)
+    	{
+            volatile pt_entry *e1 = get_page_entry_pd(pd, (void *)faulting_address);
+            printk("phys(1) is 0x%lx\n", PTE_FRAME(*e1));
+
+            if(ct->parent)
+            {
+                e1 = get_page_entry_pd((pdirectory *)ct->parent->pd_virt, (void *)faulting_address);
+                printk("phys(2) is 0x%lx\n", PTE_FRAME(*e1));
+            }
+
+            e1 = get_page_entry_pd((pdirectory *)this_core->idle_task->pd_virt, (void *)faulting_address);
+            printk("phys(3) is 0x%lx\n", PTE_FRAME(*e1));
+    	}
+    	else
+    	{
+            for(struct memregion_t *tmp = ct->mem->first_region; tmp != NULL; tmp = tmp->next)
+            {
+                char *path;
+                struct dentry_t *dent;
+
+                if(r->rip >= tmp->addr &&
+                   r->rip < (tmp->addr + (tmp->size * PAGE_SIZE)))
+                {
+                    path = "*";
+
+                    if(tmp->inode && get_dentry(tmp->inode, &dent) == 0)
+                    {
+                        if(dent->path)
+                        {
+                            path = dent->path;
+                        }
+                    }
+
+                    printk("memregion: addr %lx - %lx (type %d, prot %x, fl %x, %s)\n", 
+                           tmp->addr, tmp->addr + (tmp->size * PAGE_SIZE), tmp->type, 
+                           tmp->prot, tmp->flags, path);
+                    break;
+                }
+    	    }
+    	}
+
         screen_refresh(NULL);
         __asm__ __volatile__("xchg %%bx, %%bx"::);
+
         kpanic("page fault");
         hang();
     }
+
+    __pagefault_cleanup(ct, fpregs, recursive_pagefault);
+    kfree(__fpregs);
 
     // user task
     // kill the task and force signal dispatch

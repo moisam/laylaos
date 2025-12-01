@@ -107,9 +107,9 @@ pdirectory *get_pde(pdirectory *pd, size_t pd_index, int flags)
 /*
  * Get page entry.
  */
-pt_entry *get_page_entry_pd(pdirectory *pml4, void *virt)
+pt_entry *__get_page_entry_pd(pdirectory *pml4, void *virt, int __flags)
 {
-    int flags = FLAG_GETPDE_CREATE |
+    int flags = __flags |
                   (((uintptr_t)virt <= USER_MEM_END) ? FLAG_GETPDE_USER : 0);
     pdirectory *pdp, *pd;
     ptable *pt;
@@ -137,6 +137,12 @@ pt_entry *get_page_entry_pd(pdirectory *pml4, void *virt)
     }
 
     return &pt->m_entries[PT_INDEX((uintptr_t)virt)];
+}
+
+
+pt_entry *get_page_entry_pd(pdirectory *pml4, void *virt)
+{
+    return __get_page_entry_pd(pml4, virt, FLAG_GETPDE_CREATE);
 }
 
 
@@ -423,6 +429,7 @@ int clone_task_pd(struct task_t *parent, struct task_t *child)
         {
             dest_pml4v->m_entries_phys[i] = src_pml4v->m_entries_phys[i];
             dest_pml4v->m_entries_virt[i] = src_pml4v->m_entries_virt[i];
+            __asm__ __volatile__("":::"memory");
             continue;
         }
 
@@ -519,6 +526,7 @@ int clone_task_pd(struct task_t *parent, struct task_t *child)
 
                     inc_frame_shares(PTE_FRAME(src_pt->m_entries[l]));
                     ((ptable *)pt_virt)->m_entries[l] = src_pt->m_entries[l];
+                    __asm__ __volatile__("":::"memory");
                     vmmngr_flush_tlb_entry(v);
                     v += PAGE_SIZE;
                 }
@@ -572,6 +580,7 @@ static inline void __free_user_page(volatile pdirectory *pd, int i, int is_pd)
         //__asm__ __volatile__("xchg %%bx, %%bx"::);
         __atomic_fetch_sub(&pagetable_count, 1, __ATOMIC_SEQ_CST);
         __free_page_table(virt);
+        __asm__ __volatile__("":::"memory");
     }
 
     pmmngr_free_block((void *)phys);
@@ -584,6 +593,7 @@ static inline void __free_user_page(volatile pdirectory *pd, int i, int is_pd)
             //__asm__ __volatile__("xchg %%bx, %%bx"::);
             __atomic_fetch_sub(&pagetable_count, 1, __ATOMIC_SEQ_CST);
             __free_page_table(virt + PAGE_SIZE);
+            __asm__ __volatile__("":::"memory");
         }
 
         pmmngr_free_block((void *)(phys + PAGE_SIZE));
@@ -600,10 +610,10 @@ static inline void __free_user_page(volatile pdirectory *pd, int i, int is_pd)
  */
 void free_user_pages(virtual_addr src_addr)
 {
-    virtual_addr v;
-    volatile pdirectory *src_pml4v = (pdirectory *)src_addr;
+    volatile virtual_addr v;
+    volatile pdirectory *src_pml4v = (volatile pdirectory *)src_addr;
     volatile pdirectory *src_pdp, *src_pd;
-    ptable *src_pt;
+    volatile ptable *src_pt;
     volatile int i, j, k, l;
     struct kernel_region_t *r = &kernel_regions[REGION_PAGETABLE];
 
@@ -622,9 +632,9 @@ void free_user_pages(virtual_addr src_addr)
         {
             break;
         }
-        
-        src_pdp = (pdirectory *)PDE_VIRT_FRAME(src_pml4v->m_entries_virt[i]);
-        
+
+        src_pdp = (volatile pdirectory *)PDE_VIRT_FRAME(src_pml4v->m_entries_virt[i]);
+
         // read the PDP
         for(j = 0; j < 512; j++)
         {
@@ -635,7 +645,7 @@ void free_user_pages(virtual_addr src_addr)
                 continue;
             }
 
-            src_pd = (pdirectory *)PDE_VIRT_FRAME(src_pdp->m_entries_virt[j]);
+            src_pd = (volatile pdirectory *)PDE_VIRT_FRAME(src_pdp->m_entries_virt[j]);
 
             // read the PD
             for(k = 0; k < 512; k++)
@@ -647,7 +657,7 @@ void free_user_pages(virtual_addr src_addr)
                     continue;
                 }
 
-                src_pt = (ptable *)PDE_VIRT_FRAME(src_pd->m_entries_virt[k]);
+                src_pt = (volatile ptable *)PDE_VIRT_FRAME(src_pd->m_entries_virt[k]);
 
                 // read the PT
                 for(l = 0; l < 512; l++)
@@ -668,6 +678,7 @@ void free_user_pages(virtual_addr src_addr)
                     pmmngr_free_block((void *)PTE_FRAME(src_pt->m_entries[l]));
                     vmmngr_flush_tlb_entry(v);
                     __atomic_store_n(&(src_pt->m_entries[l]), 0, __ATOMIC_SEQ_CST);
+                    __asm__ __volatile__("":::"memory");
 
                     v += PAGE_SIZE;
                 }
@@ -675,16 +686,19 @@ void free_user_pages(virtual_addr src_addr)
                 __free_user_page(src_pd, k, 0);
                 __atomic_store_n(&(src_pd->m_entries_virt[k]), 0, __ATOMIC_SEQ_CST);
                 __atomic_store_n(&(src_pd->m_entries_phys[k]), 0, __ATOMIC_SEQ_CST);
+                __asm__ __volatile__("":::"memory");
             }
 
             __free_user_page(src_pdp, j, 1);
             __atomic_store_n(&(src_pdp->m_entries_virt[j]), 0, __ATOMIC_SEQ_CST);
             __atomic_store_n(&(src_pdp->m_entries_phys[j]), 0, __ATOMIC_SEQ_CST);
+            __asm__ __volatile__("":::"memory");
         }
 
         __free_user_page(src_pml4v, i, 1);
         __atomic_store_n(&(src_pml4v->m_entries_virt[i]), 0, __ATOMIC_SEQ_CST);
         __atomic_store_n(&(src_pml4v->m_entries_phys[i]), 0, __ATOMIC_SEQ_CST);
+        __asm__ __volatile__("":::"memory");
     }
 
     elevated_priority_unlock_recursive(r->mutex, r->lock_count);
@@ -872,6 +886,7 @@ retry:
             {
                 // this means no physical memory available, so bail out
                 PTE_SET_FRAME(pt, 0);
+                kpanic("Insufficient memory (in get_next_addr(1))!\n");
                 return -1;
             }
 
@@ -897,6 +912,7 @@ retry:
     }
 
     elevated_priority_unlock_recursive(r->mutex, r->lock_count);
+    kpanic("Insufficient memory (in get_next_addr(2))!\n");
 
     // nothing found
     return -1;

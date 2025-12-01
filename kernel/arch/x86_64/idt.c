@@ -251,7 +251,8 @@ int gpf(struct regs *r, int arg)
     add_task_segv_signal(this_core->cur_task, SEGV_ACCERR, (void *)r->eip);
 #endif      /* __x86_64__ */
 
-    /*
+
+
     switch_tty(1);
     printk("\nGPF: int %d  err 0x%x\n", r->int_no, r->err_code);
 
@@ -269,12 +270,40 @@ int gpf(struct regs *r, int arg)
     for(i = 0; i < 8; i++) printk("0x%02x ", p[i]);
     printk("\n\n");
 
+    for(struct memregion_t *tmp = this_core->cur_task->mem->first_region; tmp != NULL; tmp = tmp->next)
+    {
+        char *path;
+        struct dentry_t *dent;
+
+        if(r->rip >= tmp->addr &&
+           r->rip < (tmp->addr + (tmp->size * PAGE_SIZE)))
+        {
+            path = "*";
+
+            if(tmp->inode && get_dentry(tmp->inode, &dent) == 0)
+            {
+                if(dent->path)
+                {
+                    path = dent->path;
+                }
+            }
+
+            printk("memregion: addr %lx - %lx (type %d, prot %x, fl %x, %s)\n", 
+                           tmp->addr, tmp->addr + (tmp->size * PAGE_SIZE), tmp->type, 
+                           tmp->prot, tmp->flags, path);
+            printk("           path '%s'\n", path);
+            break;
+        }
+    }
+
     dump_regs(r);
     screen_refresh(NULL);
     __asm__ __volatile__("xchg %%bx, %%bx"::);
+    kpanic("_______-----------\n");
 
     empty_loop();
-    */
+
+
 
     check_pending_signals(r);
     __asm__ __volatile__("xchg %%bx, %%bx"::);

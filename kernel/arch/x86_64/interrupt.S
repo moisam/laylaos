@@ -100,22 +100,33 @@ isr123:
     cli
     pushq $0     // dummy error code
     pushq $123
-    jmp isr_common_stub
+    jmp irq_common_stub
 
 /*
  * TLB shootdown
  */
 .global isr124
 isr124:
+    /*
+    cli
+    pushq %rax
+    movq %cr3, %rax
+    movq %rax, %cr3
+    movabsq $lapic_virt, %rax
+    movq (%rax), %rax
+    movl $0x0, 0xb0(%rax)
+    popq %rax
+    iretq
+    */
     cli
     pushq $0     // dummy error code
     pushq $124
     _SWAPGS
     PUSHAQ
     call handle_tlb_shootdown
-    movabsq $lapic_virt, %r12
-    movq (%r12), %r12
-    movl $0x0, 0xb0(%r12)
+    movabsq $lapic_virt, %rax
+    movq (%rax), %rax
+    movl $0x0, 0xb0(%rax)
     POPAQ
     _SWAPGS
     add $16, %rsp     // Clean up the pushed error code and pushed ISR number
@@ -136,6 +147,7 @@ isr125:
  */
 .global isr126
 isr126:
+    cli
     pushq %r12
     movabsq $lapic_virt, %r12
     movq (%r12), %r12
@@ -148,6 +160,7 @@ isr126:
  */
 .global isr255
 isr255:
+    cli
     xchg %bx, %bx
     iretq
 
@@ -158,28 +171,7 @@ isr255:
  * and finally restores the stack frame.
  */
 isr_common_stub:
-    //xchg %bx, %bx
     _SWAPGS
-
-    /*
-    # instead of pushing everything (PUSHAQ), we only save the registers
-    # that are not saved by the callee, while maintaining our struct regs_t
-    # structure.
-    # The callee saved registers are: rbx, rsp, rbp, r12, r13, r14, r15
-    pushq %rax
-    pushq %rbx
-    pushq %rcx
-    pushq %rdx
-    pushq %rsi
-    pushq %rdi
-    sub $16, %rsp   # rbp & rsp
-    pushq %r8
-    pushq %r9
-    pushq %r10
-    pushq %r11
-    sub $32, %rsp
-    */
-
     PUSHAQ
 
     mov %rsp, %rdi
@@ -187,22 +179,6 @@ isr_common_stub:
 
     cli
     POPAQ
-
-    /*
-    add $32, %rsp
-    popq %r11
-    popq %r10
-    popq %r9
-    popq %r8
-    add $16, %rsp
-    popq %rdi
-    popq %rsi
-    popq %rdx
-    popq %rcx
-    popq %rbx
-    popq %rax
-    */
-
     _SWAPGS
 
     add $16, %rsp     // Clean up the pushed error code and pushed ISR number
@@ -252,8 +228,6 @@ IRQ 14, 46
 irq7:
 
     cli
-    //xchg %bx, %bx
-    //xchg %bx, %bx
     pushq %rax
 
     // If the APIC is running, do not check for a spurious IRQ7
@@ -305,8 +279,6 @@ irq7:
 irq15:
 
     cli
-    //xchg %bx, %bx
-    //xchg %bx, %bx
     pushq %rax
 
     // If the APIC is running, do not check for a spurious IRQ15
@@ -363,26 +335,6 @@ irq15:
 
 irq_common_stub:
     _SWAPGS
-
-    /*
-    # instead of pushing everything (PUSHAQ), we only save the registers
-    # that are not saved by the callee, while maintaining our struct regs_t
-    # structure.
-    # The callee saved registers are: rbx, rsp, rbp, r12, r13, r14, r15
-    pushq %rax
-    pushq %rbx
-    pushq %rcx
-    pushq %rdx
-    pushq %rsi
-    pushq %rdi
-    sub $16, %rsp   # rbp & rsp
-    pushq %r8
-    pushq %r9
-    pushq %r10
-    pushq %r11
-    sub $32, %rsp
-    */
-
     PUSHAQ
 
     mov %rsp, %rdi
@@ -415,22 +367,17 @@ irq_common_stub:
 2:
     cli
     POPAQ
+    _SWAPGS
 
-    /*
-    add $32, %rsp
-    popq %r11
-    popq %r10
-    popq %r9
-    popq %r8
-    add $16, %rsp
-    popq %rdi
-    popq %rsi
-    popq %rdx
-    popq %rcx
-    popq %rbx
-    popq %rax
-    */
+    add $16, %rsp     // Clean up the pushed error code and pushed ISR number
+    iretq             // pops 5 things at once: CS, RIP, RFLAGS, SS, and RSP!
 
+
+.global resume_user_after_irq
+resume_user_after_irq:
+    cli
+    mov %rdi, %rsp
+    POPAQ
     _SWAPGS
 
     add $16, %rsp     // Clean up the pushed error code and pushed ISR number

@@ -38,8 +38,7 @@
 #include <mm/kheap.h>
 #include <gui/vbe.h>            // screen_refresh()
 
-volatile int nested_irqs = 0;
-struct handler_t *interrupt_handlers[256];
+struct handler_t *interrupt_handlers[MAX_INTERRUPTS];
 
 struct irq_redir_t irq_redir[16] =
 {
@@ -57,33 +56,39 @@ void irq_handler(struct regs *r)
 {
     struct handler_t *h;
     uint8_t int_no = (r->int_no & 0xFF);
-    //int done = 0;
+    ////int done = 0;
     unsigned long long oticks = ticks;
 
-    nested_irqs++;
-
-    /*
-    if(cur_task)
-    {
-        cur_task->irq_regs = r;
-    }
-    */
+    ////this_core->nested_irqs++;
 
     for(h = interrupt_handlers[int_no]; h; h = h->next)
     {
         if(h->handler(r, h->handler_arg))
         {
             cli();
+
+            // IRQ 124 never comes here so don't check for it
+            if(int_no == 123)
+            {
+                this_core->irq_count[16]++;
+                this_core->irq_ticks[16] += (ticks - oticks);
+            }
+            else if(int_no == 255)
+            {
+                this_core->irq_count[18]++;
+                this_core->irq_ticks[18] += (ticks - oticks);
+            }
+            else
+            {
+                this_core->irq_count[int_no - 32]++;
+                this_core->irq_ticks[int_no - 32] += (ticks - oticks);
+            }
+
+            /*
             h->hits++;
             // TODO: this does not account for round over
             h->ticks += (ticks - oticks);
-            nested_irqs--;
-
-            /*
-            if(cur_task)
-            {
-                cur_task->irq_regs = NULL;
-            }
+            //this_core->nested_irqs--;
             */
 
             return;
@@ -94,7 +99,7 @@ void irq_handler(struct regs *r)
     screen_refresh(NULL);
 
     pic_send_eoi(int_no - 32);
-    nested_irqs--;
+    ////this_core->nested_irqs--;
 }
 
 
@@ -212,10 +217,10 @@ struct handler_t *irq_handler_alloc(int (*func)(struct regs *, int),
 
     h->handler = func;
     h->handler_arg = arg;
-    h->hits = 0;
-    h->ticks = 0;
+    //h->hits = 0;
+    //h->ticks = 0;
     h->next = NULL;
-    
+
     p = h->short_name;
 
     while((*p++ = *name++))

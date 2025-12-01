@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: task_offsets.h
  *    This file is part of LaylaOS.
@@ -37,9 +37,6 @@
 .set PROPERTY_IN_SYSCALL,       (1 << 12)
 
 /* offsets into the task struct */
-.set TASK_STATE_FIELD,          288
-.set TASK_TIME_LEFT_FIELD,      292
-.set TASK_PROPERTIES_FIELD,     300
 
 .set TASK_USER_FIELD,           4
 .set TASK_IN_KERNEL_MODE_FIELD, 8
@@ -78,4 +75,13 @@
 
 #.set TASK_SYSCALL_REGS,         232
 .set TASK_EXECVE_REGS,          232
+
+.set TASK_STATE_FIELD,          288
+.set TASK_TIME_LEFT_FIELD,      292
+.set TASK_PROPERTIES_FIELD,     300
+
+.set TASK_CPUID_FIELD,          304
+
+//.set TASK_TSS_STACK_PHYS,       312
+//.set TASK_TSS_STACK_VIRT,       320
 
