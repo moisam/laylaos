@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025 (c)
  * 
  *    file: init.c
  *    This file is part of LaylaOS.
@@ -116,7 +116,12 @@ static void __gui_init(int argc, char **argv, int load_fonts)
 {
     //char *envserver;
     int retries, res;
+    static int volatile inited = 0;
 
+    if(inited)
+    {
+        return;
+    }
 
     GLOB.evbufsz = 0x2000 /* 0x6000 */;
     GLOB.evbuf_internal = malloc(GLOB.evbufsz);
@@ -197,7 +202,12 @@ static void __gui_init(int argc, char **argv, int load_fonts)
     // make sure the server connection is closed on EXEC
     set_cloexec_flag(GLOB.serverfd, FD_CLOEXEC);
 
+    // make it non-blocking
+    res = fcntl(GLOB.serverfd, F_GETFL, 0);
+    fcntl(GLOB.serverfd, F_SETFL, res | O_NONBLOCK);
+
     atexit(gui_atexit);
+    inited = 1;
 }
 
 
