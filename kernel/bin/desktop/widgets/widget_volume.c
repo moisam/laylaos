@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: widget_volume.c
  *    This file is part of LaylaOS.
@@ -92,11 +92,6 @@ void widget_repaint_volume(struct window_t *widget_win, int is_active_child)
             if(ioctl(dsp_fd, AUDIO_GETINFO, &ainfo) >= 0)
             {
                 has_audio_info = 1;
-                
-                if(!played_start_sound)
-                {
-                    play_start_sound();
-                }
             }
         }
     }
@@ -125,6 +120,24 @@ void widget_repaint_volume(struct window_t *widget_win, int is_active_child)
 
 #undef DRAW_ICON
 
+}
+
+
+int widget_periodic_volume(struct widget_t *widget)
+{
+    // Don't play the start sound in the initial repaint, as this delays the
+    // appearance of the top panel for a significant time. Instead, schedule 
+    // periodic call, play the sound in the first call, then unschedule the
+    // periodic call
+    if(has_audio_info && !played_start_sound)
+    {
+        play_start_sound();
+    }
+
+    widget->periodic = NULL;
+    played_start_sound = 1;
+
+    return 0;
 }
 
 
@@ -161,6 +174,7 @@ int widget_init_volume(void)
 
     widget->win.w = 25;
     widget->win.repaint = widget_repaint_volume;
+    widget->periodic = widget_periodic_volume;
     widget->win.title = "Volume";
     widget->flags |= WIDGET_FLAG_INITIALIZED;
 
