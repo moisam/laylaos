@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: procfs_task.c
  *    This file is part of LaylaOS.
@@ -94,45 +94,23 @@ size_t read_other_taskmem(struct task_t *task, off_t pos,
     volatile size_t left = count;
     size_t i, j;
     char *p;
-    virtual_addr page, last_page = 0;
-    pt_entry *e, *tmp = NULL;
-    virtual_addr addr;
-    
-    KDEBUG("read_other_taskmem: buf 0x%x, count %d\n", buf, count);
+    virtual_addr page, addr;
+    pt_entry *e;
 
-    get_tmp_virt_addr(&addr, &tmp, PTE_FLAGS_PW);
-    
-    if(!tmp)
-    {
-        return 0;
-    }
-    
     while(left)
     {
-        KDEBUG("read_other_taskmem: left %d, count %d\n", left, count);
-
         virtual_addr mempos = pos + memstart;
         physical_addr phys;
-        
+
         page = align_down(mempos);
 
-        KDEBUG("read_other_taskmem: page 0x%x, last_page 0x%x\n", page, last_page);
-        
-        if(page != last_page)
+        if(!(e = get_page_entry_pd((pdirectory *)task->pd_virt, page)) ||
+           !(phys = PTE_FRAME(*e)))
         {
-            if(!(e = get_page_entry_pd((pdirectory *)task->pd_virt,
-                                        (void *)page)) ||
-               // !(phys = pt_entry_get_frame(e)))
-               !(phys = PTE_FRAME(*e)))
-            {
-                break;
-            }
-            
-            PTE_SET_FRAME(tmp, phys);
-            vmmngr_flush_tlb_entry(addr);
-            last_page = page;
+            break;
         }
 
+        addr = PHYS_TO_HIMEM(phys);
         i = mempos % PAGE_SIZE;
 
         if((page + PAGE_SIZE) <= memend)
@@ -143,8 +121,6 @@ size_t read_other_taskmem(struct task_t *task, off_t pos,
         {
             j = MIN((memend - page), left);
         }
-
-        KDEBUG("read_other_taskmem: i %d, j %d\n", i, j);
         
         if(j == 0)
         {
@@ -158,9 +134,6 @@ size_t read_other_taskmem(struct task_t *task, off_t pos,
         copy_internal(buf, p, j, j, 1);
         buf += j;
     }
-    
-    *tmp = 0;
-    vmmngr_flush_tlb_entry(addr);
     
     return count - left;
 }
@@ -177,61 +150,28 @@ size_t write_other_taskmem(struct task_t *task, off_t pos,
     volatile size_t left = count;
     size_t i, j;
     char *p;
-    virtual_addr page, last_page = 0;
-    pt_entry *e, *tmp = NULL;
-    virtual_addr addr, end = TMPFS_END;
+    virtual_addr page, addr;
+    pt_entry *e;
 
-    kernel_mutex_lock(&tmpfs_lock);
-    
-    for(addr = TMPFS_START; addr < end; addr += PAGE_SIZE)
-    {
-        pt_entry *pt = get_page_entry((void *)addr);
-
-        if(PTE_FRAME(*pt) == 0)
-        //if(pt_entry_get_frame(pt) == 0)
-        {
-            PTE_SET_FRAME(pt, 1);
-            PTE_ADD_ATTRIB(pt, PTE_FLAGS_PW);
-            tmp = pt;
-            break;
-        }
-    }
-
-    kernel_mutex_unlock(&tmpfs_lock);
-    
-    if(!tmp)
-    {
-        return 0;
-    }
-    
     while(left)
     {
         virtual_addr mempos = pos + memstart;
         physical_addr phys;
         
         page = align_down(mempos);
-        
-        if(page != last_page)
+
+        if(!(e = get_page_entry_pd((pdirectory *)task->pd_virt, page)) ||
+           !(phys = PTE_FRAME(*e)))
         {
-            if(!(e = get_page_entry_pd((pdirectory *)task->pd_virt,
-                                        (void *)page)) ||
-               // !(phys = pt_entry_get_frame(e)))
-               !(phys = PTE_FRAME(*e)))
-            {
-                break;
-            }
-            
-            if(!PDE_WRITABLE(*e))
-            //if(!pd_entry_is_writable(*e))
-            {
-                break;
-            }
-            
-            PTE_SET_FRAME(tmp, phys);
-            vmmngr_flush_tlb_entry(addr);
-            last_page = page;
+            break;
         }
 
+        if(!PDE_WRITABLE(*e))
+        {
+            break;
+        }
+
+        addr = PHYS_TO_HIMEM(phys);
         i = mempos % PAGE_SIZE;
 
         if((page + PAGE_SIZE) <= memend)
@@ -242,7 +182,7 @@ size_t write_other_taskmem(struct task_t *task, off_t pos,
         {
             j = MIN((memend - page), left);
         }
-        
+
         if(j == 0)
         {
             break;
@@ -255,9 +195,6 @@ size_t write_other_taskmem(struct task_t *task, off_t pos,
         copy_internal(p, buf, j, j, 1);
         buf += j;
     }
-    
-    *tmp = 0;
-    vmmngr_flush_tlb_entry(addr);
     
     return count - left;
 }
@@ -453,7 +390,7 @@ static void __memregion_breakdown(struct task_t *task,
 
         for(addr = start; addr < end; addr += PAGE_SIZE)
         {
-            if(!(e = __get_page_entry_pd(pml4_src, (void *)addr, 0)))
+            if(!(e = __get_page_entry_pd(pml4_src, addr, 0)))
             {
                 continue;
             }
@@ -911,5 +848,75 @@ size_t get_task_io(struct task_t *task, char **buf)
     //printk("*** %s\n", *buf);
 
     return strlen(*buf);
+}
+
+
+/*
+ * Read /proc/[pid]/comm.
+ */
+size_t get_task_comm(struct task_t *task, char **buf)
+{
+    size_t len = strlen((char *)task->command) + 2;
+
+    if(!task || !buf)
+    {
+        return 0;
+    }
+
+    PR_MALLOC(*buf, len);
+    ksprintf(*buf, len, "%s\n", task->command);
+
+    return strlen(*buf);
+}
+
+
+/*
+ * Read /proc/[pid]/exe.
+ */
+size_t get_task_exe(struct task_t *task, char **buf)
+{
+    if(!task || !task->exe_path || !buf)
+    {
+        return 0;
+    }
+
+    PR_MALLOC(*buf, 2048);
+    ksprintf(*buf, 2048, "%s", task->exe_path);
+
+    return strlen(*buf);
+}
+
+
+/*
+ * Read /proc/[pid]/cwd.
+ */
+size_t get_task_cwd(struct task_t *task, char **buf)
+{
+    if(!task || !task->fs || !task->fs->cwd || !buf)
+    {
+        return 0;
+    }
+
+    PR_MALLOC(*buf, 2048);
+
+    return copy_task_dirpath(task->fs->cwd->dev,
+                             task->fs->cwd->inode, *buf, 2048, 1);
+}
+
+
+/*
+ * Read /proc/[pid]/root.
+ */
+size_t get_task_root(struct task_t *task, char **buf)
+{
+    if(!task || !task->fs || !task->fs->root || !buf)
+    {
+        return 0;
+    }
+
+    PR_MALLOC(*buf, 2048);
+
+    return copy_task_dirpath(task->fs->root->dev,
+                             task->fs->root->inode, *buf, 2048, 1);
 }
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: pcache.c
  *    This file is part of LaylaOS.
@@ -67,8 +67,8 @@ static inline void release_page_memory(struct cached_page_t *pcache)
         }
 
         dec_frame_shares(pcache->phys);
-        vmmngr_free_page(get_page_entry((void *) pcache->virt));
-        vmmngr_flush_tlb_entry(pcache->virt);
+
+        pmmngr_free_block((void *)pcache->phys);
     }
 
     if(pcache->node)
@@ -112,7 +112,7 @@ void free_cached_page(struct pcache_key_t *pkey, struct cached_page_t *pcache)
     }
 
     pcache_remove(pcachetab, pkey);
-    kfree(pkey);
+    //kfree(pkey);
     release_page_memory(pcache);
     kernel_mutex_unlock(&pcachetab_lock);
 }
@@ -144,61 +144,7 @@ void release_cached_page(struct cached_page_t *pcache)
     {
         unblock_tasks(pcache);
     }
-    /*
-    else if(get_frame_shares(pcache->phys) <= 1)
-    {
-        // This might not be the best idea as it involves re-reading pages
-        // if they are needed after they are released. Here we release the 
-        // page once the last reference is removed to free memory and ensure
-        // changes are flushed to disk
-        volatile struct hashtab_item_t *hitem;
-        struct pcache_key_t key, *pkey;
-
-        if(pcache->flags & (PCACHE_FLAG_ALWAYS_DIRTY | PCACHE_FLAG_DIRTY))
-        {
-            __sync_and_and_fetch(&pcache->flags, ~PCACHE_FLAG_DIRTY);
-            sync_cached_page(pcache);
-        }
-
-        if(!(pcache->flags & (PCACHE_FLAG_BUSY | PCACHE_FLAG_WANTED | PCACHE_FLAG_DIRTY)))
-        {
-            FILL_ZEROES(&key, sizeof(struct pcache_key_t));
-            key.dev = pcache->dev;
-            key.ino = pcache->ino;
-            key.offset = pcache->offset;
-
-            kernel_mutex_lock(&pcachetab_lock);
-            hitem = pcache_lookup(pcachetab, &key);
-
-            if(hitem)
-            {
-                pkey = hitem->key;
-                pcache_remove(pcachetab, pkey);
-                kfree(pkey);
-                release_page_memory(pcache);
-            }
-
-            kernel_mutex_unlock(&pcachetab_lock);
-            __asm__ __volatile__("":::"memory");
-        }
-    }
-    */
 }
-
-
-/*
-#define MAY_LOCK(lock)                              \
-    volatile int unlock = 0;                        \
-    if(kernel_mutex_trylock(lock)) {                \
-        if(!this_core->cur_task || (lock)->holder != this_core->cur_task) {\
-            kernel_mutex_lock(lock);                \
-            unlock = 1;                             \
-        }                                           \
-    } else unlock = 1;
-
-#define MAY_UNLOCK(lock)    \
-    if(unlock) kernel_mutex_unlock(lock);
-*/
 
 
 struct cached_page_t *get_cached_page(struct fs_node_t *node, 
@@ -221,7 +167,7 @@ struct cached_page_t *get_cached_page(struct fs_node_t *node,
 
     //printk("get_cached_page: dev 0x%x, node 0x%x\n", node->dev, node->inode);
 
-    FILL_ZEROES(&key, sizeof(struct pcache_key_t));
+    //FILL_ZEROES(&key, sizeof(struct pcache_key_t));
     key.dev = node->dev;
     key.ino = node->inode;
     key.offset = offset;
@@ -267,7 +213,7 @@ loop:
             __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_WANTED);
             kernel_mutex_unlock(&pcachetab_lock);
 
-            if(++tries >= 5000000)
+            if(++tries >= 90000000)
             {
                 switch_tty(1);
                 printk("pcache: busy page dev 0x%x, ino 0x%x, flags 0x%x, pid %d, curpid %d\n", key.dev, key.ino, pcache->flags, pcache->pid, this_core->cur_task ? this_core->cur_task->pid : 0);
@@ -276,12 +222,8 @@ loop:
                 kpanic("pcache: infinite loop\n");
             }
 
-            /*
-            block_task(pcache, 0);
-            //block_task2(pcache, 300);
-            */
             set_task_waitchan(this_core->cur_task, pcache);
-            block_task_timeout(this_core->cur_task, PIT_FREQUENCY);
+            block_task_timeout(this_core->cur_task, PIT_FREQUENCY / 5);
             //set_task_state(this_core->cur_task, TASK_SLEEPING);
             //scheduler();
 
@@ -305,16 +247,13 @@ loop:
     }
 
     // page not found, allocate a new page cache entry
-    if(!(pcache = kmalloc(sizeof(struct cached_page_t))) ||
-       !(pkey = kmalloc(sizeof(struct pcache_key_t))))
+    if(!(pcache = kmalloc(sizeof(struct cached_page_t) + sizeof(struct pcache_key_t))))
     {
         kpanic("Cannot allocate page cache entry (1)\n");
     }
-    
-    //A_memset(pcache, 0, sizeof(struct cached_page_t));
-    //A_memset(pkey, 0, sizeof(struct pcache_key_t));
-    FILL_ZEROES(pcache, sizeof(struct cached_page_t));
-    FILL_ZEROES(pkey, sizeof(struct pcache_key_t));
+
+    pkey = (struct pcache_key_t *)((uintptr_t)pcache + sizeof(struct cached_page_t));
+    A_memset(pcache, 0, sizeof(struct cached_page_t) + sizeof(struct pcache_key_t));
 
     // The node passed to us might be a struct fs_node_header_t, which is
     // not a complete node. So get the node struct in all cases to ensure
@@ -336,7 +275,6 @@ loop:
     pcache->dev = node->dev;
     pcache->ino = node->inode;
     pcache->offset = offset;
-    //pcache->refs = 1;
     __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_BUSY);
     pcache->pid = this_core->cur_task ? this_core->cur_task->pid : 0;
 
@@ -353,8 +291,7 @@ loop:
     kernel_mutex_unlock(&pcachetab_lock);
 
     // get a physical page and map it to kernel virtual space
-    while(get_next_addr(&pcache->phys, &pcache->virt, 
-                        PTE_FLAGS_PW, REGION_PCACHE) != 0)
+   	if(!(pcache->phys = (physical_addr)pmmngr_alloc_block()))
     {
         printk("pcache: failed to allocate memory, retrying in 2 secs\n");
         //block_task2(pcache, PIT_FREQUENCY * 2);
@@ -363,11 +300,7 @@ loop:
         block_task_timeout(this_core->cur_task, PIT_FREQUENCY * 2);
     }
 
-    if(pcache->virt < PCACHE_MEM_START || pcache->virt >= PCACHE_MEM_END)
-    {
-        kpanic("pcache: got an invalid pcache address\n");
-    }
-
+    pcache->virt = PHYS_TO_HIMEM(pcache->phys);
     inc_frame_shares(pcache->phys);
 
     if((d = get_mount_info(node->dev)) == NULL)
@@ -415,11 +348,8 @@ loop:
     {
         req.dev = node->dev;
         req.data = pcache->virt;
-
-        //req.blocksz = d->block_size;
         req.datasz = d->block_size;
         req.fs_blocksz = d->block_size;
-
         req.blockno = offset;
         req.write = 0;
 
@@ -442,10 +372,7 @@ loop:
         int how_many = 1;
 
         res = 0;
-        //MAY_LOCK(&pcache->node->lock);
         kernel_mutex_lock(&pcache->node->lock);
-
-        //printk("get_cached_page: dev 0x%x, node 0x%x, node @ 0x%lx, bmap @ 0x%lx\n", pcache->node->dev, pcache->node->inode, node, d->fs->ops->bmap);
 
         // Find out the mapping of the logical sectors we need to read
         for(i = 0; i < n; i++)
@@ -455,13 +382,7 @@ loop:
             //printk("get_cached_page: [%d/%d] %d = %d\n", i, n, block + i, disk_block[i]);
         }
 
-        //printk("get_cached_page: done\n");
-        //printk("get_cached_page: 1 lock 0x%lx, me 0x%lx, holder 0x%lx\n", &pcache->node->lock, this_core->cur_task, pcache->node->lock.holder);
-
-        //MAY_UNLOCK(&pcache->node->lock);
         kernel_mutex_unlock(&pcache->node->lock);
-
-        //printk("get_cached_page: 2 lock 0x%lx, me 0x%lx, holder 0x%lx\n", &pcache->node->lock, this_core->cur_task, pcache->node->lock.holder);
 
         // To try and reduce disk access requests (and IRQs and the resultant
         // delays), find out the maximum amount of sectors we can read in 
@@ -510,7 +431,6 @@ loop:
         while(n--)
         {
             if(!disk_block[i])
-            //if(!(i = d->fs->ops->bmap(node, block, d->block_size, bmap_flag)))
             {
                 A_memset((void *)p, 0, d->block_size);
             }
@@ -518,10 +438,8 @@ loop:
             {
                 req.dev = node->dev;
                 req.data = p;
-                //req.blocksz = d->block_size;
                 req.datasz = d->block_size;
                 req.fs_blocksz = d->block_size;
-                //req.blockno = i;
                 req.blockno = disk_block[i];
                 req.write = 0;
 
@@ -533,7 +451,6 @@ loop:
 
             p += d->block_size;
             res += d->block_size;
-            //block++;
             i++;
         }
 
@@ -552,7 +469,6 @@ loop:
     }
 
     inc_frame_shares(pcache->phys);
-    //mark_as_clean(pcache);
     pcache->last_accessed = ticks;
     __asm__ __volatile__("":::"memory");
 
@@ -598,11 +514,8 @@ int sync_cached_page(struct cached_page_t *pcache)
 
         req.dev = pcache->dev;
         req.data = pcache->virt;
-
-        //req.blocksz = pcache->len; // d->block_size;
         req.datasz = pcache->len;
         req.fs_blocksz = pcache->len;
-
         req.blockno = pcache->offset;
         req.write = 1;
 
@@ -615,7 +528,6 @@ int sync_cached_page(struct cached_page_t *pcache)
     }
     else
     {
-        //struct fs_node_t *node;
         size_t block;
         int i, n;
         virtual_addr p;
@@ -633,18 +545,6 @@ int sync_cached_page(struct cached_page_t *pcache)
                     pcache->node->flags, pcache->node);
             kpanic("\n\n*** pcache with 0 node refs!\n\n");
         }
-#if 0
-        if(!(node = get_node(pcache->dev, pcache->ino, 
-                               GETNODE_FOLLOW_MPOINTS /* | GETNODE_IGNORE_STALE */)))
-        {
-            /*
-            printk("sync_cached_page: dev 0x%x, inode 0x%x\n", pcache->dev, pcache->ino);
-            printk("sync_cached_page: len 0x%x, flags 0x%x\n", pcache->len, pcache->flags);
-            kpanic("\nsync_cached_page: invalid inode\n\n");
-            */
-            return -EIO;
-        }
-#endif
 
         // before we lock the node and call bmap, make sure we are not
         // trying to recursively lock the node
@@ -661,7 +561,6 @@ int sync_cached_page(struct cached_page_t *pcache)
         size_t off = pcache->offset;
         int bmap_flag, how_many = 1;
 
-        //MAY_LOCK(&pcache->node->lock);
         kernel_mutex_lock(&pcache->node->lock);
 
         // Find out the mapping of the logical sectors we need to read
@@ -675,7 +574,6 @@ int sync_cached_page(struct cached_page_t *pcache)
             //printk("sync_cached_page: [%d] %d\n", i, disk_block[i]);
         }
 
-        //MAY_UNLOCK(&pcache->node->lock);
         kernel_mutex_unlock(&pcache->node->lock);
 
         // To try and reduce disk access requests (and IRQs and the resultant
@@ -710,7 +608,6 @@ int sync_cached_page(struct cached_page_t *pcache)
 
             if(bdev_tab[maj].strategy(&req) < 0)
             {
-                //release_node(node);
                 return 0;
             }
 
@@ -726,16 +623,11 @@ int sync_cached_page(struct cached_page_t *pcache)
         while(n--)
         {
             if(disk_block[i])
-            //if((i = d->fs->ops->bmap(node, block, d->block_size, BMAP_FLAG_NONE)))
             {
                 req.dev = pcache->dev;
                 req.data = p;
-
-                //req.blocksz = d->block_size;
                 req.datasz = d->block_size;
                 req.fs_blocksz = d->block_size;
-
-                //req.blockno = i;
                 req.blockno = disk_block[i];
                 req.write = 1;
 
@@ -747,11 +639,8 @@ int sync_cached_page(struct cached_page_t *pcache)
 
             p += d->block_size;
             res += d->block_size;
-            //block++;
             i++;
         }
-
-        //release_node(node);
     }
 
     return res;
@@ -821,7 +710,7 @@ static inline void release_pcache_internal(volatile struct hashtab_item_t *hitem
         pcachetab->items[i] = hitem->next;
     }
 
-    kfree(hitem->key);
+    //kfree(hitem->key);
     kfree((void *)hitem);
     kernel_mutex_unlock(&pcachetab_lock);
     release_page_memory(pcache);
@@ -872,10 +761,6 @@ loop:
                 __sync_or_and_fetch(&pcache->flags, PCACHE_FLAG_WANTED);
                 kernel_mutex_unlock(&pcachetab_lock);
 
-                /*
-                block_task(pcache, 0);
-                //block_task2(pcache, 30);
-                */
                 set_task_waitchan(this_core->cur_task, pcache);
                 set_task_state(this_core->cur_task, TASK_SLEEPING);
                 scheduler();
@@ -1188,9 +1073,7 @@ loop:
                         release_pcache_internal(hitem, prev, i);
                         goto loop;
                     }
-                    //else printk("cannot remove page: 0x%x:0x%x: shares %d, flags 0x%x (1)\n", pcache->dev, pcache->ino, get_frame_shares(pcache->phys), pcache->flags);
                 }
-                //else printk("cannot remove page: 0x%x:0x%x: shares %d, flags 0x%x (2)\n", pcache->dev, pcache->ino, get_frame_shares(pcache->phys), pcache->flags);
 
                 res = -EBUSY;
             }
@@ -1202,7 +1085,6 @@ loop:
 
     kernel_mutex_unlock(&pcachetab_lock);
     return res;
-    //return 0;
 }
 
 

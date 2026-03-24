@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: fatfs.c
  *    This file is part of LaylaOS.
@@ -392,7 +392,7 @@ long fatfs_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector
     struct fat_private_t *priv;
     struct superblock_t *super;
     struct disk_req_t req;
-    physical_addr ignored;
+    physical_addr phys;
     int maj = MAJOR(dev);
 
     if(maj >= NR_DEV || !bdev_tab[maj].strategy)
@@ -407,11 +407,13 @@ long fatfs_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector
 
     A_memset(super, 0, sizeof(struct superblock_t));
 
-    if(get_next_addr(&ignored, &super->data, PTE_FLAGS_PW, REGION_PCACHE) != 0)
-    {
+   	if(!(phys = (physical_addr)pmmngr_alloc_block()))
+   	{
         kfree(super);
         return -EAGAIN;
     }
+
+    super->data = PHYS_TO_HIMEM(phys);
 
     super->blockno = 0;
     super->blocksz = bytes_per_sector;
@@ -428,8 +430,7 @@ long fatfs_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector
     printk("vfat: reading superblock (dev 0x%x)\n", dev);
 
 #define BAIL_OUT(err)   \
-        vmmngr_free_page(get_page_entry((void *)super->data));  \
-        vmmngr_flush_tlb_entry(super->data);    \
+        pmmngr_free_block((void *)phys);   \
         kfree(super);   \
         return err;
 
@@ -574,6 +575,7 @@ void fatfs_put_super(dev_t dev, struct superblock_t *super)
 
     struct fat_private_t *priv;
     struct fat_cacheent_t *cent, *next;
+    physical_addr phys;
 
     if(!super || !super->data)
     {
@@ -599,8 +601,11 @@ void fatfs_put_super(dev_t dev, struct superblock_t *super)
         kfree((void *)priv);
     }
 
-    vmmngr_free_page(get_page_entry((void *)super->data));
-    vmmngr_flush_tlb_entry(super->data);
+    if((phys = get_phys_addr(super->data)))
+    {
+        pmmngr_free_block((void *)phys);
+    }
+
     kfree(super);
 }
 

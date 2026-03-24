@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: devpts.c
  *    This file is part of LaylaOS.
@@ -306,7 +306,7 @@ int pty_slave_index(dev_t dev)
 /*
  * Perform a select operation on a master pty device.
  */
-long pty_master_select(struct file_t *f, int which)
+long pty_master_select(struct file_t *f, int which, int record)
 {
     struct tty_t *tty;
     dev_t dev;
@@ -338,8 +338,10 @@ long pty_master_select(struct file_t *f, int which)
     	case FREAD:
             if(ttybuf_is_empty(&tty->write_q))
             {
-        		//selrecord(&tty->wsel);
-        		selrecord(&tty->write_q.sel);
+                if(record)
+                {
+            		selrecord(&tty->write_q.sel);
+        		}
                 return 0;
             }
             return 1;
@@ -347,8 +349,10 @@ long pty_master_select(struct file_t *f, int which)
     	case FWRITE:
     	    if(ttybuf_is_full(&tty->read_q))
     	    {
-        		//selrecord(&tty->rsel);
-        		selrecord(&tty->read_q.sel);
+                if(record)
+                {
+            		selrecord(&tty->read_q.sel);
+        		}
                 return 0;
             }
             return 1;

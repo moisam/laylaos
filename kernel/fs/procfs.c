@@ -198,7 +198,7 @@ struct procfs_entry_t procfs_root_entries[] =
 #define PROC_BUFFERS        6
     { "buffers"         , PROCFS_FILE_MODE, 0, 0, 0, get_buffer_info, },
 #define PROC_CMDLINE        7
-    { "cmdline"         , PROCFS_FILE_MODE, 0, 0, 0, NULL, },
+    { "cmdline"         , PROCFS_FILE_MODE, 0, 0, 0, get_cmdline, },
 #define PROC_CPUINFO        8
     { "cpuinfo"         , PROCFS_FILE_MODE, 0, 0, 0, detect_cpu, },
 #define PROC_DEVICES        9
@@ -236,9 +236,9 @@ struct procfs_entry_t procfs_root_entries[] =
 #define PROC_SYSCALLS       25
     { "syscalls"        , PROCFS_FILE_MODE, 0, 0, 0, get_syscalls, },
 #define PROC_SELF           26
-    { "self"            , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
+    { "self"            , PROCFS_LINK_MODE, 0, 0, 0, get_self, },
 #define PROC_THREAD_SELF    27
-    { "thread-self"     , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
+    { "thread-self"     , PROCFS_LINK_MODE, 0, 0, 0, get_thread_self, },
 };
 
 #define procfs_root_entry_count     arr_count(procfs_root_entries)
@@ -301,13 +301,13 @@ struct procfs_pid_entry_t procfs_pid_entries[] =
 #define PROC_PID_CMDLINE    2
     { "cmdline"         , PROCFS_FILE_MODE, 0, 0, 0, NULL, },
 #define PROC_PID_COMM       3
-    { "comm"            , PROCFS_FILE_MODE, 0, 0, 0, NULL, },
+    { "comm"            , PROCFS_FILE_MODE, 0, 0, 0, get_task_comm, },
 #define PROC_PID_CWD        4
-    { "cwd"             , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
+    { "cwd"             , PROCFS_LINK_MODE, 0, 0, 0, get_task_cwd, },
 #define PROC_PID_ENVIRON    5
     { "environ"         , PROCFS_FILE_MODE, 0, 0, 0, NULL, },
 #define PROC_PID_EXE        6
-    { "exe"             , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
+    { "exe"             , PROCFS_LINK_MODE, 0, 0, 0, get_task_exe, },
 #define PROC_PID_FD         7
     { "fd"              , PROCFS_DIR_MODE , 0, 0, 0, NULL, },
 #define PROC_PID_IO         8
@@ -325,7 +325,7 @@ struct procfs_pid_entry_t procfs_pid_entries[] =
 #define PROC_PID_MOUNTS     14
     { "mounts"          , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
 #define PROC_PID_ROOT       15
-    { "root"            , PROCFS_LINK_MODE, 0, 0, 0, NULL, },
+    { "root"            , PROCFS_LINK_MODE, 0, 0, 0, get_task_root, },
 #define PROC_PID_STAT       16
     { "stat"            , PROCFS_FILE_MODE, 0, 0, 0, get_task_stat, },
 #define PROC_PID_STATM      17
@@ -2577,14 +2577,7 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
 
             switch(file)
             {
-                case PROC_CMDLINE    :   /* /proc/cmdline */
-                    PR_MALLOC(procbuf, strlen(kernel_cmdline) + 2);
-                    //sprintf(procbuf, "%s\n", kernel_cmdline);
-                    ksprintf(procbuf, strlen(kernel_cmdline) + 2, "%s\n",
-                                kernel_cmdline);
-                    buflen = strlen(procbuf);
-                    break;
-
+                case PROC_CMDLINE    :   /* /proc/cmdline     */
                 case PROC_CPUINFO    :   /* /proc/cpuinfo     */
                 case PROC_BUFFERS    :   /* /proc/buffers     */
                 case PROC_DEVICES    :   /* /proc/devices     */
@@ -2603,28 +2596,15 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                 case PROC_VERSION    :   /* /proc/version     */
                 case PROC_VMSTAT     :   /* /proc/vmstat      */
                 case PROC_SYSCALLS   :   /* /proc/syscalls    */
+                case PROC_SELF       :   /* /proc/self        */
+                case PROC_THREAD_SELF:   /* /proc/thread-self */
                     buflen = procfs_root_entries[file].read_file(&procbuf);
                     break;
 
-                case PROC_TIMER_LIST :   /* /proc/timer_list */
+                case PROC_TIMER_LIST :   /* /proc/timer_list  */
                     /*
                      * TODO:
                      */
-                    break;
-
-                case PROC_SELF       :   /* /proc/self */
-                    PR_MALLOC(procbuf, 16);
-                    //sprintf(procbuf, "/proc/%u", tgid(ct));
-                    ksprintf(procbuf, 16, "/proc/%u", tgid(this_core->cur_task));
-                    buflen = strlen(procbuf);
-                    break;
-
-                case PROC_THREAD_SELF:   /* /proc/thread-self */
-                    PR_MALLOC(procbuf, 32);
-                    //sprintf(procbuf, "/proc/%u/task/%u", tgid(ct), ct->pid);
-                    ksprintf(procbuf, 32, "/proc/%u/task/%u",
-                                tgid(this_core->cur_task), this_core->cur_task->pid);
-                    buflen = strlen(procbuf);
                     break;
 
                 default:
@@ -2697,50 +2677,8 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
                     buflen = procfs_get_task_args(task, file, &procbuf);
                     break;
 
-                case PROC_PID_COMM      :   /* /proc/[pid]/comm */
-                    PR_MALLOC(procbuf, strlen((char *)task->command) + 2);
-                    //sprintf(procbuf, "%s\n", task->command);
-                    ksprintf(procbuf, strlen((char *)task->command) + 2, "%s\n",
-                                task->command);
-                    buflen = strlen(procbuf);
-                    break;
-
                 case PROC_PID_ENVIRON   :   /* /proc/[pid]/environ */
                     buflen = procfs_get_task_args(task, file, &procbuf);
-                    break;
-
-                case PROC_PID_EXE       :   /* /proc/[pid]/exe */
-                    /*
-                    if(!task->exe_dev || !task->exe_inode)
-                    {
-                        break;
-                    }
-
-                    PR_MALLOC(procbuf, 2048);
-                    buflen = copy_task_dirpath(task->exe_dev,
-                                               task->exe_inode, procbuf,
-                                               2048, 1);
-                    break;
-                    */
-                    if(!task->exe_path)
-                    {
-                        break;
-                    }
-
-                    PR_MALLOC(procbuf, 2048);
-                    ksprintf(procbuf, 2048, "%s", task->exe_path);
-                    buflen = strlen(procbuf);
-                    break;
-
-                case PROC_PID_IO        :   /* /proc/[pid]/io */
-                case PROC_PID_LIMITS    :   /* /proc/[pid]/limits */
-                case PROC_PID_MAPS      :   /* /proc/[pid]/maps */
-                case PROC_PID_SMAPS     :   /* /proc/[pid]/smaps */
-                case PROC_PID_STAT      :   /* /proc/[pid]/stat */
-                case PROC_PID_STATM     :   /* /proc/[pid]/statm */
-                case PROC_PID_STATUS    :   /* /proc/[pid]/status */
-                case PROC_PID_TIMERS    :   /* /proc/[pid]/timers */
-                    buflen = procfs_pid_entries[file].read_file((struct task_t *)task, &procbuf);
                     break;
 
                 case PROC_PID_MEM       :   /* /proc/[pid]/mem */
@@ -2758,28 +2696,19 @@ ssize_t procfs_read_file(struct fs_node_t *node, off_t *pos,
 
                     return j;
 
+                case PROC_PID_EXE       :   /* /proc/[pid]/exe */
+                case PROC_PID_COMM      :   /* /proc/[pid]/comm */
+                case PROC_PID_IO        :   /* /proc/[pid]/io */
+                case PROC_PID_LIMITS    :   /* /proc/[pid]/limits */
+                case PROC_PID_MAPS      :   /* /proc/[pid]/maps */
+                case PROC_PID_SMAPS     :   /* /proc/[pid]/smaps */
+                case PROC_PID_STAT      :   /* /proc/[pid]/stat */
+                case PROC_PID_STATM     :   /* /proc/[pid]/statm */
+                case PROC_PID_STATUS    :   /* /proc/[pid]/status */
+                case PROC_PID_TIMERS    :   /* /proc/[pid]/timers */
                 case PROC_PID_CWD       :   /* /proc/[pid]/cwd */
-                    if(!task->fs || !task->fs->cwd)
-                    {
-                        break;
-                    }
-
-                    PR_MALLOC(procbuf, 2048);
-                    buflen = copy_task_dirpath(task->fs->cwd->dev,
-                                               task->fs->cwd->inode, procbuf,
-                                               2048, 1);
-                    break;
-
                 case PROC_PID_ROOT      :   /* /proc/[pid]/root */
-                    if(!task->fs || !task->fs->root)
-                    {
-                        break;
-                    }
-
-                    PR_MALLOC(procbuf, 2048);
-                    buflen = copy_task_dirpath(task->fs->root->dev,
-                                               task->fs->root->inode, procbuf,
-                                               2048, 1);
+                    buflen = procfs_pid_entries[file].read_file((struct task_t *)task, &procbuf);
                     break;
 
                 default:

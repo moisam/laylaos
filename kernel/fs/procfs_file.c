@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: procfs_file.c
  *    This file is part of LaylaOS.
@@ -150,7 +150,7 @@ size_t get_device_list(char **_buf)
 }
 
 
-#define PRINT_INTERRUPT(i, j)                       \
+#define PRINT_INTERRUPT(i)                          \
     if(count + rowlen >= bufsz) {                   \
         *_buf = buf;                                \
         PR_REALLOC(buf, bufsz, count);              \
@@ -162,7 +162,7 @@ size_t get_device_list(char **_buf)
     else ksprintf(p, bufsz, "%3d: ", i);            \
     p += 5;                                         \
     for(k = 0; k < processor_count; k++) {          \
-        ksprintf(p, bufsz, "%10d ", processor_local_data[k].irq_count[j]); \
+        ksprintf(p, bufsz, "%10d ", processor_local_data[k].irq_count[i]); \
         p += 11;                                    \
     }                                               \
     ksprintf(p, bufsz, " %s\n", interrupt_handlers[i] ? \
@@ -187,16 +187,14 @@ size_t get_interrupt_info(char **_buf)
     p = buf;
     *p = '\0';
 
-    //ksprintf(buf, bufsz, "IRQ        Hits      Ticks Name\n");
-
     // maximum length of a single row
     rowlen = 5 + (processor_count * 11) + 
                 sizeof(interrupt_handlers[0]->short_name) + 1;
 
     // print the header
-    ksprintf(p, bufsz, " IRQ ");
-    count += 5;
-    p += 5;
+    ksprintf(p, bufsz, " IRQ  ");
+    count += 6;
+    p += 6;
 
     for(i = 0; i < processor_count; i++)
     {
@@ -210,45 +208,10 @@ size_t get_interrupt_info(char **_buf)
     p += 6;
 
     // now print the rows
-    for(i = 32; i < (32 + 16); i++)
+    for(i = 0; i < 256; i++)
     {
-        PRINT_INTERRUPT(i, i - 32);
-
-        /*
-        if(interrupt_handlers[i] == NULL)
-        {
-            ksprintf(tmp, sizeof(tmp), "%3d: %10d %10d %s\n", i - 32, 
-                                       0, 0, "--");
-        }
-        else
-        {
-            ksprintf(tmp, sizeof(tmp), "%3d: %10d %10d %s\n", i - 32, 
-                                       interrupt_handlers[i]->hits,
-                                       interrupt_handlers[i]->ticks,
-                                       interrupt_handlers[i]->short_name);
-        }
-
-        len = strlen(tmp);
-        
-        if(count + len >= bufsz)
-        {
-            *_buf = buf;
-            PR_REALLOC(buf, bufsz, count);
-            p = buf + count;
-        }
-
-        count += len;
-        strcpy(p, tmp);
-        p += len;
-        */
+        PRINT_INTERRUPT(i);
     }
-
-    /*
-     * TODO: we should also print data for ERR and NMI interrupts.
-     */
-    PRINT_INTERRUPT(123, 16);
-    PRINT_INTERRUPT(124, 17);
-    PRINT_INTERRUPT(255, 18);
 
     *_buf = buf;
     return count;
@@ -326,6 +289,45 @@ size_t get_uptime(char **buf)
 
     PR_MALLOC(*buf, 32);
     ksprintf(*buf, 32, "%ld %ld\n", (long int)uptime, (long int)idle);
+
+    return strlen(*buf);
+}
+
+
+/*
+ * Read /proc/cmdline.
+ */
+size_t get_cmdline(char **buf)
+{
+    size_t len = strlen(kernel_cmdline) + 2;
+
+    PR_MALLOC(*buf, len);
+    ksprintf(*buf, len, "%s\n", kernel_cmdline);
+
+    return strlen(*buf);
+}
+
+
+/*
+ * Read /proc/self.
+ */
+size_t get_self(char **buf)
+{
+    PR_MALLOC(*buf, 16);
+    ksprintf(*buf, 16, "/proc/%u", tgid(this_core->cur_task));
+
+    return strlen(*buf);
+}
+
+
+/*
+ * Read /proc/thread-self.
+ */
+size_t get_thread_self(char **buf)
+{
+    PR_MALLOC(*buf, 32);
+    ksprintf(*buf, 32, "/proc/%u/task/%u",
+                       tgid(this_core->cur_task), this_core->cur_task->pid);
 
     return strlen(*buf);
 }
@@ -740,16 +742,25 @@ size_t get_sysstat(char **buf)
     //struct task_t *idle_task = get_idle_task();
     unsigned long tmp;
     unsigned long user = 0, sys = 0, idle = 0;
-    unsigned long irq_hits[19], total_irq_hits = 0;
+    unsigned long *irq_hits, total_irq_hits = 0;
     unsigned long irq_ticks = 0, softirq = 0;
     unsigned int running = 0, blocked = 0;
     int i, j, state;
     char *p;
 
-    PR_MALLOC(*buf, 4096);
+    PR_MALLOC(*buf, 8192);
     p = *buf;
     *p = '\0';
-    
+
+    if(!(irq_hits = kmalloc(256 * sizeof(unsigned long))))
+    {
+        kfree(*buf);
+        *buf = NULL;
+        return 0;
+    }
+
+    A_memset(irq_hits, 0, 256 * sizeof(unsigned long));
+
     /*
      * TODO: Collect the rest of info for /proc/stat.
      *       See: https://man7.org/linux/man-pages/man5/proc.5.html
@@ -776,43 +787,9 @@ size_t get_sysstat(char **buf)
         {
             blocked++;
         }
-
-#if 0
-        if((*t)->properties & PROPERTY_IDLE)
-        //if(*t == idle_task)
-        {
-            idle += (*t)->user_time + (*t)->children_user_time;
-        }
-        else if(*t == softsleep_task /* || *t == softitimer_task */)
-        {
-            softirq += (*t)->user_time + (*t)->children_user_time;
-        }
-        else
-        {
-            user += (*t)->user_time + (*t)->children_user_time;
-            sys += (*t)->sys_time + (*t)->children_sys_time;
-        }
-#endif
     }
     
     elevated_priority_unlock(&task_table_lock);
-
-#if 0
-    // get IRQ stats
-    for(i = 32; i < (32 + 16); i++)
-    {
-        if(interrupt_handlers[i] != NULL)
-        {
-            irq_ticks += interrupt_handlers[i]->ticks;
-            irq_hits += interrupt_handlers[i]->hits;
-        }
-    }
-#endif
-
-    for(j = 0; j < 19; j++)
-    {
-        irq_hits[j] = 0;
-    }
 
     for(i = 0; i < processor_count; i++)
     {
@@ -826,7 +803,7 @@ size_t get_sysstat(char **buf)
             idle += processor_local_data[i].idle_task->user_time;
         }
 
-        for(j = 0; j < 19; j++)
+        for(j = 0; j < 256; j++)
         {
             irq_ticks += processor_local_data[i].irq_ticks[j];
             total_irq_hits += processor_local_data[i].irq_count[j];
@@ -835,7 +812,7 @@ size_t get_sysstat(char **buf)
     }
 
     // now print to the buffer
-    ksprintf(p, 4096, "cpu %lu %lu %lu %lu %lu %lu\n",
+    ksprintf(p, 8192, "cpu %lu %lu %lu %lu %lu %lu\n",
                       user, // time spent in user mode
                       0,    // TODO: time spent in user mode with low priority (nice)
                       sys,  // time spent in system mode
@@ -857,7 +834,7 @@ size_t get_sysstat(char **buf)
             tmp = 0;
         }
 
-        ksprintf(p, 4096, "cpu%d %lu %lu %lu %lu ",
+        ksprintf(p, 8192, "cpu%d %lu %lu %lu %lu ",
                  i,
                  processor_local_data[i].user_time,
                  0,    // TODO: time spent in user mode with low priority (nice)
@@ -867,27 +844,27 @@ size_t get_sysstat(char **buf)
 
         tmp = 0;
 
-        for(j = 0; j < 19; j++)
+        for(j = 0; j < 256; j++)
         {
             tmp += processor_local_data[i].irq_ticks[j];
         }
 
-        ksprintf(p, 4096, "%lu %lu\n",
+        ksprintf(p, 8192, "%lu %lu\n",
                  tmp,
                  processor_local_data[i].softirq_ticks);
         p += strlen(p);
     }
 
-    ksprintf(p, 4096, "intr %lu ", total_irq_hits);
+    ksprintf(p, 8192, "intr %lu ", total_irq_hits);
     p += strlen(p);
 
-    for(j = 0; j < 19; j++)
+    for(j = 0; j < 256; j++)
     {
-        ksprintf(p, 4096, "%lu%c", irq_hits[j], (j == 19 - 1) ? '\n' : ' ');
+        ksprintf(p, 8192, "%lu%c", irq_hits[j], (j == 255) ? '\n' : ' ');
         p += strlen(p);
     }
 
-    ksprintf(p, 4096, "swap %u %u\n"
+    ksprintf(p, 8192, "swap %u %u\n"
                       "ctxt %lu\n"
                       "btime %ld\n"
                       "processes %lu\n"
@@ -994,8 +971,7 @@ size_t get_pci_device_config_space(struct pci_dev_t *pci, char **_buf)
 
     for(i = 0; i < words; i++)
     {
-        *p++ = pci_config_read_long(pci->bus, pci->dev, pci->function,
-                                    i * sizeof(uint32_t));
+        *p++ = pci_config_read_long(pci, i * sizeof(uint32_t));
     }
     
     *_buf = buf;

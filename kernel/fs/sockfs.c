@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: sockfs.c
  *    This file is part of LaylaOS.
@@ -140,9 +140,20 @@ ssize_t sockfs_write(struct file_t *f, off_t *pos,
 
     so = (struct socket_t *)f->node->data;
 
+    /*
     if((res = sendto_pre_checks(so, NULL, 0)) != 0)
     {
 		return res;
+    }
+    */
+
+    // User has called shutdown() specifying SHUT_RDWR or SHUT_WR
+    // At the moment the call to sendto_pre_checks() only checks this case,
+    // so make one less call and do the check here
+    if(so->flags & SOCKET_FLAG_SHUT_LOCAL)
+    {
+        so->err = -ENOTCONN;
+        return so->err;
     }
 
 	msg.msg_name = 0;
@@ -243,7 +254,7 @@ long sockfs_ioctl(struct file_t *f, int cmd, char *data, int kernel)
 /*
  * Perform a select operation on a socket.
  */
-long sockfs_select(struct file_t *f, int which)
+long sockfs_select(struct file_t *f, int which, int record)
 {
 	struct socket_t *so;
 
@@ -267,7 +278,10 @@ long sockfs_select(struct file_t *f, int which)
                 return 1;
             }
     		
-    		selrecord(&so->selrecv);
+    		if(record)
+    		{
+        		selrecord(&so->selrecv);
+    		}
     		break;
 
     	case FWRITE:

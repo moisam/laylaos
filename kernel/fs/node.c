@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: node.c
  *    This file is part of LaylaOS.
@@ -80,7 +80,7 @@ void sync_nodes(dev_t dev)
 
         __sync_or_and_fetch(&(*node)->flags, FS_NODE_KEEP_INCORE);
         kernel_mutex_unlock(&list_lock);
-        kernel_mutex_lock(&(*node)->lock);
+        //kernel_mutex_lock(&(*node)->lock);
 
         if((*node)->dev && /* ((*node)->flags & FS_NODE_DIRTY) && */ 
             !IS_PIPE((*node)) && !((*node)->flags & FS_NODE_STALE))
@@ -90,7 +90,7 @@ void sync_nodes(dev_t dev)
 	    }
 
         __sync_and_and_fetch(&(*node)->flags, ~FS_NODE_KEEP_INCORE);
-        kernel_mutex_unlock(&(*node)->lock);
+        //kernel_mutex_unlock(&(*node)->lock);
         kernel_mutex_lock(&list_lock);
 	}
 
@@ -266,6 +266,8 @@ void release_node(struct fs_node_t *node)
     }
 
 
+#if 0
+
     struct memregion_t *tmp;
     volatile long expected_refs = 0, file_refs = 0, mem_refs = 0, pcache_refs = 0;
 
@@ -311,6 +313,8 @@ void release_node(struct fs_node_t *node)
         printk("\n\n*** expected_refs %d, file_refs %d, mem_refs %d, pcache_refs %d\n", expected_refs, file_refs, mem_refs, pcache_refs);
         kpanic("*** trying to free a referenced node\n");
     }
+
+#endif
 
     
     __sync_or_and_fetch(&node->flags, FS_NODE_STALE);
@@ -427,6 +431,8 @@ try:
         if(*tmp) printk("%x:%x,", (*tmp)->dev, (*tmp)->inode);
         else printk("0:0,");
     }
+
+    extern void print_cache_stats(void);    // pcache.c
     print_cache_stats();
     kpanic("*** get_node()\n");
 

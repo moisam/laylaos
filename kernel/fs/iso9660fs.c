@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: iso9660fs.c
  *    This file is part of LaylaOS.
@@ -481,46 +481,6 @@ static void iso9660_strncpy(char *dest, char *src, size_t len, int isdir)
 }
 
 
-#if 0
-
-/*
- * ISO9660 filenames take the format: 'FILENAME;ID'.
- *
- * This function compares the name of the file/dir passed to us in 'origname'
- * to the ISO9660 name in 'cdname', converting uppercase letters to lowercase
- * and ignoring the file ID number, including the semicolon, in 'cdname'.
- *
- * The length passed in 'len' is the strlen of 'cdname', not 'origname'. This
- * is because we can identify the end of 'origname' by finding the null-
- * terminating byte, while we can't find the end of 'cdname' as it might not
- * be null-terminated.
- *
- * This function enables us to compare a filename like 'boot' to the ISO9660 
- * name 'BOOT;1', for example.
- *
- * Returns:
- *    0 if the names as the same, non-zero otherwise.
- */
-static int iso9660_strncmp(char *cdname, char *origname, size_t len, int isdir)
-{
-    KDEBUG("iso9600_strncpy: cdname '%s', origname '%s'\n", cdname, origname);
-
-    // Alloc filenames on the stack to speed up comparison.
-    // This should be ok, as ISO9660 should be <= 255 chars, even with ISO9660
-    // extensions like Rock Ridge (upto 255 chars, 8 bits each) and Joliet
-    // (upto 64 UCS-2 chars, 16 bit each, for a total of 128 bytes).
-    char buf[len + 1];
-
-    iso9660_strncpy(buf, cdname, len, isdir);
-
-    KDEBUG("iso9600_strncpy: cdname '%s', buf '%s'\n", cdname, buf);
-
-    return strcmp(buf, origname);
-}
-
-#endif
-
-
 /*
  * Initialise and register the ISO9660 filesystem.
  */
@@ -542,11 +502,9 @@ long iso9660fs_read_super(dev_t dev, struct mount_info_t *d,
 {
     struct superblock_t *super;
     struct disk_req_t req;
-    physical_addr ignored;
+    physical_addr phys;
     int maj = MAJOR(dev);
     char *buf;
-    //ino_t root;
-    //struct iso9660_dirent_t *dent;
 
     if(maj >= NR_DEV || !bdev_tab[maj].strategy)
     {
@@ -560,11 +518,13 @@ long iso9660fs_read_super(dev_t dev, struct mount_info_t *d,
 
     A_memset(super, 0, sizeof(struct superblock_t));
 
-    if(get_next_addr(&ignored, &super->data, PTE_FLAGS_PW, REGION_PCACHE) != 0)
-    {
+   	if(!(phys = (physical_addr)pmmngr_alloc_block()))
+   	{
         kfree(super);
         return -EAGAIN;
     }
+
+    super->data = PHYS_TO_HIMEM(phys);
 
     /* Volume Descriptors start at sector 0x10 */
     super->blockno = 0x10;
@@ -586,8 +546,7 @@ read:
     req.write = 0;
 
 #define BAIL_OUT(err)   \
-        vmmngr_free_page(get_page_entry((void *)super->data));  \
-        vmmngr_flush_tlb_entry(super->data);    \
+        pmmngr_free_block((void *)phys);   \
         kfree(super);   \
         return err;
 
@@ -621,11 +580,6 @@ read:
         d->flags |= FS_SUPER_RDONLY;
         
         // the root node is stored in the Primary Volume Descriptor (PVD)
-        /*
-        dent = (struct iso9660_dirent_t *)(buf + 156);
-        root = GET_DWORD(dent->lba);
-        d->root = get_node(dev, root, 0);
-        */
         d->root = get_node(dev, 2, 0);
 
         KDEBUG("iso9660fs_read_super: d->block_size 0x%x\n", d->block_size);
@@ -664,7 +618,8 @@ void iso9660fs_put_super(dev_t dev, struct superblock_t *super)
 {
     struct lba_cache_t *c;
     struct lba_cacheent_t *cent, *next;
-    
+    physical_addr phys;
+
     for(c = lba_cache; c < &lba_cache[MAX_ISO9660_DEVICES]; c++)
     {
         kernel_mutex_lock(&c->lock);
@@ -687,8 +642,11 @@ void iso9660fs_put_super(dev_t dev, struct superblock_t *super)
         
         kernel_mutex_unlock(&c->lock);
 
-        vmmngr_free_page(get_page_entry((void *)super->data));
-        vmmngr_flush_tlb_entry(super->data);
+        if((phys = get_phys_addr(super->data)))
+        {
+            pmmngr_free_block((void *)phys);
+        }
+
         kfree(super);
 
         break;

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: ext2fs_hash.c
  *    This file is part of LaylaOS.
@@ -46,12 +46,16 @@
 #include <fs/ext2_hash.h>
 #include <mm/kheap.h>
 
-#define EXT_DIRTYPE(d)      \
-    (d->super) ? \
+#define EXT_DIRTYPE(d)              \
+    (d->super) ?                    \
         is_ext_dir_type((struct ext2_superblock_t *)(d->super->data)) : 0
 
-#define FAKE_DIRENT_SIZE    (sizeof(struct htree_fake_ent_t) + 4)
+#define FAKE_DIRENT_SIZE            (sizeof(struct htree_fake_ent_t) + 4)
 
+#define INFO_HAS_SUPER_STRUCT(info) !!(info->d->super)
+
+#define INFO_SUPER_STRUCT(info) \
+    ((struct ext2_superblock_t *)(info->d->super->data))
 
 static void init_hash_seed(volatile struct htree_incore_t *info);
 static uint32_t get_hash(volatile struct htree_incore_t *info,
@@ -126,10 +130,20 @@ static int init_count_limit(struct cached_page_t *buf, volatile struct htree_inc
 
     maxsz = info->d->block_size;
 
+    if(INFO_HAS_SUPER_STRUCT(info))
+    {
+        if(INFO_SUPER_STRUCT(info)->readonly_features & EXT2_FEATURE_RO_COMPAT_METADATA_CHKSUM)
+        {
+            maxsz -= sizeof(struct htree_tail_t);
+        }
+    }
+
+    /*
     if(info->super->readonly_features & EXT2_FEATURE_RO_COMPAT_METADATA_CHKSUM)
     {
         maxsz -= sizeof(struct htree_tail_t);
     }
+    */
 
     //printk("init_count_limit: maxsz %d\n", maxsz);
 
@@ -175,7 +189,7 @@ static uint32_t get_next_block(volatile struct htree_incore_t *info, int collisi
 
         // before we commit, make sure the next block has a collision so we 
         // can use it
-        ent = &((struct htree_ent_t *)buf)[1];
+        ent = &((struct htree_ent_t *)buf->virt)[1];
 
         // We use collisions when looking up entries.
         // We don't use them when getting all the dentries.
@@ -200,7 +214,13 @@ static uint32_t get_next_block(volatile struct htree_incore_t *info, int collisi
         info->htree_block = buf;
     }
 
-    ent = &((struct htree_ent_t *)info->htree_block)[cur_ent];
+    ent = &((struct htree_ent_t *)info->htree_block->virt)[cur_ent];
+
+    /*
+    printk("get_next_block: collisions_only %d, cur_ent %u, h 0x%x (0x%x)\n", collisions_only, cur_ent, ent->hash, (ent->hash & 1));
+    struct htree_ent_t *entries = (struct htree_ent_t *)info->htree_block->virt;
+    for(unsigned int x = 0; x < info->count; x++) printk("get_next_block: [%u] hash 0x%x\n", x, entries[info->first_ent + x].hash);
+    */
 
     // We use collisions when looking up entries.
     // We don't use them when getting all the dentries.
@@ -243,13 +263,15 @@ static size_t block_count_for_newent(volatile struct htree_incore_t *info)
 }
 
 
-static struct htree_incore_t *init_info_struct(struct fs_node_t *dir, 
-                                               struct mount_info_t *d,
-                                               int ext_dir_type)
+static volatile 
+struct htree_incore_t *init_info_struct(struct fs_node_t *dir, 
+                                        struct mount_info_t *d,
+                                        volatile struct htree_incore_t *info,
+                                        int ext_dir_type)
 {
     struct cached_page_t *buf;
     struct htree_root_t *hroot;
-    struct htree_incore_t *info;
+    //struct htree_incore_t *info;
     size_t offset = 0;
 
     if(!(buf = get_relative_block(dir, d, 0, 0)))
@@ -267,16 +289,18 @@ static struct htree_incore_t *init_info_struct(struct fs_node_t *dir,
 
     offset = hroot->root_infolen + (2 * (sizeof(struct htree_fake_ent_t) + 4));
 
+    /*
     if(!(info = kmalloc(sizeof(struct htree_incore_t))))
     {
         release_cached_page(buf);
         return NULL;
     }
+    */
 
-    info->lblock = dir->blocks[0];
+    //info->lblock = dir->blocks[0];
     info->first_ent = (offset / sizeof(struct htree_ent_t));
     info->cur_ent = info->first_ent;
-    info->super = (struct ext2_superblock_t *)(d->super->data);
+    //info->super = (struct ext2_superblock_t *)(d->super->data);
     info->d = d;
     info->htree_block = buf;
     info->ext_dir_type = ext_dir_type;
@@ -287,7 +311,7 @@ static struct htree_incore_t *init_info_struct(struct fs_node_t *dir,
 
     if(init_count_limit(buf, info) < 0)
     {
-        kfree(info);
+        //kfree(info);
         release_cached_page(buf);
         return NULL;
     }
@@ -298,28 +322,31 @@ static struct htree_incore_t *init_info_struct(struct fs_node_t *dir,
 
 static int init_info2_struct(volatile struct htree_incore_t *info, 
                              size_t lblock,
-                             volatile struct htree_incore_t **res)
+                             volatile struct htree_incore_t *info2 /*,
+                             volatile struct htree_incore_t **res */)
 {
     struct cached_page_t *buf;
-    struct htree_incore_t *info2;
+    //struct htree_incore_t *info2;
 
-    *res = NULL;
+    // *res = NULL;
 
     if(!(buf = get_relative_block(info->dir, info->d, lblock, 0)))
     {
         return -EIO;
     }
 
+    /*
     if(!(info2 = kmalloc(sizeof(struct htree_incore_t))))
     {
         release_cached_page(buf);
         return -ENOMEM;
     }
+    */
 
     //info2->lblock = lblock;
     info2->first_ent = 1;
     info2->cur_ent = 1;
-    info2->super = info->super;
+    //info2->super = info->super;
     info2->d = info->d;
     info2->htree_block = buf;
     info2->ext_dir_type = info->ext_dir_type;
@@ -332,12 +359,12 @@ static int init_info2_struct(volatile struct htree_incore_t *info,
 
     if(init_count_limit(buf, info2) < 0)
     {
-        kfree(info2);
+        //kfree(info2);
         release_cached_page(buf);
         return -EINVAL;
     }
 
-    *res = info2;
+    // *res = info2;
 
     return 0;
 }
@@ -587,9 +614,13 @@ static void add_htree_ent(volatile struct htree_incore_t *info,
         kpanic("Unable to split HTree node -- not yet implemented!\n");
     }
 
+    /*
+    printk("add_htree_ent: count %u, first_ent %u, cur_ent %u, hash 0x%x\n", count, info->first_ent, info->cur_ent, hash);
+    for(unsigned int x = 0; x < count; x++) printk("add_htree_ent: [%u] hash 0x%x\n", x, entries[info->first_ent + x].hash);
+    */
+
     if(count > 0)
     {
-        char *tmp;
         size_t sz;
 
         sz = (count + info->first_ent - info->cur_ent - 1) * sizeof(struct htree_ent_t);
@@ -602,14 +633,23 @@ static void add_htree_ent(volatile struct htree_incore_t *info,
 
         if(sz)
         {
-            if(!(tmp = kmalloc(sz)))
+            // we should be able to accommodate this on the stack
+            char __tmp[128];
+            char *tmp = (sz <= 128) ? __tmp : kmalloc(sz);
+
+            if(!tmp)
+            //if(!(tmp = kmalloc(sz)))
             {
                 kpanic("Failed to alloc temp memory (in add_htree_ent())\n");
             }
 
             A_memcpy(tmp, &entries[info->cur_ent + 1], sz);
             A_memcpy(&entries[info->cur_ent + 2], tmp, sz);
-            kfree(tmp);
+
+            if(tmp != __tmp)
+            {
+                kfree(tmp);
+            }
         }
     }
 
@@ -643,7 +683,7 @@ long split_indexed_block(volatile struct htree_incore_t *info,
     struct cached_page_t *buf1 = NULL, *buf2 = NULL;
     struct htree_root_t *hroot;
     struct htree_fake_ent_t *fent;
-    struct ext2_superblock_t *super;
+    //struct ext2_superblock_t *super;
     struct hashed_ent_t *hent, entry_head;
     struct ext2_dirent_t *dent, *newdent;
     char *tmp = NULL, *namebuf = NULL, *name, *block;
@@ -658,11 +698,18 @@ long split_indexed_block(volatile struct htree_incore_t *info,
     entry_head.next = NULL;
     blocks = ((info->dir->size + (info->d->block_size - 1)) / info->d->block_size);
 
+    if(!INFO_HAS_SUPER_STRUCT(info))
+    {
+        return -EINVAL;
+    }
+
+    /*
     if(!info->d->super || 
        !(super = (struct ext2_superblock_t *)(info->d->super->data)))
     {
         return -EINVAL;
     }
+    */
 
     if(!(tmp = kmalloc(info->d->block_size)))
     {
@@ -684,6 +731,8 @@ long split_indexed_block(volatile struct htree_incore_t *info,
 
     if(first_split)
     {
+        //printk("split_indexed_block: 1 '%s', %lu, %lu\n", filename, block1, blocks);
+
         if(!(buf2 = get_relative_block(info->dir, info->d, 0, 0)))
         {
             res = -EIO;
@@ -709,7 +758,8 @@ long split_indexed_block(volatile struct htree_incore_t *info,
 
         size_t maxsz = info->d->block_size;
 
-        if(super->readonly_features & EXT2_FEATURE_RO_COMPAT_METADATA_CHKSUM)
+        if(INFO_SUPER_STRUCT(info)->readonly_features & EXT2_FEATURE_RO_COMPAT_METADATA_CHKSUM)
+        //if(super->readonly_features & EXT2_FEATURE_RO_COMPAT_METADATA_CHKSUM)
         {
             maxsz -= sizeof(struct htree_tail_t);
         }
@@ -729,6 +779,8 @@ long split_indexed_block(volatile struct htree_incore_t *info,
     }
     else
     {
+        //printk("split_indexed_block: 2 '%s', %lu, %lu\n", filename, block1, blocks);
+
         // Save entries from the first block into the buffer
         A_memcpy(tmp, (void *)buf1->virt, info->d->block_size);
     }
@@ -960,7 +1012,7 @@ static long hash_add(volatile struct htree_incore_t *info,
                      uint32_t hash)
 {
     struct htree_ent_t *start, *end, *mid;
-    volatile struct htree_incore_t *info2;
+    volatile struct htree_incore_t info2;
     size_t lblock, tmp;
     long res;
 
@@ -1047,9 +1099,9 @@ static long hash_add(volatile struct htree_incore_t *info,
         return res;
     }
 
-    res = hash_add(info2, file, filename, fnamelen, hash);
-    release_cached_page(info2->htree_block);
-    kfree((void *)info2);
+    res = hash_add(&info2, file, filename, fnamelen, hash);
+    release_cached_page(info2.htree_block);
+    //kfree((void *)info2);
 
     return res;
 }
@@ -1132,7 +1184,7 @@ static long hash_getdents(volatile struct htree_incore_t *info,
                           off_t *pos, size_t *actual_bytes, int *done)
 {
     struct htree_ent_t *start, *end;
-    volatile struct htree_incore_t *info2;
+    volatile struct htree_incore_t info2;
     size_t lblock, i, start_offset;
     long res, count = 0;
 
@@ -1207,13 +1259,13 @@ static long hash_getdents(volatile struct htree_incore_t *info,
             return res;
         }
 
-        res = hash_getdents(info2, pos, actual_bytes, done);
+        res = hash_getdents(&info2, pos, actual_bytes, done);
 
-        info->buf = info2->buf;
-        info->bufsz = info2->bufsz;
+        info->buf = info2.buf;
+        info->bufsz = info2.bufsz;
 
-        release_cached_page(info2->htree_block);
-        kfree((void *)info2);
+        release_cached_page(info2.htree_block);
+        //kfree((void *)info2);
         start++;
 
         if(res >= 0)
@@ -1311,7 +1363,7 @@ static long hash_lookup(volatile struct htree_incore_t *info,
                         struct dirent **entry)
 {
     struct htree_ent_t *start, *end, *mid;
-    volatile struct htree_incore_t *info2;
+    volatile struct htree_incore_t info2;
     size_t lblock;
     long res;
 
@@ -1372,9 +1424,9 @@ static long hash_lookup(volatile struct htree_incore_t *info,
         return res;
     }
 
-    res = hash_lookup(info2, filename, fnamelen, hash, entry);
-    release_cached_page(info2->htree_block);
-    kfree((void *)info2);
+    res = hash_lookup(&info2, filename, fnamelen, hash, entry);
+    release_cached_page(info2.htree_block);
+    //kfree((void *)info2);
 
     return res;
 }
@@ -1604,6 +1656,18 @@ static void init_hash_seed(volatile struct htree_incore_t *info)
     info->hash_seed[2] = 0;
     info->hash_seed[3] = 0;
 
+    if(INFO_HAS_SUPER_STRUCT(info))
+    {
+        if(INFO_SUPER_STRUCT(info)->version_major >= 1)
+        {
+            info->hash_seed[0] = INFO_SUPER_STRUCT(info)->hash_seed[0];
+            info->hash_seed[1] = INFO_SUPER_STRUCT(info)->hash_seed[1];
+            info->hash_seed[2] = INFO_SUPER_STRUCT(info)->hash_seed[2];
+            info->hash_seed[3] = INFO_SUPER_STRUCT(info)->hash_seed[3];
+        }
+    }
+
+    /*
     if(info->super->version_major >= 1)
     {
         info->hash_seed[0] = info->super->hash_seed[0];
@@ -1611,6 +1675,7 @@ static void init_hash_seed(volatile struct htree_incore_t *info)
         info->hash_seed[2] = info->super->hash_seed[2];
         info->hash_seed[3] = info->super->hash_seed[3];
     }
+    */
 
     if(info->hash_seed[0] == 0 && info->hash_seed[1] == 0 &&
        info->hash_seed[2] == 0 && info->hash_seed[3] == 0)
@@ -1631,7 +1696,7 @@ long ext2_finddir_hashed(struct fs_node_t *dir, char *filename,
                          struct dirent **entry, struct mount_info_t *d, 
                          int flags)
 {
-    volatile struct htree_incore_t *info;
+    volatile struct htree_incore_t info;
     long res;
     uint32_t hash;
     size_t fnamelen = strlen(filename);
@@ -1659,18 +1724,19 @@ long ext2_finddir_hashed(struct fs_node_t *dir, char *filename,
         FALLBACK_TO_LINEAR_SEARCH();
     }
 
-    if(!(info = init_info_struct(dir, d, !!(flags & DIR_LOOKUP_FLAG_HAS_DIRTYPE))))
+    if(!init_info_struct(dir, d, &info, !!(flags & DIR_LOOKUP_FLAG_HAS_DIRTYPE)))
+    //if(!(info = init_info_struct(dir, d, !!(flags & DIR_LOOKUP_FLAG_HAS_DIRTYPE))))
     {
         FALLBACK_TO_LINEAR_SEARCH();
     }
 
-    init_hash_seed(info);
-    info->lookup_flags = flags;
-    hash = get_hash(info, filename, fnamelen, info->hash_ver);
+    init_hash_seed(&info);
+    info.lookup_flags = flags;
+    hash = get_hash(&info, filename, fnamelen, info.hash_ver);
 
-    res = hash_lookup(info, filename, fnamelen, hash, entry);
-    release_cached_page(info->htree_block);
-    kfree((void *)info);
+    res = hash_lookup(&info, filename, fnamelen, hash, entry);
+    release_cached_page(info.htree_block);
+    //kfree((void *)info);
 
     return res;
 }
@@ -1684,7 +1750,7 @@ long ext2_getdents_hashed(struct fs_node_t *dir,
                           off_t *pos, void *buf, int bufsz,
                           struct mount_info_t *d)
 {
-    volatile struct htree_incore_t *info;
+    volatile struct htree_incore_t info;
     int ext_dir_type, done = 0;
     long res;
     size_t actual_bytes = 0;
@@ -1692,13 +1758,14 @@ long ext2_getdents_hashed(struct fs_node_t *dir,
 
     ext_dir_type = EXT_DIRTYPE(d);
 
-    if(!(info = init_info_struct(dir, d, ext_dir_type)))
+    if(!init_info_struct(dir, d, &info, ext_dir_type))
+    //if(!(info = init_info_struct(dir, d, ext_dir_type)))
     {
         FALLBACK_TO_LINEAR_GETDENTS();
     }
 
-    info->buf = buf;
-    info->bufsz = bufsz;
+    info.buf = buf;
+    info.bufsz = bufsz;
 
     /*
     switch_tty(1);
@@ -1709,9 +1776,9 @@ long ext2_getdents_hashed(struct fs_node_t *dir,
     if(info->count == 4 && info->limit == 124) runs++;
     */
 
-    res = hash_getdents(info, pos, &actual_bytes, &done);
-    release_cached_page(info->htree_block);
-    kfree((void *)info);
+    res = hash_getdents(&info, pos, &actual_bytes, &done);
+    release_cached_page(info.htree_block);
+    //kfree((void *)info);
 
     (*pos) = old_pos + actual_bytes;
 
@@ -1744,7 +1811,7 @@ long ext2_deldir_hashed(struct fs_node_t *dir, struct dirent *entry,
 long ext2_addir_hashed(struct fs_node_t *dir, struct fs_node_t *file,
                        char *filename, struct mount_info_t *d)
 {
-    volatile struct htree_incore_t *info;
+    volatile struct htree_incore_t info;
     long res;
     uint32_t hash;
     size_t fnamelen = strlen(filename);
@@ -1761,18 +1828,19 @@ long ext2_addir_hashed(struct fs_node_t *dir, struct fs_node_t *file,
         return -ENAMETOOLONG;
     }
 
-    if(!(info = init_info_struct(dir, d, ext_dir_type)))
+    if(!init_info_struct(dir, d, &info, ext_dir_type))
+    //if(!(info = init_info_struct(dir, d, ext_dir_type)))
     {
         return -ENOMEM;
     }
 
-    init_hash_seed(info);
-    info->lookup_flags = flags;
-    hash = get_hash(info, filename, fnamelen, info->hash_ver);
+    init_hash_seed(&info);
+    info.lookup_flags = flags;
+    hash = get_hash(&info, filename, fnamelen, info.hash_ver);
 
-    res = hash_add(info, file, filename, fnamelen, hash);
-    release_cached_page(info->htree_block);
-    kfree((void *)info);
+    res = hash_add(&info, file, filename, fnamelen, hash);
+    release_cached_page(info.htree_block);
+    //kfree((void *)info);
 
     return res;
 }

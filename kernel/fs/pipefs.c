@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: pipefs.c
  *    This file is part of LaylaOS.
@@ -74,7 +74,12 @@ void pipefs_free_node(struct fs_node_t *node)
      */
     if(node->size && node->blocks[2])
     {
-        vmmngr_free_pages((virtual_addr)node->size, node->blocks[2]);
+        physical_addr phys;
+
+        if((phys = get_phys_addr(node->size)))
+        {
+            pmmngr_free_blocks((void *)phys, node->blocks[2] / PAGE_SIZE);
+        }
     }
 
     node->size = 0;
@@ -91,23 +96,21 @@ void pipefs_free_node(struct fs_node_t *node)
 struct fs_node_t *pipefs_get_node(void)
 {
     struct fs_node_t *node;
-    physical_addr phys;
-    int flags = (this_core->cur_task->user ? I86_PTE_USER : 0) |
-                  I86_PTE_PRESENT | I86_PTE_WRITABLE;
+    void *phys;
 
     // get a free node
     if((node = get_empty_node()) == NULL)
     {
         return NULL;
     }
-    
-    if((node->size = vmmngr_alloc_and_map(DEFAULT_PIPE_SIZE, 0,
-                                          flags, &phys, 
-                                          REGION_PIPE)) == 0)
+
+    if(!(phys = pmmngr_alloc_blocks(DEFAULT_PIPE_SIZE / PAGE_SIZE)))
     {
         node->refs = 0;
         return NULL;
     }
+
+    node->size = PHYS_TO_HIMEM(phys);
 
     // exactly 2 = reader + writer
     node->refs = 2;
@@ -139,8 +142,6 @@ long pipefs_set_size(struct fs_node_t *node, int __newsz)
     uintptr_t newbuf, oldbuf;
     size_t oldsz, newsz = __newsz;
     physical_addr phys;
-    int flags = (this_core->cur_task->user ? I86_PTE_USER : 0) |
-                  I86_PTE_PRESENT | I86_PTE_WRITABLE;
 
     if(newsz < PAGE_SIZE)
     {
@@ -163,12 +164,12 @@ long pipefs_set_size(struct fs_node_t *node, int __newsz)
         return -EBUSY;
     }
 
-    if((newbuf = vmmngr_alloc_and_map(newsz, 0,
-                                      flags, &phys, 
-                                      REGION_PIPE)) == 0)
+    if(!(phys = (physical_addr)pmmngr_alloc_blocks(newsz / PAGE_SIZE)))
     {
         return -EBUSY;
     }
+
+    newbuf = PHYS_TO_HIMEM(phys);
 
     kernel_mutex_lock(&node->lock);
     oldbuf = node->size;
@@ -179,7 +180,10 @@ long pipefs_set_size(struct fs_node_t *node, int __newsz)
 
     if(oldbuf && oldsz)
     {
-        vmmngr_free_pages((virtual_addr)oldbuf, oldsz);
+        if((phys = get_phys_addr(oldbuf)))
+        {
+            pmmngr_free_blocks((void *)phys, oldsz / PAGE_SIZE);
+        }
     }
 
     return node->blocks[2];
@@ -234,6 +238,9 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
     //   - sleep and wait for input otherwise
     while(EMPTY_PIPE(head, tail))
     {
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+
         selwakeup(&node->select_channel);   // wakeup writers
 
         if(node->refs < 2)     // no more writers
@@ -250,21 +257,7 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
 
         // wait for writers
         set_task_waitchan(this_core->cur_task, &node->select_channel);
-        block_task_timeout(this_core->cur_task, PIT_FREQUENCY);
-        /*
-        set_task_waitchan(this_core->cur_task, &node->select_channel);
-        set_task_state(this_core->cur_task, TASK_SLEEPING);
-        scheduler();
-        */
-#if 0
-        /*
-        if(block_task2(&node->select_channel, PIT_FREQUENCY) == EINTR)
-        {
-            return -EINTR;
-        }
-        */
-        block_task(&node->select_channel, 1);
-#endif
+        block_task_timeout(this_core->cur_task, 2);
 
        	if(get_task_waking_signal(this_core->cur_task))
         {
@@ -279,6 +272,27 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
 
     while(count != 0 && !EMPTY_PIPE(head, tail))
     {
+        size_t n;
+
+        // try and read as much as possible to reduce reading overhead
+        if(head < tail)
+        {
+            // we have limited space till we hit the tail
+            n = MIN(count, (tail - head));
+        }
+        else
+        {
+            // we have space till the end of buffer space
+            // in the next loop the head will start from 0
+            n = MIN(count, (PIPE_SIZE(node) - head));
+        }
+
+        A_memcpy(d, (unsigned char *)node->size + head, n);
+        d += n;
+        count -= n;
+        head = (head + n) & (PIPE_SIZE(node) - 1);
+
+        /*
         count--;
 
         // *d = s[head];
@@ -286,6 +300,7 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
         d++;
 
         head = (head + 1) & (PIPE_SIZE(node) - 1);
+        */
         node->blocks[1] = head;
         tail = node->blocks[0];
     }
@@ -293,6 +308,7 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
     kernel_mutex_unlock(&node->lock);
 
     selwakeup(&node->select_channel);   // wakeup writers
+
     return d - buf;
 }
 
@@ -384,10 +400,14 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
 
     while(count != 0)
     {
-        count--;
+        size_t n;
+        //count--;
 
         while(FULL_PIPE(node, head, tail))
         {
+            set_task_waking_signal(this_core->cur_task, 0);
+            __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+
             kernel_mutex_unlock(&node->lock);
             selwakeup(&node->select_channel);   // wakeup readers
 
@@ -406,21 +426,7 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
 
             // wait for readers
             set_task_waitchan(this_core->cur_task, &node->select_channel);
-            block_task_timeout(this_core->cur_task, PIT_FREQUENCY);
-            /*
-            set_task_waitchan(this_core->cur_task, &node->select_channel);
-            set_task_state(this_core->cur_task, TASK_SLEEPING);
-            scheduler();
-            */
-#if 0
-            /*
-            if(block_task2(&node->select_channel, PIT_FREQUENCY) == EINTR)
-            {
-                return -EINTR;
-            }
-            */
-            block_task(&node->select_channel, 1);
-#endif
+            block_task_timeout(this_core->cur_task, 2);
 
         	if(get_task_waking_signal(this_core->cur_task))
         	{
@@ -433,10 +439,35 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
             kernel_mutex_lock(&node->lock);
         }
 
+        // try and write as much as possible to reduce writing overhead
+        if(tail < head)
+        {
+            // we have limited space till we hit the head
+            n = MIN(count, (head - 1 - tail));
+        }
+        else if(head == 0)
+        {
+            // we have till end of buffer - 1
+            n = MIN(count, (PIPE_SIZE(node) - 1 - tail));
+        }
+        else
+        {
+            // we have space till the end of buffer space
+            // in the next loop the tail will start from 0
+            n = MIN(count, (PIPE_SIZE(node) - tail));
+        }
+
+        A_memcpy((unsigned char *)node->size + tail, d, n);
+        d += n;
+        count -= n;
+        tail = (tail + n) & (PIPE_SIZE(node) - 1);
+
+        /*
         //s[tail] = *d++;
         ((unsigned char *)node->size)[tail] = *d++;
 
         tail = (tail + 1) & (PIPE_SIZE(node) - 1);
+        */
         node->blocks[0] = tail;
         head = node->blocks[1];
     }
@@ -452,7 +483,7 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
 /*
  * Perform a select operation on a pipe.
  */
-long pipefs_select(struct file_t *f, int which)
+long pipefs_select(struct file_t *f, int which, int record)
 {
     volatile unsigned long head, tail;
 
@@ -473,7 +504,10 @@ long pipefs_select(struct file_t *f, int which)
     			return 1;
     		}
     		
-    		selrecord(&f->node->select_channel);
+    		if(record)
+    		{
+        		selrecord(&f->node->select_channel);
+    		}
     		break;
 
     	case FWRITE:
@@ -488,7 +522,10 @@ long pipefs_select(struct file_t *f, int which)
     			return 1;
     		}
 		    
-    		selrecord(&f->node->select_channel);
+    		if(record)
+    		{
+        		selrecord(&f->node->select_channel);
+    		}
     		break;
 
     	case 0:

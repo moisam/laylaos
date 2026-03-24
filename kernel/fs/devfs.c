@@ -535,7 +535,7 @@ long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
         i++;
         dnode = dnode->next;
     }
-    
+
     return -ENOENT;
 }
 

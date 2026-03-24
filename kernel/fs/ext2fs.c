@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ext2fs.c
  *    This file is part of LaylaOS.
@@ -147,10 +147,10 @@ long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
     struct superblock_t *super;
     struct ext2_superblock_t *psuper;
     struct disk_req_t req;
-    physical_addr ignored;
     int maj = MAJOR(dev);
     uint32_t bgcount[2];
     size_t bgd_size, bgd_block;
+    void *phys, *tmpphys;
 
     if(maj >= NR_DEV || !bdev_tab[maj].strategy)
     {
@@ -164,11 +164,13 @@ long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
 
     A_memset(super, 0, sizeof(struct superblock_t));
 
-    if(get_next_addr(&ignored, &super->data, PTE_FLAGS_PW, REGION_PCACHE) != 0)
-    {
+   	if(!(phys = pmmngr_alloc_block()))
+   	{
         kfree(super);
         return -EAGAIN;
     }
+
+    super->data = PHYS_TO_HIMEM(phys);
 
     KDEBUG("ext2_read_super: super->data 0x%lx\n", super->data);
     A_memset((void *)super->data, 0, PAGE_SIZE);
@@ -216,8 +218,7 @@ long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
     printk("ext2: reading superblock (dev 0x%x)\n", dev);
 
 #define BAIL_OUT(err)   \
-        vmmngr_free_page(get_page_entry((void *)super->data));  \
-        vmmngr_flush_tlb_entry(super->data);    \
+        pmmngr_free_block(phys);   \
         kfree(super);   \
         return err;
 
@@ -332,13 +333,13 @@ long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
     bgd_block = (d->block_size <= 1024) ? 2 : 1;
     bgd_size = get_bgd_size(psuper);
 
-    if(!(super->privdata = 
-            vmmngr_alloc_and_map(align_up(bgd_size), 0, PTE_FLAGS_PW, NULL, REGION_DMA)))
+    if(!(tmpphys = pmmngr_alloc_blocks(align_up(bgd_size) / PAGE_SIZE)))
     {
         printk("ext2: insufficient memory to load block group descriptor table\n");
         BAIL_OUT(-ENOMEM);
     }
 
+    super->privdata = PHYS_TO_HIMEM(tmpphys);
     A_memset((void *)super->privdata, 0, bgd_size);
     req.dev = dev;
     req.data = super->privdata;
@@ -352,30 +353,11 @@ long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
     if(bdev_tab[maj].strategy(&req) < 0)
     {
         printk("ext2: failed to read from disk -- aborting mount\n");
-        vmmngr_free_pages(super->privdata, super->privdata + align_up(bgd_size));
+        pmmngr_free_blocks(tmpphys, align_up(bgd_size) / PAGE_SIZE);
         BAIL_OUT(-EIO);
     }
 
 #undef BAIL_OUT
-
-
-    /*
-    struct block_group_desc_t *tab = (struct block_group_desc_t *)super->privdata;
-
-    for(int x = 0; x < 20; x++)
-    {
-        printk("[%d] %d, %d, %d, %d, %d, %d\n", x,
-            tab[x].block_bitmap_addr,
-            tab[x].inode_bitmap_addr,
-            tab[x].inode_table_addr,
-            tab[x].unalloc_blocks,
-            tab[x].unalloc_inodes,
-            tab[x].dir_count);
-    }
-
-    if(dev != 0x1fa) for(;;);
-    */
-
 
     printk("ext2: reading root node\n");
     d->root = get_node(dev, EXT2_ROOT_INO, 0);
@@ -550,6 +532,7 @@ long ext2_write_super(dev_t dev, struct superblock_t *super)
 void ext2_put_super(dev_t dev, struct superblock_t *super)
 {
     struct ext2_superblock_t *psuper;
+    physical_addr phys;
 
     if(!super || !super->data)
     {
@@ -569,12 +552,19 @@ void ext2_put_super(dev_t dev, struct superblock_t *super)
     if(super->privdata)
     {
         size_t bgd_size = get_bgd_size((struct ext2_superblock_t *)(super->data));
-        vmmngr_free_pages(super->privdata, super->privdata + align_up(bgd_size));
+
+        if((phys = get_phys_addr(super->privdata)))
+        {
+            pmmngr_free_blocks((void *)phys, align_up(bgd_size) / PAGE_SIZE);
+        }
+
         super->privdata = 0;
     }
 
-    vmmngr_free_page(get_page_entry((void *)super->data));
-    vmmngr_flush_tlb_entry(super->data);
+    if((phys = get_phys_addr(super->data)))
+    {
+        pmmngr_free_block((void *)phys);
+    }
 
     kfree(super);
 }
@@ -1648,6 +1638,8 @@ long ext2_alloc_inode(struct fs_node_t *new_node)
 }
 
 
+#if 0
+
 /*
 const int bit_count[256] =
 {
@@ -1682,6 +1674,8 @@ static uint32_t calc_unalloc_blocks(volatile uint8_t *bitmap, uint32_t blocks_pe
 
     return blocks_per_group - count;
 }
+
+#endif
 
 
 /*
@@ -2169,6 +2163,7 @@ long ext2_finddir_by_inode_internal(struct fs_node_t *dir,
 long ext2_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
 {
     struct bgd_table_info_t bgd;
+    long res;
 
     if(get_bgd_table(dir->dev, &bgd) < 0)
     {
@@ -2177,7 +2172,10 @@ long ext2_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
     
     if(dir->flags & FS_NODE_INDEXED_DIR)
     {
-        return ext2_addir_hashed(dir, file, filename, bgd.d);
+        kernel_mutex_lock(&dir->lock);
+        res = ext2_addir_hashed(dir, file, filename, bgd.d);
+        kernel_mutex_unlock(&dir->lock);
+        return res;
     }
 
     return ext2_addir_internal(dir, file, filename, bgd.d);
@@ -2209,6 +2207,8 @@ long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
     }
     */
 
+    kernel_mutex_lock(&dir->lock);
+
     blocks = ((dir->size + (d->block_size - 1)) / d->block_size);
 
     while((res = linear_dir_add(dir, file, filename,
@@ -2217,6 +2217,7 @@ long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
         /*
         if(res != -ENOBUFS)
         {
+            kernel_mutex_unlock(&dir->lock);
             return res;
         }
         */
@@ -2227,7 +2228,7 @@ long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
             // convert this directory to an indexed one
             if(d->super)
             {
-                struct htree_incore_t *info;
+                struct htree_incore_t info;
                 struct ext2_superblock_t *super =
                         (struct ext2_superblock_t *)(d->super->data);
 
@@ -2237,24 +2238,29 @@ long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
                     // create new blocks
                     if(add_blocks(dir, d, 2) < 0)
                     {
+                        kernel_mutex_unlock(&dir->lock);
                         return -ENOBUFS;
                     }
 
                     // We don't need a full info struct as we only need it for hashing
+                    /*
                     if(!(info = kmalloc(sizeof(struct htree_incore_t))))
                     {
+                        kernel_mutex_unlock(&dir->lock);
                         return -ENOMEM;
                     }
+                    */
 
-                    info->super = super;
-                    info->d = d;
-                    info->hash_ver = DEFAULT_HASH(d);
-                    info->dir = dir;
+                    //info.super = super;
+                    info.d = d;
+                    info.hash_ver = DEFAULT_HASH(d);
+                    info.dir = dir;
 
-                    res = split_indexed_block(info, file, filename, 1, 1);
+                    res = split_indexed_block(&info, file, filename, 1, 1);
 
-                    kfree(info);
+                    //kfree(info);
 
+                    kernel_mutex_unlock(&dir->lock);
                     return res;
                 }
             }
@@ -2262,6 +2268,7 @@ long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
             // Reached end of dir. Try to create a new block at the end
             if(!(buf = get_relative_block(dir, d, offset, BMAP_FLAG_CREATE)))
             {
+                kernel_mutex_unlock(&dir->lock);
                 return -EIO;
             }
 
@@ -2270,6 +2277,7 @@ long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
             if((res = linear_dir_add(dir, file, filename,
                                         d, fnamelen, offset)) < 0)
             {
+                kernel_mutex_unlock(&dir->lock);
                 return res;
             }
 
@@ -2286,6 +2294,8 @@ long ext2_addir_internal(struct fs_node_t *dir, struct fs_node_t *file,
         dir->size = sz;
         dir->ctime = dir->mtime;
     }
+
+    kernel_mutex_unlock(&dir->lock);
 
     return 0;
 }

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: mount.c
  *    This file is part of LaylaOS.
@@ -61,8 +61,8 @@ void sync_super(dev_t dev)
     struct mount_info_t *ld = &mounttab[NR_SUPER];
     time_t tm = now();
 
-    kernel_mutex_lock(&mount_table_mutex);
-    
+    //kernel_mutex_lock(&mount_table_mutex);
+
     for( ; d < ld; d++)
     {
         if(d->dev == 0)
@@ -74,22 +74,6 @@ void sync_super(dev_t dev)
         {
             continue;
         }
-
-        /*
-        if(kernel_mutex_trylock(&d->flock))
-        {
-            continue;    // locked means busy, ignore it
-        }
-
-        kernel_mutex_unlock(&d->flock);
-        
-        if(kernel_mutex_trylock(&d->ilock))
-        {
-            continue;    // locked means busy, ignore it
-        }
-
-        kernel_mutex_unlock(&d->ilock);
-        */
 
         kernel_mutex_lock(&d->lock);
 
@@ -121,7 +105,7 @@ void sync_super(dev_t dev)
         }
     }
 
-    kernel_mutex_unlock(&mount_table_mutex);
+    //kernel_mutex_unlock(&mount_table_mutex);
 }
 
 
@@ -135,12 +119,12 @@ struct mount_info_t *get_mount_info(dev_t dev)
 {
     struct mount_info_t *d = mounttab;
     struct mount_info_t *ld = &mounttab[NR_SUPER];
-    
+
     kernel_mutex_lock(&mount_table_mutex);
 
     for( ; d < ld; d++)
     {
-        if(d->dev && d->dev == dev)
+        if(/* d->dev && */ d->dev == dev)
         {
             kernel_mutex_unlock(&mount_table_mutex);
             return d;
@@ -313,13 +297,6 @@ long vfs_mount(dev_t dev, char *path, char *fstype, int flags, char *options)
     
     if(path[0] == '/' && path[1] == '\0')
     {
-        /*
-        if(!fsysroot)
-        {
-            return -EINVAL;
-        }
-        */
-        
         mounting_sysroot = 1;
     }
 

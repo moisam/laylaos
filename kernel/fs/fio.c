@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: fio.c
  *    This file is part of LaylaOS.
@@ -33,28 +33,6 @@
 #include <fs/devpts.h>
 #include <mm/kheap.h>
 #include <kernel/net/socket.h>
-
-
-/*
-long fdnode(int fd, struct task_t *t, struct file_t **f, struct fs_node_t **node)
-{
-    *f = NULL;
-    *node = NULL;
-
-    if(!t || !t->ofiles)
-    {
-        return -EBADF;
-    }
-
-    if(fd < 0 || fd >= NR_OPEN ||
-       !(*f = t->ofiles->ofile[fd]) || !(*node = (*f)->node))
-    {
-        return -EBADF;
-    }
-    
-    return 0;
-}
-*/
 
 
 static long fdalloc(int *res)
@@ -117,7 +95,6 @@ long falloc(int *_fd, struct file_t **_f)
     	kernel_mutex_lock(&f->lock);
 		if(!f->refs)
 		{
-        	//f->refs++;
             __sync_fetch_and_add(&(f->refs), 1);
         	kernel_mutex_unlock(&f->lock);
 		    break;
@@ -155,7 +132,6 @@ long closef(struct file_t *f)
     __sync_fetch_and_sub(&(f->refs), 1);
 
 	if(f->refs)
-	//if(--f->refs)
 	{
 	    // last close of a loopback device
 	    if(f->refs == 1 && f->node && (f->node->flags & FS_NODE_LOOP_BACKING))
@@ -174,7 +150,6 @@ long closef(struct file_t *f)
 
 	    if(IS_SOCKET(node))
     	{
-    	    //sockfs_close(f);
     	    socket_close(node->data);
             node->data = 0;
             node->links = 0;

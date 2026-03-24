@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: dummy.c
  *    This file is part of LaylaOS.
@@ -64,10 +64,11 @@ long dummyfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
 /*
  * Perform a dummy select operation.
  */
-long dummyfs_select(struct file_t *f, int which)
+long dummyfs_select(struct file_t *f, int which, int record)
 {
     UNUSED(f);
     UNUSED(which);
+    UNUSED(record);
 
 	return 1;
 }

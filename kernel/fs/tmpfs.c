@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: tmpfs.c
  *    This file is part of LaylaOS.
@@ -225,8 +225,6 @@ long tmpfs_read_super(dev_t dev, struct mount_info_t *d,
     kernel_mutex_unlock(&tmpfs_lock);
 
     if((res = tmpfs_mkdir(d->root, d->root)) < 0)
-    //if((res = tmpfs_mkdir(tmpfs_dev[min].root,
-    //                        tmpfs_dev[min].root->inode)) < 0)
     {
         d->root = NULL;
         return res;
@@ -949,7 +947,7 @@ void tmpfs_free(dev_t dev, uint32_t block_no)
         return;
     }
 
-    // If this block is cached, invalidated the cache as it might end up
+    // If this block is cached, invalidate the cache as it might end up
     // overwriting the block if it is re-allocated before the disk update
     // task runs next
     tmpnode.dev = dev;
@@ -1372,33 +1370,23 @@ void tmpfs_init(void)
  * Returns:
  *    number of alloc'd memory pages
  */
-static size_t tmpfs_get_frames(virtual_addr *__blocks, size_t __count)
+static size_t tmpfs_get_frames(virtual_addr *__blocks, size_t count)
 {
     volatile size_t i = 0;
     volatile virtual_addr *blocks = __blocks;
-    volatile size_t count = __count;
-    volatile virtual_addr addr, end = TMPFS_END;
-    
-    for(addr = TMPFS_START; addr < end; addr += PAGE_SIZE)
-    {
-        pt_entry *pt = get_page_entry((void *)addr);
-        
-        if(PTE_FRAME(*pt) == 0)
-        {
-            if(!vmmngr_alloc_page(pt, PTE_FLAGS_PW))
-            {
-                break;
-            }
+    volatile virtual_addr addr;
+    void *p;
 
-            vmmngr_flush_tlb_entry(addr);
-            blocks[i++] = addr;
-            A_memset((void *)addr, 0, PAGE_SIZE);
-            
-            if(i == count)
-            {
-                break;
-            }
+    for(i = 0; i < count; i++)
+    {
+        if(!(p = pmmngr_alloc_block()))
+        {
+            break;
         }
+
+        addr = PHYS_TO_HIMEM(p);
+        blocks[i] = addr;
+        A_memset((void *)addr, 0, PAGE_SIZE);
     }
     
     return i;
@@ -1417,7 +1405,8 @@ static size_t tmpfs_get_frames(virtual_addr *__blocks, size_t __count)
  */
 static void tmpfs_release_frames(virtual_addr *blocks, size_t count)
 {
-    size_t i;
+    volatile size_t i;
+    physical_addr phys;
     
     for(i = 0; i < count; i++)
     {
@@ -1425,10 +1414,12 @@ static void tmpfs_release_frames(virtual_addr *blocks, size_t count)
         {
             continue;
         }
-        
-        pt_entry *pt = get_page_entry((void *)blocks[i]);
-        *pt = 0;
-        vmmngr_flush_tlb_entry(blocks[i]);
+
+        if((phys = get_phys_addr(blocks[i])))
+        {
+            pmmngr_free_block((void *)phys);
+        }
+
         blocks[i] = 0;
     }
 }

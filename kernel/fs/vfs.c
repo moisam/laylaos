@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: vfs.c
  *    This file is part of LaylaOS.
@@ -125,6 +125,8 @@ char *path_remove_trailing_slash(char *path, int kernel, long *trailing_slash)
 }
 
 
+#define TMPBUFSZ                    2048
+
 /*
  * Get the node of the parent directory for the given path. We don't get the
  * requested file directly, as we might need to create it, in which case we
@@ -149,7 +151,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
     ino_t n;
     struct dirent *entry;
     int symlinks = 0;
-    
+
     if(!pathname || !*pathname)
     {
         return -EINVAL;
@@ -164,7 +166,12 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
     *filename = NULL;
     *dirnode = NULL;
     follow_mpoints = !!follow_mpoints;
-    
+
+    if(!(tmp = kmalloc(TMPBUFSZ)))
+    {
+        return -ENOMEM;
+    }
+
     if(*pathname == '/')
     {
         if(!this_core->cur_task->fs || 
@@ -178,6 +185,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             if(this_core->cur_task->user)
             {
                 printk("vfs: current task has no root directory!\n");
+                kfree(tmp);
                 return -EINVAL;
             }
 
@@ -196,11 +204,13 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
            this_core->cur_task->ofiles->ofile[dirfd] == NULL ||
            (node = this_core->cur_task->ofiles->ofile[dirfd]->node) == NULL)
         {
+            kfree(tmp);
             return -EBADF;
         }
 
         if(!S_ISDIR(node->mode) || has_access(node, EXECUTE, 0) != 0)
         {
+            kfree(tmp);
             return -EPERM;
         }
     }
@@ -211,6 +221,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
            this_core->cur_task->fs->cwd->refs == 0)
         {
             printk("vfs: current task has no cwd!\n");
+            kfree(tmp);
             return -EINVAL;
         }
 
@@ -221,11 +232,11 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
     {
         printk("vfs: failed to get current task's cwd/root!\n");
         //__asm__ __volatile__("xchg %%bx, %%bx"::);
+        kfree(tmp);
         return -EINVAL;
     }
 
     parent = node;
-
 
     INC_NODE_REFS(node);
     
@@ -240,6 +251,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             {
                 release_node(node);
                 release_node(parent);
+                kfree(tmp);
                 return -ELOOP;
             }
         
@@ -247,6 +259,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             {
                 release_node(node);
                 release_node(parent);
+                kfree(tmp);
                 return res;
             }
         
@@ -274,6 +287,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
         {
             release_node(node);
             release_node(parent);
+            kfree(tmp);
             return -ENOENT;
         }
 
@@ -281,6 +295,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
         {
             release_node(node);
             release_node(parent);
+            kfree(tmp);
             return -EPERM;
         }
         
@@ -297,17 +312,19 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             (*filename) = fname;
             (*dirnode) = node;
             release_node(parent);
+            kfree(tmp);
             return 0;
         }
         
-        // get a local copy of this path segment
-        if(!(tmp = (char *)kmalloc(len + 1)))
+        if(len >= TMPBUFSZ)
         {
             release_node(node);
             release_node(parent);
-            return -ENOMEM;
+            kfree(tmp);
+            return -ENAMETOOLONG;
         }
-        
+
+        // get a local copy of this path segment
         A_memcpy(tmp, fname, len);
         tmp[len] = '\0';
 
@@ -316,15 +333,14 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
         // find this path segment in the current directory
         if((res = vfs_finddir(node, tmp, &entry)) < 0)
         {
-            kfree(tmp);
             release_node(node);
             release_node(parent);
+            kfree(tmp);
             return res;
         }
         
         dev = node->dev;
         n = entry->d_ino;
-        kfree(tmp);
         kfree(entry);
         release_node(node);
 
@@ -334,10 +350,13 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
         if(!(node = get_node(dev, n, follow_mpoints)))
         {
             release_node(parent);
+            kfree(tmp);
             return -ENOENT;
         }
     }
 }
+
+#undef TMPBUFSZ
 
 
 /*
@@ -384,7 +403,7 @@ static void set_select_func(struct fs_node_t *node, int flags)
     
         if(major < NR_DEV)
         {
-            long (*select)(struct file_t *, int) =
+            long (*select)(struct file_t *, int, int) =
                             S_ISCHR(mode) ? cdev_tab[major].select :
                                             bdev_tab[major].select;
             long (*poll)(struct file_t *, struct pollfd *) =
@@ -400,8 +419,6 @@ static void set_select_func(struct fs_node_t *node, int flags)
                                                       dummyfs_write;
                 node->read  = cdev_tab[major].read  ? cdev_tab[major].read  :
                                                       dummyfs_read;
-                //node->read = chr_read;
-                //node->write = chr_write;
             }
             else
             {
@@ -960,8 +977,6 @@ long vfs_addir(struct fs_node_t *dir, struct fs_node_t *file, char *filename)
         dir->flags |= FS_NODE_DIRTY;
     }
 
-    //printk("vfs_addir: done\n");
-
     return res;
 }
 
@@ -1012,7 +1027,6 @@ ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
     while(left)
     {
         dbuf = NULL;
-        //offset = (*pos) / PAGE_SIZE;
         offset = (*pos) & ~(PAGE_SIZE - 1);
         
         if(!(dbuf = get_cached_page(node, offset, 0)))
@@ -1025,8 +1039,6 @@ ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
         j = MIN((PAGE_SIZE - i), left);
         (*pos) += j;
         left -= j;
-
-        //printk("vfs_read: buf 0x%lx, j %d, count %d\n", buf, j, count);
 
         p = (char *)(dbuf->virt + i);
 
@@ -1041,8 +1053,6 @@ ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
 
         release_cached_page(dbuf);
         buf += j;
-        //offset += PAGE_SIZE;
-        //i = 0;
     }
     
     // read() syscall updates the access time, so we only do this if we are
@@ -1051,8 +1061,6 @@ ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
     {
         update_atime(node);
     }
-    
-    //printk("vfs_read: res %d\n", count - left);
 
     return count - left;
 }
@@ -1085,7 +1093,6 @@ ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
     while(done < count)
     {
         dbuf = NULL;
-        //offset = i / PAGE_SIZE;
         offset = i & ~(PAGE_SIZE - 1);
         
         if(!(dbuf = get_cached_page(node, offset, 0 /* PCACHE_AUTO_ALLOC */)))
@@ -1122,16 +1129,12 @@ ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
         }
 
         __sync_or_and_fetch(&dbuf->flags, PCACHE_FLAG_DIRTY);
-        //dbuf->flags |= PCACHE_FLAG_DIRTY;
         release_cached_page(dbuf);
         buf += k;
     }
 
     *pos = i;
     
-    //printk("vfs_write: done - i %u, done %u, count %u\n", i, done, count);
-    
-    //return i ? (int)i : -EIO;
     return done ? (ssize_t)done : -EIO;
 }
 

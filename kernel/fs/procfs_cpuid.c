@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2024, 2025 (c)
+ *    Copyright 2024, 2025, 2026 (c)
  * 
  *    file: procfs_cpuid.c
  *    This file is part of LaylaOS.
@@ -30,10 +30,6 @@
 #include <kernel/asm.h>
 #include <mm/kheap.h>
 #include <fs/procfs.h>
-
-
-#define cpuid(in, a, b, c, d)   \
-    __asm__ __volatile__ ("cpuid": "=a" (a), "=b" (b), "=c" (c), "=d" (d) : "a" (in));
 
 #define BUFSZ                   4096
 
@@ -82,167 +78,6 @@ static unsigned long long cpu_speed(void)
 
     return ((end - start) / 1000000) * 5;
 }
-
-#if 0
-
-size_t detect_cpu(char **buf)
-{
-	unsigned long eax, ebx, ecx, edx;
-	unsigned long ebx_save, ecx_save, edx_save, ext_features;
-	int family, model, stepping, i;
-	char str[64], *p;
-
-    if(!has_cpuid())
-	{
-	    return 0;
-	}
-
-	if(!(*buf = kmalloc(BUFSZ)))
-	{
-	    return 0;
-	}
-
-	cpuid(0, eax, ebx, ecx, edx);
-	COPY_BYTES(str, 0, ebx);
-	COPY_BYTES(str, 4, edx);
-	COPY_BYTES(str, 8, ecx);
-	str[12] = '\0';
-
-    p = *buf;
-    ksprintf(p, BUFSZ, "processor     : 0\n");
-    p += strlen(p);
-
-    // vendor id
-    ksprintf(p, BUFSZ, "vendor_id     : %s\n", str);
-    p += strlen(p);
-
-	cpuid(1, eax, ebx, ecx, edx);
-    family = (eax >> 8) & 0x0f;
-    model = (eax >> 4) & 0x0f;
-    stepping = (eax & 0x0f);
-
-    if(family == 0x0f)
-    {
-        family += ((eax >> 20) & 0xff);
-    }
-
-    if(family == 0x0f || family == 0x06)
-    {
-        model += ((eax >> 16) & 0x0f) << 4;
-    }
-
-    // cpu family and model
-    ksprintf(p, BUFSZ, "cpu family    : %u\n", family);
-    p += strlen(p);
-    ksprintf(p, BUFSZ, "model         : %u\n", model);
-    p += strlen(p);
-
-    // get extended features
-    ebx_save = ebx;
-    ecx_save = ecx;
-    edx_save = edx;
-	cpuid(0x80000000, eax, ebx, ecx, edx);
-	ext_features = eax;
-
-    if(eax >= 0x80000004)
-    {
-        for(i = 0; i < 3; i++)
-        {
-            cpuid(0x80000002 + i, eax, ebx, ecx, edx);
-            COPY_BYTES(str, (i * 16) + 0, eax);
-            COPY_BYTES(str, (i * 16) + 4, ebx);
-            COPY_BYTES(str, (i * 16) + 8, ecx);
-            COPY_BYTES(str, (i * 16) + 12, edx);
-        }
-
-        str[(i * 16)] = '\0';
-        ksprintf(p, BUFSZ, "model name    : %s\n", str);
-        p += strlen(p);
-    }
-
-    ksprintf(p, BUFSZ, "stepping      : %u\n", stepping);
-    p += strlen(p);
-
-    ksprintf(p, BUFSZ, "cpu MHz       : %llu\n", cpu_speed());
-    p += strlen(p);
-
-    /*
-     * TODO: cache size
-     */
-
-    /*
-     * TODO: fill these with proper values
-     */
-    ksprintf(p, BUFSZ, "physical id   : %u\n", 0);
-    p += strlen(p);
-    ksprintf(p, BUFSZ, "core id       : %u\n", 0);
-    p += strlen(p);
-    ksprintf(p, BUFSZ, "cpu cores     : %u\n", 1);
-    p += strlen(p);
-
-    if(((edx_save >> 28) & 0x01))
-    {
-        ksprintf(p, BUFSZ, "initial apicid: %u\n", (int)((ebx_save >> 24) & 0xff));
-        p += strlen(p);
-    }
-
-    ksprintf(p, BUFSZ, "fpu           : %s\n", (edx_save & 0x01) ? "yes" : "no");
-    p += strlen(p);
-
-    // features and flags
-    ksprintf(p, BUFSZ, "flags         : ");
-    p += strlen(p);
-
-    // check the features returned in edx
-    for(i = 0; i < 32; i++)
-    {
-        if(((edx_save >> i) & 0x01) && edx_features[i])
-        {
-            ksprintf(p, BUFSZ, "%s ", edx_features[i]);
-            p += strlen(p);
-        }
-    }
-
-    // check the features returned in ecx
-    for(i = 0; i < 32; i++)
-    {
-        if(((ecx_save >> i) & 0x01) && ecx_features[i])
-        {
-            ksprintf(p, BUFSZ, "%s ", ecx_features[i]);
-            p += strlen(p);
-        }
-    }
-
-    *p++ = '\n';
-    *p = '\0';
-
-    if(edx_save & (1 << 19))
-    {
-        ksprintf(p, BUFSZ, "clflush size  : %u\n", (int)(((ebx_save >> 8) & 0xff) * 8));
-        p += strlen(p);
-    }
-
-    if(ext_features >= 0x80000008)
-    {
-        cpuid(0x80000008, eax, ebx, ecx, edx);
-        ksprintf(p, BUFSZ, "address sizes : %u bits physical, %u bits virtual\n",
-                    (int)(eax & 0xff), (int)((eax >> 8) & 0xff));
-        p += strlen(p);
-    }
-
-    /*
-    if(strcmp(str, "AuthenticAMD") == 0)
-    {
-    }
-    */
-
-    *p++ = '\n';
-    *p = '\0';
-
-    return (p - *buf);
-}
-
-#endif
 
 
 size_t detect_cpu(char **buf)
