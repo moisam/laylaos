@@ -1,0 +1,66 @@
+diff -rub ./libusb-1.0.29/configure.ac ./libusb-1.0.29/configure.ac
+--- ./libusb-1.0.29/configure.ac	2025-05-03 10:14:36.000000000 +0100
++++ ./libusb-1.0.29/configure.ac	2025-12-27 17:59:18.559336503 +0000
+@@ -94,6 +94,11 @@
+ Please use an explicit --host=$host_cpu-emscripten instead.
+ 	])
+ 	;;
++*-laylaos*)
++	AC_MSG_RESULT([LaylaOS])
++	backend=laylaos
++	platform=posix
++	;;
+ *-linux* | *-uclinux*)
+ 	dnl on Android Linux, some functions are in different places
+ 	case $host in
+@@ -387,6 +392,7 @@
+ AM_CONDITIONAL([CREATE_IMPORT_LIB], [test "x$create_import_lib" = xyes])
+ AM_CONDITIONAL([OS_DARWIN], [test "x$backend" = xdarwin])
+ AM_CONDITIONAL([OS_HAIKU], [test "x$backend" = xhaiku])
++AM_CONDITIONAL([OS_LAYLAOS], [test "x$backend" = xlaylaos])
+ AM_CONDITIONAL([OS_LINUX], [test "x$backend" = xlinux])
+ AM_CONDITIONAL([OS_NETBSD], [test "x$backend" = xnetbsd])
+ AM_CONDITIONAL([OS_NULL], [test "x$backend" = xnull])
+diff -rub ./libusb-1.0.29/libusb/Makefile.am ./libusb-1.0.29/libusb/Makefile.am
+--- ./libusb-1.0.29/libusb/Makefile.am	2024-08-12 20:28:06.000000000 +0100
++++ ./libusb-1.0.29/libusb/Makefile.am	2025-12-27 17:04:43.452681464 +0000
+@@ -22,6 +22,7 @@
+ OS_LINUX_SRC = os/linux_usbfs.h os/linux_usbfs.c
+ OS_EMSCRIPTEN_SRC = os/emscripten_webusb.cpp
+ OS_NETBSD_SRC = os/netbsd_usb.c
++OS_LAYLAOS_SRC = os/laylaos_usb.c
+ OS_NULL_SRC = os/null_usb.c
+ OS_OPENBSD_SRC = os/openbsd_usb.c
+ OS_SUNOS_SRC = os/sunos_usb.h os/sunos_usb.c
+@@ -58,6 +59,10 @@
+ libusb_1_0_la_LIBADD = libusb_emscripten.la
+ endif
+ 
++if OS_LAYLAOS
++OS_SRC = $(OS_LAYLAOS_SRC)
++endif
++
+ if OS_NETBSD
+ OS_SRC = $(OS_NETBSD_SRC)
+ endif
+diff -rub ./libusb-1.0.29/libusb/os/threads_posix.c ./libusb-1.0.29/libusb/os/threads_posix.c
+--- ./libusb-1.0.29/libusb/os/threads_posix.c	2025-03-19 10:02:44.000000000 +0000
++++ ./libusb-1.0.29/libusb/os/threads_posix.c	2025-12-27 17:03:29.627969290 +0000
+@@ -32,7 +32,7 @@
+ # include <unistd.h>
+ #elif defined(__NetBSD__)
+ # include <lwp.h>
+-#elif defined(__OpenBSD__)
++#elif defined(__OpenBSD__) || defined(__laylaos__)
+ # include <unistd.h>
+ #elif defined(__sun__)
+ # include <sys/lwp.h>
+@@ -88,7 +88,7 @@
+ 	if (tl_tid)
+ 		return tl_tid;
+ 
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) || defined(__laylaos__)
+ 	tid = (unsigned long)gettid();
+ #elif defined(__APPLE__)
+ #ifdef HAVE_PTHREAD_THREADID_NP

@@ -38,7 +38,15 @@ cd ${DOWNLOAD_SRCDIR}
 sed -i -e "s/chown/sudo chown/g" src/Makefile.am
 sed -i -e "s/chmod/sudo chmod/g" src/Makefile.am
 
-./bootstrap
+myname=`uname -s`
+
+# git protocol is not supported in LaylaOS yet, so use the GIT protocol on
+# GNU/Linux, and the default HTTPS protocol on LaylaOS
+if [ "$myname" != "LaylaOS" ]; then
+    GNULIB_URL="git://git.savannah.gnu.org/gnulib.git" ./bootstrap
+else
+    ./bootstrap
+fi
 
 rm ${DOWNLOAD_SRCDIR}/build-aux/config.sub
 cp ${CWD}/../config.sub.laylaos ${DOWNLOAD_SRCDIR}/build-aux/config.sub
@@ -64,17 +72,24 @@ CFLAGS="$CFLAGS -mstackrealign" ../configure \
     --host=${BUILD_TARGET} --prefix=/usr \
     --sysconfdir=/etc --with-systemdtmpfilesdir=no \
     --with-systemdsystemunitdir=no --enable-automatic-create --disable-cats \
+    --disable-setuid --enable-cache-owner=no \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 # we don't have sudo yet on LaylaOS
 myname=`uname -s`
 if [ "$myname" == "LaylaOS" ]; then
     sed -i 's/sudo//g' src/Makefile
+    SUDO=
+else
+    SUDO=sudo
 fi
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
+
+${SUDO} patchelf --remove-rpath ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/man
+${SUDO} patchelf --remove-rpath ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/mandb
 
 # Clean up
 cd ${CWD}

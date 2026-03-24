@@ -34,7 +34,16 @@ echo " ==> Patching ${DOWNLOAD_NAME}"
 echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 cd ${DOWNLOAD_SRCDIR}
-./bootstrap
+
+myname=`uname -s`
+
+# git protocol is not supported in LaylaOS yet, so use the GIT protocol on
+# GNU/Linux, and the default HTTPS protocol on LaylaOS
+if [ "$myname" != "LaylaOS" ]; then
+    GNULIB_URL="git://git.savannah.gnu.org/gnulib.git" ./bootstrap
+else
+    ./bootstrap
+fi
 
 rm build-aux/config.sub 
 cp ${CWD}/../config.sub.laylaos build-aux/config.sub
@@ -48,7 +57,6 @@ cp ${CWD}/../config.sub.laylaos gnulib/build-aux/config.sub
 rm gnulib/build-aux/config.guess
 cp ${CWD}/../config.guess.laylaos gnulib/build-aux/config.guess
 
-myname=`uname -s`
 if [ "$myname" != "LaylaOS" ]; then
     cd ${DOWNLOAD_PORTS_PATH} && patch -i ${CWD}/${PATCH_FILE} -p0 && cd ${CWD}
 fi

@@ -1,0 +1,61 @@
+diff -rub ./lite-1.11/build.sh ./lite-1.11/build.sh
+--- ./lite-1.11/build.sh	2020-07-05 10:56:39.000000000 +0100
++++ ./lite-1.11/build.sh	2026-01-24 12:00:23.149387522 +0000
+@@ -3,6 +3,10 @@
+ cflags="-Wall -O3 -g -std=gnu11 -fno-strict-aliasing -Isrc"
+ lflags="-lSDL2 -lm"
+ 
++if [ "x$CPPFLAGS" != "x" ]; then
++  cflags="$cflags $CPPFLAGS"
++fi
++
+ if [[ $* == *windows* ]]; then
+   platform="windows"
+   outfile="lite.exe"
+@@ -14,7 +18,13 @@
+ else
+   platform="unix"
+   outfile="lite"
++
++  if [ "x$CC" != "x" ]; then
++    compiler="$CC"
++  else
+   compiler="gcc"
++  fi
++
+   cflags="$cflags -DLUA_USE_POSIX"
+   lflags="$lflags -o $outfile"
+ fi
+diff -rub ./lite-1.11/src/main.c ./lite-1.11/src/main.c
+--- ./lite-1.11/src/main.c	2020-07-05 10:56:39.000000000 +0100
++++ ./lite-1.11/src/main.c	2026-01-24 12:22:31.543895247 +0000
+@@ -5,7 +5,7 @@
+ 
+ #ifdef _WIN32
+   #include <windows.h>
+-#elif __linux__
++#elif defined(__linux__) || defined(__laylaos__)
+   #include <unistd.h>
+ #elif __APPLE__
+   #include <mach-o/dyld.h>
+@@ -30,7 +30,7 @@
+ #if _WIN32
+   int len = GetModuleFileName(NULL, buf, sz - 1);
+   buf[len] = '\0';
+-#elif __linux__
++#elif defined(__linux__) || defined(__laylaos__)
+   char path[512];
+   sprintf(path, "/proc/%d/exe", getpid());
+   int len = readlink(path, buf, sz - 1);
+@@ -122,7 +122,11 @@
+     "xpcall(function()\n"
+     "  SCALE = tonumber(os.getenv(\"LITE_SCALE\")) or SCALE\n"
+     "  PATHSEP = package.config:sub(1, 1)\n"
++#ifdef __laylaos__
++    "  EXEDIR = \"/usr/share/lite\"\n"
++#else
+     "  EXEDIR = EXEFILE:match(\"^(.+)[/\\\\].*$\")\n"
++#endif
+     "  package.path = EXEDIR .. '/data/?.lua;' .. package.path\n"
+     "  package.path = EXEDIR .. '/data/?/init.lua;' .. package.path\n"
+     "  core = require('core')\n"

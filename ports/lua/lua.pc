@@ -1,0 +1,13 @@
+# liblua pkg-config.
+prefix=/usr
+exec_prefix=${prefix}
+includedir=${prefix}/include
+libdir=${exec_prefix}/lib
+
+Name: lua
+Description: An Extensible Extension Language
+Version: 5.2.4
+Requires:
+Conflicts:
+Libs: -L${libdir} -llua
+Cflags: -I${includedir}

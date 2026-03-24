@@ -29,7 +29,11 @@ git clone https://https.git.savannah.gnu.org/git/nano.git
 cd nano || exit_failure "$0: failed to download ${DOWNLOAD_NAME}"
 
 # git protocol is not supported in LaylaOS yet, so fix the URL used in autogen.sh
-sed -i "s~gnulib_url=.*~gnulib_url=\"https://git.savannah.gnu.org/git/gnulib.git\"~" ./autogen.sh
+myname=`uname -s`
+if [ "$myname" == "LaylaOS" ]; then
+    sed -i "s~gnulib_url=.*~gnulib_url=\"https://git.savannah.gnu.org/git/gnulib.git\"~" ./autogen.sh
+fi
+
 ./autogen.sh
 
 # patch and copy our extra files
