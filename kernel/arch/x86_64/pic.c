@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: pic.c
  *    This file is part of LaylaOS.
@@ -74,7 +74,7 @@ void pic_disable(void)
 /*
  * Enable an IRQ.
  */
-void enable_irq(unsigned char irq_line)
+void enable_irq(unsigned char irq_line, uint16_t apic_flags)
 {
     uint16_t port;
     uint8_t val;
@@ -82,7 +82,7 @@ void enable_irq(unsigned char irq_line)
     if(apic_running)
     {
         //ioapic_enable_irq(irq_remap(irq_line), 0x20 + irq_line);
-        ioapic_enable_irq(irq_line);
+        ioapic_enable_irq(irq_line, apic_flags);
         return;
     }
     

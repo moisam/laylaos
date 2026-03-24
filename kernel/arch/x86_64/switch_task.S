@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: switch_task.S
  *    This file is part of LaylaOS.
@@ -38,21 +38,6 @@
 
 
 /*
-.global unlock_scheduler_no_sti
-.type unlock_scheduler_no_sti, @function
-
-unlock_scheduler_no_sti:
-
-    movabsq $IRQ_disable_counter, %rax
-    movl (%rax), %eax
-    lea -1(%rax), %edx
-    movabsq $IRQ_disable_counter, %rax
-    movl %edx, (%rax)
-    retq
-*/
-
-
-/*
  * C declaration:
  *   int save_context(struct task_t *task)
  */
@@ -66,12 +51,8 @@ unlock_scheduler_no_sti:
  *  0(%esp) - return address
  */
 save_context:
-    //xchg %bx, %bx
-    //xchg %bx, %bx
-
     movq %rax, TASK_RAX_FIELD(%rdi)
     leaq 8(%rsp), %rax
-    //movq %rsp, %rax
     movq %rax, TASK_RSP_FIELD(%rdi)
     movq %rbp, TASK_RBP_FIELD(%rdi)
     movq (%rsp), %rax
@@ -120,11 +101,6 @@ save_context:
  *  0(%esp) - return address
  */
 restore_context:
-    ////movabsq $cur_task, %rax
-    ////movq %rdi, (%rax)
-    //movq %rdi, %gs:24               // this_core->cur_task
-    //xchg %bx, %bx
-
     movq TASK_RBX_FIELD(%rdi), %rbx
     movq TASK_RDX_FIELD(%rdi), %rdx
     movq TASK_RSI_FIELD(%rdi), %rsi
@@ -150,11 +126,8 @@ restore_context:
     pushq TASK_RDI_FIELD(%rdi)
     
     movq TASK_KSTACK_VIRT(%rdi), %rax       // rax = address for the top of
-    //movq TASK_TSS_STACK_VIRT(%rdi), %rax    // rax = address for the top of
-                                            // the next task's kernel stack
     
     movq %gs:0, %rcx                // get this processor's TSS
-    //movabsq $tss_entry, %rcx
 
     movq %rax, 4(%rcx)          // Adjust the ESP0 field in the TSS (used by CPU
                                 // for CPL=3 -> CPL=0 privilege level changes)
@@ -176,14 +149,9 @@ restore_context:
     // in mmngr_virtual.c
 
     movq %rax, %gs:16
-    ////movabsq $_cur_directory_phys, %rcx
-    ////movq %rax, (%rcx)
 
-    //movq 48(%rdi), %rax
     movq TASK_PDIR_VIRT(%rdi), %rax
     movq %rax, %gs:8
-    ////movabsq $_cur_directory_virt, %rcx
-    ////movq %rax, (%rcx)
 
     // set TS in CR0 so the FPU will trap to exception #7
     //movq %cr0, %rax

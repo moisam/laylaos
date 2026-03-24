@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: syscall_dispatcher.S
  *    This file is part of LaylaOS.
@@ -80,17 +80,9 @@ syscall_entry64:
     cli
     swapgs
 
-    //xchg %bx, %bx
     mov %rsp, %r9
 
     // move to the task's kernel stack, using ESP0 field of the TSS
-    /*
-    //movabsq $tss_entry, %rsp
-    xor %rsp, %rsp                  // ensure no trash in upper bits
-    movq %gs:0, %rsp                // get this processor's TSS
-
-    movq 4(%rsp), %rsp
-    */
     movq %gs:24, %rsp               // this_core->cur_task
     movq TASK_KSTACK_VIRT(%rsp), %rsp
 
@@ -163,10 +155,6 @@ syscall_entry:
 resume_user:
     cli
 
-    ////movabsq $scheduler_lock, %rdi
-    ////call kernel_mutex_unlock
-    //call unlock_scheduler_no_sti
-
     // Unlock the scheduler
     mov %gs:40, %eax                // this_core->cpuid
     mov $0xffffffff, %ecx
@@ -178,11 +166,7 @@ resume_user:
     andl $~0x02, %eax
     movl %eax, %gs:56
 
-
-
     // if user task, release the 'running in kernel mode' flag
-    //movabsq $cur_task, %rdi
-    //movq (%rdi), %rdi
     movq %gs:24, %rdi               // this_core->cur_task
     call unset_syscall_flags
     
@@ -213,15 +197,6 @@ resume_user:
     swapgs
     iretq            // pops 5 things at once: CS, RIP, RFLAGS, SS, and RSP!
 
-    /*
-    popq %rcx       # RIP
-    add $8, %rsp    # discard CS
-    popq %r11       # RFLAGS
-    popq %rsp       # USERRSP
-    swapgs
-    sysretq
-    */
-
 
 /*
  * Called from syscall_execve().
@@ -231,8 +206,6 @@ resume_user:
 enter_user:
     cli
 
-    //movabsq $cur_task, %rax
-    //movq (%rax), %rax
     movq %gs:24, %rax               // this_core->cur_task
 
     leaq TASK_EXECVE_REGS(%rax), %rax

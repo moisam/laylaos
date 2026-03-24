@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: ap_bootstrap.S
  *    This file is part of LaylaOS.
@@ -177,6 +177,11 @@ ap_premain:
     // Reset RFLAGS.
     pushq   $0
     popfq
+
+    // Set WP, so kernel writes to non-writeable pages trigger page faults.
+    mov %cr0, %rax
+    or $0x10000, %rax
+    mov %rax, %cr0
 
 	movabsq $ap_main, %rax
 	call *%rax

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: interrupt.S
  *    This file is part of LaylaOS.
@@ -35,6 +35,7 @@
 
 .extern isr_handler
 .extern apic_running
+.extern check_signals_after_irq
 
 /********************************
  * Handling ISRs
@@ -93,6 +94,159 @@ ISR_NOERRCODE 30
 ISR_NOERRCODE 31
 
 /*
+ * IRQs start at #32
+ */
+
+.altmacro
+
+/*
+ * - Define handlers for ISRs 32 to 38
+ * - ISR 39 (i.e. IRQ 7) has a special handler for spurious IRQs below
+ * - Define handlers for ISRs 40 to 46
+ * - ISR 47 (i.e. IRQ 15) has a special handler for spurious IRQs below
+ * - Define handlers for ISRs 48 to 122
+ * - ISRs 123 to 126 have special handlers below
+ * - Define handlers for ISRs 127 to 254
+ * - Finally, ISR 255 has a special handler for spurious APIC IRQs
+ */
+.set i, 32
+.rept 39 - 32
+    ISR_NOERRCODE %i
+    .set i, i + 1
+.endr
+
+.set i, 40
+.rept 47 - 40
+    ISR_NOERRCODE %i
+    .set i, i + 1
+.endr
+
+.set i, 48
+.rept 123 - 48
+    ISR_NOERRCODE %i
+    .set i, i + 1
+.endr
+
+.set i, 127
+.rept 255 - 127
+    ISR_NOERRCODE %i
+    .set i, i + 1
+.endr
+
+.noaltmacro
+
+
+/*
+ * Special handler for IRQ-7 to check and handle spurious interrupts.
+ * See:
+ *    https://forum.osdev.org/viewtopic.php?f=1&t=11673
+ *    https://wiki.osdev.org/8259_PIC
+ */
+
+.global isr39
+isr39:
+
+    cli
+    pushq %rax
+
+    // If the APIC is running, do not check for a spurious IRQ7
+    movabsq $apic_running, %rax
+    movl (%rax), %eax
+    test %eax, %eax
+    jnz 0f
+
+    // PIC.OCW3 set function to read ISR (In Service Register)
+    movb $0x0b, %al
+    
+    // write to PIC.OCW3
+    outb %al, $0x20
+
+    // read ISR
+    inb $0x20, %al
+    
+    // if the in-service register does not have IR7 bit set
+    // this would be a spurious interrupt.
+    test $0x80, %al
+    jz 1f
+    
+    // mutex for spurious guard
+    //bts $0x01, flags
+    //jc 1f
+
+0:
+    popq %rax
+
+    // normal IRQ-7 routine
+    pushq $0     // dummy error code
+    pushq $39
+    jmp isr_common_stub
+
+1:
+    // do not send EOI to master pic for a spurious IRQ7
+    popq %rax
+    iretq
+
+
+/*
+ * Special handler for IRQ-15 to check and handle spurious interrupts.
+ * See:
+ *    https://forum.osdev.org/viewtopic.php?f=1&t=11673
+ *    https://wiki.osdev.org/8259_PIC
+ */
+
+.global isr47
+isr47:
+
+    cli
+    pushq %rax
+
+    // If the APIC is running, do not check for a spurious IRQ15
+    movabsq $apic_running, %rax
+    movl (%rax), %eax
+    test %eax, %eax
+    jnz 0f
+    
+    // PIC.OCW3 set function to read ISR (In Service Register)
+    movb $0x0b, %al
+    //movb $0x03, %al
+    
+    // write to PIC.OCW3
+    outb %al, $0xa0
+    //outb %al, $0xa3
+
+    // read ISR
+    inb $0xa0, %al
+    
+    // if the in-service register does not have IR7 bit set
+    // this would be a spurious interrupt.
+    test $0x80, %al
+    jz 1f
+    
+    // mutex for spurious guard
+    //bts $0x01, flags
+    //jc 1f
+
+0:
+    popq %rax
+
+    // normal IRQ-15 routine
+    pushq $0     // dummy error code
+    pushq $47
+    jmp isr_common_stub
+
+1:
+    // NOTE: Specific EOI used for master PIC cascade line!!!!
+    //movb $0x20, %al
+    movb $0x62, %al
+    
+    // send EOI to slave PIC (clear the ISR flag for IRQ15)
+    outb %al, $0x20
+    
+    popq %rax
+    iretq
+
+
+/*
  * Timer interrupt for other processors
  */
 .global isr123
@@ -100,7 +254,7 @@ isr123:
     cli
     pushq $0     // dummy error code
     pushq $123
-    jmp irq_common_stub
+    jmp isr_common_stub
 
 /*
  * TLB shootdown
@@ -178,193 +332,9 @@ isr_common_stub:
     call isr_handler
 
     cli
-    POPAQ
-    _SWAPGS
-
-    add $16, %rsp     // Clean up the pushed error code and pushed ISR number
-    iretq             // pops 5 things at once: CS, RIP, RFLAGS, SS, and RSP!
-
-
-/********************************
- * Handling IRQs
- ********************************/
-
-.extern irq_handler
-.extern check_signals_after_irq
-
-.macro IRQ n m
-    .global irq\n
-    irq\n:
-        cli
-        pushq $0     // dummy error code
-        pushq $\m
-        jmp irq_common_stub
-.endm
-
-IRQ 0, 32
-IRQ 1, 33
-IRQ 2, 34
-IRQ 3, 35
-IRQ 4, 36
-IRQ 5, 37
-IRQ 6, 38
-IRQ 8, 40
-IRQ 9, 41
-IRQ 10, 42
-IRQ 11, 43
-IRQ 12, 44
-IRQ 13, 45
-IRQ 14, 46
-
-
-/*
- * Special handler for IRQ-7 to check and handle spurious interrupts.
- * See:
- *    https://forum.osdev.org/viewtopic.php?f=1&t=11673
- *    https://wiki.osdev.org/8259_PIC
- */
-
-.global irq7
-irq7:
-
-    cli
-    pushq %rax
-
-    // If the APIC is running, do not check for a spurious IRQ7
-    movabsq $apic_running, %rax
-    movl (%rax), %eax
-    test %eax, %eax
-    jnz 0f
-
-    // PIC.OCW3 set function to read ISR (In Service Register)
-    movb $0x0b, %al
-    
-    // write to PIC.OCW3
-    outb %al, $0x20
-
-    // read ISR
-    inb $0x20, %al
-    
-    // if the in-service register does not have IR7 bit set
-    // this would be a spurious interrupt.
-    test $0x80, %al
-    jz 1f
-    
-    // mutex for spurious guard
-    //bts $0x01, flags
-    //jc 1f
-
-0:
-    popq %rax
-
-    // normal IRQ-7 routine
-    pushq $0     // dummy error code
-    pushq $39
-    jmp irq_common_stub
-
-1:
-    // do not send EOI to master pic for a spurious IRQ7
-    popq %rax
-    iretq
-
-
-/*
- * Special handler for IRQ-15 to check and handle spurious interrupts.
- * See:
- *    https://forum.osdev.org/viewtopic.php?f=1&t=11673
- *    https://wiki.osdev.org/8259_PIC
- */
-
-.global irq15
-irq15:
-
-    cli
-    pushq %rax
-
-    // If the APIC is running, do not check for a spurious IRQ15
-    movabsq $apic_running, %rax
-    movl (%rax), %eax
-    test %eax, %eax
-    jnz 0f
-    
-    // PIC.OCW3 set function to read ISR (In Service Register)
-    movb $0x0b, %al
-    //movb $0x03, %al
-    
-    // write to PIC.OCW3
-    outb %al, $0xa0
-    //outb %al, $0xa3
-
-    // read ISR
-    inb $0xa0, %al
-    
-    // if the in-service register does not have IR7 bit set
-    // this would be a spurious interrupt.
-    test $0x80, %al
-    jz 1f
-    
-    // mutex for spurious guard
-    //bts $0x01, flags
-    //jc 1f
-
-0:
-    popq %rax
-
-    // normal IRQ-15 routine
-    pushq $0     // dummy error code
-    pushq $47
-    jmp irq_common_stub
-
-1:
-    // NOTE: Specific EOI used for master PIC cascade line!!!!
-    //movb $0x20, %al
-    movb $0x62, %al
-    
-    // send EOI to slave PIC (clear the ISR flag for IRQ15)
-    outb %al, $0x20
-    
-    popq %rax
-    iretq
-    
-
-/*
- * This is our common IRQ stub. It saves the processor state, sets
- * up for kernel mode segments, calls the C-level fault handler,
- * and finally restores the stack frame.
- */
-
-irq_common_stub:
-    _SWAPGS
-    PUSHAQ
-
-    mov %rsp, %rdi
-    call irq_handler
-
-    /*
-     * only check signals if all the following is true:
-     *   - tasking is initialized 
-     *   - the current running task is a user task, not a kernel task
-     *   - we are not inside an IRQ that happened inside another IRQ
-     *     (we check this in check_signals_after_irq())
-     */
-
-    //xchg %bx, %bx
-    cli
-    /*
-    movabsq $cur_task, %rax
-    movq (%rax), %rax
-    test %rax, %rax
-    jz 2f
-
-    movl TASK_USER_FIELD(%rax), %eax
-    test %eax, %eax
-    jz 2f
-    */
-
     mov %rsp, %rdi
     call check_signals_after_irq
 
-2:
     cli
     POPAQ
     _SWAPGS
@@ -375,6 +345,7 @@ irq_common_stub:
 
 .global resume_user_after_irq
 resume_user_after_irq:
+
     cli
     mov %rdi, %rsp
     POPAQ
@@ -382,10 +353,4 @@ resume_user_after_irq:
 
     add $16, %rsp     // Clean up the pushed error code and pushed ISR number
     iretq             // pops 5 things at once: CS, RIP, RFLAGS, SS, and RSP!
-
-
-.global get_cr2
-get_cr2:
-    movq %cr2, %rax
-    retq
 

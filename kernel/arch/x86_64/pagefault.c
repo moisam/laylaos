@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: pagefault.c
  *    This file is part of LaylaOS.
@@ -170,7 +170,7 @@ int page_fault(struct regs *r, int arg)
     // A page fault has occurred.
     // The faulting address is stored in the CR2 register.
     //extern virtual_addr get_cr2(void);
-    volatile virtual_addr faulting_address; // = get_cr2();
+    volatile virtual_addr faulting_address;
 
     __asm__ __volatile__("movq %%cr2, %0" : "=r"(faulting_address) ::);
 
@@ -197,7 +197,7 @@ int page_fault(struct regs *r, int arg)
     pdirectory *pd = (pdirectory *)ct->pd_virt;
 
     volatile physical_addr tmp_phys = 0;
-    volatile virtual_addr  tmp_virt = 0;
+    //volatile virtual_addr  tmp_virt = 0;
     int recursive_pagefault = (ct->properties & PROPERTY_HANDLING_PAGEFAULT);
     uint64_t *fpregs, /* __fpregs[64 + 1] */ *__fpregs = kmalloc(sizeof(uint64_t) * 66);
     
@@ -210,9 +210,6 @@ int page_fault(struct regs *r, int arg)
      * So we temporarily store fpregs on the stack here and restore them
      * upon return.
      */
-    //uint64_t fpregs[64] __attribute__((aligned(16)));
-    //uint64_t *fpregs, __fpregs[64 + 1];
-    
     if((uintptr_t)__fpregs & 0x0f)
     {
         fpregs = (uint64_t *)((uintptr_t)__fpregs + 16 - ((uintptr_t)__fpregs & 0x0f));
@@ -243,6 +240,7 @@ int page_fault(struct regs *r, int arg)
     volatile struct memregion_t *memregion = NULL;
     volatile physical_addr phys = 0;
     uintptr_t private_flag = 0;
+    volatile pt_entry *e1 = get_page_entry_pd(pd, faulting_address);
 
     if(!(memregion = memregion_containing(ct, faulting_address)))
     {
@@ -262,7 +260,15 @@ int page_fault(struct regs *r, int arg)
        		goto unresolved;
         }
 
-        goto finalize;
+        if(e1)
+        {
+            __atomic_store_n(e1, tmp_phys | PTE_FLAGS_PWU | private_flag, __ATOMIC_SEQ_CST);
+        }
+
+        vmmngr_flush_tlb_entry(faulting_address);
+        __pagefault_cleanup(ct, fpregs, recursive_pagefault);
+        kfree(__fpregs);
+        return 1;
     }
 
     // trying to access kernel memory from userland?
@@ -276,8 +282,6 @@ int page_fault(struct regs *r, int arg)
     {
         goto unresolved;
     }
-
-    //if((align_down(faulting_address) == 0x7e800005a000)) __asm__ __volatile__("xchg %%bx, %%bx"::);
     
     // if page is not present in memory, we need to load it from file then
     // modify its access rights according to the mapping.
@@ -291,7 +295,15 @@ int page_fault(struct regs *r, int arg)
            		goto unresolved;
             }
 
-            goto finalize;
+            if(e1)
+            {
+                __atomic_store_n(e1, tmp_phys | PTE_FLAGS_PWU | private_flag, __ATOMIC_SEQ_CST);
+            }
+
+            vmmngr_flush_tlb_entry(faulting_address);
+            __pagefault_cleanup(ct, fpregs, recursive_pagefault);
+            kfree(__fpregs);
+            return 1;
         }
 
         if(memregion_load_page((struct memregion_t *)memregion, pd,
@@ -307,8 +319,6 @@ int page_fault(struct regs *r, int arg)
         return 1;
     }
 
-    volatile pt_entry *e1 = get_page_entry_pd(pd, (void *)faulting_address);
-
     // if page is present and not marked as CoW, or the fault is read access,
     // this is an access violation.
     if(!e1 || !*e1 || !rw)
@@ -322,29 +332,6 @@ int page_fault(struct regs *r, int arg)
 
     /* get the physical frame */
     phys = PTE_FRAME(*e1);
-
-    /*
-    if(!(*e & I86_PTE_COW))
-    {
-        vmmngr_flush_tlb_entry(faulting_address);
-
-        if(!recursive_pagefault)
-        {
-            ct->properties &= ~PROPERTY_HANDLING_PAGEFAULT;
-            kernel_mutex_unlock(&(ct->mem->mutex));
-        }
-
-        cli();
-        //A_memcpy(&ct->fpregs, fpregs, sizeof(fpregs));
-        //fpu_state_restore(ct);
-        __asm__ __volatile__("fxrstor (%0)" : : "r"(fpregs));
-
-        return 1;
-    }
-    */
-
-    //KDEBUG("page_fault: phys " _XPTR_ ", shares %d\n", phys, get_frame_shares(phys));
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
         
     /* is this the last copy? */
     if(get_frame_shares(phys) == 0)
@@ -356,70 +343,22 @@ int page_fault(struct regs *r, int arg)
     {
         /* no, so make a copy of it */
         /* get a temporary virtual address so that we can copy the page */
-        if(get_next_addr((physical_addr *)&tmp_phys, 
-                         (virtual_addr *)&tmp_virt,
-                         PTE_FLAGS_PWU, REGION_PAGETABLE) != 0)
-        {
+       	if(!(tmp_phys = (physical_addr)pmmngr_alloc_block()))
+       	{
             goto unresolved;
         }
 
-        A_memcpy((void *)tmp_virt, 
+        A_memcpy((void *)PHYS_TO_HIMEM(tmp_phys), 
                  (void *)(align_down(faulting_address)), PAGE_SIZE);
+
         dec_frame_shares(phys);
-    }
 
-    private_flag = (memregion->flags & MEMREGION_FLAG_PRIVATE) ?
-                                    I86_PTE_PRIVATE : 0;
+        private_flag = (memregion->flags & MEMREGION_FLAG_PRIVATE) ?
+                                        I86_PTE_PRIVATE : 0;
 
-finalize:
-
-    /*
-     * if we copied the page with the faulting address, make sure our page
-     * table (whether old or fresh) points to the right address.
-     */
-    if(tmp_phys)
-    {
-        /* decrement the old frame's share count and assign the new one */
-        e1 = get_page_entry_pd(pd, (void *)faulting_address);
-
-        /* ensure we have a clean slate, then set the frame and the flags */
         if(e1)
         {
-            __atomic_store_n(e1, 0, __ATOMIC_SEQ_CST);
-            PTE_ADD_ATTRIB(e1, PTE_FLAGS_PWU | private_flag);
-            PTE_SET_FRAME(e1, tmp_phys);
-        }
-            
-        /* remove the temporary virtual address mapping */
-        if(tmp_virt)
-        {
-            struct kernel_region_t *r = &kernel_regions[REGION_PAGETABLE];
-
-            // For some reason, Bochs sometimes does not enable interrupts and
-            // we loop here with disabled interrupts, which means we don't
-            // receive any IPI and this could hang another processor that is
-            // waiting for an IPI to be acknowledged.
-            sti();
-            elevated_priority_lock_recursive(r->mutex, r->lock_count);
-
-            e1 = get_page_entry_pd(pd, (void *)tmp_virt);
-
-            if(e1)
-            {
-                __atomic_store_n(e1, 0, __ATOMIC_SEQ_CST);
-            }
-
-            vmmngr_flush_tlb_entry(tmp_virt);
-            
-            /*
-             * If we alloc'd a page by calling get_next_addr() in the code
-             * above, this would have incremeted our pagetable count. As we
-             * only used it as a temporary virtual address, we need to
-             * decrement the pagetable count before we go.
-             */
-            __atomic_fetch_sub(&pagetable_count, 1, __ATOMIC_SEQ_CST);
-
-            elevated_priority_unlock_recursive(r->mutex, r->lock_count);
+            __atomic_store_n(e1, tmp_phys | PTE_FLAGS_PWU | private_flag, __ATOMIC_SEQ_CST);
         }
     }
 
@@ -462,16 +401,16 @@ unresolved:
 
     	if(faulting_address > KERNEL_MEM_START)
     	{
-            volatile pt_entry *e1 = get_page_entry_pd(pd, (void *)faulting_address);
+            pt_entry *e1 = get_page_entry_pd(pd, faulting_address);
             printk("phys(1) is 0x%lx\n", PTE_FRAME(*e1));
 
             if(ct->parent)
             {
-                e1 = get_page_entry_pd((pdirectory *)ct->parent->pd_virt, (void *)faulting_address);
+                e1 = get_page_entry_pd((pdirectory *)ct->parent->pd_virt, faulting_address);
                 printk("phys(2) is 0x%lx\n", PTE_FRAME(*e1));
             }
 
-            e1 = get_page_entry_pd((pdirectory *)this_core->idle_task->pd_virt, (void *)faulting_address);
+            e1 = get_page_entry_pd((pdirectory *)this_core->idle_task->pd_virt, faulting_address);
             printk("phys(3) is 0x%lx\n", PTE_FRAME(*e1));
     	}
     	else

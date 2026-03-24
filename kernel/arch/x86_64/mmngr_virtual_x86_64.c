@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: mmngr_virtual_x86_64.c
  *    This file is part of LaylaOS.
@@ -45,72 +45,33 @@
 /* defined in mmngr_virtual.c */
 extern volatile virtual_addr last_table_addr;
 
+/* defined in boot.S */
+extern pdirectory BootPageDirectory[3];
 
-//physical_addr zeropage_phys = 0;
-//virtual_addr zeropage_virt = 0;
-
-
-/*
- * Get page directory entry.
- */
-pdirectory *get_pde(pdirectory *pd, size_t pd_index, int flags)
-{
-    int userflag = (flags & FLAG_GETPDE_USER) ? I86_PDE_USER : 0;
-    int is_pd = (flags & (FLAG_GETPDE_ISPD | FLAG_GETPDE_ISPDP));
-    int create = (flags & FLAG_GETPDE_CREATE);
-    pd_entry *e = &pd->m_entries_virt[pd_index];
-
-    if(!PDE_PRESENT(*e))
-    {
-        // page dir not present, allocate it
-        physical_addr pd_phys = 0;
-        virtual_addr pd_virt = 0;
-        size_t sz;
-        
-        if(!create)
-        {
-            return 0;
-        }
-        
-        if(is_pd)
-        {
-            //__asm__ __volatile__("xchg %%bx, %%bx"::);
-            sz = PAGE_SIZE * PDIRECTORY_FRAMES;
-            pd_virt = vmmngr_alloc_and_map(sz, 1, PTE_FLAGS_PW,
-                                           &pd_phys, REGION_PAGETABLE);
-        }
-        else
-        {
-            sz = PAGE_SIZE;
-            get_next_addr(&pd_phys, &pd_virt, PTE_FLAGS_PW,
-                          REGION_PAGETABLE);
-        }
-
-        if(!pd_virt)
-        {
-            // nothing found
-            kpanic("Insufficient memory for page table (in get_pde())!\n");
-            return 0;
-        }
-      
-        // init the page directory entry for virt to point to our new pd
-        init_pd_entry(pd, pd_index, pd_phys, pd_virt, userflag);
-
-        // clear page dir
-        A_memset((void *)pd_virt, 0, sz);
-    }
-
-    return (pdirectory *)PDE_VIRT_FRAME(*e);
-}
+pdirectory himem_pdp __attribute__((aligned(4096))) = { 0, };
+pdirectory himem_pd[64] __attribute__((aligned(4096))) = { 0, };
+pdirectory kheap_pdp __attribute__((aligned(4096))) = { 0, };
+pdirectory kheap_pd __attribute__((aligned(4096))) = { 0, };
+pdirectory mmio_pdp __attribute__((aligned(4096))) = { 0, };
+pdirectory kmod_pdp __attribute__((aligned(4096))) = { 0, };
+pdirectory kmem_pdp __attribute__((aligned(4096))) = { 0, };
+pdirectory kmem_pd __attribute__((aligned(4096))) = { 0, };
+ptable kheap_pt[4] __attribute__((aligned(4096))) = { 0, };
+ptable kmem_pt[4] __attribute__((aligned(4096))) = { 0, };
 
 
 /*
  * Get page entry.
  */
-pt_entry *__get_page_entry_pd(pdirectory *pml4, void *virt, int __flags)
+pt_entry *__get_page_entry_pd(pdirectory *pml4, virtual_addr virt, int __flags)
 {
-    int flags = __flags |
-                  (((uintptr_t)virt <= USER_MEM_END) ? FLAG_GETPDE_USER : 0);
+    int create = (__flags & FLAG_GETPDE_CREATE);
+    int userflag = (virt <= USER_MEM_END) ? I86_PDE_USER : 0;
+    int access = PTE_FLAGS_PW | userflag;
+    size_t pml4i = PML4_INDEX(virt);
+    size_t pdpi = PDP_INDEX(virt);
+    size_t pdi = PD_INDEX(virt);
+    void *tmp;
     pdirectory *pdp, *pd;
     ptable *pt;
 
@@ -118,428 +79,433 @@ pt_entry *__get_page_entry_pd(pdirectory *pml4, void *virt, int __flags)
     {
         return NULL;
     }
-    
-    if(!(pdp = get_pde(pml4, PML4_INDEX((uintptr_t)virt), 
-                       flags | FLAG_GETPDE_ISPDP)))
+
+    if(!PDE_PRESENT(pml4->m_entries_phys[pml4i]))
     {
-        return NULL;
+        if(!create)
+        {
+            return NULL;
+        }
+
+        if(!(tmp = pmmngr_alloc_block()))
+        {
+            kpanic("Insufficient memory (in __get_page_entry_pd())!\n");
+            return NULL;
+        }
+
+        A_memset((void *)PHYS_TO_HIMEM(tmp), 0, PAGE_SIZE);
+        pml4->m_entries_phys[pml4i] = (uintptr_t)tmp | access;
+        __atomic_fetch_add(&pagetable_count, 1, __ATOMIC_SEQ_CST);
     }
 
-    if(!(pd = get_pde(pdp, PDP_INDEX((uintptr_t)virt), 
-                      flags | FLAG_GETPDE_ISPD)))
+    pdp = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(pml4->m_entries_phys[pml4i]));
+
+    if(!PDE_PRESENT(pdp->m_entries_phys[pdpi]))
     {
-        return NULL;
+        if(!create)
+        {
+            return NULL;
+        }
+
+        if(!(tmp = pmmngr_alloc_block()))
+        {
+            kpanic("Insufficient memory (in __get_page_entry_pd())!\n");
+            return NULL;
+        }
+
+        A_memset((void *)PHYS_TO_HIMEM(tmp), 0, PAGE_SIZE);
+        pdp->m_entries_phys[pdpi] = (uintptr_t)tmp | access;
+        __atomic_fetch_add(&pagetable_count, 1, __ATOMIC_SEQ_CST);
     }
 
-    if(!(pt = (ptable *)get_pde(pd, PD_INDEX((uintptr_t)virt), flags)))
+    pd = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(pdp->m_entries_phys[pdpi]));
+
+    if(!PDE_PRESENT(pd->m_entries_phys[pdi]))
     {
-        return NULL;
+        if(!create)
+        {
+            return NULL;
+        }
+
+        if(!(tmp = pmmngr_alloc_block()))
+        {
+            kpanic("Insufficient memory (in __get_page_entry_pd())!\n");
+            return NULL;
+        }
+
+        A_memset((void *)PHYS_TO_HIMEM(tmp), 0, PAGE_SIZE);
+        pd->m_entries_phys[pdi] = (uintptr_t)tmp | access;
+        __atomic_fetch_add(&pagetable_count, 1, __ATOMIC_SEQ_CST);
     }
 
-    return &pt->m_entries[PT_INDEX((uintptr_t)virt)];
+    pt = (ptable *)PHYS_TO_HIMEM(PDE_FRAME(pd->m_entries_phys[pdi]));
+
+    return &pt->m_entries[PT_INDEX(virt)];
 }
 
 
-pt_entry *get_page_entry_pd(pdirectory *pml4, void *virt)
+pt_entry *get_page_entry_pd(pdirectory *pml4, virtual_addr virt)
 {
     return __get_page_entry_pd(pml4, virt, FLAG_GETPDE_CREATE);
 }
 
 
 /*
+ * Get physical address.
+ */
+physical_addr get_phys_addr(virtual_addr virt)
+{
+    pdirectory *pml4 = this_core->cur_task ? 
+                            (pdirectory *)this_core->cur_task->pd_virt : 
+                            vmmngr_get_directory_virt();
+    pdirectory *pdp, *pd;
+    ptable *pt;
+    size_t pml4i = PML4_INDEX(virt);
+    size_t pdpi = PDP_INDEX(virt);
+    size_t pdi = PD_INDEX(virt);
+    size_t pti = PT_INDEX(virt);
+
+    if(!pml4)
+    {
+        return 0;
+    }
+
+    if(!PDE_PRESENT(pml4->m_entries_phys[pml4i]))
+    {
+        return 0;
+    }
+
+    pdp = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(pml4->m_entries_phys[pml4i]));
+
+    if(!PDE_PRESENT(pdp->m_entries_phys[pdpi]))
+    {
+        return 0;
+    }
+
+    if((pdp->m_entries_phys[pdpi] & 0x80) == 0x80)
+    {
+        return PDE_FRAME(pdp->m_entries_phys[pdpi]) | (virt & 0x3fffffff);
+    }
+
+    pd = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(pdp->m_entries_phys[pdpi]));
+
+    if(!PDE_PRESENT(pd->m_entries_phys[pdi]))
+    {
+        return 0;
+    }
+
+    if((pd->m_entries_phys[pdi] & 0x80) == 0x80)
+    {
+        return PDE_FRAME(pd->m_entries_phys[pdi]) | (virt & 0x1fffff);
+    }
+
+    pt = (ptable *)PHYS_TO_HIMEM(PDE_FRAME(pd->m_entries_phys[pdi]));
+
+    if(!PTE_PRESENT(pt->m_entries[pti]))
+    {
+        return 0;
+    }
+
+    return PTE_FRAME(pt->m_entries[pti]) | (virt & 0xfff);
+}
+
+
+#define MAKE_PHYS(v)        ((uintptr_t)(v) - KERNEL_MEM_START)
+#define KERNEL_PML_ACCESS   (I86_PDE_PRESENT | I86_PDE_WRITABLE)
+
+/*
  * Initialize the virtual memory manager.
  */
-void vmmngr_initialize(/* multiboot_info_t *mbd */)
+void vmmngr_initialize(unsigned long addr)
 {
-    virtual_addr pml4v, pdpv[4], pdv[4];
-    pdirectory *pml4, *pdp[4], *pd[4];
-    virtual_addr ptv, frame, v;
-    ptable *pt, *tmp;
-    volatile int j, num_tables;
-    //int has_vbe = BIT_SET(mbd->flags, 11);
-    
-    num_tables = (0x100000 + kernel_size) / 0x200000;
+    volatile size_t i, j, k, num_pds;
+    volatile size_t mmap_bytes, mmap_pages;
+    physical_addr first_available;
+    virtual_addr ro_start = (virtual_addr)&kernel_ro_start - KERNEL_MEM_START;
+    virtual_addr ro_end = (virtual_addr)&kernel_ro_end - KERNEL_MEM_START;
+    virtual_addr p;
 
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
+    // don't call vmmngr_switch_pdirectory() as the boot code has already
+    // loaded PML4 into CR3
+    this_core->_cur_directory_phys = (void *)MAKE_PHYS(BootPageDirectory);
+    this_core->_cur_directory_virt = BootPageDirectory;
+
+    // find out the size needed for our memory bitmap and the physical
+    // start address of the memory area where we can store the bitmap
+    pmmngr_early_init(addr, &mmap_bytes, &first_available);
+    mmap_pages = mmap_bytes / PAGE_SIZE;
+
+    if(mmap_bytes % PAGE_SIZE)
+    {
+        mmap_pages++;
+    }
+
+    // set up initial PDPs
+    BootPageDirectory[0].m_entries_phys[PML4_INDEX(HIMEM_START)] =
+                    MAKE_PHYS(&himem_pdp) | KERNEL_PML_ACCESS;
+    BootPageDirectory[0].m_entries_phys[PML4_INDEX(KHEAP_START)] =
+                    MAKE_PHYS(&kheap_pdp) | KERNEL_PML_ACCESS;
+    BootPageDirectory[0].m_entries_phys[PML4_INDEX(MMIO_START)] =
+                    MAKE_PHYS(&mmio_pdp) | KERNEL_PML_ACCESS;
+    BootPageDirectory[0].m_entries_phys[PML4_INDEX(KMODULE_START)] =
+                    MAKE_PHYS(&kmod_pdp) | KERNEL_PML_ACCESS;
+
+    // identity map from -128GiB using 2MiB pages
+    // this way we can later alloc a physical page and directly write to
+    // it by mapping it to our himem region
+    for(i = 0; i < 64; i++)
+    {
+        himem_pdp.m_entries_phys[i] = 
+                MAKE_PHYS(&himem_pd[i]) | KERNEL_PML_ACCESS;
+
+        for(j = 0; j < 512; j++)
+        {
+            himem_pd[i].m_entries_phys[j] = 
+                    (i << 30) |     // PDP
+                    (j << 21) |     // PD
+                    0x80      |     // large page
+                    KERNEL_PML_ACCESS;
+        }
+    }
+
+    // calculate the number of PD entries the kernel needs
+    num_pds = (0x100000 + kernel_size) / 0x200000;
     
     if(((0x100000 + kernel_size) % 0x200000))
     {
-        num_tables++;
+        num_pds++;
     }
 
-    ptable *table[num_tables];
-    virtual_addr vtable[num_tables];
-    
-    pagetable_count = num_tables;
+    // map the kernel's PDP
+    kmem_pdp.m_entries_phys[0] = MAKE_PHYS(&kmem_pd) | KERNEL_PML_ACCESS;
 
-    for(j = 0; j < num_tables; j++)
+    // map the kernel
+    for(i = 0; i < num_pds; i++)
     {
-        if(!(table[j] = (ptable *)pmmngr_alloc_block()))
+        kmem_pd.m_entries_phys[i] = MAKE_PHYS(&kmem_pt[i]) | KERNEL_PML_ACCESS;
+
+        for(j = 0; j < 512; j++)
         {
-            kpanic("Insufficient memory for VM init\n");
-            return;
-        }
-        
-        // clear page table
-        A_memset(table[j], 0, sizeof (ptable));
+            // map kernel's text, rodata and data sections as read-only, and
+            // everything else as writeable.
+            p = (0x200000 * i) + (PAGE_SIZE * j);
 
-        vtable[j] = last_table_addr;
-        last_table_addr += PAGE_SIZE;
+            if(p < ro_start || p > ro_end)
+            {
+                kmem_pt[i].m_entries[j] = p | KERNEL_PML_ACCESS;
+            }
+            else
+            {
+                kmem_pt[i].m_entries[j] = p | I86_PDE_PRESENT;
+            }
+        }
     }
 
-    virtual_addr ro_start = (virtual_addr)&kernel_ro_start;
-    virtual_addr ro_end = (virtual_addr)&kernel_ro_end;
-    
-    /*
-     * setup a page table for our kernel code and dynamic structs
-     * map 1mb to 3gb (where we are at)
-     */
-    for(frame = 0x0, v = KERNEL_MEM_START;
-        frame < (0x100000 + kernel_size);
-        frame += PAGE_SIZE, v += PAGE_SIZE)
+    // map the new kernel PDP into our boot PML4
+    BootPageDirectory[0].m_entries_phys[PML4_INDEX(KERNEL_MEM_START)] =
+                    MAKE_PHYS(&kmem_pdp) | KERNEL_PML_ACCESS;
+
+    // set up the kernel heap
+    kheap_pdp.m_entries_phys[0] = MAKE_PHYS(&kheap_pd) | KERNEL_PML_ACCESS;
+    kheap_pd.m_entries_phys[0] = MAKE_PHYS(&kheap_pt[0]) | KERNEL_PML_ACCESS;
+    kheap_pd.m_entries_phys[1] = MAKE_PHYS(&kheap_pt[1]) | KERNEL_PML_ACCESS;
+    kheap_pd.m_entries_phys[2] = MAKE_PHYS(&kheap_pt[2]) | KERNEL_PML_ACCESS;
+    kheap_pd.m_entries_phys[3] = MAKE_PHYS(&kheap_pt[3]) | KERNEL_PML_ACCESS;
+
+    for(i = 0, j = 0, k = 0; i < mmap_pages; i++)
     {
-        // create a new page
-        pt_entry page = 0;
-        PTE_ADD_ATTRIB(&page, I86_PTE_PRESENT);
-        
-        // map kernel's text, rodata and data sections as read-only, and
-        // everything else as writeable.
-        if(v < ro_start || v > ro_end)
+        kheap_pt[j].m_entries[k++] = (first_available + (i << 12)) | KERNEL_PML_ACCESS;
+
+        if(k >= 512)
         {
-            PTE_ADD_ATTRIB(&page, I86_PTE_WRITABLE);
+            k = 0;
+            j++;
         }
-        
-        PTE_SET_FRAME(&page, frame);
-
-        // ...and add it to the page table
-        table[PD_INDEX(v)]->m_entries[PT_INDEX(v)] = page;
     }
 
-#define ALLOC_PD(p)                                     \
-    if(!(p = (pdirectory *)                             \
-                pmmngr_alloc_blocks(PDIRECTORY_FRAMES)))\
-    {                                                   \
-        kpanic("Insufficient memory for VM init\n");    \
-        return;                                         \
-    }                                                   \
-    A_memset(p, 0, PD_BYTES);                           \
-    pagetable_count += PDIRECTORY_FRAMES;
+    // now set up the page frame bitmap and mark used memory
+    pmmngr_init(addr, PHYS_TO_HIMEM(first_available));
 
-    // Create the default directory table. To kick things off, we need to do
-    // the following:
-    //   - alloc kernel's level 4 page directory (pml4)
-    //   - alloc the following page directory pages (pdp), each of which 
-    //     covers 512 GiB worth of kernel address space:
-    //       * the first part of the kernel (starting at 0xFFFF800000000000)
-    //       * the kernel heap (starting at KHEAP_START)
-    //       * temporary filesystems (starting at TMPFS_START)
-    //       * the page cache (starting at PCACHE_MEM_START)
-    //   - page directories for each of the above pdps (each page directory
-    //     will cover the 1st 1 GiB of the pdp's addresses)
-    //   - a page table so we can address resolve the other tables
-    //
-    // Doing the above here at the beginning ensures that every task that we
-    // fork later on will have pointers to the same kernel memory addresses.
+    // and ensure we mark our bitmap pages as used
+    pmmngr_deinit_region(first_available, mmap_pages * PAGE_SIZE);
 
-    ALLOC_PD(pml4);
-    ALLOC_PD(pdp[0]);
-    ALLOC_PD(pdp[1]);
-    ALLOC_PD(pdp[2]);
-    ALLOC_PD(pdp[3]);
-    ALLOC_PD(pd[0]);
-    ALLOC_PD(pd[1]);
-    ALLOC_PD(pd[2]);
-    ALLOC_PD(pd[3]);
+    // unmap page zero
+    //kmem_pt[0].m_entries[0] = 0;
+    BootPageDirectory[0].m_entries_phys[0] = 0;
 
-    pml4v = last_table_addr;
-    pdpv[0] = pml4v + PD_BYTES;
-    pdpv[1] = pdpv[0] + PD_BYTES;
-    pdpv[2] = pdpv[1] + PD_BYTES;
-    pdpv[3] = pdpv[2] + PD_BYTES;
-    pdv[0] = pdpv[3] + PD_BYTES;
-    pdv[1] = pdv[0] + PD_BYTES;
-    pdv[2] = pdv[1] + PD_BYTES;
-    pdv[3] = pdv[2] + PD_BYTES;
-    last_table_addr += (9 * PD_BYTES);
-
-    init_pd_entry(pml4, PML4_INDEX(KERNEL_MEM_START), 
-                                    (physical_addr)pdp[0], pdpv[0], 0);
-    init_pd_entry(pml4, PML4_INDEX(PAGE_TABLE_START), 
-                                    (physical_addr)pdp[1], pdpv[1], 0);
-    init_pd_entry(pml4, PML4_INDEX(PCACHE_MEM_START), 
-                                    (physical_addr)pdp[2], pdpv[2], 0);
-    init_pd_entry(pml4, PML4_INDEX(TMPFS_START), 
-                                    (physical_addr)pdp[3], pdpv[3], 0);
-
-    init_pd_entry(pdp[0], PDP_INDEX(KERNEL_MEM_START), 
-                                    (physical_addr)pd[0], pdv[0], 0);
-    init_pd_entry(pdp[1], PDP_INDEX(PAGE_TABLE_START), 
-                                    (physical_addr)pd[1], pdv[1], 0);
-    init_pd_entry(pdp[2], PDP_INDEX(PCACHE_MEM_START), 
-                                    (physical_addr)pd[2], pdv[2], 0);
-    init_pd_entry(pdp[3], PDP_INDEX(TMPFS_START), 
-                                    (physical_addr)pd[3], pdv[3], 0);
-
-    for(j = 0; j < num_tables; j++)
-    {
-        init_pd_entry(pd[0], j, (physical_addr)(table[j]), vtable[j], 0);
-    }
-
-#define ALLOC_PT(pt)                                    \
-    if(!(pt = (ptable *)pmmngr_alloc_block()))          \
-    {                                                   \
-        kpanic("Insufficient memory for VM init\n");    \
-        return;                                         \
-    }                                                   \
-    A_memset(pt, 0, sizeof(ptable));                    \
-    pagetable_count++;
-
-
-    ALLOC_PT(pt);
-    ptv = last_table_addr;
-    last_table_addr += PAGE_SIZE;
-
-    pt->m_entries[PT_INDEX(pml4v)    ] = (uintptr_t)pml4 | PTE_FLAGS_PW;
-    pt->m_entries[PT_INDEX(pml4v) + 1] = 
-                            ((uintptr_t)pml4 + PAGE_SIZE) | PTE_FLAGS_PW;
-
-    for(j = 0; j < 4; j++)
-    {
-        pt->m_entries[PT_INDEX(pdpv[j])    ] = (uintptr_t)pdp[j] | PTE_FLAGS_PW;
-        pt->m_entries[PT_INDEX(pdpv[j]) + 1] = 
-                                ((uintptr_t)pdp[j] + PAGE_SIZE) | PTE_FLAGS_PW;
-
-        pt->m_entries[PT_INDEX(pdv[j])     ] = (uintptr_t)pd[j] | PTE_FLAGS_PW;
-        pt->m_entries[PT_INDEX(pdv[j])  + 1] = 
-                                ((uintptr_t)pd[j] + PAGE_SIZE) | PTE_FLAGS_PW;
-    }
-
-    pt->m_entries[PT_INDEX(ptv)      ] = (uintptr_t)pt | PTE_FLAGS_PW;
-
-    for(j = 0; j < num_tables; j++)
-    {
-        pt->m_entries[PT_INDEX(vtable[j])] = 
-                                (uintptr_t)(table[j]) | PTE_FLAGS_PW;
-    }
-
-    init_pd_entry(pd[1], 0, (physical_addr)pt, ptv, 0);
-
-    for(j = 1; j < PAGES_PER_DIR - 20 /* 24 */; j++)
-    {
-        ALLOC_PT(tmp);
-        pt->m_entries[PT_INDEX(last_table_addr)] = 
-                                        (uintptr_t)tmp | PTE_FLAGS_PW;
-        init_pd_entry(pd[1], j, (physical_addr)tmp, last_table_addr, 0);
-        last_table_addr += PAGE_SIZE;
-    }
-
-    // switch to our page directory
-    vmmngr_switch_pdirectory(pml4, (pdirectory *)pml4v);
-
+    // now we are ready for the heap
     printk("Initializing kernel heap..\n");
-    kheap_init();
 
-    /* all frames have 0 sharing by default (until we have user processes) */
+    kheap_init((void *)(KHEAP_START + (mmap_pages * PAGE_SIZE)));
+
+    // all frames have 0 sharing by default (until we have user processes)
     size_t frames = pmmngr_get_block_count();
-    frame_shares = (unsigned char *)kmalloc(frames);
+    frame_shares = (uint8_t *)kmalloc(frames);
     A_memset((void *)frame_shares, 0, frames);
 
     if(!using_ega())
-    //if(has_vbe)
     {
         printk("Initializing VESA BIOS Extensions (VBE)..\n");
         //__asm__ __volatile__("xchg %%bx, %%bx"::);
         vbe_init();
     }
-
-    // allocate a zero page after all memory is mapped so we do not overwrite
-    // something important
-    /*
-    get_next_addr(&zeropage_phys, &zeropage_virt, 
-                  I86_PTE_PRESENT, REGION_PIPE);
-    A_memset((void *)zeropage_virt, 0, PAGE_SIZE);
-    inc_frame_shares(zeropage_phys);
-    */
 }
 
+#undef MAKE_PHYS
+#undef KERNEL_PML_ACCESS
 
-static inline pdirectory *alloc_pd(physical_addr *phys)
+
+static inline void *alloc_pd(physical_addr *phys)
 {
-    pdirectory *pd;
-    
-    // try and get 2 consecutive virtual address pages
-    if(!(pd = (pdirectory *)vmmngr_alloc_and_map(PD_BYTES, 1, PTE_FLAGS_PW,
-                                                 phys, REGION_PAGETABLE)))
+    if(!(*phys = (physical_addr)pmmngr_alloc_block()))
     {
-        printk("vmm: insufficient memory for page directory\n");
         return NULL;
     }
 
-    A_memset(pd, 0, PD_BYTES);
-    
+    void *pd = (void *)PHYS_TO_HIMEM(*phys);
+
+    A_memset(pd, 0, PAGE_SIZE);
+    __atomic_fetch_add(&pagetable_count, 1, __ATOMIC_SEQ_CST);
+
     return pd;
 }
 
-
-#pragma GCC push_options
-#pragma GCC optimize("O0")
 
 /*
  * Clone task page directory.
  */
 int clone_task_pd(struct task_t *parent, struct task_t *child)
 {
+    physical_addr dest_pml4_phys;
+    physical_addr dest_pdp_phys, dest_pd_phys, pt_phys;
+    ptable *pt_virt;
+    volatile virtual_addr v;
+    pdirectory *dest_pml4v;
+    volatile pdirectory *src_pml4v;
+    pdirectory *src_pdp, *src_pd;
+    pdirectory *dest_pdp, *dest_pd;
+    volatile ptable *src_pt;
+    volatile size_t i, j, k, l;
+
     if(!parent || !parent->mem || !child)
     {
         return 1;
     }
-
-    physical_addr dest_pml4_phys;
-    physical_addr dest_pdp_phys, dest_pd_phys;
-    virtual_addr v;
-    pdirectory *dest_pml4v;
-    pdirectory *src_pml4v = (pdirectory *)parent->pd_virt;
-    pdirectory *src_pdp, *src_pd;
-    pdirectory *dest_pdp, *dest_pd;
-    ptable *src_pt;
-    volatile int i, j, k, l;
 
     if(!(dest_pml4v = alloc_pd(&dest_pml4_phys)))
     {
         return 1;
     }
 
+    src_pml4v = (pdirectory *)parent->pd_virt;
+
     kernel_mutex_lock(&(parent->mem->mutex));
 
-    // read the PML4
-    for(v = 0, i = 0; i < 512; i++)
+    if(!(parent->properties & PROPERTY_IDLE))
     {
-        /* copy only pages that are present */
-        if(!PDE_PRESENT(src_pml4v->m_entries_virt[i]))
-        {
-            v += ((virtual_addr)PAGE_SIZE * 512 * 512 * 512);
-            continue;
-        }
-
-        /*
-         * first 4-mb & kernel space & kheap will be linked as-is, while user 
-         * pages will be marked COW and read-only if they are writable.
-         */
-        if(i >= 256)    /* first 4-mb & kernel space & kheap */
-        {
-            dest_pml4v->m_entries_phys[i] = src_pml4v->m_entries_phys[i];
-            dest_pml4v->m_entries_virt[i] = src_pml4v->m_entries_virt[i];
-            __asm__ __volatile__("":::"memory");
-            continue;
-        }
-
-        if(parent->properties & PROPERTY_IDLE)
-        //if(parent == idle_task)
-        {
-            continue;
-        }
-
-        if(!(dest_pdp = alloc_pd(&dest_pdp_phys)))
-        {
-            goto bailout;
-        }
-        
-        init_pd_entry(dest_pml4v, i, dest_pdp_phys, 
-                        (virtual_addr)dest_pdp, I86_PDE_USER);
-        src_pdp = (pdirectory *)PDE_VIRT_FRAME(src_pml4v->m_entries_virt[i]);
-        
-        /*
-         * When to mark user pages Copy-on-Write (CoW):
-         *
-         *                  Forking     Cloning     Vforking
-         * ---------------------------------------------------
-         * MAP_PRIVATE      YES         NO          NO
-         * MAP_SHARED       NO          NO          NO
-         * ---------------------------------------------------
-         */
-
-        // read the PDP
-        for(j = 0; j < 512; j++)
+        // read the PML4
+        for(i = 0; i < 256; i++)
         {
             /* copy only pages that are present */
-            if(!PDE_PRESENT(src_pdp->m_entries_virt[j]))
+            if(!PDE_PRESENT(src_pml4v->m_entries_phys[i]))
             {
-                v += (PAGE_SIZE * 512 * 512);
                 continue;
             }
 
-            if(!(dest_pd = alloc_pd(&dest_pd_phys)))
+            if(!(dest_pdp = alloc_pd(&dest_pdp_phys)))
             {
                 goto bailout;
             }
-            
-            init_pd_entry(dest_pdp, j, dest_pd_phys, 
-                                (virtual_addr)dest_pd, I86_PDE_USER);
-            src_pd = (pdirectory *)PDE_VIRT_FRAME(src_pdp->m_entries_virt[j]);
 
-            // read the PD
-            for(k = 0; k < 512; k++)
+            __atomic_store_n(&dest_pml4v->m_entries_phys[i], 
+                             dest_pdp_phys | PTE_FLAGS_PWU, __ATOMIC_SEQ_CST);
+
+            src_pdp = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(src_pml4v->m_entries_phys[i]));
+
+            /*
+             * When to mark user pages Copy-on-Write (CoW):
+             *
+             *                  Forking     Cloning     Vforking
+             * ---------------------------------------------------
+             * MAP_PRIVATE      YES         NO          NO
+             * MAP_SHARED       NO          NO          NO
+             * ---------------------------------------------------
+             */
+
+            // read the PDP
+            for(j = 0; j < 512; j++)
             {
                 /* copy only pages that are present */
-                if(!PDE_PRESENT(src_pd->m_entries_virt[k]))
+                if(!PDE_PRESENT(src_pdp->m_entries_phys[j]))
                 {
-                    v += (PAGE_SIZE * 512);
                     continue;
                 }
 
-                physical_addr pt_phys = 0;
-                virtual_addr pt_virt = 0;
-
-                if(get_next_addr(&pt_phys, &pt_virt, PTE_FLAGS_PWU,
-                                 REGION_PAGETABLE) != 0)
+                if(!(dest_pd = alloc_pd(&dest_pd_phys)))
                 {
                     goto bailout;
                 }
-                
-                A_memset((void *)pt_virt, 0, PAGE_SIZE);
-                init_pd_entry(dest_pd, k, pt_phys, pt_virt, I86_PDE_USER);
 
-                src_pt = (ptable *)PDE_VIRT_FRAME(src_pd->m_entries_virt[k]);
+                __atomic_store_n(&dest_pdp->m_entries_phys[j], 
+                                 dest_pd_phys | PTE_FLAGS_PWU, __ATOMIC_SEQ_CST);
 
-                // read the PT
-                for(l = 0; l < 512; l++)
+                src_pd = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(src_pdp->m_entries_phys[j]));
+
+                // read the PD
+                for(k = 0; k < 512; k++)
                 {
                     /* copy only pages that are present */
-                    if(!PTE_PRESENT(src_pt->m_entries[l]))
+                    if(!PDE_PRESENT(src_pd->m_entries_phys[k]))
                     {
-                        v += PAGE_SIZE;
                         continue;
                     }
 
-                    // mark as copy-on-write if it is a private mapping,
-                    // or if we are forking or cloning (but not if we are 
-                    // vforking)
-                    if(PTE_PRIVATE(src_pt->m_entries[l]) && 
-                       PTE_WRITABLE(src_pt->m_entries[l]))
+                    if(!(pt_virt = alloc_pd(&pt_phys)))
                     {
-                        //if(!((v >= USER_SHM_START && v < USER_SHM_END) ||
-                        //     (v >= VBE_BACKBUF_START && v < VBE_BACKBUF_END)))
+                        goto bailout;
+                    }
+
+                    __atomic_store_n(&dest_pd->m_entries_phys[k], 
+                                     pt_phys | PTE_FLAGS_PWU, __ATOMIC_SEQ_CST);
+
+                    src_pt = (ptable *)PHYS_TO_HIMEM(PDE_FRAME(src_pd->m_entries_phys[k]));
+
+                    // read the PT
+                    for(l = 0; l < 512; l++)
+                    {
+                        /* copy only pages that are present */
+                        if(!PTE_PRESENT(src_pt->m_entries[l]))
+                        {
+                            continue;
+                        }
+
+                        // mark as copy-on-write if it is a private mapping,
+                        // or if we are forking or cloning (but not if we are 
+                        // vforking)
+                        if(PTE_PRIVATE(src_pt->m_entries[l]) && 
+                           PTE_WRITABLE(src_pt->m_entries[l]))
                         {
                             PTE_MAKE_COW(&src_pt->m_entries[l]);
                         }
-                    }
 
-                    inc_frame_shares(PTE_FRAME(src_pt->m_entries[l]));
-                    ((ptable *)pt_virt)->m_entries[l] = src_pt->m_entries[l];
-                    __asm__ __volatile__("":::"memory");
-                    vmmngr_flush_tlb_entry(v);
-                    v += PAGE_SIZE;
+                        inc_frame_shares(PTE_FRAME(src_pt->m_entries[l]));
+                        pt_virt->m_entries[l] = src_pt->m_entries[l];
+                        __asm__ __volatile__("":::"memory");
+
+                        v = (i << 39) | (j << 30) | (k << 21) | (l << 12);
+                        vmmngr_flush_tlb_entry(v);
+                    }
                 }
             }
         }
     }
 
-
+    // now copy kernel page dir entries
+    A_memcpy((void *)&dest_pml4v->m_entries_phys[256],
+                (void *)&src_pml4v->m_entries_phys[256], 256 * sizeof(pd_entry));
+    __asm__ __volatile__("":::"memory");
 
     kernel_mutex_unlock(&(parent->mem->mutex));
-
-    //KDEBUG("Old page dir at 0x%lx (virt 0x%lx)\n", (uintptr_t)parent->pd_phys, (uintptr_t)src_pml4v);
-    //KDEBUG("New page dir at 0x%lx (virt 0x%lx)\n", (uintptr_t)dest_pml4p, (uintptr_t)dest_pml4v);
 
     child->pd_virt = (virtual_addr)dest_pml4v;
     child->pd_phys = dest_pml4_phys;
@@ -556,54 +522,19 @@ bailout:
     return 1;
 }
 
-#pragma GCC pop_options
 
-
-static inline void __free_page_table(virtual_addr virt)
-{
-    volatile pt_entry *pt = get_page_entry((void *)virt);
-
-    if(pt)
-    {
-        __atomic_store_n(pt, 0, __ATOMIC_SEQ_CST);
-    }
-}
-
-
-static inline void __free_user_page(volatile pdirectory *pd, int i, int is_pd)
+static inline void __free_user_page(volatile pdirectory *pd, int i)
 {
     physical_addr phys = PDE_FRAME(pd->m_entries_phys[i]);
-    virtual_addr virt = PDE_VIRT_FRAME(pd->m_entries_virt[i]);
     
     if(get_frame_shares(phys) == 0)
     {
-        //__asm__ __volatile__("xchg %%bx, %%bx"::);
         __atomic_fetch_sub(&pagetable_count, 1, __ATOMIC_SEQ_CST);
-        __free_page_table(virt);
-        __asm__ __volatile__("":::"memory");
     }
 
     pmmngr_free_block((void *)phys);
-    vmmngr_flush_tlb_entry(virt);
-
-    if(is_pd)
-    {
-        if(get_frame_shares(phys + PAGE_SIZE) == 0)
-        {
-            //__asm__ __volatile__("xchg %%bx, %%bx"::);
-            __atomic_fetch_sub(&pagetable_count, 1, __ATOMIC_SEQ_CST);
-            __free_page_table(virt + PAGE_SIZE);
-            __asm__ __volatile__("":::"memory");
-        }
-
-        pmmngr_free_block((void *)(phys + PAGE_SIZE));
-        vmmngr_flush_tlb_entry(virt + PAGE_SIZE);
-    }
 }
 
-
-#pragma GCC push_options
-#pragma GCC optimize("O0")
 
 /*
  * Free user pages.
@@ -614,50 +545,39 @@ void free_user_pages(virtual_addr src_addr)
     volatile pdirectory *src_pml4v = (volatile pdirectory *)src_addr;
     volatile pdirectory *src_pdp, *src_pd;
     volatile ptable *src_pt;
-    volatile int i, j, k, l;
-    struct kernel_region_t *r = &kernel_regions[REGION_PAGETABLE];
-
-    elevated_priority_lock_recursive(r->mutex, r->lock_count);
+    volatile size_t i, j, k, l;
 
     // read the PML4
-    for(v = 0, i = 0; i < 512; i++)
+    for(v = 0, i = 0; i < 256; i++)
     {
-        if(!PDE_PRESENT(src_pml4v->m_entries_virt[i]))
+        if(!PDE_PRESENT(src_pml4v->m_entries_phys[i]))
         {
-            v += ((virtual_addr)PAGE_SIZE * 512 * 512 * 512);
             continue;
         }
 
-        if(i >= 256)
-        {
-            break;
-        }
-
-        src_pdp = (volatile pdirectory *)PDE_VIRT_FRAME(src_pml4v->m_entries_virt[i]);
+        src_pdp = (volatile pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(src_pml4v->m_entries_phys[i]));
 
         // read the PDP
         for(j = 0; j < 512; j++)
         {
             /* free only pages that are present */
-            if(!PDE_PRESENT(src_pdp->m_entries_virt[j]))
+            if(!PDE_PRESENT(src_pdp->m_entries_phys[j]))
             {
-                v += (PAGE_SIZE * 512 * 512);
                 continue;
             }
 
-            src_pd = (volatile pdirectory *)PDE_VIRT_FRAME(src_pdp->m_entries_virt[j]);
+            src_pd = (volatile pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(src_pdp->m_entries_phys[j]));
 
             // read the PD
             for(k = 0; k < 512; k++)
             {
                 /* free only pages that are present */
-                if(!PDE_PRESENT(src_pd->m_entries_virt[k]))
+                if(!PDE_PRESENT(src_pd->m_entries_phys[k]))
                 {
-                    v += (PAGE_SIZE * 512);
                     continue;
                 }
 
-                src_pt = (volatile ptable *)PDE_VIRT_FRAME(src_pd->m_entries_virt[k]);
+                src_pt = (volatile ptable *)PHYS_TO_HIMEM(PDE_FRAME(src_pd->m_entries_phys[k]));
 
                 // read the PT
                 for(l = 0; l < 512; l++)
@@ -665,46 +585,33 @@ void free_user_pages(virtual_addr src_addr)
                     /* free only pages that are present */
                     if(!PTE_PRESENT(src_pt->m_entries[l]))
                     {
-                        v += PAGE_SIZE;
                         continue;
                     }
 
-                    /*
-                    printk("free_user_pages: virt 0x%lx, phys 0x%lx, shares %d\n", v, PTE_FRAME(src_pt->m_entries[l]), get_frame_shares(PTE_FRAME(src_pt->m_entries[l])));
-                    screen_refresh(NULL);
-                    __asm__ __volatile__("xchg %%bx, %%bx"::);
-                    */
-
                     pmmngr_free_block((void *)PTE_FRAME(src_pt->m_entries[l]));
+
+                    v = (i << 39) | (j << 30) | (k << 21) | (l << 12);
                     vmmngr_flush_tlb_entry(v);
+
                     __atomic_store_n(&(src_pt->m_entries[l]), 0, __ATOMIC_SEQ_CST);
                     __asm__ __volatile__("":::"memory");
-
-                    v += PAGE_SIZE;
                 }
 
-                __free_user_page(src_pd, k, 0);
-                __atomic_store_n(&(src_pd->m_entries_virt[k]), 0, __ATOMIC_SEQ_CST);
+                __free_user_page(src_pd, k);
                 __atomic_store_n(&(src_pd->m_entries_phys[k]), 0, __ATOMIC_SEQ_CST);
                 __asm__ __volatile__("":::"memory");
             }
 
-            __free_user_page(src_pdp, j, 1);
-            __atomic_store_n(&(src_pdp->m_entries_virt[j]), 0, __ATOMIC_SEQ_CST);
+            __free_user_page(src_pdp, j);
             __atomic_store_n(&(src_pdp->m_entries_phys[j]), 0, __ATOMIC_SEQ_CST);
             __asm__ __volatile__("":::"memory");
         }
 
-        __free_user_page(src_pml4v, i, 1);
-        __atomic_store_n(&(src_pml4v->m_entries_virt[i]), 0, __ATOMIC_SEQ_CST);
+        __free_user_page(src_pml4v, i);
         __atomic_store_n(&(src_pml4v->m_entries_phys[i]), 0, __ATOMIC_SEQ_CST);
         __asm__ __volatile__("":::"memory");
     }
-
-    elevated_priority_unlock_recursive(r->mutex, r->lock_count);
 }
-
-#pragma GCC pop_options
 
 
 /*
@@ -712,53 +619,50 @@ void free_user_pages(virtual_addr src_addr)
  */
 size_t get_task_pagecount(struct task_t *task)
 {
-    if(!task || !task->pd_virt)
-    {
-        return 0;
-    }
-    
     size_t count = 0;
-    volatile pdirectory *src_pml4v = (pdirectory *)task->pd_virt;
+    volatile pdirectory *src_pml4v;
     pdirectory *src_pdp, *src_pd;
     ptable *src_pt;
     int i, j, k, l;
 
-    // read the PML4
-    for(i = 0; i < 512; i++)
+    if(!task || !task->pd_virt)
     {
-        if(!PDE_PRESENT(src_pml4v->m_entries_virt[i]))
+        return 0;
+    }
+
+    src_pml4v = (pdirectory *)task->pd_virt;
+
+    // read the PML4
+    for(i = 0; i < 256; i++)
+    {
+        if(!PDE_PRESENT(src_pml4v->m_entries_phys[i]))
         {
             continue;
         }
+        
+        src_pdp = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(src_pml4v->m_entries_phys[i]));
 
-        if(i >= 256)
-        {
-            break;
-        }
-        
-        src_pdp = (pdirectory *)PDE_VIRT_FRAME(src_pml4v->m_entries_virt[i]);
-        
         // read the PDP
         for(j = 0; j < 512; j++)
         {
             /* count only pages that are present */
-            if(!PDE_PRESENT(src_pdp->m_entries_virt[j]))
+            if(!PDE_PRESENT(src_pdp->m_entries_phys[j]))
             {
                 continue;
             }
 
-            src_pd = (pdirectory *)PDE_VIRT_FRAME(src_pdp->m_entries_virt[j]);
+            src_pd = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(src_pdp->m_entries_phys[j]));
 
             // read the PD
             for(k = 0; k < 512; k++)
             {
                 /* count only pages that are present */
-                if(!PDE_PRESENT(src_pd->m_entries_virt[k]))
+                if(!PDE_PRESENT(src_pd->m_entries_phys[k]))
                 {
                     continue;
                 }
 
-                src_pt = (ptable *)PDE_VIRT_FRAME(src_pd->m_entries_virt[k]);
+                src_pt = (ptable *)PHYS_TO_HIMEM(PDE_FRAME(src_pd->m_entries_phys[k]));
 
                 // read the PT
                 for(l = 0; l < 512; l++)
@@ -776,145 +680,5 @@ size_t get_task_pagecount(struct task_t *task)
     }
     
     return count;
-}
-
-
-#define MAKE_VIRT_ADDR(pml4i, pdpi, pdi, pti)   \
-    (((virtual_addr)(0xFFFF)) << 48)|           \
-    (((virtual_addr)(pml4i)) << 39) |           \
-    (((virtual_addr)(pdpi)) << 30)  |           \
-    (((virtual_addr)(pdi)) << 21)   |           \
-    (((virtual_addr)(pti)) << 12);
-
-#define MAY_RETURN_ADDR(pml4i, pdpi, pdi, pti)      \
-    {                                               \
-        virtual_addr res =                          \
-            MAKE_VIRT_ADDR(pml4i, pdpi, pdi, pti);  \
-        if(res >= max) return 0;                    \
-        if(res >= min) return res;                  \
-        continue;                                   \
-    }
-
-
-virtual_addr __get_next_addr(virtual_addr min, virtual_addr max)
-{
-    volatile pdirectory *src_pml4v = 
-                    this_core->cur_task ? 
-                        (pdirectory *)this_core->cur_task->pd_virt : 
-                                      vmmngr_get_directory_virt();
-    pdirectory *src_pdp, *src_pd;
-    ptable *src_pt;
-    volatile int i, j, k, l;
-
-    // read the PML4
-    for(i = (int)PML4_INDEX(min); i <= (int)PML4_INDEX(max); i++)
-    //for(i = 256; i < 512; i++)
-    {
-        if(!PDE_PRESENT(src_pml4v->m_entries_virt[i]))
-        {
-            MAY_RETURN_ADDR(i, 0, 0, 0);
-        }
-        
-        src_pdp = (pdirectory *)PDE_VIRT_FRAME(src_pml4v->m_entries_virt[i]);
-        
-        // read the PDP
-        for(j = 0; j < 512; j++)
-        {
-            if(!PDE_PRESENT(src_pdp->m_entries_virt[j]))
-            {
-                MAY_RETURN_ADDR(i, j, 0, 0);
-            }
-
-            src_pd = (pdirectory *)PDE_VIRT_FRAME(src_pdp->m_entries_virt[j]);
-
-            // read the PD
-            for(k = 0; k < 512; k++)
-            {
-                if(!PDE_PRESENT(src_pd->m_entries_virt[k]))
-                {
-                    MAY_RETURN_ADDR(i, j, k, 0);
-                }
-
-                src_pt = (ptable *)PDE_VIRT_FRAME(src_pd->m_entries_virt[k]);
-
-                // read the PT
-                for(l = 0; l < 512; l++)
-                {
-                    if(!PTE_PRESENT(src_pt->m_entries[l]))
-                    {
-                        MAY_RETURN_ADDR(i, j, k, l);
-                    }
-                }
-            }
-        }
-    }
-
-    return 0;
-}
-
-
-int get_next_addr(physical_addr *phys, virtual_addr *virt, 
-                  int flags, int region)
-{
-    volatile virtual_addr res;
-    struct kernel_region_t *r = &kernel_regions[region];
-    volatile int tries = 0;
-
-    // for safety
-    *virt = 0;
-    *phys = 0;
-    res = 0;
-
-    elevated_priority_lock_recursive(r->mutex, r->lock_count);
-
-retry:
-
-    res = __get_next_addr(r->min, r->max);
-
-    if(res)
-    {
-        pt_entry *pt = get_page_entry((void *)res);
-
-        if(PTE_FRAME(*pt) == 0)
-        {
-            // reserve the addr temporarily so we can unlock the mutex
-            PTE_SET_FRAME(pt, 1);
-
-            elevated_priority_unlock_recursive(r->mutex, r->lock_count);
-
-            if(!vmmngr_alloc_page(pt, flags))
-            {
-                // this means no physical memory available, so bail out
-                PTE_SET_FRAME(pt, 0);
-                kpanic("Insufficient memory (in get_next_addr(1))!\n");
-                return -1;
-            }
-
-            *virt = res;
-            *phys = PTE_FRAME(*pt);
-
-            vmmngr_flush_tlb_entry(res);
-            
-            if(region == REGION_PAGETABLE)
-            {
-                __atomic_fetch_add(&pagetable_count, 1, __ATOMIC_SEQ_CST);
-            }
-
-            //KDEBUG("get_next_addr: res 0x%x\n", res);
-            //__asm__ __volatile__("xchg %%bx, %%bx"::);
-            return 0;
-        }
-    }
-
-    if(++tries < 5)
-    {
-        goto retry;
-    }
-
-    elevated_priority_unlock_recursive(r->mutex, r->lock_count);
-    kpanic("Insufficient memory (in get_next_addr(2))!\n");
-
-    // nothing found
-    return -1;
 }
 

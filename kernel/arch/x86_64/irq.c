@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: irq.c
  *    This file is part of LaylaOS.
@@ -49,61 +49,6 @@ struct irq_redir_t irq_redir[16] =
 };
 
 
-/*
- * IRQ handler switch function.
- */
-void irq_handler(struct regs *r)
-{
-    struct handler_t *h;
-    uint8_t int_no = (r->int_no & 0xFF);
-    ////int done = 0;
-    unsigned long long oticks = ticks;
-
-    ////this_core->nested_irqs++;
-
-    for(h = interrupt_handlers[int_no]; h; h = h->next)
-    {
-        if(h->handler(r, h->handler_arg))
-        {
-            cli();
-
-            // IRQ 124 never comes here so don't check for it
-            if(int_no == 123)
-            {
-                this_core->irq_count[16]++;
-                this_core->irq_ticks[16] += (ticks - oticks);
-            }
-            else if(int_no == 255)
-            {
-                this_core->irq_count[18]++;
-                this_core->irq_ticks[18] += (ticks - oticks);
-            }
-            else
-            {
-                this_core->irq_count[int_no - 32]++;
-                this_core->irq_ticks[int_no - 32] += (ticks - oticks);
-            }
-
-            /*
-            h->hits++;
-            // TODO: this does not account for round over
-            h->ticks += (ticks - oticks);
-            //this_core->nested_irqs--;
-            */
-
-            return;
-        }
-    }
-
-    printk("Unhandled IRQ %d\n", int_no - 32);
-    screen_refresh(NULL);
-
-    pic_send_eoi(int_no - 32);
-    ////this_core->nested_irqs--;
-}
-
-
-static inline
 void register_interrupt_handler(int n, struct handler_t *handler)
 {
     struct handler_t *h;
@@ -128,25 +73,6 @@ void register_interrupt_handler(int n, struct handler_t *handler)
 }
 
 
-/*
- * Register IRQ handler.
- */
-void register_irq_handler(int n, struct handler_t *handler)
-{
-    register_interrupt_handler(n + 32, handler);
-}
-
-
-/*
- * Register ISR handler.
- */
-void register_isr_handler(int n, struct handler_t *handler)
-{
-    register_interrupt_handler(n, handler);
-}
-
-
-static inline
 void unregister_interrupt_handler(int n, struct handler_t *handler)
 {
     if(interrupt_handlers[n] == NULL)
@@ -184,28 +110,10 @@ void unregister_interrupt_handler(int n, struct handler_t *handler)
 
 
 /*
- * Unregister IRQ handler.
- */
-void unregister_irq_handler(int n, struct handler_t *handler)
-{
-    unregister_interrupt_handler(n + 32, handler);
-}
-
-
-/*
- * Unregister ISR handler.
- */
-void unregister_isr_handler(int n, struct handler_t *handler)
-{
-    unregister_interrupt_handler(n, handler);
-}
-
-
-/*
  * Allocate an IRQ handler.
  */
-struct handler_t *irq_handler_alloc(int (*func)(struct regs *, int), 
-                                    int arg, char *name)
+struct handler_t *irq_handler_alloc(int (*func)(struct regs *, void *), 
+                                    void *arg, char *name)
 {
     char *p;
     struct handler_t *h = kmalloc(sizeof(struct handler_t));
@@ -245,6 +153,47 @@ uint32_t irq_remap(uint32_t irq)
 */
 
 
+void reserve_irq_range(unsigned int start, unsigned int end)
+{
+    uintptr_t s = int_off();
+    volatile uint32_t *irqs = processor_local_data[0].irq_map;
+    volatile unsigned int i;
+
+    for(i = start; i <= end; i++)
+    {
+        irqs[i / 32] |= (1 << (i % 32));
+    }
+
+    int_on(s);
+}
+
+
+unsigned int alloc_irq_vector(void)
+{
+    uintptr_t s = int_off();
+    volatile uint32_t *irqs = processor_local_data[0].irq_map;
+    volatile unsigned int i, j;
+
+    for(i = 0; i < 8; i++)
+    {
+        for(j = 0; j < 32; j++)
+        {
+            if((irqs[i] & (1 << j)) == 0)
+            {
+                irqs[i] |= (1 << j);
+                int_on(s);
+
+                return (i * 32) + j;
+            }
+        }
+    }
+
+    int_on(s);
+
+    return -1;
+}
+
+
 /*
  * Initialise IRQs.
  */
@@ -254,23 +203,6 @@ void irq_init(void)
 
     pic_init(0x20, 0x28);
 
-    install_isr(32, 0x8E, 0x08, irq0);	//IRQ 0
-    install_isr(33, 0x8E, 0x08, irq1);
-    install_isr(34, 0x8E, 0x08, irq2);
-    install_isr(35, 0x8E, 0x08, irq3);
-    install_isr(36, 0x8E, 0x08, irq4);
-    install_isr(37, 0x8E, 0x08, irq5);
-    install_isr(38, 0x8E, 0x08, irq6);
-    install_isr(39, 0x8E, 0x08, irq7);
-    install_isr(40, 0x8E, 0x08, irq8);
-    install_isr(41, 0x8E, 0x08, irq9);
-    install_isr(42, 0x8E, 0x08, irq10);
-    install_isr(43, 0x8E, 0x08, irq11);
-    install_isr(44, 0x8E, 0x08, irq12);
-    install_isr(45, 0x8E, 0x08, irq13);
-    install_isr(46, 0x8E, 0x08, irq14);
-    install_isr(47, 0x8E, 0x08, irq15);
-    
     timer_init();
     ps2_init();
 }

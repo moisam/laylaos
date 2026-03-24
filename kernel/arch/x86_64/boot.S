@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: boot.S
  *    This file is part of LaylaOS.
@@ -39,9 +39,15 @@
 
 // Declare constants for the video mode
 .set VIDEO_MODE,    0           // 0 = linear graphics, 1 = text mode
+.set VIDEO_WIDTH,   0           // pixels (graphics mode), cols (text mode)
+.set VIDEO_HEIGHT,  0           // pixels (graphics mode), cols (text mode)
+.set VIDEO_BPP,     32          // bpp (graphics mode), 0 (text mode)
+/*
+.set VIDEO_MODE,    0           // 0 = linear graphics, 1 = text mode
 .set VIDEO_WIDTH,   1024        // pixels (graphics mode), cols (text mode)
 .set VIDEO_HEIGHT,  768         // pixels (graphics mode), cols (text mode)
 .set VIDEO_BPP,     32          // bpp (graphics mode), 0 (text mode)
+*/
 /*
 .set VIDEO_MODE,    1           // 0 = linear graphics, 1 = text mode
 .set VIDEO_WIDTH,   80          // pixels (graphics mode), cols (text mode)
@@ -152,6 +158,7 @@ stack_top:
 .section .bss, "aw", @nobits
 .align 0x1000
 
+.global BootPageDirectory
 BootPageDirectory:
     .skip 0x3000
 
@@ -289,6 +296,11 @@ long_mode:
     // Reset RFLAGS.
     pushq   $0
     popfq
+
+    // Set WP, so kernel writes to non-writeable pages trigger page faults.
+    mov %cr0, %rax
+    or $0x10000, %rax
+    mov %rax, %cr0
 
 	// Transfer control to the main kernel.
 	//call kernel_main
