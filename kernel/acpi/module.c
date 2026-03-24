@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: module.c
  *    This file is part of LaylaOS.
@@ -259,72 +259,46 @@ int init_module(void)
     if((phys = AcpiOsGetRootPointer()))
     {
         // map RSDP to a virtual address
-        if((virt = 
-                phys_to_virt_off(phys, phys + PAGE_SIZE,
-                                          PTE_FLAGS_PW, REGION_ACPI)))
-        {
-            sz = (((struct RSDPDescriptor *)virt)->Revision == 2) ?
+        virt = PHYS_TO_HIMEM(phys);
+        sz = (((struct RSDPDescriptor *)virt)->Revision == 2) ?
                     ((struct RSDPDescriptor20 *)virt)->Length :
                     sizeof(struct RSDPDescriptor);
 
-            if((rsdp_copy = kmalloc(sz)))
+        if((rsdp_copy = kmalloc(sz)))
+        {
+            A_memcpy(rsdp_copy, (void *)virt, sz);
+        }
+
+        // if this is ACPI 2.0 and we have an XSDT, grab it
+        if(((struct RSDPDescriptor20 *)rsdp_copy)->firstPart.Revision == 2 &&
+           ((struct RSDPDescriptor20 *)rsdp_copy)->XsdtAddress != 0)
+        {
+            phys = ((struct RSDPDescriptor20 *)rsdp_copy)->XsdtAddress;
+            virt = PHYS_TO_HIMEM(phys);
+            sz = ((struct XSDT *)virt)->h.Length;
+
+            if((xsdt_copy = kmalloc(sz)))
             {
-                A_memcpy(rsdp_copy, (void *)virt, sz);
+                A_memcpy(xsdt_copy, (void *)virt, sz);
             }
+        }
 
-            // free this as we will not use it anymore
-            vmmngr_free_pages(virt, PAGE_SIZE);
+        // if this is ACPI 2.0 and we don't have an XSDT, or if this
+        // is ACPI 1.0, grab the RSDT
+        if(((struct RSDPDescriptor *)rsdp_copy)->RsdtAddress != 0)
+        {
+            phys = ((struct RSDPDescriptor *)rsdp_copy)->RsdtAddress;
+            virt = PHYS_TO_HIMEM(phys);
+            sz = ((struct RSDT *)virt)->h.Length;
 
-            // if this is ACPI 2.0 and we have an XSDT, grab it
-            if(((struct RSDPDescriptor20 *)rsdp_copy)->firstPart.Revision == 2 &&
-               ((struct RSDPDescriptor20 *)rsdp_copy)->XsdtAddress != 0)
+            if((rsdt_copy = kmalloc(sz)))
             {
-                phys = ((struct RSDPDescriptor20 *)rsdp_copy)->XsdtAddress;
-
-                if((virt = 
-                        phys_to_virt_off(phys, phys + PAGE_SIZE,
-                                          PTE_FLAGS_PW, REGION_ACPI)))
-                {
-                    sz = ((struct XSDT *)virt)->h.Length;
-
-                    if((xsdt_copy = kmalloc(sz)))
-                    {
-                        A_memcpy(xsdt_copy, (void *)virt, sz);
-                    }
-
-                    // free this as we will not use it anymore
-                    vmmngr_free_pages(virt, PAGE_SIZE);
-                }
-            }
-
-            // if this is ACPI 2.0 and we don't have an XSDT, or if this
-            // is ACPI 1.0, grab the RSDT
-            if(((struct RSDPDescriptor *)rsdp_copy)->RsdtAddress != 0)
-            {
-                phys = ((struct RSDPDescriptor *)rsdp_copy)->RsdtAddress;
-
-                if((virt = 
-                        phys_to_virt_off(phys, phys + PAGE_SIZE,
-                                          PTE_FLAGS_PW, REGION_ACPI)))
-                {
-                    sz = ((struct RSDT *)virt)->h.Length;
-
-                    if((rsdt_copy = kmalloc(sz)))
-                    {
-                        A_memcpy(rsdt_copy, (void *)virt, sz);
-                    }
-
-                    // free this as we will not use it anymore
-                    vmmngr_free_pages(virt, PAGE_SIZE);
-                }
+                A_memcpy(rsdt_copy, (void *)virt, sz);
             }
         }
     }
 
     printk("Finished loading ACPICA..\n");
-    //__asm__ __volatile("xchg %%bx, %%bx"::);
-    //__asm__ __volatile__("cli\nhlt"::);
-    //for(;;);
 
     return 0;
 }
@@ -388,6 +362,7 @@ void acpi_parse_madt(void)
     }
 
     processor_count = 0;
+    printk("ACPI: found %s with %d entries\n", is_xsdt ? "XSDT" : "RSDT", entries);
 
     /*
      * Iterate through table entries to find the MADT table, which has a
@@ -401,12 +376,7 @@ void acpi_parse_madt(void)
                             ((struct XSDT *)table)->PointerToOtherSDT[i] :
                             ((struct RSDT *)table)->PointerToOtherSDT[i]);
 
-        if(!(virt = 
-                phys_to_virt_off(phys, phys + PAGE_SIZE,
-                                          PTE_FLAGS_PW, REGION_ACPI)))
-        {
-            kpanic("ACPI: failed to map table\n");
-        }
+        virt = PHYS_TO_HIMEM(phys);
 
         p = (char *)virt;
 
@@ -415,6 +385,7 @@ void acpi_parse_madt(void)
             struct MADT *madt = (struct MADT *)virt;
 
             lapic_phys = madt->LocalAPICAddress;
+            printk("ACPI: found MADT with length %d\n", madt->h.Length);
 
             for(p2 = (char *)madt->Entries; p2 < p + madt->h.Length; p2 += p2[1])
             {
@@ -429,7 +400,6 @@ void acpi_parse_madt(void)
                             if(processor_count >= MAX_CORES)
                             {
                                 printk("ACPI: too many cores (max %d)\n", MAX_CORES);
-                                vmmngr_free_pages(virt, PAGE_SIZE);
                                 goto skip;
                             }
 
@@ -473,8 +443,6 @@ void acpi_parse_madt(void)
                 }
             }
         }
-
-        vmmngr_free_pages(virt, PAGE_SIZE);
     }
 
 skip:
@@ -524,10 +492,23 @@ void acpi_reset(void)
             break;
 
         case ACPI_ADDRESS_SPACE_SYSTEM_PCI_CONFIG:
+        {
+            struct pci_dev_t pci;
+
+            pci.config_space = 0;
+            pci.segment = 0;
+            pci.bus = 0;
+            pci.dev = (ResetReg.Address >> 32) & 0xff;
+            pci.function = (ResetReg.Address >> 16) & 0xff;
+
+            pci_config_write_byte(&pci, (ResetReg.Address & 0xff), ResetValue);
+            /*
             pci_config_write_byte(0, (ResetReg.Address >> 32) & 0xff,
                                      (ResetReg.Address >> 16) & 0xff, 
                                      (ResetReg.Address & 0xff), ResetValue);
+            */        
             break;
+        }
 
         default:
             break;
