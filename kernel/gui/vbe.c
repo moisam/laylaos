@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: vbe.c
  *    This file is part of LaylaOS.
@@ -287,26 +287,24 @@ void get_vbe_info(unsigned long addr)
 
 static inline void vbe_map_backbuf(uint8_t **addr)
 {
-    if(!(*addr = (uint8_t *)
-            vmmngr_alloc_and_map(vbe_framebuffer.memsize, 0,
-                                 PTE_FLAGS_PWU, NULL, REGION_VBE_BACKBUF)))
+    physical_addr phys;
+
+    if(!(phys = (physical_addr)pmmngr_alloc_blocks(align_up(vbe_framebuffer.memsize) / PAGE_SIZE)))
     {
-        printk("  Failed to alloc VBE back buffer\n");
+        kpanic("  Failed to alloc VBE back buffer\n");
     }
     else
     {
+        *addr = (uint8_t *)kmod_map(phys, phys + vbe_framebuffer.memsize);
         A_memset(*addr, 0, vbe_framebuffer.memsize);
 
-        virtual_addr start = (virtual_addr)*addr;
-        virtual_addr end = start + vbe_framebuffer.memsize;
-        virtual_addr addr;
-        volatile pt_entry *e;
+        physical_addr start = phys;
+        physical_addr end = start + vbe_framebuffer.memsize;
+        physical_addr addr;
 
         for(addr = start; addr < end; addr += PAGE_SIZE)
         {
-            //__asm__ __volatile__("xchg %%bx, %%bx"::);
-            e = get_page_entry((void *)addr);
-            inc_frame_shares(PTE_FRAME(*e));
+            inc_frame_shares(addr);
         }
     }
 }
@@ -323,24 +321,14 @@ void vbe_init(void)
         return;
     }
 
-    //printk("  VBE mode 0x%x, phys 0x%lx\n", vbe_mode, vbe_framebuffer.phys_addr);
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
-
     if(!(vbe_framebuffer.virt_addr = (uint8_t *)
-            phys_to_virt_off((physical_addr)vbe_framebuffer.phys_addr,
-                             (physical_addr)vbe_framebuffer.phys_addr +
-                                            vbe_framebuffer.memsize,
-                              PTE_FLAGS_PW, REGION_VBE_FRONTBUF)))
+            kmod_map((physical_addr)vbe_framebuffer.phys_addr,
+                     (physical_addr)vbe_framebuffer.phys_addr +
+                                            vbe_framebuffer.memsize)))
     {
         printk("  Failed to map virtual VBE memory\n");
         return;
     }
-
-    /*
-    // mark video memory area as used
-    pmmngr_deinit_region((physical_addr)vbe_framebuffer.phys_addr,
-                                        vbe_framebuffer.memsize);
-    */
 
     vbe_map_backbuf(&fb_backbuf_text);
     vbe_map_backbuf(&fb_backbuf_gui);
@@ -358,10 +346,9 @@ void vbe_init(void)
                         vbe_framebuffer.palette_num_colors;
 
         temp_addr = (uint8_t *)
-            phys_to_virt_off((physical_addr)vbe_framebuffer.palette_phys_addr,
-                             (physical_addr)vbe_framebuffer.palette_phys_addr +
-                                (vbe_framebuffer.palette_num_colors * 4),
-                             PTE_FLAGS_PW, REGION_VBE_FRONTBUF);
+            kmod_map((physical_addr)vbe_framebuffer.palette_phys_addr,
+                     (physical_addr)vbe_framebuffer.palette_phys_addr +
+                                (vbe_framebuffer.palette_num_colors * 4));
 
         vbe_framebuffer.palette_virt_addr = kmalloc(sz);
         palette = vbe_framebuffer.palette_virt_addr;
@@ -431,13 +418,13 @@ int map_vbe_backbuf(virtual_addr *resaddr)
         src < vbeend;
         dest += PAGE_SIZE, src += PAGE_SIZE)
     {
-        if(!(esrc = get_page_entry_pd(pml4_src, (void *)src)) ||
-           !(edest = get_page_entry_pd(pml4_dest, (void *)dest)))
+        if(!(esrc = get_page_entry_pd(pml4_src, src)) ||
+           !(edest = get_page_entry_pd(pml4_dest, dest)))
         {
             return -ENOMEM;
         }
         
-        *edest = *esrc;
+        *edest = *esrc | I86_PTE_USER;
         inc_frame_shares(PTE_FRAME(*esrc));
         vmmngr_flush_tlb_entry(dest);
     }
