@@ -2031,7 +2031,8 @@ void tcp_input(struct packet_t *p)
 
     if(!(so = sock_lookup(IPPROTO_TCP, tcph->srcp, tcph->destp)))
     {
-        printk("tcp: cannot find socket for src %d and dest %d\n", tcph->srcp, tcph->destp);
+        printk("tcp: cannot find socket for src %d and dest %d\n", 
+                ntohs(tcph->srcp), ntohs(tcph->destp));
         DROP_PACKET(p);
         return;
     }

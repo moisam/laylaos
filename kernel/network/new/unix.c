@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: unix.c
  *    This file is part of LaylaOS.
@@ -40,6 +40,93 @@
 #include "iovec.c"
 #include "../../kernel/task_funcs.c"
 
+#define SHORT_PACKET_COUNT                  32
+#define SHORT_PACKET_SIZE                   256
+#define SHORT_PACKET_BUFFER_SIZE            (SHORT_PACKET_SIZE - sizeof(struct packet_t))
+#define SHORT_PACKET_TOTALMEM               (SHORT_PACKET_COUNT * SHORT_PACKET_SIZE)
+
+static volatile uint32_t short_packet_use_bitmap = 0;
+static char *short_packets = NULL;
+static struct kernel_mutex_t short_packet_lock;
+
+
+static void short_packet_free(struct packet_t *_p)
+{
+    uint32_t i;
+    char *p = (char *)_p;
+
+    if(p < short_packets || p >= (short_packets + SHORT_PACKET_TOTALMEM))
+    {
+        KDEBUG("unix: free: ignoring packet with invalid addr\n");
+        return;
+    }
+
+    i = (p - short_packets) / SHORT_PACKET_SIZE;
+    short_packet_use_bitmap &= ~(1 << i);
+}
+
+
+/*
+ * This function's code is similar to ne2000_alloc_packet() from 
+ * network/packet.c, modified to use our static buffers instead of dynamically
+ * allocating buffers on the kernel heap. This is to reduce the overhead
+ * for GUI applications that send large amounts of small packets in short
+ * bursts.
+ *
+ * TODO: increase the amount of buffers and use this for the whole
+ *       network stack?
+ */
+static struct packet_t *alloc_short_packet(size_t len)
+{
+    struct packet_t *p;
+    volatile int i;
+
+    if(len > SHORT_PACKET_BUFFER_SIZE || short_packet_use_bitmap == 0xFFFFFFFF)
+    {
+        return alloc_packet(len);
+    }
+
+    kernel_mutex_lock(&short_packet_lock);
+
+    // first use
+    if(!short_packets && !(short_packets = kmalloc(SHORT_PACKET_TOTALMEM)))
+    {
+        kernel_mutex_unlock(&short_packet_lock);
+        return alloc_packet(len);
+    }
+
+    // find a slot
+    for(i = 0; i < SHORT_PACKET_COUNT; i++)
+    {
+        if(!(short_packet_use_bitmap & (1 << i)))
+        {
+            break;
+        }
+    }
+
+    // no free slot
+    if(i == SHORT_PACKET_COUNT)
+    {
+        kernel_mutex_unlock(&short_packet_lock);
+        return alloc_packet(len);
+    }
+
+    short_packet_use_bitmap |= (1 << i);
+    kernel_mutex_unlock(&short_packet_lock);
+
+    p = (struct packet_t *)(short_packets + (i * SHORT_PACKET_SIZE));
+
+    //A_memset(p, 0, sizeof(struct packet_t) + len);
+    p->data = ((uint8_t *)p + sizeof(struct packet_t));
+    p->head = p->data;
+    p->end = p->data + len;
+    p->refs = 1;
+    p->count = len;
+    p->free_packet = short_packet_free;
+
+    return p;
+}
+
 
 static struct socket_t *unix_socket(void)
 {
@@ -72,7 +159,7 @@ static long unix_write(struct socket_t *so, struct msghdr *msg, int kernel)
         return -EINVAL;
     }
 
-    if(!(p = alloc_packet(total)))
+    if(!(p = alloc_short_packet(total)))
     {
         printk("unix: insufficient memory for sending packet\n");
         return -ENOMEM;
@@ -131,10 +218,6 @@ try:
         selrecord(&so->selrecv);
         SOCKET_UNLOCK(so);
 
-        /*
-        this_core->cur_task->woke_by_signal = 0;
-        block_task(so, 1);
-        */
         set_task_waking_signal(this_core->cur_task, 0);
         set_task_waitchan(this_core->cur_task, so);
         set_task_state(this_core->cur_task, TASK_SLEEPING);
@@ -143,7 +226,6 @@ try:
         SOCKET_LOCK(so);
 
         if(get_task_waking_signal(this_core->cur_task))
-        //if(this_core->cur_task->woke_by_signal)
         {
             // TODO: should we return -ERESTARTSYS and restart the read?
             return -EINTR;
@@ -173,7 +255,6 @@ try:
 
     if(!so->inq.head)
     {
-        //so->poll_events &= ~POLLIN;
         __sync_and_and_fetch(&so->poll_events, ~POLLIN);
     }
 
