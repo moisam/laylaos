@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: cdrom.c
  *    This file is part of LaylaOS.
@@ -57,25 +57,6 @@ extern struct ata_devtab_s tab1;     // for devices with maj == 3
 extern struct ata_devtab_s tab2;     // for devices with maj == 22
 
 
-/*
- * Structure to represent the data returned by the REQUEST SENSE command.
- */
-struct sense_data_t
-{
-    uint8_t err_code;
-    uint8_t reserved1;
-    uint8_t sense_key;
-    uint32_t info;
-    uint8_t additional_sense_len;
-    uint32_t cmd_specific_info;
-    uint8_t additional_sense_code;
-    uint8_t additional_sense_code_qualifier;
-    uint8_t field_replacable_unit_code;
-    uint8_t sense_key_specific[3];
-    uint8_t additional_sense_bytes[1];
-} __attribute__((packed));
-
-
 struct cd_toc_t
 {
     struct ioc_toc_header header;
@@ -113,18 +94,6 @@ void cdrom_task_func(void *arg)
 
     for(;;)
     {
-#if 0
-        if(disk_task == NULL)
-        {
-            // we are too early as the disk task has not been forked yet
-            //block_task2(&cdrom_task, PIT_FREQUENCY * 5);
-            set_task_waking_signal(this_core->cur_task, 0);
-            __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
-            block_task_timeout(this_core->cur_task, PIT_FREQUENCY * 5);
-            continue;
-        }
-#endif
-
         for(i = 0; i < MAX_CDROM_DEVICES; i++)
         {
             KDEBUG("cdrom_task_func: devid[%d] = 0x%x\n", i, cdroms[i].dev);
@@ -189,16 +158,22 @@ void cdrom_task_func(void *arg)
                             (sense_data.sense_key & 0x0f), 
                             sense_data.additional_sense_code);
 
-                // check data is valid
+                // check data is valid -- this is for the info field, 
+                // which we are not using at the moment
+                /*
                 if(!(sense_data.err_code & 0x80))
                 {
                     continue;
                 }
+                */
 
-                // 0xf0 = 0x70 | 0x80 => current error
-                // 0xf1 = 0x71 | 0x80 => deferred error
-                if(sense_data.err_code != 0xf0 &&
-                   sense_data.err_code != 0xf1)
+                // clear bit 7
+                sense_data.err_code &= 0x7f;
+
+                // 0x70 => current error
+                // 0x71 => deferred error
+                if(sense_data.err_code != 0x70 &&
+                   sense_data.err_code != 0x71)
                 {
                     continue;
                 }
@@ -225,10 +200,12 @@ void cdrom_task_func(void *arg)
 
                 // Some ADDITIONAL SENSE CODES of interest:
                 //   0x28    Medium May Have Changed
+                //   0x29    Power on, Reset or Bus device reset occurred
                 //   0x30    Cannot Read Medium
                 //   0x3A    Medium Not Present
 
                 if(sense_data.sense_key == 0x02 ||
+                   sense_data.additional_sense_code == 0x29 ||
                    sense_data.additional_sense_code == 0x30 ||
                    sense_data.additional_sense_code == 0x3A)
                 {
@@ -252,37 +229,21 @@ void cdrom_task_func(void *arg)
                     // using info from fstab
                     if(!get_mount_info(cdroms[i].dev))
                     {
-                        //struct dirent *entry;
                         char name[32];
 
                         printk("cdrom: (re)mounting cdrom\n");
-
-                        /*
-                            if(devfs_find_deventry(cdrom_devid[i],
-                                                         1, &entry) != 0)
-                            {
-                                continue;
-                            }
-
-                            ksprintf(name, 32, "/dev/%s", entry->d_name);
-                            kfree(entry);
-                        */
 
                         ksprintf(name, 32, "/dev/%s", cdroms[i].name);
                         printk("cdrom: cdrom dev '%s'\n", name);
                         mount_internal("cdrom", name, 0);
                     }
                 }
-
-                //screen_refresh(NULL);
-                //__asm__ __volatile__("xchg %%bx, %%bx"::);
             }
         }
 
-        //block_task2(&cdrom_task, PIT_FREQUENCY * 5);
         set_task_waking_signal(this_core->cur_task, 0);
         __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
-        block_task_timeout(this_core->cur_task, PIT_FREQUENCY * 5);
+        block_task_timeout(this_core->cur_task, PIT_FREQUENCY * 10);
     }
 }
 
@@ -292,18 +253,11 @@ void cdrom_task_func(void *arg)
  */
 void add_cdrom_device(dev_t dev_id, mode_t mode)
 {
-    //char buf[8];
-    
     if(last_index >= MAX_CDROM_DEVICES)
     {
         return;
     }
     
-    /*
-    ksprintf(buf, 8, "cdrom%d", last_index);
-    add_dev_node(buf, dev_id, mode);
-    cdrom_devid[last_index++] = dev_id;
-    */
     ksprintf(cdroms[last_index].name, 8, "cdrom%d", last_index);
     add_dev_node(cdroms[last_index].name, dev_id, mode);
     cdroms[last_index].dev = dev_id;
@@ -355,20 +309,18 @@ long cdrom_test_unit_ready(struct ata_dev_s *dev, virtual_addr addr)
     }
     else
     {
-        HBA_MEM *hba = (HBA_MEM *)dev->ahci->iobase;
-        HBA_PORT *port = &hba->ports[dev->port_index];
+        //HBA_MEM *hba = (HBA_MEM *)dev->ahci->iobase;
+        //HBA_PORT *port = &hba->ports[dev->port_index];
 
         res = achi_satapi_read_packet_virt(dev, 0, 0, 0, 0, packet);
-        status = port->ssts;
-        err = port->serr;
+        status = 0; // port->ssts;
+        err = ATA_ER_MC; // port->serr;
     }
 
     KDEBUG("cdrom: cdrom_test_unit_ready() status 0x%x, err 0x%x\n", status, err);
 
     buf[0] = status;
     buf[1] = err;
-    //screen_refresh(NULL);
-    //for(;;);
 
     return res;
 }
@@ -787,7 +739,8 @@ static long cdrom_command(struct ata_dev_s *dev, dev_t devid,
     size_t len;
     long res;
     int pages;
-    uintptr_t tmp_phys, tmp_virt;
+    uintptr_t tmp_virt;
+    void *tmp_phys;
 
     if(copy_arg(&scsireq, arg, sizeof(scsireq_t), kernel) != 0)
     {
@@ -813,18 +766,19 @@ static long cdrom_command(struct ata_dev_s *dev, dev_t devid,
     {
         len = align_up(len);
         pages = len / PAGE_SIZE;
-        tmp_virt = vmmngr_alloc_and_map(pages, 0, PTE_FLAGS_PW,
-                                            &tmp_phys, REGION_DMA);
 
-        if(!tmp_virt)
+        if(!(tmp_phys = pmmngr_alloc_blocks(pages)))
         {
             ((scsireq_t *)arg)->retsts = SCCMD_UNKNOWN;
             return -ENOMEM;
         }
+
+        tmp_virt = PHYS_TO_HIMEM(tmp_phys);
     }
     else
     {
         tmp_virt = 0;
+        tmp_phys = NULL;
     }
 
     req.dev = devid;
@@ -854,9 +808,9 @@ static long cdrom_command(struct ata_dev_s *dev, dev_t devid,
         }
     }
 
-    if(tmp_virt)
+    if(tmp_phys)
     {
-        vmmngr_free_pages(tmp_virt, tmp_virt + len);
+        pmmngr_free_blocks(tmp_phys, pages);
     }
 
     return 0;

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: lodev.c
  *    This file is part of LaylaOS.
@@ -39,7 +39,7 @@
 #include <kernel/fio.h>
 #include <fs/dummy.h>
 #include <mm/kheap.h>
-#include <kernel/gpt_mbr.h>
+//#include <kernel/gpt_mbr.h>
 
 
 /*
@@ -188,8 +188,9 @@ long lodev_strategy(struct disk_req_t *req)
 }
 
 
-static int lodev_register_part(struct lodev_t *lo, struct parttab_s *part, int n)
+static void lodev_register_part(void *dev, struct parttab_s *part, int n)
 {
+    struct lodev_t *lo = dev;
     char name[16];
     int i;
 
@@ -208,13 +209,11 @@ static int lodev_register_part(struct lodev_t *lo, struct parttab_s *part, int n
 
     if(i == MAX_LODEV_PARTITIONS)
     {
-        return -ENOBUFS;
+        return;
     }
 
     ksprintf(name, sizeof(name), "loop%dp%d", lo->number, n);
     add_dev_node(name, TO_DEVID(LODEV_PART_MAJ, i), (S_IFBLK | 0664));
-
-    return 0;
 }
 
 
@@ -242,173 +241,16 @@ static void lodev_remove_parts(struct lodev_t *lo)
 }
 
 
-static int read_sector(struct lodev_t *lo, uint8_t *ide_buf, uint32_t lba)
+static int read_sector_direct(void *__dev, uintptr_t phys_buf, uintptr_t virt_buf, uint32_t lba)
 {
+    struct lodev_t *lo = __dev;
     off_t pos = lo->offset + (lba * lo->blocksz);
 
-    return vfs_read_node(lo->file->node, &pos, ide_buf, lo->blocksz, 1);
-}
+    UNUSED(phys_buf);
 
-
-/*
- * Read the given device's GUID Partition Table (GPT).
- *
- * For details on GPT partition table format, see:
- *    https://wiki.osdev.org/GPT
- */
-static int lodev_read_gpt(struct lodev_t *lo, uint8_t *ide_buf)
-{
-    int dev_index;
-    uint32_t gpthdr_lba = 0, off;
-    uint32_t gptent_lba = 0, gptent_count = 0, gptent_sz = 0;
-    struct gpt_part_entry_t *ent;
-    struct parttab_s *part;
-
-    // Sector 0 has already been read for us.
-    if((gpthdr_lba = get_gpthdr_lba(ide_buf)) == 0)
-    {
-        // This shouldn't happen
-        return -EIO;
-    }
-
-    // Read the Partition Table Header
-    if(read_sector(lo, ide_buf, gpthdr_lba) <= 0)
-    {
-        printk("lodev: skipping disk with error status\n");
-        return -EIO;
-    }
-
-    // Verify GPT signature
-    if(!valid_gpt_signature(ide_buf))
-    {
-        return -EIO;
-    }
-
-    // Get partition entry starting lba, entry size and count
-    gptent_lba = get_dword(ide_buf + 0x48);
-    gptent_count = get_dword(ide_buf + 0x50);
-    gptent_sz = get_dword(ide_buf + 0x54);
-    off = 0;
-    dev_index = 1;
-
-    printk("lodev: found GPT with %u entries (sz %u)\n", gptent_count, gptent_sz);
-
-    // Read the first set of partition entries
-    if(read_sector(lo, ide_buf, gptent_lba) <= 0)
-    {
-        printk("lodev: skipping disk with invalid GPT entries\n");
-        return -EIO;
-    }
-
-    while(gptent_count--)
-    {
-        if(off >= lo->blocksz)
-        {
-            // Read the next set of partition entries
-            if(read_sector(lo, ide_buf, ++gptent_lba) <= 0)
-            {
-                printk("lodev: skipping disk with invalid GPT entries\n");
-                return -EIO;
-            }
-
-            off = 0;
-        }
-
-        ent = (struct gpt_part_entry_t *)(ide_buf + off);
-
-        // Check for unused entries
-        if(unused_gpt_entry(ent))
-        {
-            printk("lodev: skipping unused GPT entry\n");
-            off += gptent_sz;
-            continue;
-        }
-
-        if(!(part = part_from_gpt_ent(ent)))
-        {
-            return -ENOMEM;
-        }
-        
-        part->priv = lo;
-        lodev_register_part(lo, part, dev_index);
-        dev_index++;
-        off += gptent_sz;
-    }
-
-    return 0;
-}
-
-
-static int lodev_read_mbr(struct lodev_t *lo)
-{
-    int i, res = 0;
-    off_t pos;
-    uint8_t *ide_buf;
-    uintptr_t tmp_phys, tmp_virt;
-    struct parttab_s *part;
-
-    if(!lo || !lo->file || !lo->file->node)
-    {
-        return -EINVAL;
-    }
-
-    /* Read the MBR */
-    if(get_next_addr(&tmp_phys, &tmp_virt, PTE_FLAGS_PW, REGION_DMA) != 0)
-    {
-        kpanic("lodev: insufficient memory to reload partition table\n");
-        return -ENOMEM;
-    }
-
-    pos = lo->offset;
-    ide_buf = (uint8_t *)tmp_virt;
-    A_memset(ide_buf, 0, PAGE_SIZE);
-
-    if((res = vfs_read_node(lo->file->node, &pos, ide_buf, lo->blocksz, 1)) < 0)
-    {
-        return res;
-    }
-
-    /* add the partitions */
-    for(i = 0; i < 4; i++)
-    {
-        // Check for unused entries
-        if(ide_buf[mbr_offset[i] + 4] == 0)
-        {
-            continue;
-        }
-
-        // Check for GPT partition table
-        if(ide_buf[mbr_offset[i] + 4] == 0xEE)
-        {
-            res = lodev_read_gpt(lo, ide_buf);
-            vmmngr_unmap_page((void *)tmp_virt);
-            return res;
-        }
-
-        // Check partition start sector is legal
-        if((ide_buf[mbr_offset[i] + 2] & 0x3f) == 0)
-        {
-            continue;
-        }
-
-        if(!(part = part_from_mbr_buf(ide_buf, i)))
-        {
-            res = -ENOMEM;
-            goto out;
-        }
-
-        part->priv = lo;
-
-        if((res = lodev_register_part(lo, part, i + 1)) < 0)
-        {
-            goto out;
-        }
-    }
-
-out:
-
-    vmmngr_unmap_page((void *)tmp_virt);
-    return res;
+    return (vfs_read_node(lo->file->node, &pos, 
+                            (unsigned char *)virt_buf, lo->blocksz, 1) < 0) ?
+                -EIO : 0;
 }
 
 
@@ -594,7 +436,8 @@ static int lodev_change_fd(struct lodev_t *lo, unsigned int fd)
     if(lo->flags & LO_FLAGS_PARTSCAN)
     {
         lodev_remove_parts(lo);
-        lodev_read_mbr(lo);
+        //lodev_read_mbr(lo);
+        read_disk_mbr("lodev", lo, lo->blocksz, read_sector_direct, lodev_register_part);
     }
 
     return 0;
@@ -746,7 +589,8 @@ static int lodev_set_status(struct lodev_t *lo, struct loop_info64 *info)
     if(lo->flags & LO_FLAGS_PARTSCAN)
     {
         lodev_remove_parts(lo);
-        lodev_read_mbr(lo);
+        //lodev_read_mbr(lo);
+        read_disk_mbr("lodev", lo, lo->blocksz, read_sector_direct, lodev_register_part);
     }
 
     return 0;
@@ -920,7 +764,8 @@ static int lodev_config(struct lodev_t *lo, struct loop_config *loconf)
     if(lo->flags & LO_FLAGS_PARTSCAN)
     {
         lodev_remove_parts(lo);
-        lodev_read_mbr(lo);
+        //lodev_read_mbr(lo);
+        read_disk_mbr("lodev", lo, lo->blocksz, read_sector_direct, lodev_register_part);
     }
 
     return 0;
@@ -1097,7 +942,8 @@ long lodev_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
             lodev_remove_parts(lo);
 
             // finally read the new partition table
-            lodev_read_mbr(lo);
+            //lodev_read_mbr(lo);
+            read_disk_mbr("lodev", lo, lo->blocksz, read_sector_direct, lodev_register_part);
 
             return 0;
         }
