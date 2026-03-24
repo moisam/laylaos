@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: kbd.c
  *    This file is part of LaylaOS.
@@ -131,6 +131,36 @@ void kbd_task_func(void *arg)
         while(!kbdbuf_is_empty(&kbd_queue))
         {
             code = kbdbuf_dequeue(&kbd_queue) & 0xffff;
+
+            /*
+             * Handle LED switching here. We used to do this in the
+             * process_key() call below, but now that we support USB keyboards
+             * we cannot do this anymore, as USB keyboards handle their
+             * own LED logic.
+             */
+            switch(code & 0xff)
+            {
+        		case KEYCODE_CAPS:
+        		    if(!(code & 0x8000))
+        		    {
+        				kbd_set_leds(_numlock, !_capslock, _scrolllock);
+        			}
+        			break;
+
+        		case KEYCODE_NUM:
+        		    if(!(code & 0x8000))
+        		    {
+        				kbd_set_leds(!_numlock, _capslock, _scrolllock);
+        			}
+        			break;
+
+        		case KEYCODE_SCROLL:
+        		    if(!(code & 0x8000))
+        		    {
+        				kbd_set_leds(_numlock, _capslock, !_scrolllock);
+        			}
+        			break;
+            }
 
             tty->process_key((struct tty_t *)tty, code);
 

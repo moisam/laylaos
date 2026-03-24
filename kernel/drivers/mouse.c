@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: mouse.c
  *    This file is part of LaylaOS.
@@ -69,6 +69,8 @@ void mouse_handle_code(int code)
 {
     mouse_buttons_t buttons;
     static unsigned char mouse_byte[5] = { 0, };
+
+    //printk("[%d] %x,", mouse_cycle, code);
 
     mouse_byte[mouse_cycle] = code;
     mouse_cycle++;

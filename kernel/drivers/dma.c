@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: dma.c
  *    This file is part of LaylaOS.
@@ -53,9 +53,8 @@ int ata_dma_init(struct ata_dev_s *dev)
         printk("dma: failed to allocate memory\n");
         return -ENOMEM;
     }
-    
-    dev->PRDT_virt = phys_to_virt(dev->PRDT_phys,
-                                  PTE_FLAGS_PW, REGION_DMA);
+
+    dev->PRDT_virt = mmio_map(dev->PRDT_phys, dev->PRDT_phys + PAGE_SIZE);
     memset((void *)dev->PRDT_virt, 0, PAGE_SIZE);
 
     if(!(dev->dma_buf_phys = (physical_addr)pmmngr_alloc_dma_blocks(1)))
@@ -64,9 +63,7 @@ int ata_dma_init(struct ata_dev_s *dev)
         return -ENOMEM;
     }
 
-    dev->dma_buf_virt = phys_to_virt(dev->dma_buf_phys,
-                                     PTE_FLAGS_PW, REGION_DMA);
-    
+    dev->dma_buf_virt = mmio_map(dev->dma_buf_phys, dev->dma_buf_phys + PAGE_SIZE);
     dev->dma_buf_size = 1 * PAGE_SIZE;
 
     return 0;

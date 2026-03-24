@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ata2.c
  *    This file is part of LaylaOS.
@@ -89,8 +89,9 @@ void ata_setup_device(uint16_t iobase,
                       uint8_t ps, uint8_t ms);
 int ata_cmd(struct ata_dev_s *dev, unsigned int cmd,
             unsigned int feat, unsigned int sects);
-void ata_register_dev(struct ata_dev_s *dev, struct parttab_s *part, int n);
-void ata_read_mbr(struct ata_dev_s *dev);
+
+void ata_register_dev(void *dev, struct parttab_s *part, int n);
+static int read_sector_direct(void *__dev, uintptr_t phys_buf, uintptr_t virt_buf, uint32_t lba);
 
 
 /*
@@ -105,8 +106,7 @@ void ata_init(struct pci_dev_t *pci)
     int i;
     unsigned int bar[6];
     uint8_t master, slave;
-    uint8_t irq = pci_config_read(pci->bus, pci->dev,
-                                    pci->function, 0x3c) & 0xff;
+    uint8_t irq = pci_config_read(pci, 0x3c) & 0xff;
 
     for(i = 0; i < 6; i++)
     {
@@ -219,12 +219,71 @@ void ata_setup_controller(uint16_t iobase, uint16_t ctrl, uint16_t bmide,
 
     // enable IRQs
     struct handler_t *h = irq_handler_alloc(ide_irq_callback, 0, "ide");
-    register_irq_handler(irq, h);
-    enable_irq(irq);
+    register_interrupt_handler(irq + 32, h);
+    enable_irq(irq, 0);
 	outb(ctrl + ATA_REG_CONTROL, 0x00);
     ata_delay(iobase + ATA_REG_STATUS);
     KDEBUG("ata_setup_controller: enabled IRQ %d\n", irq);
     //__asm__("xchg %%bx, %%bx"::);
+}
+
+
+void ata_get_blocksz(struct ata_dev_s *dev, uint8_t *ide_buf)
+{
+    dev->heads = U32(ide_buf, ATA_IDENT_HEADS);
+    dev->cylinders = U32(ide_buf, ATA_IDENT_CYLINDERS);
+    dev->sectors = U32(ide_buf, ATA_IDENT_SECTORS);
+
+    // ATA specification says word 5 is obsolete. It contains valid
+    // information (physical block size) in emulators, but not when I
+    // tested the code on real hardware.
+    dev->bytes_per_sector = U16(ide_buf, ATA_IDENT_BYTES_PER_SECTOR);
+
+    // In this case, we need to get the physical/logical sector size 
+    // information from words 106 & 107
+    if(dev->bytes_per_sector == 0)
+    {
+        uint16_t info = U16(ide_buf, ATA_IDENT_LOGICSECTSZ);
+
+        // If bit 14 is set and bit 15 is clear, this word contains valid info
+        if((info & 0xC000) == 0x4000)
+        {
+            // If bit 12 is set, sector size is > 256 words and can be found in
+            // words 117 & 118. Otherwise, sector size is the default 256 words.
+            if(info & 0x1000)
+            {
+                dev->bytes_per_sector = U16(ide_buf, (117 * 2));
+                dev->bytes_per_sector *= 2;
+            }
+            else
+            {
+                dev->bytes_per_sector = 512;
+            }
+        }
+    }
+
+    // If the above fails, fallback to the default 512 bytes
+    if(dev->bytes_per_sector == 0)
+    {
+        dev->bytes_per_sector = 512;
+    }
+
+    //printk("block_len = %lu\n", dev->bytes_per_sector);
+
+    if(dev->commandsets & (1 << 26))
+    {
+        // device uses 48bit addressing
+        dev->size = U32(ide_buf, ATA_IDENT_MAX_LBA_EXT);
+        //printk("    Uses 48bit LBA, size = %luMB\n", dev->size / 1024 / 2);
+    }
+    else
+    {
+        // device uses CHS or 28bit addressing
+        dev->size = U32(ide_buf, ATA_IDENT_MAX_LBA);
+        //printk("    Uses 28bit LBA/CHS, size = %luMB\n", dev->size / 1024 / 2);
+    }
+
+    dev->size *= dev->bytes_per_sector;
 }
 
 
@@ -419,32 +478,7 @@ int ata_identify(struct ata_dev_s *dev)
     /* read ATA device capacity */
     else
     {
-        dev->heads = U32(ide_buf, ATA_IDENT_HEADS);
-        dev->cylinders = U32(ide_buf, ATA_IDENT_CYLINDERS);
-        dev->sectors = U32(ide_buf, ATA_IDENT_SECTORS);
-        dev->bytes_per_sector = U16(ide_buf, ATA_IDENT_BYTES_PER_SECTOR);
-
-        if(dev->bytes_per_sector == 0)
-        {
-            dev->bytes_per_sector = 512;
-        }
-
-        KDEBUG("block_len = %lu\n", dev->bytes_per_sector);
-
-        if(dev->commandsets & (1 << 26))
-        {
-    	    // device uses 48bit addressing
-    	    dev->size = U32(ide_buf, ATA_IDENT_MAX_LBA_EXT);
-    	    //printk("    Uses 48bit LBA, size = %luMB\n", dev->size / 1024 / 2);
-        }
-        else
-        {
-    	    // device uses CHS or 28bit addressing
-    	    dev->size = U32(ide_buf, ATA_IDENT_MAX_LBA);
-    	    //printk("    Uses 28bit LBA/CHS, size = %luMB\n", dev->size / 1024 / 2);
-        }
-        
-        dev->size *= dev->bytes_per_sector;
+        ata_get_blocksz(dev, ide_buf);
     }
 
    	printk("  %s %s exists and is %s\n", psstr[PS(dev)], msstr[MS(dev)],
@@ -499,7 +533,8 @@ void ata_setup_device(uint16_t iobase,
     // if PATA or SATA, read the MBR
     if((dev->type & 1) == 0)
     {
-        ata_read_mbr(dev);
+        //ata_read_mbr(dev);
+        read_disk_mbr("ata", dev, dev->bytes_per_sector, read_sector_direct, ata_register_dev);
     }
 
 	// enable UDMA if the device supports it
@@ -568,8 +603,9 @@ static void remove_ata_dev(int maj, int min)
 }
 
 
-void ata_register_dev(struct ata_dev_s *dev, struct parttab_s *part, int n)
+void ata_register_dev(void *__dev, struct parttab_s *part, int n)
 {
+    struct ata_dev_s *dev = __dev;
     char name[] = { 'h', 'd', '?', '\0', '\0', '\0' };
     static char d[] = { 'a', 'b', 'c', 'd' };   // 3rd letter in name
     static int majs[] = { 3, 3, 22, 22 };       // maj for primary/secondary
@@ -615,92 +651,104 @@ void ata_register_dev(struct ata_dev_s *dev, struct parttab_s *part, int n)
 }
 
 
-static int read_sector_direct(struct ata_dev_s *dev, uint32_t lba)
-{
-    outb(dev->base + ATA_REG_FEATURE, 0x00);
-    outb(dev->base + ATA_REG_SECTORCNT, (unsigned char)1);
-    outb(dev->base + ATA_REG_SECTOR, (lba & 0xff));
-    outb(dev->base + ATA_REG_TRACKLSB, ((lba >> 8) & 0xff));
-    outb(dev->base + ATA_REG_TRACKMSB, ((lba >> 16) & 0xff));
-    outb(dev->base + ATA_REG_DRVHD, 0xE0 | (MS(dev) << 4) | 
-                                            ((lba >> 24) & 0xff));
-    outb(dev->base + ATA_REG_COMMAND, 0x20);
-
-    if(ata_wait(dev, ATA_SR_DRDY, TIMEOUT_DRDY) != 0)
-    {
-        return -EIO;
-    }
-	
-    insw(dev->base, ide_buf, dev->bytes_per_sector / 2 /* 256 */);
-    return 0;
-}
-
-
 /*
  * Read the given device's GUID Partition Table (GPT).
  *
  * For details on GPT partition table format, see:
  *    https://wiki.osdev.org/GPT
  */
-void ata_read_gpt(struct ata_dev_s *dev)
+int read_disk_gpt(char *module, void *dev, size_t bytes_per_sector,
+                  int (*read_sector)(void *, uintptr_t, uintptr_t, uint32_t),
+                  void (*register_dev)(void *, struct parttab_s *, int),
+                  uintptr_t phys_buf, uintptr_t virt_buf)
 {
-    int dev_index;
+    int dev_index, res;
     uint32_t gpthdr_lba = 0, off;
     uint32_t gptent_lba = 0, gptent_count = 0, gptent_sz = 0;
     struct gpt_part_entry_t *ent;
     struct parttab_s *part;
 
     // Sector 0 has already been read for us.
-    if((gpthdr_lba = get_gpthdr_lba(ide_buf)) == 0)
+    if((gpthdr_lba = get_gpthdr_lba((unsigned char *)virt_buf)) == 0)
     {
         // This shouldn't happen
-        return;
+        printk("%s: failed to get GPT header LBA\n", module);
+        return -EIO;
     }
 
     // Read the Partition Table Header
-    if(read_sector_direct(dev, gpthdr_lba) != 0)
+    if((res = read_sector(dev, phys_buf, virt_buf, gpthdr_lba)) < 0)
     {
-        printk("  Skipping disk with error status\n");
-        return;
+        printk("%s: failed to read GPT (err %d)\n", module, res);
+        return res;
     }
 
     // Verify GPT signature
-    if(!valid_gpt_signature(ide_buf))
+    if(!valid_gpt_signature((unsigned char *)virt_buf))
     {
-        return;
+        printk("%s: skipping disk with invalid GPT signature\n", module);
+        return -EIO;
     }
 
     // Get partition entry starting lba, entry size and count
-    gptent_lba = get_dword(ide_buf + 0x48);
-    gptent_count = get_dword(ide_buf + 0x50);
-    gptent_sz = get_dword(ide_buf + 0x54);
+    gptent_lba = get_dword((unsigned char *)virt_buf + 0x48);
+    gptent_count = get_dword((unsigned char *)virt_buf + 0x50);
+    gptent_sz = get_dword((unsigned char *)virt_buf + 0x54);
+    /*
+    gptent_count = 
+            ((unsigned char *)virt_buf)[0x50] | 
+            (((unsigned char *)virt_buf)[0x51] << 8) |
+            (((unsigned char *)virt_buf)[0x52] << 16) | 
+            (((unsigned char *)virt_buf)[0x53] << 24);
+    gptent_sz = 
+            ((unsigned char *)virt_buf)[0x54] | 
+            (((unsigned char *)virt_buf)[0x55] << 8) |
+            (((unsigned char *)virt_buf)[0x56] << 16) | 
+            (((unsigned char *)virt_buf)[0x57] << 24);
+    */
+
     off = 0;
     dev_index = 1;
 
-    printk("  Found GPT with %u entries (sz %u)\n", gptent_count, gptent_sz);
+    /*
+    printk("%s: gpthdr_lba %x\n", module, gpthdr_lba);
+    printk("%s: gptent_lba %x (%x %x %x %x %x %x %x %x)\n", module, gptent_lba, 
+            ((unsigned char *)virt_buf)[0x48], ((unsigned char *)virt_buf)[0x49],
+            ((unsigned char *)virt_buf)[0x4a], ((unsigned char *)virt_buf)[0x4b],
+            ((unsigned char *)virt_buf)[0x4c], ((unsigned char *)virt_buf)[0x4d],
+            ((unsigned char *)virt_buf)[0x4e], ((unsigned char *)virt_buf)[0x4f]);
+    printk("%s: gptent_count %x (%x %x %x %x)\n", module, gptent_count, 
+            ((unsigned char *)virt_buf)[0x50], ((unsigned char *)virt_buf)[0x51],
+            ((unsigned char *)virt_buf)[0x52], ((unsigned char *)virt_buf)[0x53]);
+    printk("%s: gptent_sz %x (%x %x %x %x)\n", module, gptent_sz, 
+            ((unsigned char *)virt_buf)[0x54], ((unsigned char *)virt_buf)[0x55],
+            ((unsigned char *)virt_buf)[0x56], ((unsigned char *)virt_buf)[0x57]);
+    */
+
+    printk("%s: found GPT with 0x%x entries (entsz 0x%x)\n", module, gptent_count, gptent_sz);
 
     // Read the first set of partition entries
-    if(read_sector_direct(dev, gptent_lba) != 0)
+    if((res = read_sector(dev, phys_buf, virt_buf, gptent_lba)) < 0)
     {
-        printk("  Skipping disk with invalid GPT entries\n");
-        return;
+        printk("%s: skipping disk with invalid 1st GPT LBA (%x)\n", module, gptent_lba);
+        return -EIO;
     }
 
     while(gptent_count--)
     {
-        if(off >= dev->bytes_per_sector)
+        if(off >= bytes_per_sector)
         {
             // Read the next set of partition entries
-            if(read_sector_direct(dev, ++gptent_lba) != 0)
+            if((res = read_sector(dev, phys_buf, virt_buf, ++gptent_lba)) < 0)
             {
-                printk("  Skipping disk with invalid GPT entries\n");
-                return;
+                printk("%s: skipping disk with invalid nth GPT LBA (%x)\n", module, gptent_lba);
+                return -EIO;
             }
 
             off = 0;
         }
 
-        ent = (struct gpt_part_entry_t *)(ide_buf + off);
+        ent = (struct gpt_part_entry_t *)(virt_buf + off);
 
         // Check for unused entries
         if(unused_gpt_entry(ent))
@@ -712,14 +760,23 @@ void ata_read_gpt(struct ata_dev_s *dev)
 
         if(!(part = part_from_gpt_ent(ent)))
         {
-            return;
+            printk("%s: skipping disk with invalid GPT entries\n", module);
+            return -EIO;
         }
-        
+
+        /*
+        printk("%s: off %x, lba %x, entries %x, ent %lx ( ", module, off, gptent_lba, gptent_count, ent);
+        for(volatile int z = 0; z < 16; z++) printk("%x ", ent->guid[z]);
+        printk(")\n");
+        */
+
         part->dev = dev;
-        ata_register_dev(dev, part, dev_index);
+        register_dev(dev, part, dev_index);
         dev_index++;
         off += gptent_sz;
     }
+
+    return 0;
 }
 
 
@@ -729,47 +786,34 @@ void ata_read_gpt(struct ata_dev_s *dev)
  * For details on MBR and partition table format, see:
  *    https://wiki.osdev.org/MBR_(x86)
  */
-void ata_read_mbr(struct ata_dev_s *dev)
+int read_disk_mbr(char *module, void *dev, size_t bytes_per_sector,
+                  int (*read_sector)(void *, uintptr_t, uintptr_t, uint32_t),
+                  void (*register_dev)(void *, struct parttab_s *, int))
 {
     int i;
+    uint8_t *ide_buf;
+    uintptr_t tmp_phys, tmp_virt;
     struct parttab_s *part;
 
-    /* check it is ATA */
-    if(dev->type & 1)
-    {
-        return;
-    }
-
-    memset(ide_buf, 0, sizeof(ide_buf) /* 512 */);
-
     /* Read the MBR */
-    KDEBUG("  Reading the MBR..\n");
-    //__asm__ ("xchg %%bx, %%bx"::);
+    if(!(tmp_phys = (uintptr_t)pmmngr_alloc_block()))
+    //if(get_next_addr(&tmp_phys, &tmp_virt, PTE_FLAGS_PW, REGION_DMA) != 0)
+    {
+        printk("%s: insufficient memory to reload partition table\n", module);
+        return -ENOMEM;
+    }
 
-    outb(dev->base + ATA_REG_DRVHD,
-                0xE0 | (MS(dev) << 4) | ((0 >> 24) & 0x0F));
-    outb(dev->base + ATA_REG_SECTORCNT, (unsigned char)1);
-    outb(dev->base + ATA_REG_SECTOR, (unsigned char)0);
-    outb(dev->base + ATA_REG_TRACKLSB, (unsigned char)0);
-    outb(dev->base + ATA_REG_TRACKMSB, (unsigned char)0);
-    outb(dev->base + ATA_REG_COMMAND, 0x20);
-    
-    if(ata_wait(dev, ATA_SR_DRDY, TIMEOUT_DRDY) != 0)
+    tmp_virt = PHYS_TO_HIMEM(tmp_phys);
+    ide_buf = (uint8_t *)tmp_virt;
+    A_memset(ide_buf, 0, PAGE_SIZE);
+
+    if((i = read_sector(dev, tmp_phys, tmp_virt, 0)) < 0)
     {
-        printk("  Skipping disk with error status\n");
-        return;
+        printk("%s: failed to read MBR (err %d)\n", module, i);
+        pmmngr_free_block((void *)tmp_phys);
+        //vmmngr_unmap_page((void *)tmp_virt);
+        return i;
     }
-	
-    insw(dev->base, ide_buf, dev->bytes_per_sector / 2 /* 256 */);
-    
-    /* verify the boot signature */
-    /*
-    if(ide_buf[0x1fe] != 0x55 || ide_buf[0x1ff] != 0xaa)
-    {
-        printk("  Skipping disk with invalid boot signature\n");
-        return;
-    }
-    */
 
     /* add the partitions */
     for(i = 0; i < 4; i++)
@@ -785,8 +829,11 @@ void ata_read_mbr(struct ata_dev_s *dev)
         // Check for GPT partition table
         if(ide_buf[mbr_offset[i] + 4] == 0xEE)
         {
-            ata_read_gpt(dev);
-            return;
+            i = read_disk_gpt(module, dev, bytes_per_sector, 
+                              read_sector, register_dev, tmp_phys, tmp_virt);
+            pmmngr_free_block((void *)tmp_phys);
+            //vmmngr_unmap_page((void *)tmp_virt);
+            return i;
         }
 
         // Check partition start sector is legal
@@ -797,15 +844,45 @@ void ata_read_mbr(struct ata_dev_s *dev)
 
         if(!(part = part_from_mbr_buf(ide_buf, i)))
         {
-            return;
+            pmmngr_free_block((void *)tmp_phys);
+            //vmmngr_unmap_page((void *)tmp_virt);
+            return -EIO;
         }
 
         part->dev = dev;
-        ata_register_dev(dev, part, i + 1);
+        register_dev(dev, part, i + 1);
     }
 
-    KDEBUG("  Finished reading the MBR..\n");
-    //__asm__ ("xchg %%bx, %%bx"::);
+    pmmngr_free_block((void *)tmp_phys);
+    //vmmngr_unmap_page((void *)tmp_virt);
+
+    return 0;
+}
+
+
+static int read_sector_direct(void *__dev, uintptr_t phys_buf, uintptr_t virt_buf, uint32_t lba)
+{
+    struct ata_dev_s *dev = __dev;
+
+    UNUSED(phys_buf);
+
+    outb(dev->base + ATA_REG_FEATURE, 0x00);
+    outb(dev->base + ATA_REG_SECTORCNT, (unsigned char)1);
+    outb(dev->base + ATA_REG_SECTOR, (lba & 0xff));
+    outb(dev->base + ATA_REG_TRACKLSB, ((lba >> 8) & 0xff));
+    outb(dev->base + ATA_REG_TRACKMSB, ((lba >> 16) & 0xff));
+    outb(dev->base + ATA_REG_DRVHD, 0xE0 | (MS(dev) << 4) | 
+                                            ((lba >> 24) & 0xff));
+    outb(dev->base + ATA_REG_COMMAND, 0x20);
+
+    if(ata_wait(dev, ATA_SR_DRDY, TIMEOUT_DRDY) != 0)
+    {
+        return -EIO;
+    }
+
+    insw(dev->base, (void *)virt_buf, dev->bytes_per_sector / 2 /* 256 */);
+
+    return 0;
 }
 
 
@@ -921,7 +998,8 @@ long ata_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
             }
 
             // finally read the new partition table
-            ata_read_mbr(dev);
+            //ata_read_mbr(dev);
+            read_disk_mbr("ata", dev, dev->bytes_per_sector, read_sector_direct, ata_register_dev);
 
             return 0;
         }

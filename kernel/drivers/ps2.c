@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ps2.c
  *    This file is part of LaylaOS.
@@ -135,9 +135,9 @@ void kbd_set_leds(int num, int caps, int scroll)
     uint8_t data = 0;
 
     // set or clear the bit
-    data = (scroll) ? (data | 1) : (data & 1);
-    data = (num) ? (num | 2) : (num & 2);
-    data = (caps) ? (num | 4) : (num & 4);
+    if(scroll) data |= 1;
+    if(num)    data |= 2;
+    if(caps)   data |= 4;
 
     // send the command -- update keyboard Light Emetting Diods (LEDs)
     wait_input();
@@ -194,7 +194,7 @@ loop:
  * PS/2 keyboard and mouse are used together. Code is taken from ToaruOS.
  * See: https://github.com/toaruos/misaka/blob/master/kernel/arch/x86_64/ps2hid.c
  */
-int sharedps2_callback(struct regs *r, int arg)
+int sharedps2_callback(struct regs *r, void *arg)
 {
     UNUSED(arg);
 
@@ -341,7 +341,7 @@ void ps2_init(void)
     ps2_mouse_write(MOUSE_CMD_SET_SAMPLE_RATE);     // set sample rate
     ps2_mouse_write(200);
     ps2_mouse_write(MOUSE_CMD_SET_SAMPLE_RATE);
-    ps2_mouse_write(100);
+    ps2_mouse_write(200);
     ps2_mouse_write(MOUSE_CMD_SET_SAMPLE_RATE);
     ps2_mouse_write(80);
     ps2_mouse_write(KBD_ENC_CMD_ID);    // get mouse ID
@@ -364,7 +364,7 @@ void ps2_init(void)
         //__asm__ __volatile__("xchg %%bx, %%bx"::);
         printk("ps2: mouse status 0x%x\n", byte);
 
-        if(byte & 0x10)
+        if(byte != KBD_ERR_ACK && (byte & 0x10))
         {
             mouse_scaled = 1;
         }
@@ -377,9 +377,9 @@ void ps2_init(void)
     // now install our IRQ handlers
     
     // only for QEmu
-    register_irq_handler(IRQ_KBD, &ps2_kbd_handler);
-    register_irq_handler(IRQ_MOUSE, &ps2_mouse_handler);
-    enable_irq(IRQ_MOUSE);
-    enable_irq(IRQ_KBD);
+    register_interrupt_handler(IRQ_KBD + 32, &ps2_kbd_handler);
+    register_interrupt_handler(IRQ_MOUSE + 32, &ps2_mouse_handler);
+    enable_irq(IRQ_MOUSE, 0);
+    enable_irq(IRQ_KBD, 0);
 }
 

@@ -866,7 +866,9 @@ long atapi_read_pio(struct ata_dev_s *dev, unsigned char numsects,
     {
         if(atapi_read_capacity(dev) != 0)
         {
+            //switch_tty(1);
             printk("ata: failed to read ATAPI device capacity\n");
+            //kpanic("*****\n");
         }
     }
     

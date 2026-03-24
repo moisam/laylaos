@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: vbox.c
  *    This file is part of LaylaOS.
@@ -142,7 +142,7 @@ uint32_t vbox_yres = 0;
 // defined in dev/chr/input_mouse.c
 extern mouse_buttons_t cur_button_state;
 
-int vbox_intr(struct regs *r, int unit);
+int vbox_intr(struct regs *r, void *arg);
 
 
 /*
@@ -185,13 +185,14 @@ void vbox_init(struct pci_dev_t *pci)
     */
 
 #define PAGE_FLAGS      (PTE_FLAGS_PW | I86_PTE_NOT_CACHEABLE)
-    
+
     // Allocate memory for our Guest Info packet
-    if(get_next_addr(&guest_info_phys, &guest_info_virt, 
-                     PAGE_FLAGS, REGION_DMA) != 0)
+    if(!(guest_info_phys = (uintptr_t)pmmngr_alloc_block()))
     {
         return;
     }
+
+    guest_info_virt = PHYS_TO_HIMEM(guest_info_phys);
 
 #undef PAGE_FLAGS
 
@@ -313,10 +314,10 @@ void vbox_init(struct pci_dev_t *pci)
 }
 
 
-int vbox_intr(struct regs *r, int unit)
+int vbox_intr(struct regs *r, void *arg)
 {
     UNUSED(r);
-    UNUSED(unit);
+    UNUSED(arg);
     
     uint32_t ev;
     int unblock_mouse_task = 0;

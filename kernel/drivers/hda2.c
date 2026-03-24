@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: hda2.c
  *    This file is part of LaylaOS.
@@ -50,7 +50,7 @@
 static int last_unit = 0;
 struct hda_dev_t *first_hda = NULL;
 
-int hda_intr(struct regs *r, int unit);
+int hda_intr(struct regs *r, void *arg);
 //void hda_task_func(void *arg);
 
 // device for dummy output
@@ -72,7 +72,7 @@ static int hda_send_verb(struct hda_dev_t *hda, uint32_t verb,
     hda_outw(REG_CORBWP, wp);
 
     // wait 200 msecs (20 ticks at a rate of 100 ticks per sec)
-    timeout = 20;
+    timeout = 200;
     rp2 = hda_inw(REG_RIRBWP);
 
     while((rp2 == rp1) && timeout--)
@@ -129,6 +129,32 @@ static inline uint32_t hda_get_codec_param(struct hda_dev_t *hda,
 }
 
 
+static inline uint32_t hda_get_verb_response(struct hda_dev_t *hda,
+                                             uint32_t codec, uint32_t node,
+                                             uint32_t payload)
+{
+    uint64_t response = 0;
+
+    int res = hda_send_verb(hda, 
+                            hda_make_verb(codec, node, payload), 
+                            &response);
+
+    if(res)
+    {
+        return 0xffffffff;
+    }
+
+    uint32_t dword = response >> 32;
+
+    if((dword & 0xf) != codec)
+    {
+        return 0xffffffff;
+    }
+
+    return response & 0xffffffff;
+}
+
+
 static inline void hda_set_output_format(struct hda_dev_t *hda,
                                          struct hda_out_t *out)
 {
@@ -145,7 +171,7 @@ static inline void hda_set_output_format(struct hda_dev_t *hda,
 static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
 {
     struct hda_out_t *out;
-    uintptr_t phys, virt;
+    //uintptr_t phys, virt;
     uint64_t qword;
     uint32_t dword;
     uint16_t word;
@@ -164,42 +190,36 @@ static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
     out->sample_format = BITS_16;
     out->sample_rate = SR_48_KHZ;
     out->nchan = 2;
-    //out->amp_gain_steps = (amp_cap >> 8) & 0x7f;
-
 
     out->base_port = REG_ISS0_CTL + (hda->nin * 0x20);
 
-#define PAGE_FLAGS      (PTE_FLAGS_PW | I86_PTE_NOT_CACHEABLE)
-
-    if(get_next_addr(&phys, &virt, PAGE_FLAGS, REGION_DMA) != 0)
+    if(!(out->pbdl_base = (uintptr_t)pmmngr_alloc_block()))
     {
         kfree(out);
         return -ENOMEM;
     }
 
-    out->bdl = (struct hda_bdl_entry_t *)virt;
-    out->pbdl_base = phys;
+    out->bdl = (struct hda_bdl_entry_t *)mmio_map(out->pbdl_base, out->pbdl_base + PAGE_SIZE);
 
     for(i = 0; i < BDL_ENTRIES; i += 2)
     {
-        if(get_next_addr(&phys, &virt, PAGE_FLAGS, REGION_DMA) != 0)
+        if(!(out->bdl[i].paddr = (uintptr_t)pmmngr_alloc_block()))
         {
             kfree(out);
             return -ENOMEM;
         }
 
+        out->vbdl[i] = mmio_map(out->bdl[i].paddr, out->bdl[i].paddr + PAGE_SIZE);
+
         out->bdl[i].len = BDL_BUFSZ;
         out->bdl[i].flags = 1;
-        out->bdl[i].paddr = phys;
-        out->vbdl[i] = virt;
 
         out->bdl[i + 1].len = BDL_BUFSZ;
         out->bdl[i + 1].flags = 1;
-        out->bdl[i + 1].paddr = phys + (PAGE_SIZE >> 1);
-        out->vbdl[i + 1] = virt + (PAGE_SIZE >> 1);
-    }
 
-#undef PAGE_FLAGS
+        out->bdl[i + 1].paddr = out->bdl[i].paddr + (PAGE_SIZE >> 1);
+        out->vbdl[i + 1] = out->vbdl[i] + (PAGE_SIZE >> 1);
+    }
 
     // set BDL address
     hda_outl(out->base_port + REG_OFFSET_OUT_BDLPL, 
@@ -236,7 +256,7 @@ static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
     word |= 0x1c;
 
     // set stream number (we are using the first output stream)
-    byte = ((hda->nin & 0xf) << 4);
+    byte = (1 /* (hda->nin & 0xf) */ << 4);
     hda_outb(out->base_port + REG_OFFSET_OUT_CTLU, byte);
 
     // clear status bits
@@ -256,33 +276,367 @@ static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
     // set stream channel (again, we are using the first output stream)
     hda_send_verb(hda, hda_make_verb(codec, node,
                                      VERB_SET_STREAM_CHANNEL |
-                                        ((hda->nin & 0xf) << 4)), &qword);
+                                        (1 /* (hda->nin & 0xf) */ << 4)), &qword);
 
     dword = hda_get_codec_param(hda, codec, node, WIDGET_PARAM_OUT_AMP_CAPS);
     out->amp_gain_steps = (dword >> 8) & 0x7f;
-    
+    printk("hdi: gain steps 0x%x (amp caps 0x%x)\n", out->amp_gain_steps, dword);
+
+
+
+    uint64_t response;
+    dword = hda_get_verb_response(hda, codec, node, VERB_GET_EAPD_BTL);
+    printk("eapd 0x%x, ", dword);
+    hda_send_verb(hda, hda_make_verb(out->codec, out->node,
+                                             VERB_SET_EAPD_BTL | dword | (1 << 1)),
+                                                  &response);
+    tick_delay(10);
+    dword = hda_get_verb_response(hda, codec, node, VERB_GET_EAPD_BTL);
+    printk("eapd 0x%x, ", dword);
+
+
+    dword = hda_get_verb_response(hda, codec, node, VERB_GET_AMP_GAIN_MUTE | (1 << 15) | (1 << 13));
+    printk("lgain 0x%x, ", dword);
+    dword = hda_get_verb_response(hda, codec, node, VERB_GET_AMP_GAIN_MUTE | (1 << 15) | (0 << 13));
+    printk("rgain 0x%x, ", dword);
+
+    hda_send_verb(hda, hda_make_verb(out->codec, out->node,
+                                             VERB_SET_AMP_GAIN_MUTE | 0xb000 | 127),
+                                                  &response);
+
+    dword = hda_get_verb_response(hda, codec, node, VERB_GET_AMP_GAIN_MUTE | (1 << 15) | (1 << 13));
+    printk("lgain 0x%x, ", dword);
+    dword = hda_get_verb_response(hda, codec, node, VERB_GET_AMP_GAIN_MUTE | (1 << 15) | (0 << 13));
+    printk("rgain 0x%x\n", dword);
+
+
+
+
     // enable IRQs from this stream
     dword = hda_inl(REG_INTCTL);
-    dword |= (1 << hda->nin);
+    //dword |= (1 << hda->nin);   // output stream bits come after input streams
+    dword |= 0xff;
     hda_outl(REG_INTCTL, dword);
 
     // add to device struct
-    out->next = hda->out;
-    hda->out = out;
+    out->next = NULL;
+
+    if(hda->out == NULL)
+    {
+        hda->out = out;
+    }
+    else
+    {
+        struct hda_out_t *tmp;
+
+        tmp = hda->out;
+
+        while(tmp->next)
+        {
+            tmp = tmp->next;
+        }
+
+        tmp->next = out;
+    }
 
     return 0;
 }
 
 
+static void widget_print_conn(struct hda_dev_t *hda, int codec, int node)
+{
+    uint32_t n, conn;
+    int i, index, shift, is_range;
+
+    n = hda_get_codec_param(hda, codec, node, WIDGET_PARAM_CONNLIST_LEN);
+
+    if(n == 0)
+    {
+        //printk("  no connections\n");
+        return;
+    }
+
+    printk("  connections: ");
+
+    for(i = 0; i < (int)(n & 0x7f); i++)
+    {
+        if(n & 0x80)        // long form node ids
+        {
+            index = i & ~3;
+            shift = 8 * (i & 3);
+        }
+        else                // short form node ids
+        {
+            index = i & ~1;
+            shift = 8 * (i & 1);
+        }
+
+        conn = hda_get_verb_response(hda, codec, node, VERB_GET_CONN_LIST | index);
+        conn >>= shift;
+
+        if(n & 0x80)
+        {
+            is_range = (conn & 0x8000);
+            conn &= 0x7fff;
+        }
+        else
+        {
+            is_range = (conn & 0x80);
+            conn &= 0x7f;
+        }
+
+        printk("%c%u", is_range ? '-' : ' ', conn);
+    }
+
+    conn = hda_get_verb_response(hda, codec, node, VERB_GET_CONN_SELECT);
+    printk(" [cur %u]\n", conn);
+}
+
+
+struct path_segment_t
+{
+    int codec;
+    int node;
+    int next_index;
+    uint8_t type;
+    uint32_t pin_config, pin_sense;
+    struct path_segment_t *next;
+};
+
+
+static struct path_segment_t *next_path_segment(struct hda_dev_t *hda, int codec, int node)
+{
+    struct path_segment_t *seg, *next;
+    uint32_t cap;
+    uint8_t type;
+    uint32_t n, conn;
+    int i, index, shift;
+
+    cap = hda_get_codec_param(hda, codec, node, WIDGET_PARAM_WIDGET_CAPS);
+    type = ((cap >> 20) & 0xf);
+
+    if(type == WIDGET_OUTPUT)       // audio output
+    {
+        if(!(seg = kmalloc(sizeof(struct path_segment_t))))
+        {
+            kpanic("hda: failed to allocate memory for path segment\n");
+        }
+
+        seg->type = type;
+        seg->codec = codec;
+        seg->node = node;
+        seg->next_index = 0;
+        seg->pin_config = 0;
+        seg->next = NULL;
+
+        return seg;
+    }
+
+    n = hda_get_codec_param(hda, codec, node, WIDGET_PARAM_CONNLIST_LEN);
+
+    if(n == 0)
+    {
+        return NULL;
+    }
+
+    for(i = 0; i < (int)(n & 0x7f); i++)
+    {
+        if(n & 0x80)        // long form node ids
+        {
+            index = i & ~3;
+            shift = 8 * (i & 3);
+        }
+        else                // short form node ids
+        {
+            index = i & ~1;
+            shift = 8 * (i & 1);
+        }
+
+        conn = hda_get_verb_response(hda, codec, node, VERB_GET_CONN_LIST | index);
+        conn >>= shift;
+
+        if(n & 0x80)
+        {
+            conn &= 0x7fff;
+        }
+        else
+        {
+            conn &= 0x7f;
+        }
+
+        if((next = next_path_segment(hda, codec, conn)))
+        {
+            if(!(seg = kmalloc(sizeof(struct path_segment_t))))
+            {
+                kpanic("hda: failed to allocate memory for path segment\n");
+            }
+
+            if(type == WIDGET_PIN)           // pin complex
+            {
+                seg->pin_config = hda_get_verb_response(hda, codec, node, VERB_GET_CONFIG_DEFAULT);
+                seg->pin_sense = hda_get_verb_response(hda, codec, node, VERB_GET_PIN_SENSE);
+            }
+            else
+            {
+                seg->pin_config = 0;
+            }
+
+            seg->type = type;
+            seg->codec = codec;
+            seg->node = node;
+            seg->next_index = i;
+            seg->next = NULL;
+            next->next = seg;
+
+            return next;
+        }
+    }
+
+    return NULL;
+}
+
+
+static void print_path_segment(struct path_segment_t *seg, int level)
+{
+    static char *widget_types[] = { "audio output", "input", "mixer", "selector",
+                                    "pin complex", "power", "volume knob",
+                                    "beep generator" };
+    static char *pin_conn_types[] = { "jack", "no conn", "fixed dev", "jack/fixed dev" };
+    static char *pin_dev_types[] = { "line out", "speaker", "headphones", "CD", "SPDIF out",
+                                     "other digital out", "modem line", "modem handset",
+                                     "line in", "aux", "mic in", "telephony",
+                                     "SPDIF in", "other digital in", "reserved", "other" };
+    char *typestr;
+    int i = level;
+
+    if(seg->type <= 7)
+    {
+        typestr = widget_types[seg->type];
+    }
+    else if(seg->type == 15)
+    {
+        typestr = "vendor-defined";
+    }
+    else
+    {
+        typestr = "unknown";
+    }
+
+    while(i--)
+    {
+        printk("  ");
+    }
+
+    printk("%d %s (", seg->node, typestr);
+
+    if(seg->type == WIDGET_PIN)
+    {
+        uint8_t devtype = (seg->pin_config >> 20) & 0x0f;
+        uint8_t portconn = (seg->pin_config >> 30) & 0x03;
+        uint8_t sense = (seg->pin_sense >> 31) & 0x01;
+
+        printk("%s, %s, %s", pin_conn_types[portconn], 
+                             pin_dev_types[devtype],
+                             sense ? "sense" : "no sense");
+    }
+
+    printk(")%s", seg->next ? " ->\n" : "\n");
+
+    if(seg->next)
+    {
+        print_path_segment(seg->next, level + 1);
+    }
+}
+
+
+static int is_speaker_widget(struct path_segment_t *seg)
+{
+    if(seg->type == WIDGET_PIN)
+    {
+        // With regards to speakers (not headphone jacks):
+        // On QEMU, there is one pin with a line out jack.
+        // On Oracle VM VirtualBox, there are multiple speaker jacks.
+        // On real hardware, there is a fixed device speaker.
+
+        uint8_t devtype = (seg->pin_config >> 20) & 0x0f;
+        //uint8_t portconn = (seg->pin_config >> 30) & 0x03;
+
+        return (/* portconn >= 2 && */ devtype == 1);
+    }
+
+    return seg->next ? is_speaker_widget(seg->next) : 0;
+}
+
+
+static void activate_path(struct hda_dev_t *hda, struct path_segment_t *seg)
+{
+    uint32_t eapd_btl;
+    uint64_t qword;
+
+    if(seg->next)
+    {
+        activate_path(hda, seg->next);
+    }
+
+    hda_send_verb(hda, hda_make_verb(seg->codec, seg->node, VERB_SET_POWER_STATE | 0), &qword);
+    tick_delay(10);
+
+    if(seg->type == WIDGET_PIN)
+    {
+        uint32_t ctrl;
+
+        ctrl = hda_get_verb_response(hda, seg->codec, seg->node, VERB_GET_PIN_CONTROL);
+        ctrl |= 0x40;   // enable output
+
+        hda_send_verb(hda, hda_make_verb(seg->codec, seg->node, 
+                                                VERB_SET_PIN_CONTROL | ctrl), 
+                                  &qword);
+
+        eapd_btl = hda_get_verb_response(hda, seg->codec, seg->node, VERB_GET_EAPD_BTL);
+        eapd_btl |= 0x02;
+        hda_send_verb(hda, hda_make_verb(seg->codec, seg->node, 
+                                             VERB_SET_EAPD_BTL | eapd_btl), 
+                                  &qword);
+
+        hda_send_verb(hda, hda_make_verb(seg->codec, seg->node,
+                                             VERB_SET_AMP_GAIN_MUTE | 0xb000),
+                                  &qword);
+    }
+    else if(seg->type == WIDGET_OUTPUT)
+    {
+        hda_send_verb(hda, hda_make_verb(seg->codec, seg->node,
+                                             VERB_SET_AMP_GAIN_MUTE | 0xb000),
+                                  &qword);
+
+        hda_add_codec_output(hda, seg->codec, seg->node);
+    }
+    else if(seg->type == WIDGET_SELECTOR)
+    {
+        hda_send_verb(hda, hda_make_verb(seg->codec, seg->node, 
+                                                VERB_SET_CONN_SELECT | seg->next_index), 
+                                  &qword);
+
+        hda_send_verb(hda, hda_make_verb(seg->codec, seg->node,
+                                             VERB_SET_AMP_GAIN_MUTE | 0xb000 | 
+                                             (seg->next_index << 8)),
+                                  &qword);
+    }
+}
+
+
 static void hda_enum_widgets(struct hda_dev_t *hda, int codec)
 {
-    uint32_t vendor, revision, subnodes;
-    int first_node, node_count, i;
+    uint64_t qword;
+    uint32_t vendor, revision, subnodes, widgets;
+    int first_widget, widget_count;
+    int first_node, node_count, i, j;
+    int path_count = 0;
+    struct path_segment_t *chosen_path = NULL, *paths[32];
 
     if((vendor = hda_get_codec_param(hda, codec, 0, 
                                      WIDGET_PARAM_VENDOR_ID)) == 0xffffffff)
     {
-        printk("hda: ignoring device with vendor 0x%x\n", vendor);
+        printk("hda: ignoring device with vendor id 0x%x\n", vendor);
         screen_refresh(NULL);
         return;
     }
@@ -303,25 +657,64 @@ static void hda_enum_widgets(struct hda_dev_t *hda, int codec)
         uint32_t f = hda_get_codec_param(hda, codec, i, 
                                          WIDGET_PARAM_FUNC_GROUP_TYPE);
 
+        widgets = hda_get_codec_param(hda, codec, i, WIDGET_PARAM_SUBNODE_COUNT);
+        first_widget = (widgets >> 16) & 0xff;
+        widget_count = (widgets & 0xff);
+
+        printk("hda: func group type 0x%x (codec %d, node %d) - widgets %d - %d\n", 
+               (f & 0xff), codec, i, first_widget, first_widget + widget_count - 1);
+
         if((f & 0xff) != FN_GROUP_AUDIO)
         {
             // not an audio function group
             continue;
         }
 
-        uint32_t cap = hda_get_codec_param(hda, codec, i, 
-                                           WIDGET_PARAM_WIDGET_CAPS);
-        uint8_t type = ((cap >> 20) & 0xf);
+        hda_send_verb(hda, hda_make_verb(codec, i, VERB_SET_POWER_STATE | 0), &qword);
+        tick_delay(10);
 
-        printk("hda: found widget of type 0x%x (codec %d, node %d)\n", 
-               type, codec, i);
-
-        if(type == WIDGET_OUTPUT)
+        for(j = first_widget; j < first_widget + widget_count; j++)
         {
-            printk("hda: found audio output at codec %d, node %d\n", codec, i);
-            screen_refresh(NULL);
-            hda_add_codec_output(hda, codec, i);
+            uint32_t cap;
+            uint8_t type;
+
+            cap = hda_get_codec_param(hda, codec, j, WIDGET_PARAM_WIDGET_CAPS);
+            type = ((cap >> 20) & 0xf);
+
+            // collect the paths of all pin widgets
+            if(type == WIDGET_PIN)
+            {
+                if((paths[path_count] = next_path_segment(hda, codec, j)))
+                {
+                    path_count++;
+                }
+            }
         }
+
+        for(j = 0; j < path_count; j++)
+        {
+            printk("hda: found path:\n");
+            print_path_segment(paths[j], 1);
+
+            // find a path to the speaker pin
+            if(is_speaker_widget(paths[j]))
+            {
+                chosen_path = paths[j];
+            }
+        }
+    }
+
+    if(chosen_path)
+    {
+        printk("hda: activating path:\n");
+        activate_path(hda, chosen_path);
+    }
+    // QEmu does not have a speaker widget, but has a single pin path with
+    // a jack. Use this for output
+    else if(path_count == 1)
+    {
+        printk("hda: activating default path:\n");
+        activate_path(hda, paths[0]);
     }
 }
 
@@ -330,7 +723,7 @@ int hda_init(struct pci_dev_t *pci)
 {
     struct hda_dev_t *hda;
     //uint16_t cap;
-    uintptr_t bar0, phys, virt;
+    uintptr_t bar0 /* , phys, virt */;
     int timeout;
     uint32_t dword;
     uint16_t word, i;
@@ -353,16 +746,12 @@ int hda_init(struct pci_dev_t *pci)
 
     // determine the size of the BAR
     bar0 = pci->bar[0];
-    pci_config_write_long(pci->bus, pci->dev, pci->function, 
-                                    BAR0_OFFSET, 0xffffffff);
-    hda->iosize = pci_config_read_long(pci->bus, pci->dev, pci->function, 
-                                    BAR0_OFFSET);
+    pci_config_write_long(pci, BAR0_OFFSET, 0xffffffff);
+    hda->iosize = pci_config_read_long(pci, BAR0_OFFSET);
     hda->iosize &= ~0xf;    // mask the lower 4 bits
     hda->iosize = (~(hda->iosize) & 0xffffffff) + 1;     // invert and add 1
-    pci_config_write_long(pci->bus, pci->dev, pci->function, 
-                                    BAR0_OFFSET, bar0);
-    bar0 = pci_config_read_long(pci->bus, pci->dev, pci->function, 
-                                    BAR0_OFFSET);
+    pci_config_write_long(pci, BAR0_OFFSET, bar0);
+    bar0 = pci_config_read_long(pci, BAR0_OFFSET);
     
     printk("hda: BAR0 " _XPTR_ ", iosize " _XPTR_ "\n", bar0, hda->iosize);
 
@@ -402,33 +791,6 @@ int hda_init(struct pci_dev_t *pci)
         tmp->next = hda;
     }
 
-    pci_enable_busmastering(pci);
-    pci_enable_interrupts(pci);
-    pci_enable_memoryspace(pci);
-
-#define PAGE_FLAGS      (PTE_FLAGS_PW | I86_PTE_NOT_CACHEABLE)
-
-    // alloc memory for RIRB & CORB buffers
-    if(get_next_addr(&phys, &virt, PAGE_FLAGS, REGION_DMA) != 0)
-    {
-        res = -ENOMEM;
-        goto err;
-    }
-
-    hda->pcorb = phys;
-    hda->corb = (uint32_t *)virt;
-
-    if(get_next_addr(&phys, &virt, PAGE_FLAGS, REGION_DMA) != 0)
-    {
-        res = -ENOMEM;
-        goto err;
-    }
-
-    hda->prirb = phys;
-    hda->rirb = (uint64_t *)virt;
-
-#undef PAGE_FLAGS
-
     // register IRQ handler
     ksprintf(buf, 8, "hda%d", pci->unit);
     /*
@@ -436,6 +798,27 @@ int hda_init(struct pci_dev_t *pci)
                                  KERNEL_TASK_ELEVATED_PRIORITY);
     */
     pci_register_irq_handler(pci, hda_intr, buf);
+
+    pci_enable_busmastering(pci);
+    pci_enable_interrupts(pci);
+    pci_enable_memoryspace(pci);
+
+    // alloc memory for RIRB & CORB buffers
+    if(!(hda->pcorb = (uintptr_t)pmmngr_alloc_block()))
+    {
+        res = -ENOMEM;
+        goto err;
+    }
+
+    hda->corb = (uint32_t *)mmio_map(hda->pcorb, hda->pcorb + PAGE_SIZE);
+
+    if(!(hda->prirb = (uintptr_t)pmmngr_alloc_block()))
+    {
+        res = -ENOMEM;
+        goto err;
+    }
+
+    hda->rirb = (uint64_t *)mmio_map(hda->prirb, hda->prirb + PAGE_SIZE);
 
     // reset
     hda_outl(REG_GLOBCTL, 1);
@@ -634,9 +1017,7 @@ int hda_init(struct pci_dev_t *pci)
     tick_delay(10);
 
     word = hda_inw(REG_STATESTS);
-
-    //printk("hda: device status 0x%x\n", word);
-    //screen_refresh(NULL);
+    printk("hda: device status 0x%x\n", word);
 
     for(i = 0; i < 16; i++)
     {
@@ -648,6 +1029,7 @@ int hda_init(struct pci_dev_t *pci)
             //screen_refresh(NULL);
 
             hda_enum_widgets(hda, i);
+            //for(;;);
         }
     }
 
@@ -655,26 +1037,31 @@ int hda_init(struct pci_dev_t *pci)
 
     printk("hda: done\n");
     screen_refresh(NULL);
+    //for(;;);
 
     return 0;
 
 
 err:
+
     if(hda->mmio)
     {
-        vmmngr_free_pages(hda->iobase, hda->iobase + hda->iosize);
+        vmmngr_free_pages(hda->iobase, hda->iosize);
         hda->iobase = 0;
+        hda->iosize = 0;
     }
 
-    if(hda->corb)
+    if(hda->pcorb)
     {
-        vmmngr_free_page(get_page_entry((void *)hda->corb));
+        vmmngr_free_pages((virtual_addr)hda->corb, PAGE_SIZE);
+        hda->pcorb = 0;
         hda->corb = 0;
     }
 
-    if(hda->rirb)
+    if(hda->prirb)
     {
-        vmmngr_free_page(get_page_entry((void *)hda->rirb));
+        vmmngr_free_pages((virtual_addr)hda->rirb, PAGE_SIZE);
+        hda->prirb = 0;
         hda->rirb = 0;
     }
 
@@ -686,7 +1073,7 @@ err:
 /*
  * Intel HDA IRQ callback function.
  */
-int hda_intr(struct regs *r, int unit)
+int hda_intr(struct regs *r, void *arg)
 {
     UNUSED(r);
 
@@ -694,7 +1081,8 @@ int hda_intr(struct regs *r, int unit)
     //screen_refresh(NULL);
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
-    struct hda_dev_t *hda = first_hda;
+    struct pci_dev_t *pci = arg;
+    volatile struct hda_dev_t *hda = first_hda;
     struct hda_out_t *out;
     uint32_t isr;
     uint8_t sts;
@@ -702,7 +1090,7 @@ int hda_intr(struct regs *r, int unit)
 
     while(hda)
     {
-        if(hda->pci->unit == unit)
+        if(hda->pci == pci)
         {
             break;
         }
@@ -712,13 +1100,15 @@ int hda_intr(struct regs *r, int unit)
 
     if(!hda)
     {
+        printk("hda_intr: not from here\n");
         return 0;
     }
 
     isr = hda_inl(REG_INTSTS);
 
-    if((isr & (1 << 31)) == 0)
+    if(isr == 0)
     {
+        printk("hda_intr: isr 0\n");
         return 0;
     }
 
@@ -753,7 +1143,7 @@ int hda_intr(struct regs *r, int unit)
             // if the read pointer has moved past the last written buffer,
             // stop playing -- decision is made based on 3 vars: last link
             // position, new link position, and current circular buffer position
-            uint32_t new_linkpos = hda_inl(out->base_port + REG_OFFSET_OUT_LPIB);
+            volatile uint32_t new_linkpos = hda_inl(out->base_port + REG_OFFSET_OUT_LPIB);
 
             if((out->last_linkpos < out->bufpos && out->bufpos < new_linkpos) ||
                (new_linkpos < out->last_linkpos && out->last_linkpos < out->bufpos) ||
@@ -761,6 +1151,11 @@ int hda_intr(struct regs *r, int unit)
             {
                 hda_play_stop(hda, 0);
             }
+
+            /*
+            switch_tty(1);
+            printk("*** link pos %x, %x\n", out->last_linkpos, new_linkpos);
+            */
 
             out->last_linkpos = new_linkpos;
         }
@@ -872,8 +1267,18 @@ void hda_set_volume(struct hda_dev_t *hda, uint8_t vol, int overwrite)
         else
         {
             // scale to the gain steps
-            rvol = vol * hda->out->amp_gain_steps / 255;
+            if(hda->out->amp_gain_steps)
+            {
+                rvol = vol * hda->out->amp_gain_steps / 255;
+            }
+            else
+            {
+                rvol = vol * 127 / 255;
+            }
+
             hda->flags &= ~HDA_FLAG_MUTED;
+            //printk("rvol %x, vol %x, steps %x\n", rvol, vol, hda->out->amp_gain_steps);
+            //kpanic("^^^^^^\n");
         }
 
         if(overwrite)
@@ -884,7 +1289,7 @@ void hda_set_volume(struct hda_dev_t *hda, uint8_t vol, int overwrite)
         if(!(hda->flags & HDA_FLAG_DUMMY))
         {
             hda_send_verb(hda, hda_make_verb(out->codec, out->node,
-                                             VERB_SET_AMP_GAIN_MUTE | meta | 127 /* rvol */),
+                                             VERB_SET_AMP_GAIN_MUTE | meta | /* 127 */ rvol),
                                                   &response);
         }
 
@@ -1213,7 +1618,7 @@ int hda_get_bits_per_sample(struct hda_dev_t *hda)
 /*
  * Start/stop HDA device output.
  */
-int hda_play_stop(struct hda_dev_t *hda, int cmd)
+int hda_play_stop(volatile struct hda_dev_t *hda, int cmd)
 {
     struct hda_out_t *out = hda->out;
     uint16_t ctl = 0;

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ata_irq.c
  *    This file is part of LaylaOS.
@@ -411,7 +411,7 @@ int ide_wait_irq(void)
     }
 
     volatile unsigned char irq = cur_request->irq;
-    volatile int timeout = 80000000;
+    volatile int timeout = 90000000;
     
     /*
      * There is a small window of time between checking ide_irq_invoked and 
@@ -475,7 +475,7 @@ int ide_wait_irq(void)
 /*
  * Disk IRQ callback function.
  */
-int ide_irq_callback(struct regs *r, int arg)
+int ide_irq_callback(struct regs *r, void *arg)
 {
     UNUSED(arg);
     volatile uint8_t int_no = (r->int_no & 0xFF);
