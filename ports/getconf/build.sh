@@ -40,6 +40,9 @@ make CFLAGS="${CFLAGS} -D_BSD_SOURCE" || exit_failure "$0: failed to build ${DOW
 make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} PREFIX=/usr install \
     || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
+# ensure regular users can execute this
+chmod +rx ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/getconf
+
 # Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}

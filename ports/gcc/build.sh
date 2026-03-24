@@ -117,6 +117,13 @@ mv ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libgcc_s.so.1 ${CROSSCOMPILE_SYSROOT_PAT
 mv ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libstdc++.so.6 ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libstdc++.so.6.CROSS
 
 
+# copy the c99 and c89 scripts
+cp ${CWD}/c99 ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/
+cp ${CWD}/c89 ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/
+chmod a+x ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/c99
+chmod a+x ${CROSSCOMPILE_SYSROOT_PATH}/usr/bin/c89
+
+
 # Build and install libgcc
 echo " ==>"
 echo " ==> Building ported libgcc"
