@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: next-event.c
  *    This file is part of LaylaOS.
@@ -161,6 +161,33 @@ struct event_t *next_event_for_seqid(struct window_t *window,
              * library functions can work correctly.
              */
             if(seqid == EVENT_ANY && IS_INTERNAL_EVENT(ev->type))
+            {
+                qe = qe->next;
+                continue;
+            }
+
+            /*
+             * Window resize offers can be sent by the server either as a
+             * response to client request, or spontaneously when the user
+             * drags a window's border or clicks on the maximize/restore
+             * button. The former needs to be handled internally inside 
+             * libgui (the caller will be hung in a call, e.g. 
+             * window_enter_fullscreen(), waiting for server reply).
+             * The second type of resize offers is handled in the main event
+             * loop.
+             *
+             * This change was made to make an application that does
+             * something like this work:
+             *
+             *    Application loads SDL2 library
+             *    Application creates a window
+             *    Application changes window size
+             *    Application does not call SDL2's event handling loop, but
+             *       immediately proceeds to query and use the new window's
+             *       dimensions, and more importantly, canvas (which will now
+             *       be invalid as it has been destroyed by the server)
+             */
+            if(ev->type == EVENT_WINDOW_RESIZE_OFFER && ev->seqid != seqid)
             {
                 qe = qe->next;
                 continue;

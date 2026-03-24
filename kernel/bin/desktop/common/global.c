@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: global.c
  *    This file is part of LaylaOS.
@@ -32,9 +32,12 @@ struct __global_gui_data_t __global_gui_data = { {0, }, {0, }, 0, };
 
 uint32_t builtin_color_theme[] =
 {
-    0xCDCFD4FF, 0x3B4047FF, 0x3B4047FF,   // windows
-    0xCDCFD4FF, 0x535E64FF, 0x2E3238FF,
-    0x2E3238FF,
+    0xCDCFD4FF,                           // window bg
+    0x3B404700 | WINDOW_BORDER_ALPHA,     // window title bg
+    0x3B404700 | WINDOW_BORDER_ALPHA,
+    0xCDCFD4FF, /* 0x535E64FF */ 0x919191FF, // window text
+    0x2E323800 | WINDOW_BORDER_ALPHA,     // window border
+    0x2E323800 | WINDOW_BORDER_ALPHA,
     0xCDCFD4FF, 0x222226FF, 0x222226FF,   // buttons
     0xB4B4B8FF, 0x222226FF, 0x222226FF,
     0xB4B4B8FF /* 0x535E64FF */, 0x222226FF /* 0xCDCFD4FF */, 0x222226FF,
