@@ -145,13 +145,16 @@ for d in etc usr; do
     cp -R "${SYSROOT}"/${d}/* ${OUTDIR}/isodir/${d}/
 done
 
+cp -R ${SYSROOT}/bin/* ${OUTDIR}/isodir/usr/bin/
+cp -R ${SYSROOT}/sbin/* ${OUTDIR}/isodir/usr/sbin/
+
 for f in init dispman getty login bash desktop widgets; do
     mv ${OUTDIR}/isodir/usr/bin/${f} ${OUTDIR}/isodir/bin/
 done
 
 echo "=> Copying desktop resources"
-cp -r ${CWD}/../others/share_files/gui/ usr/share/
-cp -r ${CWD}/../others/share_files/fonts/ usr/share/
+cp -r ${CWD}/../others/share_files/gui/ ${OUTDIR}/isodir/usr/share/
+cp -r ${CWD}/../others/share_files/fonts/ ${OUTDIR}/isodir/usr/share/
 
 echo "=> Copying /etc files"
 cp -r ${CWD}/../others/etc_files/* ${OUTDIR}/isodir/etc/
@@ -170,6 +173,7 @@ touch ${OUTDIR}/isodir/root/.profile
 cp ${CWD}/../others/home_files/inputrc ${OUTDIR}/isodir/root/.inputrc
 cp ${CWD}/../others/home_files/bashrc ${OUTDIR}/isodir/root/.bashrc
 cp ${CWD}/../others/share_files/pci.ids ${OUTDIR}/isodir/usr/share/
+cp ${CWD}/../others/share_files/usb.ids ${OUTDIR}/isodir/usr/share/
 
 echo "=> Copying kernel img"
 cp "${SYSROOT}/boot/laylaos.kernel" ${OUTDIR}/isodir/boot/laylaos.kernel

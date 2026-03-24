@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# Copyright 2021-2024 (c) Mohammed Isam
+# Copyright 2021-2026 (c) Mohammed Isam
 #
 # This script is part of LaylaOS
 #
@@ -16,7 +16,7 @@
 
 # libs with no dependencies -- a.k.a. easy wins
 NODEPS_LIBS="zlib xz libiconv libexpat libffi libucontext fribidi gzip hunspell jsoncpp"
-NODEPS_LIBS="${NODEPS_LIBS} openssl uchardet bzip2 ncurses popt unifont"
+NODEPS_LIBS="${NODEPS_LIBS} openssl uchardet bzip2 ncurses popt unifont libusb"
 
 # image, multimedia and font libs
 IMAGE_LIBS="libjpeg libpng16 libtiff libwebp"
@@ -34,7 +34,7 @@ TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} mpg123 htop less libpipeline f
 TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} psutils groff readline gdbm gawk sed man-db"
 TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} hexedit tar grep diffutils patch"
 TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} file findutils cpio patchelf help2man which"
-TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} libuuid pcre2"
+TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} libuuid pcre2 shadow"
 GAMES_APPS="openttd sdl2-doom uMario DungeonRush"
 FILESYSTEM_APPS="gptfdisk e2fsprogs dosfstools libcddb libcdio libcdio-paranoia mtools xorriso"
 
@@ -46,7 +46,7 @@ COMPILER_APPS="binutils gmp mpfr mpc gcc bison m4 perl"
 COMPILER_APPS="${COMPILER_APPS} libidn libunistring libidn2 gettext texinfo make"
 COMPILER_APPS="${COMPILER_APPS} automake-1.17"
 COMPILER_APPS="${COMPILER_APPS} autoconf-2.71 getconf libtool cmake"
-COMPILER_APPS="${COMPILER_APPS} python meson nasm pkg-config ninja yasm"
+COMPILER_APPS="${COMPILER_APPS} python meson nasm pkg-config ninja yasm lua"
 
 # Qt-based apps
 QT_APPS="FeatherPad"
@@ -55,7 +55,7 @@ QT_APPS="FeatherPad"
 PDF_APPS_AND_LIBS="DjVuLibre openjpeg jbig2dec mupdf SDLBook"
 
 # Apps that need other stuff, e.g. SDL, Qt, glib
-NEEDY_APPS="mc freegemas grub"
+NEEDY_APPS="mc freegemas grub dosbox-x lite bochs"
 
 ##############################################
 # prepare for the build
