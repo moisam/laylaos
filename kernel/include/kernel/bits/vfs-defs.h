@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: vfs-defs.h
  *    This file is part of LaylaOS.
@@ -155,7 +155,7 @@ struct fs_info_t
  */
 struct mount_info_t
 {
-    dev_t dev;                  /**< The device on which the 
+    volatile dev_t dev;         /**< The device on which the 
                                      filesystem resides */
 	unsigned long block_size;   /**< The logical block size of the filesystem 
 	                                 is held here. Each filesystem could 
@@ -248,7 +248,7 @@ struct fs_node_t
     void *data;             /**< used by sockets (ptr to struct socket) */
 
     long (*poll)(struct file_t *, struct pollfd *);  /**< polling function */
-    long (*select)(struct file_t *f, int which);     /**< select function */
+    long (*select)(struct file_t *f, int which, int record); /**< select function */
     ssize_t (*read)(struct file_t *, off_t *,
                   unsigned char *, size_t, int);    /**< read function */
     ssize_t (*write)(struct file_t *, off_t *,

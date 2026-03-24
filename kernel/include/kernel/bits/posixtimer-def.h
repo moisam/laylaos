@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: posixtimer-def.h
  *    This file is part of LaylaOS.
@@ -48,6 +48,10 @@ struct posix_timer_t
     struct sigevent sigev;  /**< signal to deliver on timer expiration */
     struct posix_timer_t *next; /**< next timer in task list */
     struct itimerspec val;      /**< current timer value */
+
+    int64_t delta;
+    volatile struct posix_timer_t *next_waiting;
+    pid_t tgid;
 };
 
 #endif

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: pcache-defs.h
  *    This file is part of LaylaOS.
@@ -99,9 +99,9 @@ struct disk_req_t
  */
 struct pcache_key_t
 {
-    dev_t dev;          /**< device id */
-    ino_t ino;          /**< inode number */
-    off_t offset;       /**< page offset in file */
+    /* dev_t */ uint64_t dev;          /**< device id */
+    /* ino_t */ uint64_t ino;          /**< inode number */
+    /* off_t */ uint64_t offset;       /**< page offset in file */
 };
 
 /**

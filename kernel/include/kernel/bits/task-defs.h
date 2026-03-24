@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: task-defs.h
  *    This file is part of LaylaOS.
@@ -107,6 +107,7 @@
 #include <kernel/mutex.h>
 #include <mm/mmngr_virtual.h>
 #include <kernel/vfs.h>
+#include <kernel/bits/siginfo-nopad-def.h>
 
 
 /**
@@ -336,7 +337,7 @@ struct task_t
      * Signals 
      */
     struct task_sig_t *sig;             /**< task signal info */
-    siginfo_t siginfo[NSIG];            /**< siginfo structures for every 
+    siginfo_nopad_t siginfo[NSIG];      /**< siginfo structures for every 
                                                delivered signal */
     volatile sigset_t signal_pending;   /**< pending signals */
     sigset_t signal_mask;               /**< signal mask */
@@ -376,6 +377,7 @@ struct task_t
     /*
      * Time the process has been using the CPU, measured in clock ticks 
      */
+    //unsigned long long sleep_until;     /**< used by sleeping tasks */
     unsigned long long start_time;      /**< task start time */
     unsigned long user_time,            /**< task user time */
                   sys_time;             /**< task system time */
