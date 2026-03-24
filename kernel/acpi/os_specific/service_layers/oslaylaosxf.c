@@ -164,8 +164,6 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <sys/time.h>
-//#define __USE_XOPEN2K           // sem_timedwait
-//#include <semaphore.h>
 #include <pthread.h>
 #include <errno.h>
 #include <kernel/laylaos.h>
@@ -200,8 +198,6 @@ extern int acpi_sem_trywait(acpi_sem_t *sem);
 extern int acpi_sem_post(acpi_sem_t *sem);
 extern int acpi_sem_getvalue(acpi_sem_t *__restrict sem, int *__restrict sval);
 
-//struct kernel_mutex_t acpi_lock = { 0, };
-
 ACPI_PHYSICAL_ADDRESS UefiRootPointer = 0;
 
 // defined in kernel.c
@@ -216,7 +212,6 @@ int getchar(void)
     ssize_t copied;
     
     if(syscall_read(0, buf, 1, &copied) == 0)
-    //if(syscall_read(0, buf, 1) == 1)
     {
         return (int)buf[0];
     }
@@ -808,48 +803,8 @@ AcpiOsMapMemory (
 {
     physical_addr pstart = align_down(where);
     physical_addr pend = align_up(where + length);
-
+    virtual_addr addr;
     size_t sz = pend - pstart;
-    size_t i, j, pages = sz / PAGE_SIZE;
-    virtual_addr v, addr = 0;
-    
-    // NOTE: we don't need this as sz is page-aligned
-
-    /*
-    if(sz % PAGE_SIZE)
-    {
-        pages++;
-    }
-    */
-
-    // try and get consecutive virtual address pages
-    for(i = ACPI_MEMORY_START, j = 0; i < ACPI_MEMORY_END; i += PAGE_SIZE)
-    {
-        pt_entry *pt = get_page_entry((void *) i);
-
-        // we've got an unused address
-        if(PTE_FRAME(*pt) == 0)
-        //if(pt_entry_get_frame(pt) == 0)
-        {
-            // we've got our pages
-            if(++j == pages)
-            {
-                addr = i - ((pages - 1) * PAGE_SIZE);
-                break;
-            }
-        }
-        else
-        {
-            // reset our counter
-            j = 0;
-        }
-    }
-
-    if(j != pages)
-    {
-        kpanic("Insufficient memory in AcpiOsMapMemory()");
-        return 0;
-    }
 
     /*
      * TODO: We should check if the requested physical memory is actually
@@ -858,26 +813,13 @@ AcpiOsMapMemory (
      */
     pmmngr_deinit_region(pstart, sz);
 
-    for(i = 0, v = addr;
-        i < pages;
-        i++, pstart += PAGE_SIZE, v += PAGE_SIZE)
+    if(!(addr = kmod_map(pstart, pend)))
     {
-        vmmngr_map_page((void *)pstart, (void *)v, PTE_FLAGS_PW);
-        vmmngr_flush_tlb_entry(v);
-        
-        /*
-         * If the requested memory page is in the lower 1MiB, increase the
-         * frame shares so that subsequent calls to AcpiOsUnmapMemory() do not
-         * free the frame and make it available for use.
-         */
-        if(pstart < 0x100000)
-        {
-            inc_frame_shares(pstart);
-        }
+        kpanic("Insufficient memory in AcpiOsMapMemory()");
+        return 0;
     }
     
     return (ACPI_TO_POINTER ((ACPI_SIZE) (addr + (where - align_down(where)))));
-    //return (ACPI_TO_POINTER ((ACPI_SIZE) where));
 }
 
 
@@ -902,28 +844,22 @@ AcpiOsUnmapMemory (
 {
     virtual_addr vstart = align_down((virtual_addr)where);
     virtual_addr vend = align_up((virtual_addr)where + length);
-    //virtual_addr i = vstart;
+    virtual_addr i = vstart;
     
-    if(vstart < ACPI_MEMORY_START || vend > ACPI_MEMORY_END)
-    {
-        kpanic("Invalid memory address in AcpiOsUnmapMemory()");
-        return;
-    }
-    
-    /*
-     * TODO: we should call vmmngr_free_pages() to actually release the
-     *       physical memory frames, as well as unmap memory.
-     */
-    vmmngr_free_pages(vstart, vend - vstart);
-
-    /*
     while (i < vend)
     {
-        vmmngr_free_page(get_page_entry((void *) i));
-        vmmngr_flush_tlb_entry(i);
+        /*
+         * If the requested memory page is in the lower 1MiB, do not
+         * free the frame to make it available for use.
+         */
+        if(get_phys_addr(i) >= 0x100000)
+        {
+            vmmngr_free_page(get_page_entry(i));
+            //vmmngr_flush_tlb_entry(i);
+        }
+
         i += PAGE_SIZE;
     }
-    */
 }
 #endif
 
@@ -946,9 +882,8 @@ AcpiOsAllocate (
 {
     void                    *Mem;
 
-     //printk("AcpiOsAllocate: sz %u\n", size);
     Mem = (void *) kmalloc ((size_t) size);
-     //printk("AcpiOsAllocate: 0x%x\n", Mem);
+
     return (Mem);
 }
 
@@ -972,18 +907,7 @@ AcpiOsAllocateZeroed (
 {
     void                    *Mem;
 
-     //printk("AcpiOsAllocateZeroed: sz %u\n", size);
     Mem = (void *) kcalloc (1, (size_t) size);
-     //printk("AcpiOsAllocateZeroed: 0x%x\n", Mem);
-    
-    /*
-    Mem = (void *) kmalloc ((size_t) size);
-    
-    if(Mem)
-    {
-        memset(Mem, 0, (size_t) size);
-    }
-    */
     
     return (Mem);
 }
@@ -1006,7 +930,6 @@ void
 AcpiOsFree (
     void                    *mem)
 {
-     //printk("AcpiOsFree: 0x%x\n", mem);
     if(mem)
     {
         kfree (mem);
@@ -1399,7 +1322,7 @@ AcpiOsReleaseLock (
 /* define some variables and a trampoline function for our kernel */
 ACPI_OSD_HANDLER ServiceRout = NULL;
 void *ServiceRoutArg = NULL;
-int acpi_irq_callback(struct regs *unused, int arg);
+int acpi_irq_callback(struct regs *unused, void *arg);
 
 struct handler_t acpi_irq_handler =
 {
@@ -1408,7 +1331,7 @@ struct handler_t acpi_irq_handler =
     .short_name = "acpi",
 };
 
-int acpi_irq_callback(struct regs *unused, int arg)
+int acpi_irq_callback(struct regs *unused, void *arg)
 {
     UINT32 res;
     UNUSED(unused);
@@ -1417,7 +1340,7 @@ int acpi_irq_callback(struct regs *unused, int arg)
     
     if(ServiceRout)
     {
-        res = ServiceRout((void *)(uintptr_t)arg /* ServiceRoutArg */);
+        res = ServiceRout(arg /* ServiceRoutArg */);
         printk("acpi_irq_callback: 2 - res %d (%d, %d)\n", res, ACPI_INTERRUPT_HANDLED, ACPI_INTERRUPT_NOT_HANDLED);
         __asm__ __volatile__("xchg %%bx, %%bx"::);
         
@@ -1437,8 +1360,8 @@ AcpiOsInstallInterruptHandler (
     ServiceRout = ServiceRoutine;
     //acpi_irq_handler.handler_arg = Context;
     ServiceRoutArg = Context;
-    register_irq_handler(InterruptNumber, &acpi_irq_handler);
-    enable_irq(InterruptNumber);
+    register_interrupt_handler(InterruptNumber + 32, &acpi_irq_handler);
+    enable_irq(InterruptNumber, 0);
     
     //printk("AcpiOsInstallInterruptHandler: irq %d\n", InterruptNumber);
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
@@ -1468,7 +1391,7 @@ AcpiOsRemoveInterruptHandler (
     
     ServiceRout = NULL;
     ServiceRoutArg = NULL;
-    unregister_irq_handler(InterruptNumber, &acpi_irq_handler);
+    unregister_interrupt_handler(InterruptNumber + 32, &acpi_irq_handler);
 
     return (AE_OK);
 }
@@ -1531,43 +1454,11 @@ void
 AcpiOsSleep (
     UINT64                  milliseconds)
 {
-    /*
-    register struct task_t *ct = get_cur_task();
-    time_t nticks;
-    
-    nticks = (milliseconds / ACPI_MSEC_PER_SEC) * PIT_FREQUENCY;
-    
-    if(milliseconds % ACPI_MSEC_PER_SEC)
-    {
-        nticks++;
-    }
-
-    ct->alarm = ticks + nticks;
-    block_task(ct, 1);
-    ct->alarm = 0;
-    */
-
     struct timespec rqtp;
     
     rqtp.tv_sec = 0;
     rqtp.tv_nsec = milliseconds * 1000000;
     syscall_nanosleep(&rqtp, NULL);
-
-
-#if 0
-
-    /* Sleep for whole seconds */
-
-    sleep (milliseconds / ACPI_MSEC_PER_SEC);
-
-    /*
-     * Sleep for remaining microseconds.
-     * Arg to usleep() is in usecs and must be less than 1,000,000 (1 second).
-     */
-    usleep ((milliseconds % ACPI_MSEC_PER_SEC) * ACPI_USEC_PER_MSEC);
-
-#endif
-
 }
 
 
@@ -1796,14 +1687,13 @@ AcpiOsReadMemory (
         *Value = 0;
 
         // temporarily map the physical frame to a virtual address
-        if((virt = phys_to_virt(phys, PTE_FLAGS_PW, REGION_ACPI)) == (virtual_addr)-1)
+        virt = PHYS_TO_HIMEM(phys);
         /*
-        if((virt = phys_to_virt(phys, ACPI_MEMORY_START, ACPI_MEMORY_END,
-                                &acpi_lock, PTE_FLAGS_PW)) == (virtual_addr)-1)
-        */
+        if((virt = phys_to_virt(phys, PTE_FLAGS_PW, REGION_ACPI)) == (virtual_addr)-1)
         {
             return (AE_NO_MEMORY);
         }
+        */
 
         // get the requested value
         if(Width == 8)
@@ -1828,10 +1718,12 @@ AcpiOsReadMemory (
         }
 
         // unmap the temporary virtual address
-        pt_entry *page = get_page_entry((void *) virt);
+        /*
+        volatile pt_entry *page = get_page_entry((void *) virt);
 
         *page = 0;
         vmmngr_flush_tlb_entry(virt);
+        */
 
         break;
 
@@ -1875,14 +1767,13 @@ AcpiOsWriteMemory (
     case 64:
 
         // temporarily map the physical frame to a virtual address
-        if((virt = phys_to_virt(phys, PTE_FLAGS_PW, REGION_ACPI)) == (virtual_addr)-1)
+        virt = PHYS_TO_HIMEM(phys);
         /*
-        if((virt = phys_to_virt(phys, ACPI_MEMORY_START, ACPI_MEMORY_END,
-                                &acpi_lock, PTE_FLAGS_PW)) == (virtual_addr)-1)
-        */
+        if((virt = phys_to_virt(phys, PTE_FLAGS_PW, REGION_ACPI)) == (virtual_addr)-1)
         {
             return (AE_NO_MEMORY);
         }
+        */
 
         // get the requested value
         if(Width == 8)
@@ -1903,10 +1794,12 @@ AcpiOsWriteMemory (
         }
 
         // unmap the temporary virtual address
-        pt_entry *page = get_page_entry((void *) virt);
+        /*
+        volatile pt_entry *page = get_page_entry((void *) virt);
 
         *page = 0;
         vmmngr_flush_tlb_entry(virt);
+        */
 
         break;
 
@@ -1943,10 +1836,9 @@ AcpiOsReadable (
 
     for(i = vstart; i < vend; i += PAGE_SIZE)
     {
-        pt_entry *pt = get_page_entry((void *)i);
+        pt_entry *pt = get_page_entry(i);
 
         if(PTE_FRAME(*pt) == 0)
-        //if(pt_entry_get_frame(pt) == 0)
         {
             return (FALSE);
         }
@@ -1985,10 +1877,9 @@ AcpiOsWritable (
 
     for(i = vstart; i < vend; i += PAGE_SIZE)
     {
-        pt_entry *pt = get_page_entry((void *)i);
+        pt_entry *pt = get_page_entry(i);
 
         if(PTE_FRAME(*pt) == 0)
-        //if(pt_entry_get_frame(pt) == 0)
         {
             return (FALSE);
         }
