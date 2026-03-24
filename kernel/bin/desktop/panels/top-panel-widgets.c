@@ -271,7 +271,7 @@ void widgets_periodic(void)
 
         if(widget->win.visible)
         {
-            if(widget->periodic(widget))
+            if(widget->periodic && widget->periodic(widget))
             {
                 widget_copy_buf(widget);
                 child_invalidate((struct window_t *)widget);

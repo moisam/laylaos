@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: bottom-panel.c
  *    This file is part of LaylaOS.
@@ -73,12 +73,12 @@ void repaint_bg(struct window_t *window, int is_active_child)
 
 void cell_repaint(struct window_t *button_window, int is_active_child)
 {
-    int title_len;
+    //int title_len;
     struct button_t *b = (struct button_t *)button_window;
     int j;
     uint32_t border_color, bg_color, text_color;
 
-    j = (main_window->h / 2) - (__global_gui_data.mono.charh / 2);
+    j = (main_window->h / 2) - (__global_gui_data.mono.charh / 2) - 2;
     
     if(is_active_child)
     {
@@ -106,10 +106,10 @@ void cell_repaint(struct window_t *button_window, int is_active_child)
     if(button_window->title)
     {
         // Get the title length
-        title_len = strlen(button_window->title);
+        //title_len = strlen(button_window->title);
 
         // Convert it into pixels
-        title_len *= __global_gui_data.mono.charw;
+        //title_len *= __global_gui_data.mono.charw;
 
         // Draw the title within the button
         button_window->gc->clipping.clip_rects = button_window->clip_rects;
@@ -156,6 +156,18 @@ struct window_t *window_for_winid(winid_t winid)
 }
 
 
+static inline void adjust_clip_rect(struct window_t *win)
+{
+    Rect *rect;
+
+    rect = win->clip_rects->root;
+    rect->top = win->y;
+    rect->left = win->x;
+    rect->bottom = win->y + win->h - 2;
+    rect->right = win->x + win->w - 5;
+}
+
+
 void window_created(winid_t winid)
 {
     struct button_t *b;
@@ -169,12 +181,14 @@ void window_created(winid_t winid)
     
     // create a new cell to represent the window
     if(!(b = button_new(main_window->gc, main_window,
-                                         main_window->children->count * cellw, 1,
-                                         cellw - 2, main_window->h - 2,
+                                         main_window->children->count * cellw + 1, 2,
+                                         cellw - 2, main_window->h - 4,
                                          NULL)))
     {
         return;
     }
+
+    adjust_clip_rect(&b->window);
 
     main_window->active_child = oldactive;
     b->window.repaint = cell_repaint;
@@ -188,7 +202,6 @@ void window_created(winid_t winid)
 void repaint_cells(struct window_t *win, struct window_t *oldactive)
 {
     volatile ListNode *cur_node;
-    Rect *rect;
     int new_cellw, x;
 
     if(main_window->children->count == 0)
@@ -216,14 +229,9 @@ void repaint_cells(struct window_t *win, struct window_t *oldactive)
             cur_node = cur_node->next, x += cellw)
         {
             win = (struct window_t *)cur_node->payload;
-            win->x = x;
+            win->x = x + 1;
             win->w = cellw - 2;
-
-            rect = win->clip_rects->root;
-            rect->top = win->y;
-            rect->left = win->x;
-            rect->bottom = win->y + win->h - 1;
-            rect->right = win->x + win->w - 1;
+            adjust_clip_rect(win);
         }
         
         window_repaint(main_window);
