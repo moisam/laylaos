@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: signal.c
  *    This file is part of LaylaOS.
@@ -46,6 +46,9 @@
 
 
 sigset_t unblockable_signals;
+
+// defined in syscall/syscall.c
+extern void unset_syscall_flags(struct task_t *ct);
 
 
 /*
@@ -113,13 +116,11 @@ static void restart_syscall(struct task_t *ct, struct regs *r)
     {
         SET_SYSCALL_NUMBER(r, ct->interrupted_syscall);
         __atomic_store_n(&(ct->interrupted_syscall), 0, __ATOMIC_SEQ_CST);
-        //ct->interrupted_syscall = 0;
         syscall_dispatcher(r);
     }
     else
     {
         __atomic_store_n(&(ct->interrupted_syscall), 0, __ATOMIC_SEQ_CST);
-        //ct->interrupted_syscall = 0;
     }
 }
 
@@ -130,7 +131,6 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     struct sigaction *action = &ct->sig->signal_actions[signum];
 
     if(get_task_state(ct) == TASK_ZOMBIE)
-    //if(ct->state == TASK_ZOMBIE)
     {
         return 1;
     }
@@ -152,18 +152,6 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     {
         signum = ptrace_signal(signum, 0);
     }
-
-    /*
-    if((action->sa_handler != SIG_DFL) && !(action->sa_flags & SA_RESTART))
-    {
-        //ct->interrupted_syscall = 0;
-        
-        if(GET_SYSCALL_NUMBER(r) == (uintptr_t)-ERESTARTSYS)
-        {
-            SET_SYSCALL_RESULT(r, (uintptr_t)-EINTR);
-        }
-    }
-    */
     
     if(signum <= 0 || signum >= NSIG)
     {
@@ -253,8 +241,6 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     volatile uintptr_t stack;
     volatile ucontext_t *context;
 
-    //if(ct->pid == 778 || ct->pid == 779) __asm__ __volatile__("xchg %%bx, %%bx":::);
-
     if((action->sa_flags & SA_ONSTACK) && ct->signal_stack.ss_sp)
     {
         // execute handler on alternate signal stack provided by signalstack()
@@ -263,11 +249,12 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     }
     else
     {
-        // execute on normal stack
+        // execute on normal stack, and account for the redzone (128 bytes
+        // below the stack pointer)
 #ifdef __x86_64__
-        stack = (uintptr_t)r->userrsp;
+        stack = (uintptr_t)r->userrsp - 128;
 #else
-        stack = (uintptr_t)r->useresp;
+        stack = (uintptr_t)r->useresp - 128;
 #endif
     }
 
@@ -296,25 +283,22 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
 #define PUSH(v)             stack -= sizeof(uintptr_t);         \
                             *(volatile uintptr_t *)stack = (uintptr_t)(v);
 
-
 #ifdef __x86_64__
     fpu_state_save(ct);
 
     stack -= sizeof(uintptr_t) * 64;
     A_memcpy((void *)stack, ct->fpregs, sizeof(uintptr_t) * 64);
-    /*
-    for(int i = 0; i < 64; i++)
-    {
-        PUSH(ct->fpregs[i]);
-    }
-    */
 #endif
-
 
     PUSH(ct->interrupted_syscall);
 
     stack -= sizeof(ucontext_t);
     context = (ucontext_t *)stack;
+    context->uc_flags = 0;
+    context->uc_link = 0;
+    context->uc_stack.ss_sp = 0;
+    context->uc_stack.ss_flags = 0;
+    context->uc_stack.ss_size = 0;
     context->uc_mcontext.gregs[REG_R8] = r->r8;
     context->uc_mcontext.gregs[REG_R9] = r->r9;
     context->uc_mcontext.gregs[REG_R10] = r->r10;
@@ -339,13 +323,6 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
     context->uc_mcontext.gregs[REG_ESP] = r->useresp;
     context->uc_mcontext.gregs[REG_EFL] = r->eflags;
 #endif
-
-#if 0
-    stack -= sizeof(struct regs);
-    A_memcpy((void *)stack, r, sizeof(struct regs));
-#endif
-
-
 
 #ifdef SA_COOKIE
     if(action->sa_flags & SA_COOKIE)
@@ -441,16 +418,20 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
         struct posix_timer_t *timer;
         void *ptr;
 
-        timerid = ct->siginfo[signum].si_value.sival_int;
+        //timerid = ct->siginfo[signum].si_value.sival_int;
+        timerid = ct->siginfo[signum].sinp_value.sival_int;
 
-        if(!(timer = get_posix_timer(tgid(ct), timerid)))
+        if(!(timer = get_posix_timer(ct, timerid)))
         {
             ksigdelset(&ct->signal_timer, signum);
             goto ignore;
         }
 
         ptr = timer->sigev.sigev_value.sival_ptr;
-        ct->siginfo[signum].si_value.sival_ptr = ptr;
+
+        //ct->siginfo[signum].si_value.sival_ptr = ptr;
+        ct->siginfo[signum].sinp_value.sival_ptr = ptr;
+
         timer->saved_overruns = timer->cur_overruns;
         timer->cur_overruns = 0;
 
@@ -464,7 +445,10 @@ static int handle_signal(struct task_t *ct, struct regs *r, int signum)
         ksigdelset(&ct->signal_timer, signum);
     }
 
-    A_memcpy((void *)info, &ct->siginfo[signum], sizeof(siginfo_t));
+    //A_memcpy((void *)info, &ct->siginfo[signum], sizeof(siginfo_t));
+    A_memset((void *)info, 0, sizeof(siginfo_t));
+    A_memcpy((void *)info, &ct->siginfo[signum], sizeof(siginfo_nopad_t));
+
     __asm__ __volatile__("":::"memory");
 
     cli();
@@ -564,8 +548,6 @@ long syscall_sigreturn(struct regs *r, uintptr_t __user_stack)
 
     restore_sigmask();
 
-    //user_stack += sizeof(uintptr_t) * 3;
-    //user_stack += sizeof(siginfo_t);
     user_stack += sizeof(uintptr_t);
     user_stack = *(volatile uintptr_t *)user_stack + sizeof(siginfo_t);
 
@@ -661,7 +643,6 @@ long syscall_sigreturn(struct regs *r, uintptr_t __user_stack)
 
 void check_signals_after_irq(struct regs *r)
 {
-    //if(this_core->cur_task && this_core->cur_task->pid >= 54) __asm__ __volatile__("xchg %%bx, %%bx":::);
     /*
     // don't process signals if we are serving an IRQ that occurred while we 
     // were serving another IRQ (i.e. nested IRQs)
@@ -670,7 +651,12 @@ void check_signals_after_irq(struct regs *r)
         return;
     }
     */
-    
+
+    if(r->int_no < 32)
+    {
+        return;
+    }
+
     // don't process signals while in a syscall, as we will do this after we
     // finish the syscall
     if(!this_core->cur_task ||
@@ -814,18 +800,13 @@ long syscall_sigpending_internal(sigset_t* set, int kernel)
     
     if(kernel)
     {
-        //A_memcpy((void *)set, (void *)&ct->signal_pending, sizeof(sigset_t));
         copy_sigset(set, (void *)&ct->signal_pending);
         return 0;
     }
     else
     {
-        //COPY_TO_USER((void *)set, (void *)&ct->signal_pending, 
-        //                                    sizeof(sigset_t));
         return copy_sigset_to_user(set, (void *)&ct->signal_pending); 
     }
-    
-    //return 0;
 }
 
 
@@ -848,7 +829,6 @@ long syscall_sigtimedwait(sigset_t *set, siginfo_t *info,
     struct timespec ats;
     sigset_t pending, wanted, blocked;
     int signum;
-    //long error = 0;
     unsigned long timo;
     unsigned long long oticks;
 
@@ -857,7 +837,6 @@ long syscall_sigtimedwait(sigset_t *set, siginfo_t *info,
         return -EINVAL;
     }
 
-    //COPY_FROM_USER(&wanted, (void *)set, sizeof(sigset_t));
     if(copy_sigset_from_user(&wanted, set) != 0)
     {
         return -EFAULT;
@@ -868,7 +847,6 @@ long syscall_sigtimedwait(sigset_t *set, siginfo_t *info,
     ksigdelset(&wanted, SIGSTOP);
     
     /* do not wait on blocked signals */
-    //A_memcpy(&blocked, (void *)&ct->signal_mask, sizeof(sigset_t));
     copy_sigset(&blocked, &ct->signal_mask);
     ksigandset(&blocked, &blocked, &wanted);
 
@@ -904,7 +882,6 @@ retry:
     /*
      * See if there is a pending signal.
      */
-    //A_memcpy(&pending, (void *)&ct->signal_pending, sizeof(sigset_t));
     copy_sigset(&pending, (void *)&ct->signal_pending);
     
     if(!ksigisemptyset(&pending))
@@ -917,8 +894,10 @@ retry:
                 {
                     if(info)
                     {
-                        COPY_TO_USER(info, &ct->siginfo[signum], 
-                                           sizeof(siginfo_t));
+                        siginfo_t tmp;
+                        A_memset(&tmp, 0, sizeof(siginfo_t));
+                        A_memcpy(&tmp, &ct->siginfo[signum], sizeof(siginfo_nopad_t));
+                        COPY_TO_USER(info, &tmp, sizeof(siginfo_t));
                     }
                     
                     ksigdelset((sigset_t *)&ct->signal_pending, signum);
@@ -951,7 +930,6 @@ retry:
         oticks = ticks;
     }
 
-
     if(timo)
     {
         set_task_waking_signal(ct, 0);
@@ -971,30 +949,6 @@ retry:
     }
 
     goto retry;
-
-#if 0
-    if(timo < 100)
-    {
-        error = block_task2(ct, timo);
-    }
-    else
-    {
-        if((error = block_task2(ct, 100)) != EINTR)
-        {
-            goto retry;
-        }
-    }
-
-    if(error == 0)
-    {
-        goto retry;
-    }
-    
-    error = -error;
-
-done:
-    return (error == -EWOULDBLOCK) ? -EAGAIN : error;
-#endif
 }
 
 
@@ -1007,13 +961,10 @@ long syscall_sigprocmask_internal(struct task_t *ct, int how,
     {
         if(kernel)
         {
-            //A_memcpy(oldset, &ct->signal_mask, sizeof(sigset_t));
             copy_sigset(oldset, &ct->signal_mask);
         }
         else
         {
-            //if(copy_to_user(oldset, &ct->signal_mask,
-            //                    sizeof(sigset_t)) != 0)
             if(copy_sigset_to_user(oldset, &ct->signal_mask) != 0)
             {
                 return -EFAULT;
@@ -1029,13 +980,10 @@ long syscall_sigprocmask_internal(struct task_t *ct, int how,
 
         if(kernel)
         {
-            //A_memcpy(&set, userset, sizeof(sigset_t));
             copy_sigset(&set, userset);
         }
         else
         {
-            //if(copy_from_user(&set, userset,
-            //                    sizeof(sigset_t)) != 0)
             if(copy_sigset_from_user(&set, userset) != 0)
             {
                 kernel_mutex_unlock(&ct->task_mutex);
@@ -1055,7 +1003,6 @@ long syscall_sigprocmask_internal(struct task_t *ct, int how,
 	            break;
 	            
             case SIG_SETMASK:
-	            //A_memcpy(&ct->signal_mask, &set, sizeof(sigset_t));
 	            copy_sigset(&ct->signal_mask, &set);
 	            break;
 	            
@@ -1088,7 +1035,7 @@ long syscall_sigprocmask(int how, sigset_t *userset, sigset_t *oldset)
 /*
  * Handler for syscall sigsuspend().
  */
-long syscall_sigsuspend(struct regs *r, sigset_t *set)
+long syscall_sigsuspend(sigset_t *set)
 {
     sigset_t old_mask;
 	struct task_t *ct = (struct task_t *)this_core->cur_task;
@@ -1096,11 +1043,8 @@ long syscall_sigsuspend(struct regs *r, sigset_t *set)
   
     if(set)
     {
-        //A_memcpy(&old_mask, &ct->signal_mask, sizeof(sigset_t));
         copy_sigset(&old_mask, &ct->signal_mask);
 
-        //if(copy_from_user(&ct->signal_mask,
-        //                        set, sizeof(sigset_t)) != 0)
         if(copy_sigset_from_user(&ct->signal_mask, set) != 0)
         {
             kernel_mutex_unlock(&ct->task_mutex);
@@ -1115,14 +1059,13 @@ long syscall_sigsuspend(struct regs *r, sigset_t *set)
     kernel_mutex_unlock(&ct->task_mutex);
 
     /* wait for a signal to wake up.... */
-    syscall_pause(r);
+    syscall_pause();
     //block_task(ct, 1);
 
     kernel_mutex_lock(&ct->task_mutex);
   
     if(set)
     {
-        //A_memcpy(&ct->signal_mask, &old_mask, sizeof(sigset_t));
         copy_sigset(&ct->signal_mask, &old_mask);
     }
 
@@ -1231,7 +1174,7 @@ long syscall_signaltstack(stack_t *ss, stack_t *old_ss)
  * Add a signal to a task.
  */
 long add_task_signal(struct task_t *task, int signum, 
-                     siginfo_t *siginfo, int force)
+                     siginfo_nopad_t *siginfo, int force)
 {
 	struct task_t *ct = (struct task_t *)this_core->cur_task;
     
@@ -1294,14 +1237,14 @@ long add_task_signal(struct task_t *task, int signum,
 
     if(siginfo)
     {
-        A_memcpy(&task->siginfo[signum], siginfo, sizeof(siginfo_t));
+        A_memcpy(&task->siginfo[signum], siginfo, sizeof(siginfo_nopad_t));
     }
     else
     {
-        A_memset(&task->siginfo[signum], 0, sizeof(siginfo_t));
+        A_memset(&task->siginfo[signum], 0, sizeof(siginfo_nopad_t));
     }
     
-    task->siginfo[signum].si_signo = signum;
+    task->siginfo[signum].sinp_signo = signum;
 
 out:
 
@@ -1313,7 +1256,6 @@ out:
         KDEBUG("add_task_signal: waking task with signum %d\n", signum);
 
         set_task_waking_signal(task, signum);
-        //task->woke_by_signal = signum;
 
         unblock_task_no_preempt(task);
     }

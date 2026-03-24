@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: smp.c
  *    This file is part of LaylaOS.
@@ -33,22 +33,26 @@
 #include <kernel/kparam.h>
 #include <kernel/apic.h>
 #include <kernel/pic.h>
+#include <kernel/pci.h>
 #include <kernel/msr.h>
 #include <kernel/tss.h>
 #include <kernel/gdt.h>
 #include <kernel/idt.h>
 #include <kernel/asm.h>
 #include <kernel/fpu.h>
+#include <kernel/irq.h>
+#include <kernel/ioapic.h>
 #include <kernel/syscall.h>
 #include <mm/kheap.h>
 
 
-#define INVLPG_ENTRY_COUNT                  256
+#define INVLPG_ENTRY_COUNT                  128
 
 struct invlpg_entry_t
 {
     volatile virtual_addr addr;
-    volatile uint32_t cpus_pending;
+    volatile uint32_t cpus_pending, sending_cpu;
+    volatile pid_t sending_task;
 };
 
 struct invlpg_entry_t invlpg_entries[INVLPG_ENTRY_COUNT];
@@ -63,6 +67,9 @@ extern char ap_bootstrap_end[];
 extern char ap_bootstrap_gdtp[];
 extern char ap_premain[];
 
+// defined in ioapic.c
+extern int ioapic_count;
+
 // id of AP currently undergoing start up
 static volatile int ap_current = 0;
 
@@ -75,12 +82,6 @@ uintptr_t ap_stack_base = 0;        // not actually used
 
 volatile int scheduler_holding_cpu = -1;
 
-//volatile uintptr_t address_for_invlpg = 0;
-///volatile int cpus_pending_invlpg = 0;
-
-
-#define cpuid(in, a, b, c, d)   \
-    __asm__ __volatile__ ("cpuid": "=a" (a), "=b" (b), "=c" (c), "=d" (d) : "a" (in));
 
 #define COPY_BYTES(b, i, val)       \
     b[i] = val & 0xff;              \
@@ -216,8 +217,200 @@ void ap_main(void)
     ap_startup_flag = 1;
 
     syscall_idle();
-    printk("smp[%d]: We should NOT be here!\n", ap_current);
+    printk("smp[%d]: We should NOT be here!\n", this_core->cpuid);
     empty_loop();
+}
+
+
+static virtual_addr find_mp_floating_ptr(virtual_addr start, virtual_addr sz)
+{
+    virtual_addr addr;
+
+    for(addr = start; addr < start + sz; addr += 16)
+    {
+        if(memcmp((void *)addr, "_MP_", 4) == 0)
+        {
+            return addr;
+        }
+    }
+
+    return 0;
+}
+
+
+#define ARRAYCNT(a)             (sizeof(a) / sizeof(a[0]))
+#define ISA_TYPE_INDEX          6
+#define PCI_TYPE_INDEX          13
+
+
+void parse_mp_table(void)
+{
+    static char *enttypes[] = { "Processor                 ", 
+                                "Bus                       ", 
+                                "I/O APIC                  ", 
+                                "I/O Interrupt Assignment  ", 
+                                "Local Interrupt Assignment" };
+    static char *bustypestr[] = { "UNKWON",
+                                  "CBUS  ", "CBUSII", "EISA  ", "FUTURE",
+                                  "INTERN", "ISA   ", "MBI   ", "MBII  ",
+                                  "MCA   ", "MPI   ", "MPSA  ", "NUBUS ",
+                                  "PCI   ", "PCMCIA", "TC    ", "VL    ",
+                                  "VME   ", "XPRESS" };
+    static char *inttypes[] = { "INT", "NMI", "SMI", "ExtINT" };
+    uint8_t bustypes[256] = { 0, };
+    uint8_t u8;
+    uint16_t u16, i, j, entcnt;
+    uint32_t u32;
+    virtual_addr mpptr, mptab, ebda, memsz, ent;
+
+    // find the Extended Bios Data Area (EBDA) address
+    // See: https://wiki.osdev.org/Memory_Map_(x86)#Extended_BIOS_Data_Area_(EBDA)
+    u16 = *(uint16_t *)PHYS_TO_HIMEM(0x40E);
+    ebda = PHYS_TO_HIMEM(u16 << 4);
+
+    // search for the MP table
+    if(!ebda || !(mpptr = find_mp_floating_ptr(ebda, 0x400)))
+    {
+        // not found, try the last KB of system base memory
+        u16 = *(uint16_t *)PHYS_TO_HIMEM(0x413);
+        memsz = PHYS_TO_HIMEM(u16 * 0x400);
+
+        // not found, try the BIOS ROM 0xf0000 - 0xfffff
+        if(!memsz || !(mpptr = find_mp_floating_ptr(memsz, 0x400)))
+        {
+            mpptr = find_mp_floating_ptr(PHYS_TO_HIMEM(0xF0000), 0x10000);
+        }
+    }
+
+    if(!mpptr)
+    {
+        printk("smp: could not find MP floating pointer\n");
+        return;
+    }
+
+    printk("smp: found MP floating pointer at " _XPTR_ "\n", mpptr);
+    u32 = *(uint32_t *)(mpptr + 4);
+
+    if(*(uint8_t *)(mpptr + 11) == 0 && u32 != 0)
+    {
+        mptab = PHYS_TO_HIMEM(u32);
+        printk("smp: found MP config table at " _XPTR_ ", size %u\n", 
+                mptab, *(uint16_t *)(mptab + 4));
+    }
+    else
+    {
+        printk("smp: could not find MP config table\n");
+        return;
+    }
+
+    if(memcmp((void *)mptab, "PCMP", 4) != 0)
+    {
+        printk("smp: MP config table has invalid signature\n");
+        return;
+    }
+
+    // find entries count
+    entcnt = *(uint16_t *)(mptab + 34);
+    printk("smp: MP config table with %u entries\n", entcnt);
+
+    // loop through the entries
+    ent = mptab + 44;
+
+    for(i = 0; i < entcnt; i++)
+    {
+        u8 = *(uint8_t *)ent;
+        printk("[%d] type %d (%s): ", i, u8, enttypes[u8]);
+
+        if(u8 == 1)                      // Bus
+        {
+            uint8_t *s = (uint8_t *)(ent + 2);      // 6-byte string name
+            uint8_t id = *(uint8_t *)(ent + 1);     // bus id
+
+            printk(" %c%c%c%c%c%c (id %d)\n", 
+                    s[0], s[1], s[2], s[3], s[4], s[5], id);
+            bustypes[id] = 0;
+
+            // store the bus type in an array for use later
+            for(j = 0; j < ARRAYCNT(bustypestr); j++)
+            {
+                if(memcmp(bustypestr[j], s, 6) == 0)
+                {
+                    bustypes[id] = j;
+                    break;
+                }
+            }
+        }
+        else if(u8 == 3 ||                  // I/O Interrupt Assignment
+                u8 == 4)                    // Local Interrupt Assignment
+        {
+            printk(" %s (%d)  flag %x  busid %x  busirq %x  apicid %x  apicin %x\n",
+                    inttypes[*(uint8_t *)(ent + 1)], *(uint8_t *)(ent + 1),
+                    *(uint8_t *)(ent + 2), *(uint8_t *)(ent + 4),
+                    *(uint8_t *)(ent + 5), *(uint8_t *)(ent + 6),
+                    *(uint8_t *)(ent + 7));
+
+            if(u8 == 3 &&                   // I/O Interrupt Assignment
+               *(uint8_t *)(ent + 1) == 0)  // type == INT
+            {
+                uint8_t busid = *(uint8_t *)(ent + 4);
+                uint8_t busirq = *(uint8_t *)(ent + 5);
+                uint8_t apicid = *(uint8_t *)(ent + 6);
+                uint8_t intin = ioapics[apicid].irq_base + *(uint8_t *)(ent + 7);
+                uint8_t flags = 0;
+
+                u8 = *(uint8_t *)(ent + 2);
+
+                flags |= ((u8 & 0x03) == 0x03) ? IOAPIC_ACTIVE_HIGH_LOW : 0;
+                flags |= ((u8 & 0x0C) == 0x0C) ? IOAPIC_TRIGGER_EDGE_LOW : 0;
+
+                //printk("(%u, %u).. ", intin, ioapics[apicid].irq_base);
+
+                // for ISA IRQ assignments, only store the assignment if there
+                // the IRQ != its corresponding GSI, otherwise we will identity-map
+                // the IRQ when we init our I/O APIC
+                if(bustypes[busid] == ISA_TYPE_INDEX)
+                {
+                    if(busirq != intin)
+                    {
+                        irq_redir[busirq].gsi = intin;
+                        irq_redir[busirq].flags = flags;
+                    }
+                }
+                // for PCI IRQ assignments, remember what GSI the device on
+                // the given bus is assigned to, so we can use this information
+                // later on when we init the PCI device
+                else if(bustypes[busid] == PCI_TYPE_INDEX)
+                {
+                    // the I/O interrupt entry source for PCI devices is 
+                    // formatted as follows (Section D.3 of the MP spec):
+                    //   1:0          PCI interrupt signal (0 = INTA#, ...)
+                    //   6:2          PCI device number
+                    //   7            Reserved
+                    busirq >>= 2;
+                    busirq &= 0x1F;
+
+                    if(intin == 18)
+                    {
+                    pci_acpi_irq[busid][busirq].gsi = intin;
+                    pci_acpi_irq[busid][busirq].flags = flags;
+                    }
+                }
+            }
+        }
+        else
+        {
+            printk("\n");
+        }
+
+        if(*(uint8_t *)ent == 0)    // processor entry
+        {
+            ent += 20;
+        }
+        else                        // other entries
+        {
+            ent += 8;
+        }
+    }
 }
 
 
@@ -232,6 +425,16 @@ void smp_init(void)
     processor_local_data[0].tss_pointer = &tss_entry[0];
     //processor_local_data[0].printk_buf = global_printk_buf;
     processor_local_data[0].flags |= SMP_FLAG_ONLINE;
+
+    // init the irq map on the BSP
+    reserve_irq_range(0, 31);
+
+    for(i = 0; i < ioapic_count; i++)
+    {
+        reserve_irq_range(ioapics[i].irq_base + 32,
+                          ioapics[i].irq_base + ioapics[i].max_redirect + 32);
+    }
+
     online_processor_count++;
     online_processor_bitmap |= (1 << 0);
     load_processor_info();
@@ -254,14 +457,16 @@ void smp_init(void)
     // Allocate a temporary page to copy the contents of this page (in case
     // the bootloader loaded something there), copy the page, then restore
     // it later after we finish initializing APs.
-    if(get_next_addr(&tmp_phys, &tmp_virt, PTE_FLAGS_PW, REGION_KMODULE) != 0)
-    {
+   	if(!(tmp_phys = (physical_addr)pmmngr_alloc_block()))
+   	{
         kpanic("smp: could not allocate temporary page\n");
     }
 
+    tmp_virt = PHYS_TO_HIMEM(tmp_phys);
+
     // Identity map page 0x8000 so when the AP enables paging, it can find
     // the code it needs to run!
-    vmmngr_map_page((void *)0x8000, (void *)0x8000, PTE_FLAGS_PW);
+    vmmngr_map_page((physical_addr)0x8000, (virtual_addr)0x8000, PTE_FLAGS_PW);
 
     A_memcpy((void *)tmp_virt, (void *)0x8000, PAGE_SIZE);
 
@@ -290,14 +495,12 @@ void smp_init(void)
 
     for(i = 1; i < processor_count; i++)
     {
-        if(get_next_addr(&ap_stack_base, &stack_bases[i], 
-                                    PTE_FLAGS_PW, REGION_KMODULE) != 0)
-        {
+       	if(!(ap_stack_base = (physical_addr)pmmngr_alloc_block()))
+       	{
             kpanic("smp: could not allocate AP stack page\n");
         }
 
-        stack_bases[i] += PAGE_SIZE;
-        //processor_local_data[i].printk_buf = kmalloc(4096);
+        stack_bases[i] = PHYS_TO_HIMEM(ap_stack_base) + PAGE_SIZE;
     }
 
     for(i = 1; i < processor_count; i++)
@@ -381,30 +584,12 @@ void smp_init(void)
     }
 
     // copy page 0x8000 back and free temp memory
-    A_memcpy((void *)0x8000, (void *)tmp_virt, PAGE_SIZE);
-    vmmngr_unmap_page((void *)0x8000);
-    vmmngr_free_page(get_page_entry((void *)tmp_virt));
+    A_memcpy(page8000, (void *)tmp_virt, PAGE_SIZE);
+    vmmngr_unmap_page((virtual_addr)0x8000);
+    pmmngr_free_block((void *)tmp_phys);
 
     printk("smp: enabled %d cores\n", processor_count);
 }
-
-
-/*
-STATIC_INLINE int online_processors(void)
-{
-    int i, count = 1;
-
-    for(i = 1; i < processor_count; i++)
-    {
-        if(processor_local_data[i].flags & SMP_FLAG_ONLINE)
-        {
-            count++;
-        }
-    }
-
-    return count;
-}
-*/
 
 
 /*
@@ -442,6 +627,8 @@ void wakeup_other_processors(void)
 */
 
 
+#include "task_funcs.c"
+
 static volatile int tlb_holding_cpu = -1;
 
 void handle_tlb_shootdown(void)
@@ -469,8 +656,8 @@ void handle_tlb_shootdown(void)
         }
     }
 
-    this_core->irq_count[17]++;
-    this_core->irq_ticks[17] += (ticks - oticks);
+    this_core->irq_count[124]++;
+    this_core->irq_ticks[124] += (ticks - oticks);
 }
 
 
@@ -479,24 +666,9 @@ void handle_tlb_shootdown(void)
  */
 void tlb_shootdown(uintptr_t vaddr)
 {
-    /*
-    if(lapic_virt == 0 || online_processor_count <= 1)
-    {
-        return;
-    }
-
-    */
-    /*
-    volatile uintptr_t s = int_off();
-    volatile int i;
-    //volatile struct invlpg_entry_t *ent;
-    volatile uint32_t bitmap = online_processor_bitmap & ~(1 << this_core->cpuid);
-    */
-
     volatile struct invlpg_entry_t *ent;
-    volatile int i /* , unlock */;
+    volatile int i;
     volatile int old_flags;
-    //volatile uintptr_t s;
     volatile uint32_t bitmap = online_processor_bitmap & ~(1 << this_core->cpuid);
 
     old_flags = __set_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
@@ -508,7 +680,6 @@ void tlb_shootdown(uintptr_t vaddr)
             __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
         }
 
-        //int_on(s);
         return;
     }
 
@@ -528,40 +699,18 @@ void tlb_shootdown(uintptr_t vaddr)
             __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
         }
 
-        //int_on(s);
         return;
     }
 
 try:
-
-    /*
-    unlock = 1;
-    s = int_off();
-
-    while(!__sync_bool_compare_and_swap(&tlb_holding_cpu, -1, this_core->cpuid))
-    {
-        if(tlb_holding_cpu == this_core->cpuid)
-        {
-            switch_tty(1);
-            printk("tlb_shootdown[%d]: self locked (flags 0x%x, vaddr 0x%lx)\n", this_core->cpuid, this_core->flags, vaddr);
-            screen_refresh(NULL);
-            kpanic("******\n");
-
-            unlock = 0;
-            break;
-        }
-
-        int_on(s);
-        __asm__ __volatile__("pause" ::: "memory");
-        s = int_off();
-    }
-    */
 
     for(ent = invlpg_entries; ent < &invlpg_entries[INVLPG_ENTRY_COUNT]; ent++)
     {
         if(__sync_bool_compare_and_swap(&ent->cpus_pending, 0, bitmap))
         {
             __lock_xchg_ptr(&ent->addr, vaddr);
+            ent->sending_cpu = this_core->cpuid;
+            ent->sending_task = this_core->cur_task ? this_core->cur_task->pid : 0;
             __asm__ __volatile__("":::"memory");
             break;
         }
@@ -569,18 +718,6 @@ try:
 
     if(ent == &invlpg_entries[INVLPG_ENTRY_COUNT])
     {
-        //kpanic("***********************\n");
-        //__asm__ __volatile__("xchg %%bx, %%bx":::);
-        //__asm__ __volatile__("xchg %%bx, %%bx":::);
-
-        /*
-        if(unlock)
-        {
-            __sync_bool_compare_and_swap(&tlb_holding_cpu, this_core->cpuid, -1);
-        }
-
-        int_on(s);
-        */
         __asm__ __volatile__("pause" ::: "memory");
         goto try;
     }
@@ -594,8 +731,7 @@ try:
     */
 
     // trigger IPI
-    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) = 
-           /* (*((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) & 0xfff00000) | */ (3 << 18) | 124;
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) = (3 << 18) | 124;
 
     // wait for delivery
     do
@@ -603,19 +739,11 @@ try:
         __asm__ __volatile__("pause" ::: "memory");
     } while(*((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) & (1 << 12));
 
-    /*
-    if(unlock)
-    {
-        __sync_bool_compare_and_swap(&tlb_holding_cpu, this_core->cpuid, -1);
-    }
-    */
-
     if(!(old_flags & SMP_FLAG_SCHEDULER_BUSY))
     {
         __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
     }
 
-    //int_on(s);
     //printk("tlb_shootdown[%d]: vaddr 0x%lx - done\n", this_core->cpuid, vaddr);
 }
 

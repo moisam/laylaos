@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: elf.c
  *    This file is part of LaylaOS.
@@ -133,32 +133,6 @@ static int elf_load_segment(struct fs_node_t *node,
 
     return 0;
 }
-
-
-#if 0
-/*
- * Reserve memory in userspace. Similar to what we do in mmap.c, except we
- * use different offsets here as we are using a different memory region (the
- * region we reserve for shared libraries).
- */
-static uintptr_t elf_get_user_addr(size_t size)
-{
-    uintptr_t addr;
-    struct task_t *ct = cur_task;
-    
-    // search for an address in the 1GB to 3GB address range
-    for(addr = LIB_ADDR_START; addr < LIB_ADDR_END; addr += PAGE_SIZE)
-    {
-        if(memregion_check_overlaps(ct, addr, addr + size) == 0)
-        {
-            //printk("elf_get_user_addr: s %lx, e %lx\n", addr, addr + size);
-            return addr;
-        }
-    }
-    
-    return 0;
-}
-#endif
 
 
 static void calc_elf_limits(struct task_t *ct, 
@@ -296,7 +270,6 @@ static long elf_load_exec(struct fs_node_t *node, struct cached_page_t *block0,
                 {
                     if((dyn_base = get_user_addr(memend - mempos, 
                                         LIB_ADDR_START, LIB_ADDR_END)) == 0)
-                    //if((dyn_base = elf_get_user_addr(memend - mempos)) == 0)
                     {
                         goto err_inval;
                     }
@@ -326,7 +299,7 @@ static long elf_load_exec(struct fs_node_t *node, struct cached_page_t *block0,
             {
                 for(z = mempos; z < memend; z += PAGE_SIZE)
                 {
-                    pt_entry *pt = get_page_entry((void *)z);
+                    pt_entry *pt = get_page_entry(z);
                 
                     if(!pt)
                     {
@@ -363,7 +336,7 @@ static long elf_load_exec(struct fs_node_t *node, struct cached_page_t *block0,
                 {
                     for(z = mempos; z < memend; z += PAGE_SIZE)
                     {
-                        pt_entry *pt = get_page_entry((void *)z);
+                        pt_entry *pt = get_page_entry(z);
                         PTE_DEL_ATTRIB(pt, I86_PTE_WRITABLE);
                     }
                 }

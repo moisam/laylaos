@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: clock.c
  *    This file is part of LaylaOS.
@@ -53,17 +53,15 @@
 
 #define NWAITERS            1024
 
-struct clock_waiter_t waiter_head[2];
+struct posix_timer_t waiter_head[2];
+
 time_t startup_time = 0;
 struct sys_clock monotonic_time;
 struct task_t *sleep_task = NULL;
 volatile struct kernel_mutex_t waiter_mutex = { 0, };
-volatile int waiter_list_busy = 0;
 volatile int waiter_mutex_locks = 0;
 
 volatile struct task_t *softsleep_task = NULL;
-struct clock_waiter_t *waiter_table = NULL;
-struct clock_waiter_t *last_used_waiter = NULL;
 
 void softsleep_task_func(void *unused);
 
@@ -84,74 +82,8 @@ void init_clock(void)
 
 void init_clock_waiters(void)
 {
-    if(!(waiter_table = kmalloc(NWAITERS * sizeof(struct clock_waiter_t))))
-    {
-        kpanic("Failed to init clock waiter table");
-    }
-
-    A_memset(waiter_table, 0, NWAITERS * sizeof(struct clock_waiter_t));
-    last_used_waiter = waiter_table;
-
     (void)start_kernel_task("softsleep", softsleep_task_func, NULL,
                             &softsleep_task, 0);
-}
-
-
-void waiter_free(struct clock_waiter_t *w)
-{
-    w->used = 0;
-}
-
-
-struct clock_waiter_t *waiter_malloc(void)
-{
-    struct clock_waiter_t *w, *end;
-
-    end = &waiter_table[NWAITERS];
-
-    if(last_used_waiter >= end)
-    {
-        last_used_waiter = waiter_table;
-    }
-
-    w = last_used_waiter;
-
-retry:
-
-    for( ; w < end; w++)
-    {
-        if(!w->used)
-        {
-            w->used = 1;
-            last_used_waiter = &w[1];
-            return w;
-        }
-    }
-
-    // if we started searching from the middle, try to search from the 
-    // beginning, maybe we'll find an entry that someone has free'd
-    if((end == &waiter_table[NWAITERS]) && (last_used_waiter != waiter_table))
-    {
-        end = last_used_waiter;
-        w = waiter_table;
-        goto retry;
-    }
-
-    /*
-    struct clock_waiter_t *w;
-    struct clock_waiter_t *lw = &waiter_table[NWAITERS];
-
-    for(w = waiter_table; w < lw; w++)
-    {
-        if(!w->used)
-        {
-            w->used = 1;
-            return w;
-        }
-    }
-    */
-
-    return NULL;
 }
 
 
@@ -161,53 +93,41 @@ retry:
 void softsleep_task_func(void *unused)
 {
 	UNUSED(unused);
-    volatile struct clock_waiter_t *w, *prev, *next;
-    struct posix_timer_t *timer;
+    volatile struct posix_timer_t *t, *prev, *next;
     volatile int i;
-	
+
 	for(;;)
 	{
         elevated_priority_lock_recursive(&waiter_mutex, waiter_mutex_locks);
-        //waiter_list_busy = 1;
-        __lock_xchg_int(&waiter_list_busy, 1);
 
         for(i = 0; i < 2; i++)
         {
             prev = &waiter_head[i];
-            w = prev->next;
+            t = prev->next_waiting;
 
-            while(w != NULL && w->delta <= 0)
+            while(t != NULL && t->delta <= 0)
             {
-            	next = w->next;
+            	next = t->next_waiting;
 
-            	if(w->timerid)
+            	if(t->timerid)
             	{
-            	    prev->next = (struct clock_waiter_t *)next;
-
-                    if((timer = get_posix_timer(w->pid, w->timerid)))
-                    {
-                	    timer_notify_expired(w->pid, timer);
-                	    timer_reset(w->pid, timer);
-                    }
-
-            	    waiter_free((void *)w);
+            	    prev->next_waiting = next;
+               	    timer_notify_expired(t);
+               	    timer_reset(t);
             	}
             	else
             	{
-                	prev = w;
-                	unblock_task_no_preempt(get_task_by_id(w->pid));
+                	prev = t;
+                	unblock_task_no_preempt(get_task_by_id(t->tgid));
             	}
 
-            	w = /* w-> */ next;
+            	t = next;
             }
         }
 
-        ////waiter_list_busy = 0;
-        __lock_xchg_int(&waiter_list_busy, 0);
         elevated_priority_unlock_recursive(&waiter_mutex, waiter_mutex_locks);
 
-        //block_task(waiter_table, 0);
-        set_task_waitchan(this_core->cur_task, waiter_table);
+        set_task_waitchan(this_core->cur_task, softsleep_task);
         set_task_state(this_core->cur_task, TASK_WAITING);
         scheduler();
     }
@@ -334,35 +254,32 @@ long do_clock_settime(clockid_t clock_id, struct timespec *tp)
         /* check for any timers that would expire under the new clock value */
         if(old_secs > tp->tv_sec)
         {
-            struct clock_waiter_t *w;
+
+            volatile struct posix_timer_t *t;
             int i;
 
             elevated_priority_lock_recursive(&waiter_mutex, waiter_mutex_locks);
-            //waiter_list_busy = 1;
-            __lock_xchg_int(&waiter_list_busy, 1);
 
             for(i = 0; i < 2; i++)
             {
                 int64_t diff = old_secs - tp->tv_sec;
-                
-            	for(w = waiter_head[i].next; w != NULL; w = w->next)
+
+            	for(t = waiter_head[i].next_waiting; t != NULL; t = t->next_waiting)
         	    {
-        	        if(w->delta >= diff)
+        	        if(t->delta >= diff)
         	        {
-        	            w->delta -= diff;
+        	            t->delta -= diff;
         	            break;
         	        }
-        	        
-        	        if(w->delta != 0)
+
+        	        if(t->delta != 0)
         	        {
-        	            diff -= w->delta;
-        	            w->delta = 0;
+        	            diff -= t->delta;
+        	            t->delta = 0;
         	        }
         	    }
         	}
         	
-            //waiter_list_busy = 0;
-            __lock_xchg_int(&waiter_list_busy, 0);
             elevated_priority_unlock_recursive(&waiter_mutex, waiter_mutex_locks);
         }
 
@@ -412,32 +329,43 @@ long syscall_clock_settime(clockid_t clock_id, struct timespec *tp)
  */
 void clock_check_waiters(void)
 {
-	/* volatile */ int i, unblock = 0;
+	int i, unblock = 0;
+    volatile struct posix_timer_t *t;
 
-    /* volatile */ struct clock_waiter_t *w;
-
-    if(waiter_list_busy || softsleep_task == NULL)
+    if(/* waiter_list_busy || */ softsleep_task == NULL)
     {
+        return;
+    }
+
+    int old_prio = 0, old_policy = 0;
+    elevate_priority(this_core->cur_task, &old_prio, &old_policy);
+
+    if(kernel_mutex_trylock(&waiter_mutex))
+    {
+        restore_priority(this_core->cur_task, old_prio, old_policy);
         return;
     }
 
     for(i = 0; i < 2; i++)
     {
-    	for(w = waiter_head[i].next; w != NULL; w = w->next)
+    	for(t = waiter_head[i].next_waiting; t != NULL; t = t->next_waiting)
 	    {
-	        if(--w->delta > 0)
+	        if(--t->delta > 0)
 	        {
 	            break;
 	        }
 		
 	    	unblock = 1;
 		
-	        if(w->delta == 0)
+	        if(t->delta == 0)
 	    	{
 	    		break;
 	    	}
 	    }
 	}
+
+    kernel_mutex_unlock(&waiter_mutex);
+    restore_priority(this_core->cur_task, old_prio, old_policy);
 
 	if(unblock)
 	{
@@ -449,22 +377,20 @@ void clock_check_waiters(void)
 /*
  * Get clock_waiter_t struct for a task.
  */
-struct clock_waiter_t *get_waiter(volatile struct clock_waiter_t *head,
-                                  pid_t pid, ktimer_t timerid,
-                                  int64_t *remaining_ticks, int unlink)
+void get_waiter(volatile struct posix_timer_t *head,
+                volatile struct posix_timer_t *timer,
+                int64_t *remaining_ticks, int unlink)
 {
-    volatile struct clock_waiter_t *prev, *next;
+    volatile struct posix_timer_t *prev, *next;
     int64_t delta = 0;
     
     elevated_priority_lock_recursive(&waiter_mutex, waiter_mutex_locks);
-    //waiter_list_busy = 1;
-    __lock_xchg_int(&waiter_list_busy, 1);
 
-	for(prev = head; (next = prev->next) != NULL; prev = next)
+	for(prev = head; (next = prev->next_waiting) != NULL; prev = next)
 	{
 	    delta += prev->delta;
 	    
-		if(next && next->pid == pid && next->timerid == timerid)
+		if(next == timer)
 		{
 			if(remaining_ticks)
 			{
@@ -473,202 +399,32 @@ struct clock_waiter_t *get_waiter(volatile struct clock_waiter_t *head,
 
 			if(unlink)
 			{
-    			if(next->next && next->delta > 0)
+    			if(next->next_waiting && next->delta > 0)
     			{
-    				next->next->delta += next->delta;
+    				next->next_waiting->delta += next->delta;
     			}
 
-    			prev->next = next->next;
-    			next->next = NULL;
+    			prev->next_waiting = next->next_waiting;
+    			next->next_waiting = NULL;
     			next->delta += delta;
 			}
 			
 			break;
 		}
 	}
-	
-    //waiter_list_busy = 0;
-    __lock_xchg_int(&waiter_list_busy, 0);
-    elevated_priority_unlock_recursive(&waiter_mutex, waiter_mutex_locks);
-	
-	return (struct clock_waiter_t *)next;
-}
 
-
-#if 0
-
-void prep_wait(int64_t delta)
-{
-    struct clock_waiter_t *w, *prev, *next;
-    int i;
-
-    /*
-    if(timerid == 0 && delta <= 2)
-    {
-        //tick_delay(delta);
-        scheduler();
-        return 0;
-    }
-    */
-    /*
-    if(this_core->cur_task && this_core->cur_task->pid >= 63)
-    {
-    switch_tty(1);
-    printk("clock_wait: pid %d\n", this_core->cur_task->pid);
-    printk("clock_wait: delta %ld\n", delta);
-    printk("clock_wait: timerid %ld\n", timerid);
-
-    for(volatile int z = 0; z < 1000; z++) ;
-
-    __asm__ __volatile__("xchg %%bx, %%bx":::);
-    return delta;
-    }
-    */
-    
-    elevated_priority_lock_recursive(&waiter_mutex, waiter_mutex_locks);
-    __lock_xchg_int(&waiter_list_busy, 1);
-
-    if(!(w = waiter_malloc()))
-    {
-        __lock_xchg_int(&waiter_list_busy, 0);
-        elevated_priority_unlock_recursive(&waiter_mutex, waiter_mutex_locks);
-        return;
-    }
-    
-    w->delta = 0;
-    w->next = NULL;
-    w->pid = this_core->cur_task->pid;
-    w->timerid = 0;
-
-    /*
-     * Store waiting tasks in a delta queue, where every task's delta is the 
-     * difference between the task's waiting time and the previous task's
-     * waiting time. We walk down the list to find a task who's delta is
-     * smaller than the current delta and we insert ourselves before it.
-     * We correct the delta value as we walk down the list.
-     */
-	for(prev = &waiter_head[0];
-	    (next = prev->next) != NULL && delta > next->delta;
-	    prev = next)
-	{
-	    if(next->delta > 0)
-	    {
-			delta -= next->delta;
-		}
-	}
-	
-	/*
-	 * Store the new delta, and fix the next task's delta (if we are not the
-	 * last task in queue).
-	 */
-	w->delta = delta;
-
-	if(next != NULL)
-	{
-		next->delta -= delta;
-	}
-
-    /* Fix the pointers */
-	prev->next = w;
-	w->next = next;
-
-    __lock_xchg_int(&waiter_list_busy, 0);
     elevated_priority_unlock_recursive(&waiter_mutex, waiter_mutex_locks);
 }
 
-long end_wait(void)
+
+long __clock_wait(struct posix_timer_t *head,
+                  volatile struct posix_timer_t *timer, int64_t delta)
 {
-    struct clock_waiter_t *w;
-    int64_t delta = 0;
-
-    w = get_waiter(&waiter_head[0], this_core->cur_task->pid, 0, NULL, 1);
-
-    if(w)
-    {
-        delta = (w->delta > 0) ? w->delta : 0;
-        waiter_free(w);
-    }
-
-    return delta;
-}
-
-#endif
-
-
-long __clock_wait(struct clock_waiter_t *head, pid_t pid,
-                  int64_t delta, ktimer_t timerid)
-{
-    struct clock_waiter_t *w, *prev, *next;
-    //struct task_t *task;
+    volatile struct posix_timer_t *prev, *next;
     int i;
 
-    //set_task_waking_signal(this_core->cur_task, 0);
-    //__sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
-
-    /*
-    if(timerid == 0 && delta <= 2)
-    {
-        //tick_delay(delta);
-        scheduler();
-        return 0;
-    }
-    */
-
-    //if(memcmp(this_core->cur_task->command, "sdl2-do", 7) == 0)
-    /* if(this_core->cur_task->pid >= 63 && this_core->cur_task->pid != 64 &&
-       (this_core->cur_task->syscall_regs->rax == 82 ||
-        this_core->cur_task->syscall_regs->rax == 142 ||
-        this_core->cur_task->syscall_regs->rax == 308))*/
-    {
-        //static volatile int t = 0;
-        //switch_tty(1);
-
-    //printk("clock_wait: pid %d, prop %x, sig %x, delta %ld\n", this_core->cur_task->pid, this_core->cur_task->properties, this_core->cur_task->woke_by_signal, delta);
-    //printk("clock_wait: prop %x, delta %ld, sig %x..", this_core->cur_task->properties, delta, this_core->cur_task->woke_by_signal);
-
-        /*
-        if(++t >= 20)
-        {
-        dump_regs(this_core->cur_task->syscall_regs);
-        printk("bytes: ");
-        for(int z = 0; z < 8; z++) printk("%02x ", ((char *)this_core->cur_task->syscall_regs->rip)[z]);
-        printk("\n");
-        screen_refresh(NULL);
-        kpanic("****\n");
-        for(;;) ;
-        }
-        */
-    /*
-    switch_tty(1);
-    printk("clock_wait: pid %d, prop %x, sig %x\n", this_core->cur_task->pid, this_core->cur_task->properties, this_core->cur_task->woke_by_signal);
-    printk("clock_wait: delta %ld\n", delta);
-    printk("clock_wait: timerid %ld\n", timerid);
-    */
-
-    //for(volatile int z = 0; z < 10; z++) ;
-
-    //__asm__ __volatile__("xchg %%bx, %%bx":::);
-    //return 0;
-    }
-    
     elevated_priority_lock_recursive(&waiter_mutex, waiter_mutex_locks);
-    //waiter_list_busy = 1;
-    __lock_xchg_int(&waiter_list_busy, 1);
 
-    if(!(w = waiter_malloc()))
-    {
-        //waiter_list_busy = 0;
-        __lock_xchg_int(&waiter_list_busy, 0);
-        elevated_priority_unlock_recursive(&waiter_mutex, waiter_mutex_locks);
-
-        return delta;
-    }
-    
-    w->delta = 0;
-    w->next = NULL;
-    w->pid = pid;
-    w->timerid = timerid;
-    
     /*
      * Store waiting tasks in a delta queue, where every task's delta is the 
      * difference between the task's waiting time and the previous task's
@@ -677,7 +433,7 @@ long __clock_wait(struct clock_waiter_t *head, pid_t pid,
      * We correct the delta value as we walk down the list.
      */
 	for(prev = head;
-	    (next = prev->next) != NULL && delta > next->delta;
+	    (next = prev->next_waiting) != NULL && delta > next->delta;
 	    prev = next)
 	{
 	    if(next->delta > 0)
@@ -690,7 +446,7 @@ long __clock_wait(struct clock_waiter_t *head, pid_t pid,
 	 * Store the new delta, and fix the next task's delta (if we are not the
 	 * last task in queue).
 	 */
-	w->delta = delta;
+	timer->delta = delta;
 
 	if(next != NULL)
 	{
@@ -698,17 +454,15 @@ long __clock_wait(struct clock_waiter_t *head, pid_t pid,
 	}
 
     /* Fix the pointers */
-	prev->next = w;
-	w->next = next;
+	prev->next_waiting = timer;
+	timer->next_waiting = next;
 
-    //waiter_list_busy = 0;
-    __lock_xchg_int(&waiter_list_busy, 0);
     elevated_priority_unlock_recursive(&waiter_mutex, waiter_mutex_locks);
 
 	/* Return if this is a call from timer_settime() */
-	if(timerid)
+	if(timer->timerid)
 	{
-        return w->delta;
+        return timer->delta;
 	}
 
     i = get_task_properties(this_core->cur_task);
@@ -738,30 +492,14 @@ long __clock_wait(struct clock_waiter_t *head, pid_t pid,
 
 skip:
 
-    /*
-    if(this_core->cur_task->pid >= 63 && this_core->cur_task->pid != 64 &&
-       (this_core->cur_task->syscall_regs->rax == 82 ||
-        this_core->cur_task->syscall_regs->rax == 142 ||
-        this_core->cur_task->syscall_regs->rax == 308))
-    {
-    printk("clock_wait: 2 pid %d, prop %x, sig %x, delta %ld\n", this_core->cur_task->pid, this_core->cur_task->properties, this_core->cur_task->woke_by_signal, delta);
-    }
-    */
-
 	/*
 	 * Remove us from the queue. If we were woken by a signal, this call will
 	 * also store the remaining time in struct w's delta field, which we return
 	 * to the caller.
 	 */
-    (void)get_waiter(head, w->pid, w->timerid, NULL, 1);
-	
-	/*
-	task = get_task_by_id(pid);
-    delta = (task && task->woke_by_signal) ? w->delta : 0;
-    */
-    delta = (w->delta > 0) ? w->delta : 0;
+    (void)get_waiter(head, timer, NULL, 1);
 
-    waiter_free(w);
+    delta = (timer->delta > 0) ? timer->delta : 0;
 
     return delta;
 }
@@ -775,17 +513,16 @@ skip:
  *         signal handler, regardless of the use of the sigaction(2)
  *         SA_RESTART flag.
  */
-long do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags, 
-                        struct timespec *__rqtp, struct timespec *__rmtp,
-                        ktimer_t timerid)
+long do_clock_nanosleep(int flags, 
+                        volatile struct timespec *rqtp, 
+                        volatile struct timespec *rmtp,
+                        volatile struct posix_timer_t *timer)
 {
-    struct timespec rqtp;
-    struct timespec rmtp;
-    struct clock_waiter_t *head;
+    struct posix_timer_t *head;
     unsigned long long nticks;
 
     /* NOTE: Linux supports CLOCK_PROCESS_CPUTIME_ID in this function */
-    if(clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC)
+    if(timer->clockid != CLOCK_REALTIME && timer->clockid != CLOCK_MONOTONIC)
     {
         /* fail as per POSIX (POSIX says to fail for thread clock only, 
          * other clocks are not specified).
@@ -793,20 +530,18 @@ long do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags,
         return -EINVAL;
     }
 
-    if(!__rqtp)
-    {
-        return -EINVAL;
-    }
-    
-    A_memcpy(&rqtp, __rqtp, sizeof(struct timespec));
-    
-    /* check nanoseconds value as per POSIX */
-    if(rqtp.tv_nsec < 0 || rqtp.tv_nsec >= 1000000000 /* 1e9 */)
+    if(!rqtp)
     {
         return -EINVAL;
     }
 
-    if(rqtp.tv_sec < 0)
+    /* check nanoseconds value as per POSIX */
+    if(rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000 /* 1e9 */)
+    {
+        return -EINVAL;
+    }
+
+    if(rqtp->tv_sec < 0)
     {
         return -EINVAL;
     }
@@ -814,10 +549,10 @@ long do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags,
     
     time_t clock_secs = monotonic_time.tv_sec;
     uint64_t clock_nsecs = monotonic_time.tv_nsec;
-    time_t my_secs = rqtp.tv_sec;
-    uint64_t res_nticks, my_nsecs = rqtp.tv_nsec;
-    
-    if(clock_id == CLOCK_REALTIME)
+    time_t my_secs = rqtp->tv_sec;
+    uint64_t res_nticks, my_nsecs = rqtp->tv_nsec;
+
+    if(timer->clockid == CLOCK_REALTIME)
     {
         clock_secs += startup_time;
     }
@@ -830,10 +565,7 @@ long do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags,
         }
         
         my_secs -= clock_secs;
-    }
 
-    if(flags & TIMER_ABSTIME)
-    {
         if(my_nsecs <= monotonic_time.tv_nsec)
         {
             return 0;
@@ -848,24 +580,26 @@ long do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags,
     }
     
     nticks = (my_secs * PIT_FREQUENCY) + (my_nsecs / NSECS_PER_TICK);
-    head = &waiter_head[(clock_id == CLOCK_REALTIME) ? 1 : 0];
+    head = &waiter_head[(timer->clockid == CLOCK_REALTIME) ? 1 : 0];
 
     KDEBUG("do_clock_nanosleep: secs %ld\n", my_secs);
     KDEBUG("do_clock_nanosleep: nsecs %ld\n", my_nsecs);
     KDEBUG("do_clock_nanosleep: nticks %ld\n", nticks);
     KDEBUG("do_clock_nanosleep: id %d\n", timerid);
+    //printk("ns1 (%d, %ld, %ld, %ld) ", this_core->cur_task->pid, my_secs, my_nsecs, nticks);
 
-    if(nticks && (res_nticks = __clock_wait(head, pid, nticks, timerid)) != 0)
+    if(nticks && (res_nticks = __clock_wait(head, timer, nticks)) != 0)
     {
-    	volatile struct task_t *task = get_task_by_id(pid);
+    	volatile struct task_t *task = get_task_by_id(timer->tgid);
 
         if(task && get_task_waking_signal(task))
         //if(task && task->woke_by_signal)
         {
-            if(__rmtp)
+            //printk("ns2 %d, %lu, %lu ", this_core->cur_task->pid, res_nticks, nticks);
+
+            if(rmtp)
             {
-                ticks_to_timespec(res_nticks, &rmtp);
-                A_memcpy(__rmtp, &rmtp, sizeof(struct timespec));
+                ticks_to_timespec(res_nticks, (struct timespec *)rmtp);
             }
 
             return -EINTR;
@@ -894,7 +628,13 @@ long syscall_clock_nanosleep(clockid_t clock_id, int flags,
         rqptr = &rqtmp;
     }
 
-    res = do_clock_nanosleep(this_core->cur_task->pid, clock_id, flags, rqptr, &rmtmp, 0);
+    struct posix_timer_t timer;
+
+    timer.timerid = 0;
+    timer.tgid = this_core->cur_task->pid;
+    timer.clockid = clock_id;
+
+    res = do_clock_nanosleep(flags, rqptr, &rmtmp, &timer);
 
     if(res == -EINTR && __rmtp)
     {

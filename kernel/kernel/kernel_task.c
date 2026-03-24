@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: kernel_task.c
  *    This file is part of LaylaOS.
@@ -192,19 +192,4 @@ pid_t start_kernel_task(char *name, void (*func)(void *), void *func_arg,
     
     return pid;
 }
-
-
-#if 0
-
-void unblock_kernel_task(volatile struct task_t *task)
-{
-    if(!task)
-    {
-        return;
-    }
-
-    unblock_task_no_preempt(task);
-}
-
-#endif
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: apic.c
  *    This file is part of LaylaOS.
@@ -41,7 +41,7 @@ uintptr_t lapic_phys = 0;
 uintptr_t lapic_virt = 0;
 volatile int apic_running = 0;
 
-int spurious_callback(struct regs *r, int arg);
+int spurious_callback(struct regs *r, void *arg);
 
 
 struct handler_t spurious_handler =
@@ -52,7 +52,7 @@ struct handler_t spurious_handler =
 };
 
 
-int spurious_callback(struct regs *r, int arg)
+int spurious_callback(struct regs *r, void *arg)
 {
     UNUSED(r);
     UNUSED(arg);
@@ -61,13 +61,15 @@ int spurious_callback(struct regs *r, int arg)
 }
 
 
+#if 0
+
 unsigned long long get_tscMHz(void)
 {
     unsigned long long end, start;
     static unsigned long long tsc = 0;
     volatile uint8_t k;
 
-    printk("get_tscMHz: tsc %llu\n", tsc);
+    //printk("get_tscMHz: tsc %llu\n", tsc);
 
     if(tsc)
     {
@@ -132,13 +134,38 @@ unsigned long long get_tscMHz(void)
 }
 
 
+uint8_t getsecfromcmos()
+{
+    outb(0x70,0);
+    return inb(0x71);
+}
+
+#endif
+
+
 void lapic_timer_init(int timer_irq)
 {
     uint32_t i;
     uint64_t j;
-#if 0
     volatile uint8_t k;
-#endif
+
+    /*
+	unsigned long eax, ebx, ecx, edx;
+	cpuid(0x16, eax, ebx, ecx, edx);
+	printk("apic: eax %lx, ebx %lx, ecx %lx, edx %lx\n", eax, ebx, ecx, edx);
+
+    if(eax)
+    {
+        unsigned long base = eax;
+    	cpuid(0x15, eax, ebx, ecx, edx);
+
+        if(eax && ebx)
+        {
+            i = (base * 1000000 * eax / ebx) / PIT_FREQUENCY;
+            printk("apic: frequency %u ticks\n", i);
+        }
+    }
+    */
 
     printk("lapic_timer_init: irq %d\n", timer_irq);
 
@@ -154,6 +181,8 @@ void lapic_timer_init(int timer_irq)
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_LVT_LINT1)) = APIC_DISABLE;
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_TASK_PRIO)) = 0;
 
+    //printk("[%d] LDR %x\n", lapic_cur_cpu(), *((volatile uint32_t *)(lapic_virt + LAPIC_REG_LOGICAL_DEST)));
+
     // Enable LAPIC
     // Global enable
     j = rdmsr(IA32_APIC_BASE_MSR);
@@ -168,6 +197,7 @@ void lapic_timer_init(int timer_irq)
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_LVT_TIMER)) = timer_irq;
 
 
+#if 0
     // Due to issues with miscalculated timer frequency on QEmu, I switched
     // to this code, which times APIC using the TSC. It is based on the code
     // in ToaruOS.
@@ -192,7 +222,7 @@ void lapic_timer_init(int timer_irq)
 
     printk("apic: frequency %llu ticks\n", t);
     //screen_refresh(NULL);
-    //for(;;);
+    for(;;);
 
     // Finally re-enable timer in periodic mode
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_LVT_TIMER)) = timer_irq | APIC_PERIODIC;
@@ -205,8 +235,8 @@ void lapic_timer_init(int timer_irq)
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_INIT_COUNT)) = t;
 
     printk("apic: timer enabled\n");
+#endif
 
-#if 0
     // Set up divide value to 16
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_DIVIDE_CONFIG)) = 3;
 
@@ -225,10 +255,13 @@ void lapic_timer_init(int timer_irq)
     //   BCD/Binary mode (bit 0)
     outb(0x43, 0xb2);
 
+    // Reset APIC timer (set counter to -1)
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_INIT_COUNT)) = 0xFFFFFFFF;
+
     // 1193180/100 Hz = 11931 = 2e9bh
-    outb(0x42, 0x9b);   // MSB to Channel 2 data port
+    outb(0x42, 0x9b);   // LSB to Channel 2 data port
     k = inb(0x60);      // short delay
-    outb(0x42, 0x2e);   // LSB to Channel 2 data port
+    outb(0x42, 0x2e);   // MSB to Channel 2 data port
     k = inb(0x60);      // short delay
 
     // Reset PIT one-shot counter (start counting)
@@ -240,9 +273,6 @@ void lapic_timer_init(int timer_irq)
 
     k = inb(0x61);
 
-    // Reset APIC timer (set counter to -1)
-    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_INIT_COUNT)) = 0xFFFFFFFF;
-
     // Now wait until PIT counter reaches zero
     //printk("apic: loop -- k 0x%x\n", k);
 
@@ -252,7 +282,7 @@ void lapic_timer_init(int timer_irq)
         {
             //i = *((volatile uint32_t *)(lapic_virt + LAPIC_REG_CUR_COUNT));
             k = inb(0x61);
-            //printk("apic: loop -- counter value %u, k 0x%x\n", i, k);
+            //printk("apic: loop1 -- counter value %x, k 0x%x\n", i, k);
         }
     }
     else
@@ -261,7 +291,7 @@ void lapic_timer_init(int timer_irq)
         {
             //i = *((volatile uint32_t *)(lapic_virt + LAPIC_REG_CUR_COUNT));
             k = inb(0x61);
-            //printk("apic: loop -- counter value %u, k 0x%x\n", i, k);
+            //printk("apic: loop2 -- counter value %x, k 0x%x\n", i, k);
         }
     }
 
@@ -277,6 +307,7 @@ void lapic_timer_init(int timer_irq)
     i = (0xFFFFFFFF - i) + 1;
     printk("apic: counter value +ve %u\n", i);
 
+    /*
     // We used divide value different than 1, so now we have to multiply 
     // the result by 16
     i <<= 4;
@@ -296,6 +327,7 @@ void lapic_timer_init(int timer_irq)
     // Again, we did not use divide value of 1
     i >>= 4;
     printk("apic: counter value >> 4 =  %u\n", i);
+    */
 
     // Sanity check, min 16
     if(i < 1600)
@@ -305,19 +337,40 @@ void lapic_timer_init(int timer_irq)
     }
 
     printk("apic: frequency %u ticks\n", i);
+
+    /*
+    k=getsecfromcmos();
+    while(k==getsecfromcmos());  //wait for change
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_INIT_COUNT)) = 0xFFFFFFFF;
+    k=getsecfromcmos();
+    while(k==getsecfromcmos());  //wait for change
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_LVT_TIMER)) = APIC_DISABLE;
+    i = *((volatile uint32_t *)(lapic_virt + LAPIC_REG_CUR_COUNT));
+    printk("apic: counter value %u\n", i);
+    i = (0xFFFFFFFF - i) + 1;
+    printk("apic: counter value +ve %u\n", i);
+    i <<= 4;
+    printk("apic: counter value << 4 = %u\n", i);
+    i /= PIT_FREQUENCY;
+    printk("apic: counter value / 100 = %u\n", i);
+    i >>= 4;
+    printk("apic: counter value >> 4 =  %u\n", i);
+
     screen_refresh(NULL);
     for(;;);
+    */
+
+    // Set divide value register again
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_DIVIDE_CONFIG)) = 3;
+
+    // Finally re-enable timer in periodic mode
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_LVT_TIMER)) = timer_irq | APIC_PERIODIC;
 
     // Now i holds appropriate number of ticks, use it as APIC timer 
     // counter initializer
     *((volatile uint32_t *)(lapic_virt + LAPIC_REG_INIT_COUNT)) = i;
 
-    // Finally re-enable timer in periodic mode
-    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_LVT_TIMER)) = timer_irq | APIC_PERIODIC;
 
-    // Set divide value register again
-    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_DIVIDE_CONFIG)) = 3;
-#endif
 
     apic_running = 1;
 }
@@ -332,24 +385,6 @@ int lapic_cur_cpu(void)
 
     return (*((volatile uint32_t *)(lapic_virt + LAPIC_REG_ID))) >> 24;
 }
-
-
-/*
-void lapic_enable(void)
-{
-    uint64_t msr = rdmsr(IA32_APIC_BASE_MSR);
-    uint32_t i;
-
-    msr |= APIC_MSR_ENABLE;
-    msr &= ~(1 << 10);
-    wrmsr(IA32_APIC_BASE_MSR, msr);
-
-    // Software enable, map spurious interrupt to dummy isr
-    i = *((volatile uint32_t *)(lapic_virt + LAPIC_REG_SPURIOUS_INT_VECT));
-    i |= (APIC_SW_ENABLE | 0xFF);
-    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_SPURIOUS_INT_VECT)) = i;
-}
-*/
 
 
 void apic_init(void)
@@ -370,24 +405,28 @@ void apic_init(void)
             lapic_phys, lapic_virt);
 
     // Register spurious IRQ handler
-    register_isr_handler(0xFF, &spurious_handler);
+    register_interrupt_handler(0xFF, &spurious_handler);
 
     cli();
 
     pic_disable();
-    //lapic_enable();
-    //ioapic_redirect_legacy_irqs();
+
+    // Enable symmetric I/O Mode as per MP spec v1.4
+    outb(0x22, 0x70);   // select IMCR register
+    outb(0x23, 0x01);   // NMIs and 8259 IRQs to go through APIC
+
     lapic_timer_init(32);
 
     // we enabled these early on via the PIC, but now that we have APIC 
     // running, we need to redirect and enable them
-    ioapic_enable_irq(IRQ_TIMER);
-    ioapic_enable_irq(IRQ_MOUSE);
-    ioapic_enable_irq(IRQ_KBD);
-    ioapic_enable_irq(9);
-    ioapic_enable_irq(11);
-    ioapic_enable_irq(14);
-    ioapic_enable_irq(15);
+    ioapic_enable_irq(IRQ_TIMER, 0);
+    ioapic_enable_irq(IRQ_MOUSE, 0);
+    ioapic_enable_irq(IRQ_KBD, 0);
+    ioapic_enable_irq(9, 0);
+    ioapic_enable_irq(11, 0);
+    ioapic_enable_irq(14, 0);
+    ioapic_enable_irq(15, 0);
+    //ioapic_redirect_legacy_irqs();
 
     sti();
 }

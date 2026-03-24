@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: tty_state.c
  *    This file is part of LaylaOS.
@@ -35,6 +35,7 @@
 #include <signal.h>
 #include <kernel/vga.h>
 #include <kernel/tty.h>
+#include <kernel/task.h>
 #include <gui/vbe.h>
 
 
@@ -118,7 +119,7 @@ int switch_tty(int which)
         return 0;
     }
     
-    printk("Switching to tty %d\n", which);
+    //printk("Switching to tty %d\n", which);
 
     hide_cur(&ttytab[cur_tty]);
     ttytab[cur_tty].flags &= ~TTY_FLAG_ACTIVE;
@@ -128,6 +129,14 @@ int switch_tty(int which)
     repaint_screen = 1;
     restore_screen(&ttytab[cur_tty]);
     //tty_send_signal(ttytab[cur_tty].pgid, SIGCONT);
+
+    // unlock the tty if this is the first opening, so that getty can proceed
+    // and invoke login
+    if(ttytab[cur_tty].flags & TTY_FLAG_FIRST_OPEN)
+    {
+        ttytab[cur_tty].flags &= ~(TTY_FLAG_FIRST_OPEN | TTY_FLAG_STOPPED);
+        unblock_tasks(&ttytab[cur_tty]);
+    }
 
     return 0;
 }

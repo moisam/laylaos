@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: timer.c
  *    This file is part of LaylaOS.
@@ -55,7 +55,7 @@ unsigned long avenrun[3];
 
 /* define some interrupt handlers and map them to their functions */
 #define TIMER_HANDLER(which)                            \
-    int which##_timer_callback(struct regs *r, int arg);\
+    int which##_timer_callback(struct regs *r, void *arg);\
     struct handler_t which##_timer_handler =            \
     {                                                   \
         .handler = which##_timer_callback,              \
@@ -108,7 +108,7 @@ INLINE void calc_load(void)
     vdso_monotonic->tv_nsec = monotonic_time.tv_nsec;
 
 
-int early_timer_callback(struct regs *r, int arg)
+int early_timer_callback(struct regs *r, void *arg)
 {
     UNUSED(r);
     UNUSED(arg);
@@ -136,11 +136,10 @@ STATIC_INLINE int need_schedule(void)
         {
             if(--cur_task->itimer_virt.rel_ticks == 0)
             {
-                siginfo_t itimer_siginfo = { .si_code = SI_TIMER };
+                siginfo_nopad_t itimer_siginfo = { .sinp_code = SI_TIMER };
 
                 /* reset timer if needed */
                 cur_task->itimer_virt.rel_ticks = cur_task->itimer_virt.interval;
-                //add_task_timer_signal(cur_task, SIGVTALRM, ITIMER_VIRT_ID);
                 add_task_signal((struct task_t *)cur_task, SIGVTALRM, &itimer_siginfo, 1);
             }
         }
@@ -165,14 +164,6 @@ STATIC_INLINE int need_schedule(void)
 STATIC_INLINE void fix_limits_and_schedule(void)
 {
     volatile struct task_t *cur_task = this_core->cur_task;
-    rlim_t limit = cur_task->task_rlimits[RLIMIT_CPU].rlim_cur;
-
-    if(cur_task->sched_policy == SCHED_OTHER &&
-       limit != RLIM_INFINITY &&
-       (cur_task->user_time + cur_task->sys_time) >= (limit * PIT_FREQUENCY))
-    {
-        user_add_task_signal(cur_task, SIGXCPU, 1);
-    }
 
     //printk("cpu[%d]: scheduling\n", this_core->cpuid);
     if(!(this_core->flags & SMP_FLAG_SCHEDULER_BUSY) &&
@@ -204,15 +195,38 @@ STATIC_INLINE void fix_limits_and_schedule(void)
 }
 
 
-int bsp_timer_callback(struct regs *r, int arg)
+/*
+STATIC_INLINE void cleanup_sleeping_queue(void)
+{
+    volatile struct task_t *task, *next;
+
+    for(task = sleeping_queue.head.next; task != &sleeping_queue.head; )
+    {
+        next = task->next;
+
+        if(ticks >= task->sleep_until)
+        {
+            set_task_state(task, TASK_READY);
+            set_task_waitchan(task, NULL);
+            task->sleep_until = 0;
+        }
+
+        task = next;
+    }
+}
+*/
+
+
+int bsp_timer_callback(struct regs *r, void *arg)
 {
     UNUSED(r);
     UNUSED(arg);
 
+    //printk("cpu[%d]: bsp timer callback\n", this_core->cpuid);
+
 	int schedule;
 
     ticks++;
-
     monotonic_time.tv_nsec += NSECS_PER_TICK;
 
     if(this_core->cpuid != 0)
@@ -225,9 +239,8 @@ int bsp_timer_callback(struct regs *r, int arg)
 
     /* wakeup nanosleepers */
     clock_check_waiters();
-    
-    /* decrement virtual timers */
-    //dec_itimers();
+
+    //cleanup_sleeping_queue();
 
     schedule = need_schedule();
     pic_send_eoi(IRQ_TIMER);
@@ -244,12 +257,12 @@ int bsp_timer_callback(struct regs *r, int arg)
 }
 
 
-int ap_timer_callback(struct regs *r, int arg)
+int ap_timer_callback(struct regs *r, void *arg)
 {
     UNUSED(r);
     UNUSED(arg);
 
-    //printk("cpu[%d]: timer callback\n", this_core->cpuid);
+    //printk("cpu[%d]: ap timer callback\n", this_core->cpuid);
 
 	int schedule = need_schedule();
     //printk("cpu[%d]: schedule %d\n", this_core->cpuid, schedule);
@@ -273,9 +286,9 @@ int ap_timer_callback(struct regs *r, int arg)
 void timer_init(void)
 {
     printk("Initializing clock..\n");
-    register_irq_handler(IRQ_TIMER, &early_timer_handler);
-    enable_irq(IRQ_TIMER);
-    
+    register_interrupt_handler(IRQ_TIMER + 32, &early_timer_handler);
+    enable_irq(IRQ_TIMER, 0);
+
     uint32_t divisor = 1193180 / PIT_FREQUENCY;
     outb(0x43, 0x36);
     
@@ -295,10 +308,10 @@ void switch_timer(void)
 {
     cli();
 
-    unregister_irq_handler(IRQ_TIMER, &early_timer_handler);
-    register_irq_handler(IRQ_TIMER, &bsp_timer_handler);
+    unregister_interrupt_handler(IRQ_TIMER + 32, &early_timer_handler);
+    register_interrupt_handler(IRQ_TIMER + 32, &bsp_timer_handler);
 
-    register_isr_handler(123, &ap_timer_handler);
+    register_interrupt_handler(123, &ap_timer_handler);
     //enable_irq(123);
 
     sti();

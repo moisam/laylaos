@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: vdso.c
  *    This file is part of LaylaOS.
@@ -48,15 +48,14 @@ time_t *vdso_startup_time = &dummy_startup_time;
 int vdso_stub_init(virtual_addr start, virtual_addr end)
 {
     virtual_addr sz;
+    physical_addr phys;
 
     start &= ~(PAGE_SIZE - 1);
     end = align_up(end);
     sz = end - start;
 
     // these are the code pages we will map to user tasks
-    if(!(vdso_code_start = 
-            vmmngr_alloc_and_map(VDSO_STATIC_CODE_SIZE, 0,
-                                 PTE_FLAGS_PW, NULL, REGION_KMODULE)))
+    if(!(phys = (physical_addr)pmmngr_alloc_blocks(VDSO_STATIC_CODE_SIZE / PAGE_SIZE)))
     {
         printk("  Failed to alloc vdso shared data page\n");
         return -ENOMEM;
@@ -69,6 +68,7 @@ int vdso_stub_init(virtual_addr start, virtual_addr end)
         return -ENOMEM;
     }
 
+    vdso_code_start = kmod_map(phys, phys + VDSO_STATIC_CODE_SIZE);
     vdso_code_end = vdso_code_start + sz;
     A_memcpy((void *)vdso_code_start, (void *)start, sz);
 
@@ -78,14 +78,13 @@ int vdso_stub_init(virtual_addr start, virtual_addr end)
     }
 
     // this is the shared data page we will map to user tasks
-    if(!(vdso_data_addr = 
-            vmmngr_alloc_and_map(PAGE_SIZE, 0,
-                                 PTE_FLAGS_PW, NULL, REGION_KMODULE)))
+    if(!(phys = (physical_addr)pmmngr_alloc_block()))
     {
         printk("  Failed to alloc vdso shared data page\n");
         return -ENOMEM;
     }
 
+    vdso_data_addr = kmod_map(phys, phys + PAGE_SIZE);
     A_memset((void *)vdso_data_addr, 0, PAGE_SIZE);
 
     vdso_monotonic = (struct timespec *)(vdso_data_addr + VDSO_OFFSET_CLOCK_GETTIME);
@@ -147,8 +146,8 @@ int map_vdso(virtual_addr *resaddr)
         src < vdso_code_end;
         dest += PAGE_SIZE, src += PAGE_SIZE)
     {
-        if(!(esrc = get_page_entry_pd(pml4_src, (void *)src)) ||
-           !(edest = get_page_entry_pd(pml4_dest, (void *)dest)))
+        if(!(esrc = get_page_entry_pd(pml4_src, src)) ||
+           !(edest = get_page_entry_pd(pml4_dest, dest)))
         {
             return -ENOMEM;
         }
@@ -168,8 +167,8 @@ int map_vdso(virtual_addr *resaddr)
     dest = mapaddr + VDSO_STATIC_CODE_SIZE;
 
     // map data into the last page
-    if(!(esrc = get_page_entry_pd(pml4_src, (void *)vdso_data_addr)) ||
-       !(edest = get_page_entry_pd(pml4_dest, (void *)dest)))
+    if(!(esrc = get_page_entry_pd(pml4_src, vdso_data_addr)) ||
+       !(edest = get_page_entry_pd(pml4_dest, dest)))
     {
         return -ENOMEM;
     }

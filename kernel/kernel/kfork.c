@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: kfork.c
  *    This file is part of LaylaOS.
@@ -49,6 +49,8 @@
 
 #include "task_funcs.c"
 
+int fork_wait = 0;
+
 
 static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
 {
@@ -60,10 +62,10 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
     {
         return NULL;
     }
-    
+
     /* save the pid as we'll overwrite it in the following code */
     pid = new_task->pid;
-    
+
     /* store these pointers before we overwrite them with the copy below */
     struct task_files_t *files = new_task->ofiles;
     struct task_fs_t *fs = new_task->fs;
@@ -149,13 +151,11 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
 
         if(parent->fs->root)
         {
-            //new_task->fs->root->refs++;
             __sync_fetch_and_add(&(new_task->fs->root->refs), 1);
         }
 
         if(parent->fs->cwd)
         {
-            //new_task->fs->cwd->refs++;
             __sync_fetch_and_add(&(new_task->fs->cwd->refs), 1);
         }
 
@@ -165,15 +165,11 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
             /* TODO: this call should take care of releasing file locks */
             if(new_task->ofiles->ofile[i])
             {
-                //new_task->ofiles->ofile[i]->refs++;
                 __sync_fetch_and_add(&(new_task->ofiles->ofile[i]->refs), 1);
             }
         }
         
         /* child doesn't inherit parent's interval timers */
-        //A_memset(&new_task->itimer_real, 0, sizeof(struct itimer_t));
-        //A_memset(&new_task->itimer_virt, 0, sizeof(struct itimer_t));
-        //A_memset(&new_task->itimer_prof, 0, sizeof(struct itimer_t));
         A_memset(&new_task->itimer_real, 0, sizeof(struct posix_timer_t));
         A_memset(&new_task->itimer_prof, 0, sizeof(struct posix_timer_t));
         new_task->itimer_virt.rel_ticks = 0ULL;
@@ -193,7 +189,6 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
     new_task->first_sibling = 0;
     new_task->pid = pid;
     new_task->next = NULL;
-    //A_memset(&new_task->next, 0, sizeof(new_task->next));
     new_task->minflt = 0;
     new_task->majflt = 0;
     new_task->children_minflt = 0;
@@ -211,7 +206,6 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
     ksigemptyset(&new_task->signal_caught);
 
     set_task_waking_signal(new_task, 0);
-    //new_task->woke_by_signal = 0;
     
     /* reset counters */
     new_task->read_count = 0;
@@ -242,6 +236,7 @@ long syscall_fork(struct regs *parent_regs)
 
     int vforking = (GET_SYSCALL_NUMBER(parent_regs) == __NR_vfork);
     int cloning = (GET_SYSCALL_NUMBER(parent_regs) == __NR_clone);
+    pid_t new_pid, new_tgid;
 
     if(cloning && parent->threads->thread_count >= THREADS_PER_PROCESS)
     {
@@ -387,6 +382,9 @@ long syscall_fork(struct regs *parent_regs)
 
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
+    new_pid = new_task->pid;
+    new_tgid = new_task->threads->tgid;
+
     /* add to the end of ready queue */
     new_task->timeslice = get_task_timeslice(new_task);
     //new_task->state = TASK_READY;
@@ -472,16 +470,40 @@ long syscall_fork(struct regs *parent_regs)
     /* if vforking, block the parent */
     if(vforking)
     {
-        //block_task(parent, 0);
-        set_task_waitchan(parent, parent);
-        set_task_state(parent, TASK_SLEEPING);
-        scheduler();
+        while(1)
+        {
+            /* 
+             * The new task might have run by now since we added it to the ready
+             * queue. Try to find the task and if it did not exit, and did not
+             * execve, go to sleep.
+             */
+            volatile struct task_t *child = get_task_by_id(new_pid);
+
+            if(!child ||                                 // does not exist
+               !(child->properties & PROPERTY_VFORK) ||  // or execve'd
+               get_task_state(child) == TASK_ZOMBIE)     // or died
+            {
+                break;
+            }
+
+            set_task_waking_signal(parent, 0);
+            __sync_and_and_fetch(&parent->properties, ~PROPERTY_SELECT_EVENT);
+            set_task_waitchan(parent, &fork_wait);
+            block_task_timeout(this_core->cur_task, 30);
+            /*
+            //printk("VF (p %d, c %d) ", parent->pid, new_pid);
+            //block_task(parent, 0);
+            set_task_waitchan(parent, parent);
+            set_task_state(parent, TASK_SLEEPING);
+            scheduler();
+            //printk("VF wakeup (p %d, c %d) ", parent->pid, new_pid);
+            */
+        }
 
         if((parent->properties & PROPERTY_TRACE_SIGNALS) &&
            (parent->ptrace_options & PTRACE_O_TRACEVFORKDONE))
         {
-            //parent->ptrace_eventmsg = tid;
-            parent->ptrace_eventmsg = new_task->pid;
+            parent->ptrace_eventmsg = new_pid;
             ptrace_signal(SIGTRAP, PTRACE_EVENT_VFORK_DONE);
         }
     }
@@ -492,6 +514,6 @@ long syscall_fork(struct regs *parent_regs)
     //__asm__ __volatile__("xchg %%bx, %%bx":::);
 
     // syscall clone returns thread's id, while syscall fork returns pid
-    return cloning ? new_task->pid : new_task->threads->tgid;
+    return cloning ? new_pid : new_tgid;
 }
 

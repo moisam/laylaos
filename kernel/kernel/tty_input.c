@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: tty_input.c
  *    This file is part of LaylaOS.
@@ -95,7 +95,7 @@ void process_key(struct tty_t *tty, int c)
 {
     char codes[8];
     int count;
-	
+
 	// test if this is a break code
     int brk = (c & 0x8000) ? 1 : 0;
     int index;
@@ -139,7 +139,7 @@ void process_key(struct tty_t *tty, int c)
     		    if(!brk)
     		    {
     				_capslock = !_capslock;
-    				kbd_set_leds(_numlock, _capslock, _scrolllock);
+    				//kbd_set_leds(_numlock, _capslock, _scrolllock);
     			}
     			return;
 
@@ -147,7 +147,7 @@ void process_key(struct tty_t *tty, int c)
     		    if(!brk)
     		    {
     				_numlock = !_numlock;
-    				kbd_set_leds(_numlock, _capslock, _scrolllock);
+    				//kbd_set_leds(_numlock, _capslock, _scrolllock);
     			}
     			return;
 
@@ -155,7 +155,7 @@ void process_key(struct tty_t *tty, int c)
     		    if(!brk)
     		    {
     				_scrolllock = !_scrolllock;
-    				kbd_set_leds(_numlock, _capslock, _scrolllock);
+    				//kbd_set_leds(_numlock, _capslock, _scrolllock);
     			}
     			return;
         }
@@ -191,6 +191,27 @@ void process_key(struct tty_t *tty, int c)
 
     if(curkey == 0xfe)          // cursor keys
     {
+        /*
+         * Handle Virtual Console (VC) switching:
+         *   ALT + F[1..6] switch to the VC indicated by the function key
+         *   ALT + Left    switch to the previous VC
+         *   ALT + Right   switch to the next VC
+         */
+        if(_alt)
+        {
+            if(c == KEYCODE_LEFT)
+            {
+                switch_tty((cur_tty == 1) ? (total_ttys - 1) : (cur_tty - 1));
+                return;
+            }
+
+            if(c == KEYCODE_RIGHT)
+            {
+                switch_tty((cur_tty == total_ttys - 1) ? 1 : (cur_tty + 1));
+                return;
+            }
+        }
+
         int mod = keystate_to_modifiers();
 
         if(ttybuf_has_space_for(&tty->read_q, mod ? 6 : 3))
@@ -213,6 +234,21 @@ void process_key(struct tty_t *tty, int c)
     }
     else if(curkey == 0xfd)     // function keys
     {
+        /*
+         * Handle Virtual Console (VC) switching:
+         *   ALT + F[1..6] switch to the VC indicated by the function key
+         *   ALT + Left    switch to the previous VC
+         *   ALT + Right   switch to the next VC
+         */
+        if(_alt)
+        {
+            if(c >= KEYCODE_F1 && c < (KEYCODE_F1 + total_ttys))
+            {
+                switch_tty(c - KEYCODE_F1 + 1);
+                return;
+            }
+        }
+
         int mod = keystate_to_modifiers();
 
         if(ttybuf_has_space_for(&tty->read_q, mod ? 7 : 5))

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: wait.c
  *    This file is part of LaylaOS.
@@ -206,16 +206,14 @@ repeat:
 
     __sync_or_and_fetch(&ct->properties, PROPERTY_IN_WAIT);
 
-    ////block_task(ct, 1);
-    //block_task2(ct, 100);
+    set_task_waking_signal(ct, 0);
+    __sync_and_and_fetch(&ct->properties, ~PROPERTY_SELECT_EVENT);
     set_task_waitchan(ct, ct);
-    set_task_state(ct, TASK_SLEEPING);
-    scheduler();
+    block_task_timeout(ct, 30);
 
     __sync_and_and_fetch(&ct->properties, ~PROPERTY_IN_WAIT);
 
     if(get_task_waking_signal(ct))
-    //if(ct->woke_by_signal)
     {
         KDEBUG("waitpid_internal: awoken by signal (pid %d)\n", ct->pid);
         return -ERESTARTSYS;

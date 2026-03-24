@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: tty_inlines.h
  *    This file is part of LaylaOS.
@@ -52,7 +52,6 @@ STATIC_INLINE void tty_adjust_indices(struct tty_t *tty)
     if(tty->row >= tty->scroll_bottom)
     {
         // scroll up
-        //__asm__ __volatile__("xchg %%bx, %%bx"::);
         scroll_up(tty, tty->window.ws_col, tty->scroll_bottom, tty->scroll_top - 1);
         tty->row = tty->scroll_bottom - 1;
     }
@@ -67,7 +66,6 @@ STATIC_INLINE void tty_adjust_indices(struct tty_t *tty)
  */
 STATIC_INLINE int sleep_if_empty(struct kqueue_t *q, int timeout_ticks)
 {
-    //volatile int sig = this_core->cur_task->woke_by_signal;
     volatile int sig = get_task_waking_signal(this_core->cur_task);
     volatile int empty = ttybuf_is_empty(q);
     
@@ -76,7 +74,13 @@ STATIC_INLINE int sleep_if_empty(struct kqueue_t *q, int timeout_ticks)
     {
         if(timeout_ticks)
         {
-            if(__clock_wait(&waiter_head[0], this_core->cur_task->pid, timeout_ticks, 0) <= 0)
+
+            struct posix_timer_t timer;
+
+            timer.timerid = 0;
+            timer.tgid = this_core->cur_task->pid;
+
+            if(__clock_wait(&waiter_head[0], &timer, timeout_ticks) <= 0)
             {
                 empty = ttybuf_is_empty(q);
                 return empty ? -ETIMEDOUT : 0;
@@ -85,15 +89,11 @@ STATIC_INLINE int sleep_if_empty(struct kqueue_t *q, int timeout_ticks)
         else
         {
             selrecord(&q->sel);
-
-            ////block_task2(q, PIT_FREQUENCY);
-            //block_task(q, 1);
             set_task_waitchan(this_core->cur_task, q);
             set_task_state(this_core->cur_task, TASK_SLEEPING);
             scheduler();
         }
 
-        //sig = this_core->cur_task->woke_by_signal;
         sig = get_task_waking_signal(this_core->cur_task);
         empty = ttybuf_is_empty(q);
     }
@@ -116,7 +116,6 @@ STATIC_INLINE void sleep_if_full(struct kqueue_t *q)
         return;
     }
 
-    //volatile int sig = this_core->cur_task->woke_by_signal;
     volatile int sig = get_task_waking_signal(this_core->cur_task);
     volatile int space = ttybuf_has_space_for(q, 128);
 
@@ -124,14 +123,10 @@ STATIC_INLINE void sleep_if_full(struct kqueue_t *q)
     while(!sig && !space)
     {
         selrecord(&q->sel);
-
-        ////block_task2(q, PIT_FREQUENCY);
-        //block_task(q, 1);
         set_task_waitchan(this_core->cur_task, q);
         set_task_state(this_core->cur_task, TASK_SLEEPING);
         scheduler();
 
-        //sig = this_core->cur_task->woke_by_signal;
         sig = get_task_waking_signal(this_core->cur_task);
         space = ttybuf_has_space_for(q, 128);
     }

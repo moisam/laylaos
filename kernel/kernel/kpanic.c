@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: kpanic.c
  *    This file is part of LaylaOS.
@@ -81,6 +81,12 @@ void kernel_stack_trace(void)
 	
 	while(rbp != 0 && rbp >= KERNEL_MEM_START)
 	{
+	    if(!get_page_entry((rbp + sizeof(uintptr_t))))
+	    {
+    	    printk(_XPTR_ ": %s \n", rbp + sizeof(uintptr_t), "*** invalid kernel address");
+    	    break;
+	    }
+
 	    retaddr = *(uintptr_t *)(rbp + sizeof(uintptr_t));
 	    printk(_XPTR_ ": %s \n", retaddr, get_func_name(retaddr));
 	    rbp = *(uintptr_t *)rbp;

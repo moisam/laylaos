@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: tty.c
  *    This file is part of LaylaOS.
@@ -157,6 +157,11 @@ void tty_init(void)
         fb_reset_charsets(&ttytab[i]);
         fb_reset_colors(&ttytab[i]);
         tty_set_defaults(&ttytab[i]);
+
+        // Lock all ttys (except tty1) at startup, until getty opens the tty
+        // and writes to it. This is to reduce the number of processes working
+        // in the background wasting resources on unused ttys
+        ttytab[i].flags |= TTY_FLAG_FIRST_OPEN | TTY_FLAG_STOPPED;
     }
 }
 
@@ -217,7 +222,7 @@ void tty_set_defaults(struct tty_t *tty)
 /*
  * Perform a select operation on a tty device.
  */
-long tty_select(struct file_t *f, int which)
+long tty_select(struct file_t *f, int which, int record)
 {
     struct tty_t *tty;
     int canon;
@@ -248,8 +253,10 @@ long tty_select(struct file_t *f, int which)
             if(ttybuf_is_empty(&tty->secondary) ||
                (canon && !tty->secondary.extra))
             {
-        		//selrecord(&tty->ssel);
-        		selrecord(&tty->secondary.sel);
+                if(record)
+                {
+            		selrecord(&tty->secondary.sel);
+        		}
                 return 0;
             }
             return 1;
@@ -257,8 +264,10 @@ long tty_select(struct file_t *f, int which)
     	case FWRITE:
     	    if(ttybuf_is_full(&tty->write_q))
     	    {
-        		//selrecord(&tty->wsel);
-        		selrecord(&tty->write_q.sel);
+                if(record)
+                {
+            		selrecord(&tty->write_q.sel);
+        		}
                 return 0;
             }
             return 1;
@@ -497,6 +506,12 @@ ssize_t ttyx_read(struct file_t *f, off_t *pos,
             if(sleep_if_empty(/* tty, */ q, time) != 0)
             {
                 // timeout has expired
+                break;
+            }
+
+            // check if woken by signal
+            if(get_task_waking_signal(ct))
+            {
                 break;
             }
         }

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: modules.c
  *    This file is part of LaylaOS.
@@ -90,10 +90,8 @@ void boot_module_init(void)
 
     for(i = 0; i < boot_module_count; i++)
     {
-        if(!(boot_module[i].vstart = phys_to_virt_off(boot_module[i].pstart,
-                                                      boot_module[i].pend,
-                                                      PTE_FLAGS_PW, 
-                                                      REGION_KMODULE)))
+        if(!(boot_module[i].vstart = kmod_map(boot_module[i].pstart,
+                                              boot_module[i].pend)))
         {
             kpanic("Failed to map boot module to memory\n");
             empty_loop();

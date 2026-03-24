@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: kernel.c
  *    This file is part of LaylaOS.
@@ -87,6 +87,9 @@ extern void init_genrand(unsigned long s);
 
 // defined in network/network.c
 extern void network_init(void);
+
+// defined in smp.c
+extern void parse_mp_table(void);
 
 
 /*
@@ -267,12 +270,12 @@ void kernel_main(unsigned long magic, unsigned long addr)
     sse_init();
 #endif
 
-    printk("Initializing physical memory manager..\n");
+    //printk("Initializing physical memory manager..\n");
 
-    pmmngr_init(addr, e);
+    //pmmngr_init(addr, e);
 
-    printk("\nInitializing virtual memory manager..\n");
-    vmmngr_initialize(/* addr */);
+    printk("Initializing virtual memory manager..\n");
+    vmmngr_initialize(addr);
     sti();
 
     // after the call to vmmngr_initialize(), the first 4MB of memory is no
@@ -290,9 +293,6 @@ void kernel_main(unsigned long magic, unsigned long addr)
     printk("Initializing kernel modules..\n");
     boot_module_init();
 
-    // init APIC and start up other cores if present
-    printk("Parsing the MADT table..\n");
-
     /*
      * Force gcc to ignore the "void * to function pointer cast" warning
      */
@@ -303,10 +303,16 @@ void kernel_main(unsigned long magic, unsigned long addr)
 
     if((acpifunc = ksym_value("acpi_parse_madt")))
     {
+        // init APIC and start up other cores if present
+        printk("Parsing the MADT table..\n");
+
         acpifunc();
     }
 
 #pragma GCC diagnostic pop
+
+    printk("Parsing the MP table..\n");
+    parse_mp_table();
 
     printk("Initializing the scheduler..\n");
     tasking_init();
@@ -371,7 +377,7 @@ void do_init(void)
     //init_itimers();
     init_seltab();
     init_pcache();
-    
+
     // fork the soft interrupts task
     //(void)start_kernel_task("softint", softint_task_func, NULL,
     //                        &softint_task, 0);
@@ -457,7 +463,7 @@ void do_init(void)
     }
     else
     {
-        memcpy(target, "single-user", 12);
+        memcpy(target, "multi-user", 11);
     }
 
     // set up standard streams

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: tty_ioctl.c
  *    This file is part of LaylaOS.
@@ -405,6 +405,30 @@ long set_controlling_tty(dev_t dev, struct tty_t *tty, int arg)
 
 
 /*
+ * Convert dev ids like 5:0 and 4:0 to the proper tty dev id.
+ */
+STATIC_INLINE dev_t normalise_tty_devno(dev_t dev)
+{
+    int minor = MINOR(dev);
+    int major = MAJOR(dev);
+
+    // device /dev/tty
+    if(major == 5 && minor == 0)
+    {
+        return this_core->cur_task->ctty;
+    }
+
+    // device /dev/tty0
+    if(major == 4 && minor == 0)
+    {
+        return TO_DEVID(4, cur_tty);
+    }
+
+    return dev;
+}
+
+
+/*
  * Terminal ioctl function.
  *
  * Input:
@@ -593,7 +617,10 @@ long tty_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
             return -EINVAL;
 
         case TIOCSCTTY:         // set controlling terminal
-            return set_controlling_tty(dev, tty, (int)(uintptr_t)arg);
+            return set_controlling_tty(normalise_tty_devno(dev), tty, (int)(uintptr_t)arg);
+
+        case TIOCNOTTY:         // give up controlling terminal
+            return set_controlling_tty(normalise_tty_devno(dev), tty, 0);
 
         case TIOCGPGRP:         // get tty's foregound process group id
             if(kernel)
@@ -727,7 +754,7 @@ long tty_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
         case TIOCSPTLCK:        // set/remove pty slave device lock
 
             // this operation only works on a master pty device
-            if(MAJOR(dev) != PTY_MASTER_MAJ)
+            if(MAJOR(normalise_tty_devno(dev)) != PTY_MASTER_MAJ)
             {
                 return -EINVAL;
             }
@@ -754,7 +781,7 @@ long tty_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
             return 0;
 
         case TIOCGPTN:      // get pty slave device number
-            if((tmp = pty_slave_index(dev)) < 0)
+            if((tmp = pty_slave_index(normalise_tty_devno(dev))) < 0)
             {
                 return tmp;
             }

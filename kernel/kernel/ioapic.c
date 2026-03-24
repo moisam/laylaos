@@ -43,6 +43,7 @@
 #define IOAPIC_REG_IOAPIC_ARB       0x02
 #define IOAPIC_REG_IOREDTBL         0x10
 
+/*
 // delivery modes
 #define IOAPIC_DELIVERY_MODE_FIX    0x00
 #define IOAPIC_DELIVERY_MODE_LOW    0x01
@@ -54,17 +55,10 @@
 // destination modes
 #define IOAPIC_DEST_PHYSICAL        0x00
 #define IOAPIC_DEST_LOGICAL         0x01
+*/
 
-//uintptr_t ioapic_base = 0;
 
 int ioapic_count = 0;
-
-struct ioapic_t
-{
-    uint8_t id, max_redirect;
-    uint32_t phys_base, irq_base;
-    uintptr_t virt_base;
-};
 
 struct ioapic_t ioapics[MAX_IOAPIC];
 
@@ -92,9 +86,9 @@ union ioapic_redirect_ent_t
         uint8_t delivery_mode:3;
         uint8_t dest_mode:1;
         uint8_t delivery_status:1;
-        uint8_t pin_polarity:1;
+        uint8_t pin_polarity:1;     // 0: Active high, 1: Active low
         uint8_t remote_irr:1;
-        uint8_t trigger_mode:1;
+        uint8_t trigger_mode:1;     // 0: Edge, 1: Level
         uint8_t mask:1;
         uint64_t resesrved:39;
         uint8_t dest:8;
@@ -210,9 +204,41 @@ static int ioapic_from_gsi(uint32_t irq_base)
 }
 
 
-static void ioapic_create_redirect(uint8_t irq_id, uint32_t irq_base,
-                                   uint16_t flags, int cpu, int enable)
+void ioapic_create_redirect(uint8_t irq_id, uint32_t irq_base,
+                            uint16_t flags, int cpu, int enable)
 {
+    int ioapic_target = ioapic_from_gsi(irq_base);
+    uint32_t irq_off = irq_base - ioapics[ioapic_target].irq_base;
+    uint64_t v = ioapic_get_redirect_ent(ioapic_target, irq_off);
+    union ioapic_redirect_ent_t redir;
+
+    redir.low_byte = v & 0xFFFFFFFF;
+    redir.high_byte = (v >> 32) & 0xFFFFFFFF;
+
+    if(!!redir.mask == !enable)
+    {
+        return;
+    }
+
+    redir.interrupt = irq_id;       // target vector
+    redir.delivery_mode = 0;        // fixed delivery mode
+    redir.dest_mode = 0;            // physical destination
+    redir.delivery_status = 0;
+    redir.remote_irr = 0;
+    redir.resesrved = 0;
+    redir.pin_polarity = !!(flags & IOAPIC_ACTIVE_HIGH_LOW);
+    redir.trigger_mode = !!(flags & IOAPIC_TRIGGER_EDGE_LOW);
+    redir.mask = !enable;
+    redir.dest = processor_local_data[cpu].lapicid;           // XXX:
+
+    v = (uint64_t)redir.low_byte | ((uint64_t)redir.high_byte << 32);
+
+    ioapic_set_redirect_ent(ioapic_target, irq_off, v);
+
+    //printk("ioapic: mapped IRQ %d to interrupt %d (apic %d, off %d)\n", redir.interrupt, irq_base, ioapic_target, irq_off);
+    printk("ioapic: mapped IRQ %d to interrupt %d\n", irq_id, irq_base);
+
+    /*
     union ioapic_redirect_ent_t ent;
     int ioapic_target = ioapic_from_gsi(irq_base);
     uint32_t irq_off, target_io_off, reg;
@@ -242,47 +268,58 @@ static void ioapic_create_redirect(uint8_t irq_id, uint32_t irq_base,
     *(volatile uint32_t *)(ioapics[ioapic_target].virt_base + IOAPIC_REGSEL) = reg + 1;
     *(volatile uint32_t *)(ioapics[ioapic_target].virt_base + IOAPIC_REGWIN) = ent.high_byte;
 
-    printk("ioapic: mapped IRQ %d to interrupt %d\n", irq_id, irq_base);
+    //printk("ioapic: mapped IRQ %d to interrupt %d\n", irq_id, irq_base);
+    */
 }
 
 
-static void ioapic_redirect_irq_to_cpu(int id, uint8_t irq, int enable)
+static void ioapic_redirect_irq_to_cpu(int cpuid, uint8_t irq, uint16_t enable_flags, int enable)
 {
-    if(irq_redir[irq].gsi != 0xFFFFFFFF)
+    if(irq < 16 && irq_redir[irq].gsi != 0xFFFFFFFF)
     {
-        ioapic_create_redirect(irq + 0x20, irq_redir[irq].gsi, 
-                               irq_redir[irq].flags, id, enable);
+        ioapic_create_redirect(irq + 32, irq_redir[irq].gsi, 
+                               irq_redir[irq].flags, cpuid, enable);
         return;
     }
 
-    ioapic_create_redirect(irq + 0x20, irq, 0, id, enable);
+    ioapic_create_redirect(irq + 32, irq, enable_flags, cpuid, enable);
 }
 
 
-void ioapic_enable_irq(uint32_t i)
+void ioapic_enable_irq(uint32_t i, uint16_t enable_flags)
 {
     printk("ioapic: enabling IRQ %d\n", i);
-    ioapic_redirect_irq_to_cpu(lapic_cur_cpu(), i, 1);
+    ioapic_redirect_irq_to_cpu(lapic_cur_cpu(), i, enable_flags, 1);
 }
 
 
 void ioapic_disable_irq(uint32_t i)
 {
     printk("ioapic: disabling IRQ %d\n", i);
-    ioapic_redirect_irq_to_cpu(lapic_cur_cpu(), i, 0);
+    ioapic_redirect_irq_to_cpu(lapic_cur_cpu(), i, 0, 0);
 }
 
 
 /*
 void ioapic_redirect_legacy_irqs(void)
 {
-    int i;
+    volatile int i;
 
     for(i = 0; i < 16; i++)
     {
-        if(i != 2)
+        if(i == 2)
         {
-            ioapic_redirect_irq_to_cpu(lapic_cur_cpu(), i, 1);
+            continue;
+        }
+
+        if(irq_redir[i].gsi != 0xFFFFFFFF)
+        {
+            ioapic_create_redirect(i + 0x20, irq_redir[i].gsi, 
+                                   irq_redir[i].flags, 0, 1);
+        }
+        else
+        {
+            ioapic_create_redirect(i + 0x20, i, 0, 0, 1);
         }
     }
 }
