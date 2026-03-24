@@ -4,7 +4,15 @@
 # ~/.bash_profile     - personal environment variables and startup progs
 # ~/.bashrc           - personal aliases and functions
 
-if [ -f "/etc/bashrc" ]; then
-    . /etc/bashrc
+# if running bash
+if [ -n "$BASH_VERSION" ]; then
+    if [ -f "$HOME/.bashrc" ] ; then
+        . $HOME/.bashrc
+    fi
+fi
+
+# set PATH to include user's private bin if it exists
+if [ -d "$HOME/bin" ] ; then
+    PATH="$HOME/bin:$PATH"
 fi
 
