@@ -22,8 +22,15 @@ LAYLAOS_CreateWindowFramebuffer(_THIS, SDL_Window *window, Uint32 *format,
             return SDL_SetError("Unknown window pixel format");
         }
 
-        /* Create back buffer if it does not exist */
-        if(!data->backbuffer) data->backbuffer = malloc(w->canvas_size);
+        /* Free old back buffer if it exists */
+        if(data->backbuffer)
+        {
+            free(data->backbuffer);
+            data->backbuffer = NULL;
+        }
+
+        /* Create new back buffer */
+        data->backbuffer = malloc(w->canvas_size);
 
         *pitch = w->canvas_pitch;
         *pixels = data->backbuffer ? data->backbuffer : w->canvas;

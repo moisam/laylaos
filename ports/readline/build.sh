@@ -24,8 +24,18 @@ echo " ==> Download will be saved in ${DOWNLOAD_PORTS_PATH}"
 check_target
 check_paths
 
+myname=`uname -s`
+
+# git protocol is not supported in LaylaOS yet, so use the GIT protocol on
+# GNU/Linux, and the HTTPS protocol on LaylaOS
+if [ "$myname" != "LaylaOS" ]; then
+    DOWNLOAD_URL="git://git.savannah.gnu.org/readline.git"
+else
+    DOWNLOAD_URL="https://git.savannah.gnu.org/git/readline.git"
+fi
+
 cd ${DOWNLOAD_PORTS_PATH}
-git clone https://git.savannah.gnu.org/git/readline.git
+git clone ${DOWNLOAD_URL}
 
 # patch and copy our extra files
 echo " ==> Patching ${DOWNLOAD_NAME}"

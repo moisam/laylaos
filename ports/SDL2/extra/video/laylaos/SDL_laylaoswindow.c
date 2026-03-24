@@ -10,6 +10,7 @@
 #include "SDL_assert.h"
 
 #include "SDL_syswm.h"
+#include "../../events/SDL_events_c.h"
 #include "../../events/SDL_keyboard_c.h"
 
 #define STYLE_FULLSCREEN    (WINDOW_NODECORATION | WINDOW_NOCONTROLBOX | WINDOW_NOICON)
@@ -275,6 +276,9 @@ LAYLAOS_SetWindowPosition(_THIS, SDL_Window *window)
 {
     struct window_t *w = ((SDL_WindowData *)(window->driverdata))->xwindow;
 
+    //fprintf(stderr, "LAYLAOS_SetWindowPosition: %u, %u, %u, %u\n", window->x, window->y, window->w, window->h);
+    //fprintf(stderr, "LAYLAOS_SetWindowPosition: %u, %u, %u, %u\n", w->x, w->y, w->w, w->h);
+
     if(window->x != w->x || window->y != w->y)
     {
         window_set_pos(w, window->x, window->y);
@@ -282,11 +286,34 @@ LAYLAOS_SetWindowPosition(_THIS, SDL_Window *window)
 }
 
 
+/*
+ * Windows that change their size, maximize themselves, or enter/exit
+ * fullscreen mode need to invalidate their canvases and repaint themselves.
+ */
+static inline void invalidate_window_surface(SDL_Window *window, 
+                                             struct window_t *w)
+{
+    // force re-creating window surface so it gets sync'd to our
+    // new window buffer
+    window->surface_valid = SDL_FALSE;
+    (void)SDL_GetWindowSurface(window);
+
+    SDL_SendWindowEvent(window, SDL_WINDOWEVENT_MOVED, w->x, w->y);
+    SDL_SendWindowEvent(window, SDL_WINDOWEVENT_RESIZED, w->w, w->h);
+
+    // force repaint
+    SDL_SendWindowEvent(window, SDL_WINDOWEVENT_EXPOSED, 0, 0);
+}
+
+
 void
 LAYLAOS_SetWindowSize(_THIS, SDL_Window *window)
 {
     struct window_t *w = ((SDL_WindowData *)(window->driverdata))->xwindow;
-    
+
+    //fprintf(stderr, "LAYLAOS_SetWindowSize: %u, %u, %u, %u\n", window->x, window->y, window->w, window->h);
+    //fprintf(stderr, "LAYLAOS_SetWindowSize: %u, %u, %u, %u\n", w->x, w->y, w->w, w->h);
+
     if(window->x != w->x || window->y != w->y || window->w != w->w || window->h != w->h)
     {
         window_set_size(w, window->x, window->y, window->w, window->h);
@@ -294,6 +321,8 @@ LAYLAOS_SetWindowSize(_THIS, SDL_Window *window)
         window->y = w->y;
         window->w = w->w;
         window->h = w->h;
+
+        invalidate_window_surface(window, w);
     }
 }
 
@@ -386,9 +415,9 @@ void
 LAYLAOS_MaximizeWindow(_THIS, SDL_Window *window)
 {
     struct window_t *w = ((SDL_WindowData *)(window->driverdata))->xwindow;
+    fprintf(stderr, "LAYLAOS_MaximizeWindow:\n");
     window_maximize(w);
-    //window->flags |= SDL_WINDOW_MAXIMIZED;
-    //window->flags &= ~SDL_WINDOW_MINIMIZED;
+    invalidate_window_surface(window, w);
 }
 
 
@@ -472,6 +501,7 @@ void
 LAYLAOS_SetWindowFullscreen(_THIS, SDL_Window *window, SDL_VideoDisplay *display, SDL_bool fullscreen)
 {
     struct window_t *w = ((SDL_WindowData *)(window->driverdata))->xwindow;
+    fprintf(stderr, "LAYLAOS_SetWindowFullscreen: %d\n", fullscreen);
     
     // make sure it is resizable or the window manager won't do it
     if(w->flags & WINDOW_NORESIZE)
@@ -489,6 +519,8 @@ LAYLAOS_SetWindowFullscreen(_THIS, SDL_Window *window, SDL_VideoDisplay *display
         window_exit_fullscreen(w);
         //window->flags &= ~SDL_WINDOW_FULLSCREEN;
     }
+
+    invalidate_window_surface(window, w);
     
     /*
     //LAYLAOS_SetWindowGrab(_this, window, fullscreen);
