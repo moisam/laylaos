@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: timer.h
  *    This file is part of LaylaOS.
@@ -270,7 +270,10 @@ long syscall_alarm(unsigned int seconds);
  *
  * @return  POSIX timer on success, NULL on failure.
  */
+struct posix_timer_t *get_posix_timer(volatile struct task_t *task, ktimer_t timerid);
+#if 0
 struct posix_timer_t *get_posix_timer(pid_t tgid, ktimer_t timerid);
+#endif
 
 /**
  * @brief Handler for syscall timer_settime().

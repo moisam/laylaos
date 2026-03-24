@@ -56,13 +56,11 @@ struct processor_local_t
     volatile unsigned long user_time,   // total user time
                            sys_time;    // total system time
 
-    //volatile int nested_irqs;
-    volatile uint64_t irq_count[19];    // 0..15: basic IRQs
-                                        //    16: IRQ 123 (local timer)
-                                        //    17: IRQ 124 (TLB shootdown)
-                                        //    18: IRQ 255 (spurious)
-    volatile uint64_t irq_ticks[19];    // indices are the same as above
+    volatile uint64_t irq_count[256];
+    volatile uint64_t irq_ticks[256];
     volatile uint64_t softirq_ticks;
+
+    volatile uint32_t irq_map[8];
 
     // cpu features obtained from cpuid
     char vendorid[16];

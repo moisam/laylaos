@@ -122,19 +122,24 @@
  * \def MAJOR
  * Extract major device number from devid
  */
-#define MAJOR(a)                (((unsigned)(a)) >> 8)
+#define MAJOR(a)                ((((unsigned)(a)) >> 8) & 0x0fff)
 
 /**
  * \def MINOR
  * Extract minor device number from devid
  */
-#define MINOR(a)                ((a) & 0xff)
+#define MINOR(a)                (((a) & 0xff) | (((a) >> 12) & 0xff00))
 
 /**
  * \def TO_DEVID
- * Create devid from the given major and minor device numbers
+ * Create devid from the given major and minor device numbers.
+ * Device numbers are constructed as follows:
+ *    bits 0-7: low byte of minor dev number
+ *    bits 8-15: major dev number
+ *    bits 20-31: high byte of minor dev number
+ * @See: https://man7.org/linux/man-pages/man5/proc.5.html
  */
-#define TO_DEVID(maj, min)      (((maj) << 8) | ((min) & 0xff))
+#define TO_DEVID(maj, min)      ((((maj) & 0x0fff) << 8) | ((min) & 0xff) | (((min) & 0xff00) << 12))
 
 /**
  * \def IS_SOCKET

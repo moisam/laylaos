@@ -1,8 +1,8 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
- *    file: signal_funcs.c
+ *    file: signal_funcs.h
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -32,6 +32,7 @@
 #include <kernel/laylaos.h>
 #include <kernel/ksigset.h>
 #include <kernel/user.h>
+#include <kernel/bits/siginfo-nopad-def.h>
 
 
 /**
@@ -51,11 +52,18 @@
  */
 STATIC_INLINE long user_add_task_signal(volatile struct task_t *t, int signum, int force)
 {
+    /*
     siginfo_t siginfo = {
-                         .si_code = SI_USER,
-                         .si_pid = this_core->cur_task->pid,
-                         .si_uid = this_core->cur_task->uid,
-                        };
+        .si_code = SI_USER,
+        .si_pid = this_core->cur_task->pid,
+        .si_uid = this_core->cur_task->uid,
+    };
+    */
+    siginfo_nopad_t siginfo = {
+        .sinp_code = SI_USER,
+        .sinp_pid = this_core->cur_task->pid,
+        .sinp_uid = this_core->cur_task->uid,
+    };
 
     return add_task_signal((struct task_t *)t, signum, &siginfo, force);
 }
@@ -78,10 +86,16 @@ STATIC_INLINE long user_add_task_signal(volatile struct task_t *t, int signum, i
  */
 STATIC_INLINE long add_task_segv_signal(volatile struct task_t *t, int code, void *addr)
 {
+    /*
     siginfo_t siginfo = {
-                         .si_code = code,
-                         .si_addr = addr,
-                        };
+        .si_code = code,
+        .si_addr = addr,
+    };
+    */
+    siginfo_nopad_t siginfo = {
+        .sinp_code = code,
+        .sinp_addr = addr,
+    };
 
     return add_task_signal((struct task_t *)t, SIGSEGV, &siginfo, 1);
 }
@@ -104,10 +118,16 @@ STATIC_INLINE long add_task_segv_signal(volatile struct task_t *t, int code, voi
  */
 STATIC_INLINE long add_task_fpe_signal(volatile struct task_t *t, int code, void *addr)
 {
+    /*
     siginfo_t siginfo = {
-                         .si_code = code,
-                         .si_addr = addr,
-                        };
+        .si_code = code,
+        .si_addr = addr,
+    };
+    */
+    siginfo_nopad_t siginfo = {
+        .sinp_code = code,
+        .sinp_addr = addr,
+    };
 
     return add_task_signal((struct task_t *)t, SIGFPE, &siginfo, 1);
 }
@@ -128,13 +148,20 @@ STATIC_INLINE long add_task_fpe_signal(volatile struct task_t *t, int code, void
  */
 STATIC_INLINE long add_task_timer_signal(volatile struct task_t *t, int signum, ktimer_t timerid)
 {
+    /*
     siginfo_t siginfo = {
-                         .si_code = SI_TIMER,
-                         .si_value.sival_int = timerid,
-                         //.si_value.sival_ptr = ptr,
-                        };
+        .si_code = SI_TIMER,
+        .si_value.sival_int = timerid,
+        //.si_value.sival_ptr = ptr,
+    };
 
     //COPY_TO_USER(ptr, &timerid, sizeof(ktimer_t));
+    */
+    siginfo_nopad_t siginfo = {
+        .sinp_code = SI_TIMER,
+        .sinp_value.sival_int = timerid,
+    };
+
     ksigaddset((sigset_t *)&t->signal_timer, signum);
 
     return add_task_signal((struct task_t *)t, signum, &siginfo, 1);
@@ -180,14 +207,24 @@ STATIC_INLINE long add_task_child_signal(volatile struct task_t *t, int code, in
 
         if((act->sa_handler != SIG_IGN) && !(act->sa_flags & SA_NOCLDSTOP))
         {
+            /*
             siginfo_t siginfo = {
-                         .si_code = code,
-                         .si_pid = t->pid,
-                         .si_uid = t->uid,
-                         .si_status = status,
-                         .si_utime = t->user_time,
-                         .si_stime = t->sys_time,
-                        };
+                .si_code = code,
+                .si_pid = t->pid,
+                .si_uid = t->uid,
+                .si_status = status,
+                .si_utime = t->user_time,
+                .si_stime = t->sys_time,
+            };
+            */
+            siginfo_nopad_t siginfo = {
+                .sinp_code = code,
+                .sinp_pid = t->pid,
+                .sinp_uid = t->uid,
+                .sinp_status = status,
+                .sinp_utime = t->user_time,
+                .sinp_stime = t->sys_time,
+            };
 
             return add_task_signal(t->parent, SIGCHLD, &siginfo, 1);
         }

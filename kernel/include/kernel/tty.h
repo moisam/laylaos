@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: tty.h
  *    This file is part of LaylaOS.
@@ -44,7 +44,7 @@
  *
  * Terminal buffer size
  */
-#define TTY_BUF_SIZE            1024
+#define TTY_BUF_SIZE                  1024
 
 /*
  * Flags for all tty devices
@@ -66,6 +66,7 @@
 #define TTY_FLAG_APP_CURSORKEYS_MODE  0x800   /**< tty in cursor keys mode */
 #define TTY_FLAG_INSERT_MODE          0x1000  /**< tty in insert mode */
 #define TTY_FLAG_STOPPED              0x2000  /**< tty is stopped */
+#define TTY_FLAG_FIRST_OPEN           0x4000  /**< tty is not open by getty yet */
 
 /*
  * Flags for pseudo-ttys
@@ -292,10 +293,12 @@ void tty_set_defaults(struct tty_t *tty);
  *
  * @param   f       open file struct
  * @param   which   the select operation to perform
+ * @param   record  if non-zero, selrecord() is called to record a select
+ *                    request on the given file descriptor
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-long tty_select(struct file_t *f, int which);
+long tty_select(struct file_t *f, int which, int record);
 
 /**
  * @brief Perform a poll operation on a tty device.

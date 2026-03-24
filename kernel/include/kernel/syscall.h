@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: syscall.h
  *    This file is part of LaylaOS.
@@ -289,7 +289,7 @@ long syscall_stime(long *buf);
  *
  * @return  -(EINTR) if the task is not terminated by a signal.
  */
-long syscall_pause(struct regs *r);
+long syscall_pause(void);
 
 /**
  * @brief Handler for syscall rmdir().

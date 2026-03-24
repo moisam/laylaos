@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: task.h
  *    This file is part of LaylaOS.
@@ -113,8 +113,13 @@ static inline int is_cloexec(volatile struct task_t *t, int fd)
 #define get_task_waking_signal(t)       \
     __atomic_load_n(&((t)->woke_by_signal), __ATOMIC_SEQ_CST)
 
-#define block_task_timeout(t, ticks)    \
-    __clock_wait(&waiter_head[0], (t)->pid, ticks, 0)
+#define block_task_timeout(t, ticks)                \
+{                                                   \
+    struct posix_timer_t timer;                     \
+    timer.timerid = 0;                              \
+    timer.tgid = (t)->pid;                          \
+    __clock_wait(&waiter_head[0], &timer, ticks);   \
+}
 
 // a short-hand for all the code that traverses the master task table
 #define for_each_taskptr(t)                              \
@@ -123,8 +128,6 @@ static inline int is_cloexec(volatile struct task_t *t, int fd)
     for(t = task_table; t < lt; t++)
 
 
-//extern struct task_t *idle_task;    /**< pointer to the idle task (pid 0) */
-//extern struct task_t *cur_task;     /**< pointer to the current task */
 extern struct task_t *init_task;    /**< pointer to the init task (pid 1) */
 
 extern volatile struct task_t *task_table[];/**< the master task table */
@@ -134,6 +137,10 @@ extern struct task_queue_t blocked_queue;   /**< pointer to the queue of
                                                    blocked tasks */
 extern struct task_queue_t zombie_queue;    /**< pointer to the queue of
                                                    zombie tasks */
+#if 0
+extern struct task_queue_t sleeping_queue;  /**< pointer to the queue of 
+                                                   sleeping tasks */
+#endif
 
 extern volatile struct kernel_mutex_t task_table_lock;   /**< master task table lock */
 extern volatile struct kernel_mutex_t scheduler_lock;    /**< master scheduler lock */
@@ -295,38 +302,6 @@ struct task_t *task_alloc(void);
  */
 void task_free(volatile struct task_t *task);
 
-#if 0
-
-/**
- * @brief Block task with timeout.
- *
- * Send the calling task to sleep until an event occurs, it is woken up by
- * a signal, or the given \a timeout (in ticks) expires.
- *
- * @param   wait_channel    wait channel to sleep on
- * @param   timeout         timeout in ticks (if 0, task sleeps until a signal
- *                            is delivered or an I/O event occurs)
- *
- * @return  EWOULDBLOCK if \a timeout expired, EINTR if woken up by a signal,
- *            zero if woken by some other event.
- */
-int block_task2(void *wait_channel, int timeout);
-
-/**
- * @brief Block task.
- *
- * Send the calling task to sleep. If \a interruptible is non-zero, the sleep
- * can be interrupted by a signal.
- *
- * @param   wait_channel    wait channel to sleep on
- * @param   interruptible   non-zero for interruptible sleep
- *
- * @return  1 if interruptible sleep and woken by a signal, zero otherwise.
- */
-int block_task(void *wait_channel, int interruptible);
-
-#endif
-
 /**
  * @brief Unblock tasks.
  *
@@ -417,8 +392,7 @@ void reap_zombie(volatile struct task_t *task);
 void terminate_task(int code);
 
 
-void append_to_ready_queue_locked(volatile struct task_t *task /* , int move_queue */);
-//void move_to_queue_end_locked(volatile struct task_t *task);
+void append_to_ready_queue_locked(volatile struct task_t *task);
 void task_change_priority(volatile struct task_t *t, int new_prio, int new_policy);
 void schedule_and_block(volatile struct task_t *tracer, volatile struct task_t *tracee);
 
