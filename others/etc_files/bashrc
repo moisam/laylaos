@@ -1,0 +1,32 @@
+# /etc/profile        - systemwide environment variables and startup progs
+# /etc/bashrc         - systemwide aliases and functions
+# /etc/profile.d/*.sh - individual init scripts
+# ~/.bash_profile     - personal environment variables and startup progs
+# ~/.bashrc           - personal aliases and functions
+
+# Set up a red prompt for root and green prompt for other users,
+# with a blue CWD for both
+if [[ $EUID == 0 ]]; then
+    PS1='\[\033[01;31m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+else
+    PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+fi
+
+# If this is an xterm set the title to user@host:dir
+case "$TERM" in
+xterm*|rxvt*)
+    PS1="\[\e]0;\u@\h: \w\a\]$PS1"
+    ;;
+*)
+    ;;
+esac
+
+alias ls='ls --color=auto'
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+
+alias grep='grep --color=auto'
+alias fgrep='fgrep --color=auto'
+alias egrep='egrep --color=auto'
+

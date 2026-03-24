@@ -1,4 +1,5 @@
-/dev/hda1   /   ext2	sysroot,rw,remount
+# use asterisk '*' as a special case to re-mount sysroot regardless of the boot disk
+*   /   ext2	sysroot,rw,remount
 /dev/cdrom0    /mnt/cdrom  iso9660 defaults,skip-errors
 #/dev/sdc1   /mnt/fat    vfat    defaults
 /proc		/proc	procfs	defaults
@@ -7,4 +8,6 @@
 /tmp		/var/run	tmpfs	inode_count=8192,block_count=65536,block_size=1024
 /pts        /dev/pts    devpts  defaults
 /tmp		/dev/shm	tmpfs	inode_count=1024,block_count=8192,block_size=1024
+#/dev/hdb1   /mnt/vsc01   ext2	rw
+#/dev/hdc1   /mnt/vsc02   ext2	ro
 

@@ -1,0 +1,59 @@
+# /etc/profile        - systemwide environment variables and startup progs
+# /etc/bashrc         - systemwide aliases and functions
+# /etc/profile.d/*.sh - individual init scripts
+# ~/.bash_profile     - personal environment variables and startup progs
+# ~/.bashrc           - personal aliases and functions
+
+# Set the global PATH for all users
+if [ $EUID -eq 0 ]; then
+    export PATH="/sbin:/usr/sbin:/bin:/usr/bin:/bin/desktop"
+else
+    export PATH="/bin:/usr/bin:/bin/desktop"
+fi
+
+# Fix the library search dir for man and Qt apps
+export LD_LIBRARY_PATH=/usr/lib:/usr/lib/man-db:/usr/Qt-5.12/lib
+export QT_QPA_PLATFORM=laylaos
+export QT_QPA_PLATFORM_PLUGIN_PATH=/usr/Qt-5.12/plugins/platforms/
+
+# Fon't put duplicate lines or lines starting with space in the history
+export HISTCONTROL=ignoreboth
+
+# Set history length
+export HISTSIZE=1000
+export HISTFILESIZE=2000
+
+export HISTIGNORE="&:[bf]g:exit"
+
+# Append to the history file, don't overwrite it
+shopt -s histappend
+
+# Check the window size after each command and possibly update the 
+# values of LINES and COLUMNS
+shopt -s checkwinsize
+
+# Set up a red prompt for root and green prompt for other users,
+# with a blue CWD for both
+if [[ $EUID == 0 ]]; then
+    PS1='\[\033[01;31m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+else
+    PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+fi
+
+# If this is an xterm set the title to user@host:dir
+case "$TERM" in
+xterm*|rxvt*)
+    PS1="\[\e]0;\u@\h: \w\a\]$PS1"
+    ;;
+*)
+    ;;
+esac
+
+# Execute other init scripts
+for script in /etc/profile.d/*.sh; do
+    if [ -r $script ]; then
+        . $script
+    fi
+done
+unset script
+
