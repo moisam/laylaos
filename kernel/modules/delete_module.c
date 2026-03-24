@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: delete_module.c
  *    This file is part of LaylaOS.
@@ -44,7 +44,8 @@ long syscall_delete_module(char *__name, unsigned int flags)
     struct kmodule_t *mod, *me = NULL;
     char *name = NULL, *s;
     size_t namelen = 0;
-    
+    //physical_addr phys;
+
     if(!suser(this_core->cur_task))
     {
         return -EPERM;
@@ -131,7 +132,15 @@ long syscall_delete_module(char *__name, unsigned int flags)
     
     me->cleanup();
     me->state = MODULE_STATE_UNLOADED;
+
+    /*
+    if((phys = get_phys_addr(me->mempos)))
+    {
+        pmmngr_free_blocks((void *)phys, me->memsz / PAGE_SIZE);
+    }
+    */
     vmmngr_free_pages(me->mempos, me->memsz);
+
     me->mempos = 0;
     me->memsz = 0;
     free_mod_obj(me);

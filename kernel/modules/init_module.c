@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: init_module.c
  *    This file is part of LaylaOS.
@@ -293,12 +293,13 @@ void free_mod_obj(struct kmodule_t *mod)
 static long load_module(struct kmodule_t *mod, int print_info)
 {
     long i;
+    physical_addr phys;
 
     if(!mod)
     {
         return EINVAL;
     }
-    
+
     // don't load an already loaded module
     if(mod->state == MODULE_STATE_LOADED)
     {
@@ -321,32 +322,29 @@ static long load_module(struct kmodule_t *mod, int print_info)
     {
         return -ENOEXEC;
     }
-    
+
     // allocate memory
-    if(!(mod->mempos = vmmngr_alloc_and_map(mod->memsz, 0, PTE_FLAGS_PW,
-                                            NULL, REGION_KMODULE)))
+    if(!(phys = (physical_addr)pmmngr_alloc_blocks(align_up(mod->memsz) / PAGE_SIZE)))
     {
-        //kernel_mutex_unlock(&kmod_mem_mutex);
         printk("mod: failed to alloc memory\n");
         return -ENOMEM;
     }
 
+    mod->mempos = kmod_map(phys, phys + mod->memsz);
+
     INFO("Loading module to " _XPTR_ "\n", mod->mempos);
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
     
     // load object sections
     INFO("Loading object sections\n");
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
     if(load_module_sections(mod) != 0)
     {
         printk("mod: failed to read sections\n");
         return -ENOMEM;
     }
-    
+
     // read the dynamic table and find the needed dependencies
     INFO("Reading dynamic symbol table\n");
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
     if(read_module_dyntab(mod) != 0)
     {
@@ -355,7 +353,6 @@ static long load_module(struct kmodule_t *mod, int print_info)
     }
 
     INFO("Getting module info\n");
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
     // now that we have the symbol table, we can get module info and
     // validate it
@@ -368,7 +365,6 @@ static long load_module(struct kmodule_t *mod, int print_info)
     }
 
     INFO("Checking if the module is already loaded\n");
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
     // check if the module is already loaded
     if(find_loaded_module(mod->modinfo.name))
@@ -379,13 +375,11 @@ static long load_module(struct kmodule_t *mod, int print_info)
     
     // read copy relocations
     INFO("Reading copy relocations\n");
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
     object_read_copy_relocs(EHDR(mod), SHDRS(mod), mod->symtab,
                              mod->strtab, mod->symbols, mod->mempos);
 
     INFO("Loading dependencies\n");
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
     // load the required dependencies
     if((i = load_module_list(mod->modinfo.deps, print_info)) != 0)
@@ -745,6 +739,7 @@ static long load_module_list(char *depslist, int print_info)
     size_t len;
     struct fs_node_t *node;
     virtual_addr imageaddr;
+    physical_addr phys;
     size_t imagesz;
     long res;
     ssize_t readsz;
@@ -810,13 +805,14 @@ static long load_module_list(char *depslist, int print_info)
         // allocate temp memory
         imagesz = node->size;
 
-        if(!(imageaddr = vmmngr_alloc_and_map(imagesz, 0, PTE_FLAGS_PW,
-                                              NULL, REGION_KMODULE)))
+        if(!(phys = (physical_addr)pmmngr_alloc_blocks(align_up(imagesz) / PAGE_SIZE)))
         {
         	release_node(node);
             kfree(p);
             return -ENOMEM;
         }
+
+        imageaddr = kmod_map(phys, phys + imagesz);
 
         fpos = 0;
 
