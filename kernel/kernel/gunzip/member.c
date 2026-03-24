@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: member.c
  *    This file is part of LaylaOS.
@@ -73,7 +73,7 @@ static inline void free_pages(virtual_addr start, size_t sz)
     
     while(start < end)
     {
-        vmmngr_free_page(get_page_entry((void *) start));
+        vmmngr_free_page(get_page_entry(start));
         vmmngr_flush_tlb_entry(start);
         start += PAGE_SIZE;
     }
