@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: server-window-controlbox.c
  *    This file is part of LaylaOS.
@@ -39,7 +39,8 @@
 #include "inlines.c"
 
 
-#define GLOB        __global_gui_data
+#define GLOB            __global_gui_data
+#define pixels          CONTROL_BUTTON_LENGTH
 
 
 uint32_t *bclose_pixels = NULL;
@@ -61,7 +62,6 @@ extern pid_t mypid;
 
 static void alloc_controlbox_bitmaps(void)
 {
-    static int pixels = CONTROL_BUTTON_LENGTH;
     size_t sz = 4 * pixels * pixels;
 
     // alloc some memory for the button "bitmaps"
@@ -86,14 +86,10 @@ static void alloc_controlbox_bitmaps(void)
 }
 
 
-#define pixels          CONTROL_BUTTON_LENGTH
-
-
 void reinit_window_controlbox(void)
 {
     int x, y;
     int sz = sizeof(uint32_t) * pixels * pixels;
-    //uint32_t bgcolor = GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR];
 
     // fill in the backgrounds
     A_memset(bclose_pixels, 0, sz);
@@ -108,140 +104,77 @@ void reinit_window_controlbox(void)
     A_memset(bmax_disabled_pixels, 0, sz);
     A_memset(bmin_disabled_pixels, 0, sz);
 
-#if 0
-    for(y = 0; y < pixels; y++)
+
+    static int idx[] =
     {
-        uint32_t where = y * pixels;
+        8, 9, 15, 16,
+        pixels+9, pixels+10, pixels+14, pixels+15,
+        (pixels*2)+10, (pixels*2)+11, (pixels*2)+13, (pixels*2)+14,
+        (pixels*3)+11, (pixels*3)+12, (pixels*3)+13,
+        (pixels*4)+12,
+        (pixels*5)+11, (pixels*5)+12, (pixels*5)+13,
+        (pixels*6)+10, (pixels*6)+11, (pixels*6)+13, (pixels*6)+14,
+        (pixels*7)+9, (pixels*7)+10, (pixels*7)+14, (pixels*7)+15,
+        (pixels*8)+8, (pixels*8)+9, (pixels*8)+15, (pixels*8)+16,
+        0,
+    };
 
-        memset32(bclose_pixels + where, bgcolor /* CLOSEBUTTON_BGCOLOR */, pixels);
-        memset32(bmax_pixels + where, bgcolor /* MAXIMIZEBUTTON_BGCOLOR */, pixels);
-        memset32(bmin_pixels + where, bgcolor /* MINIMIZEBUTTON_BGCOLOR */, pixels);
-
-        memset32(bclose_over_pixels + where, CLOSEBUTTON_MOUSEOVER_BGCOLOR, pixels);
-        memset32(bmax_over_pixels + where, MAXIMIZEBUTTON_MOUSEOVER_BGCOLOR, pixels);
-        memset32(bmin_over_pixels + where, MINIMIZEBUTTON_MOUSEOVER_BGCOLOR, pixels);
-
-        memset32(bclose_disabled_pixels + where, bgcolor /* CLOSEBUTTON_BGCOLOR */, pixels);
-        memset32(bmax_disabled_pixels + where, bgcolor /* MAXIMIZEBUTTON_BGCOLOR */, pixels);
-        memset32(bmin_disabled_pixels + where, bgcolor /* MINIMIZEBUTTON_BGCOLOR */, pixels);
-    }
-#endif
-    
     // fill the 'X' in the close button
     y = ((pixels / 2) - 4) * pixels;
-    bclose_pixels[y + 8] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_pixels[y + 16] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_over_pixels[y + 8] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 9] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 15] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 16] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_disabled_pixels[y + 8] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-    bclose_disabled_pixels[y + 16] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
 
-    y += pixels;
-    bclose_pixels[y + 9] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_pixels[y + 15] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_over_pixels[y + 9] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 10] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 14] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 15] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_disabled_pixels[y + 9] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-    bclose_disabled_pixels[y + 15] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-
-    y += pixels;
-    bclose_pixels[y + 10] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_pixels[y + 14] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_over_pixels[y + 10] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 11] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 13] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 14] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_disabled_pixels[y + 10] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-    bclose_disabled_pixels[y + 14] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-
-    y += pixels;
-    bclose_pixels[y + 11] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_pixels[y + 13] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_over_pixels[y + 11] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 12] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 13] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_disabled_pixels[y + 11] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-    bclose_disabled_pixels[y + 13] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-
-    y += pixels;
-    bclose_pixels[y + 12] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_over_pixels[y + 12] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_disabled_pixels[y + 12] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-
-    y += pixels;
-    bclose_pixels[y + 11] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_pixels[y + 13] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_over_pixels[y + 11] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 12] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 13] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_disabled_pixels[y + 11] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-    bclose_disabled_pixels[y + 13] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-
-    y += pixels;
-    bclose_pixels[y + 10] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_pixels[y + 14] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_over_pixels[y + 10] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 11] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 13] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 14] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_disabled_pixels[y + 10] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-    bclose_disabled_pixels[y + 14] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-
-    y += pixels;
-    bclose_pixels[y + 9] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_pixels[y + 15] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_over_pixels[y + 9] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 10] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 14] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 15] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_disabled_pixels[y + 9] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-    bclose_disabled_pixels[y + 15] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-
-    y += pixels;
-    bclose_pixels[y + 8] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_pixels[y + 16] = CLOSEBUTTON_TEXTCOLOR;
-    bclose_over_pixels[y + 8] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 9] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 15] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_over_pixels[y + 16] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-    bclose_disabled_pixels[y + 8] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
-    bclose_disabled_pixels[y + 16] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
+    for(x = 0; idx[x] != 0; x++)
+    {
+        bclose_pixels[y + idx[x]] = CLOSEBUTTON_TEXTCOLOR;
+        bclose_over_pixels[y + idx[x]] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
+        bclose_disabled_pixels[y + idx[x]] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
+    }
 
     // fill the box in the maximize button
     y = ((pixels / 2) - 4) * pixels;
-    memset32(bmax_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR, 9);
-    memset32(bmax_over_pixels + y + 8, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 9);
-    memset32(bmax_over_pixels + y + 9, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 9);
-    memset32(bmax_disabled_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR_DISABLED, 9);
-    
+    memset32(bmax_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR, 10);
+    memset32(bmax_over_pixels + y + 8, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 10);
+    memset32(bmax_disabled_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR_DISABLED, 10);
+    y += pixels;
+    memset32(bmax_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR, 10);
+    memset32(bmax_over_pixels + y + 8, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 10);
+    memset32(bmax_disabled_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR_DISABLED, 10);
+    y -= pixels;
+
     for(x = 1; x < 8; x++)
     {
         bmax_pixels[y + (x * pixels) + 8] = MAXIMIZEBUTTON_TEXTCOLOR;
+        bmax_pixels[y + (x * pixels) + 9] = MAXIMIZEBUTTON_TEXTCOLOR;
         bmax_pixels[y + (x * pixels) + 16] = MAXIMIZEBUTTON_TEXTCOLOR;
+        bmax_pixels[y + (x * pixels) + 17] = MAXIMIZEBUTTON_TEXTCOLOR;
         bmax_over_pixels[y + (x * pixels) + 8] = MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR;
         bmax_over_pixels[y + (x * pixels) + 9] = MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR;
         bmax_over_pixels[y + (x * pixels) + 16] = MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR;
         bmax_over_pixels[y + (x * pixels) + 17] = MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR;
         bmax_disabled_pixels[y + (x * pixels) + 8] = MAXIMIZEBUTTON_TEXTCOLOR_DISABLED;
+        bmax_disabled_pixels[y + (x * pixels) + 9] = MAXIMIZEBUTTON_TEXTCOLOR_DISABLED;
         bmax_disabled_pixels[y + (x * pixels) + 16] = MAXIMIZEBUTTON_TEXTCOLOR_DISABLED;
+        bmax_disabled_pixels[y + (x * pixels) + 17] = MAXIMIZEBUTTON_TEXTCOLOR_DISABLED;
     }
 
     y += (8 * pixels);
-    memset32(bmax_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR, 9);
-    memset32(bmax_over_pixels + y + 8, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 9);
-    memset32(bmax_over_pixels + y + 9, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 9);
-    memset32(bmax_disabled_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR_DISABLED, 9);
+    memset32(bmax_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR, 10);
+    memset32(bmax_over_pixels + y + 8, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 10);
+    memset32(bmax_disabled_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR_DISABLED, 10);
+    y += pixels;
+    memset32(bmax_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR, 10);
+    memset32(bmax_over_pixels + y + 8, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 10);
+    memset32(bmax_disabled_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR_DISABLED, 10);
 
     // fill the '_' in the minimize button
     y = (((pixels / 2) - 4) + 8) * pixels;
-    memset32(bmin_pixels + y + 8, MINIMIZEBUTTON_TEXTCOLOR, 8);
-    memset32(bmin_over_pixels + y + 7, MINIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 8);
-    memset32(bmin_over_pixels + y + 8, MINIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 8);
-    memset32(bmin_disabled_pixels + y + 8, MINIMIZEBUTTON_TEXTCOLOR_DISABLED, 8);
+
+    for(x = 0; x < 2; x++)
+    {
+        memset32(bmin_pixels + y + 8, MINIMIZEBUTTON_TEXTCOLOR, 8);
+        memset32(bmin_over_pixels + y + 8, MINIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 8);
+        memset32(bmin_disabled_pixels + y + 8, MINIMIZEBUTTON_TEXTCOLOR_DISABLED, 8);
+        y += pixels;
+    }
 }
 
 
@@ -264,8 +197,6 @@ void server_window_invalidate_controlbox(int wscreen_x, int wscreen_y,
 }
 
 
-#define pixels          CONTROL_BUTTON_LENGTH
-
 void server_window_draw_controlbox(struct gc_t *gc,
                                    struct server_window_t *window,
                                    int wscreen_x, int wscreen_y, int flags)
@@ -278,77 +209,38 @@ void server_window_draw_controlbox(struct gc_t *gc,
                 GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR] :
                 GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE];
 
+#if 0
+    // If the mouse moved in the titlebar or control box area, we need to
+    // redraw the control box. The problem with semitransparent window borders
+    // is that we need to redraw the stuff behind the control box, otherwise
+    // the background color will darken with each redraw
+    if(flags & CONTROLBOX_FLAG_INVALIDATE)
+    {
+        RectList dirty_regions;
+        Rect dirty_rect;
+
+        dirty_regions.root = &dirty_rect;
+        dirty_regions.last = &dirty_rect;
+
+        dirty_rect.top = wscreen_y;
+        dirty_rect.left = wscreen_x + window->w - 
+                            WINDOW_BORDERWIDTH - CONTROL_BUTTON_LENGTH3;
+        dirty_rect.bottom = wscreen_y + WINDOW_TITLEHEIGHT - 1;
+        dirty_rect.right = wscreen_x + window->w - 1;
+        dirty_rect.next = NULL;
+
+        server_window_paint(gc, root_window, window, &dirty_regions,
+                                FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
+    }
+#endif
+
     if(flags & CONTROLBOX_FLAG_CLIP)
     {
-        server_window_apply_bound_clipping(window, 0, 0, &window->clipping);
+        server_window_apply_bound_clipping(window, NULL, NULL, &window->clipping, 0);
     }
 
     gc_get_clipping(gc, &saved_clipping);
     gc_set_clipping(gc, &window->clipping);
-
-
-    /*
-    x = wscreen_x + window->w - WINDOW_BORDERWIDTH - pixels;
-    y = wscreen_y + WINDOW_BORDERWIDTH;
-
-    if(window->controlbox_state & CLOSEBUTTON_OVER)
-    {
-        gc_fill_rect(gc, x, y, pixels, pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR);
-        gc_line(gc, x + 8, y + 10, x + 20, y + 18, 1, CLOSEBUTTON_MOUSEOVER_TEXTCOLOR);
-        gc_line(gc, x + 8, y + 18, x + 20, y + 10, 1, CLOSEBUTTON_MOUSEOVER_TEXTCOLOR);
-    }
-    else
-    {
-        gc_fill_rect(gc, x, y, pixels, pixels, bgcolor);
-        gc_line(gc, x + 8, y + 10, x + 20, y + 18, 1, CLOSEBUTTON_TEXTCOLOR);
-        gc_line(gc, x + 8, y + 18, x + 20, y + 10, 1, CLOSEBUTTON_TEXTCOLOR);
-    }
-
-    x -= pixels;
-
-    if(window->flags & WINDOW_NORESIZE)
-    {
-        gc_fill_rect(gc, x, y, pixels, pixels, CLOSEBUTTON_TEXTCOLOR_DISABLED);
-        gc_line(gc, x + 8, y + 24, x + 16, y + 24, 1, CLOSEBUTTON_TEXTCOLOR_DISABLED);
-    }
-    else
-    {
-        if(window->controlbox_state & MAXIMIZEBUTTON_OVER)
-        {
-            gc_fill_rect(gc, x, y, pixels, pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR);
-            gc_line(gc, x + 8, y + 24, x + 16, y + 24, 1, CLOSEBUTTON_MOUSEOVER_TEXTCOLOR);
-        }
-        else
-        {
-            gc_fill_rect(gc, x, y, pixels, pixels, bgcolor);
-            gc_line(gc, x + 8, y + 24, x + 16, y + 24, 1, CLOSEBUTTON_TEXTCOLOR);
-        }
-    }
-
-    x -= pixels;
-
-    if(window->flags & WINDOW_NOMINIMIZE)
-    {
-        gc_fill_rect(gc, x, y, pixels, pixels, CLOSEBUTTON_TEXTCOLOR_DISABLED);
-        gc_draw_rect(gc, x + 8, y + 8, 8, 8, CLOSEBUTTON_TEXTCOLOR_DISABLED);
-        gc_line(gc, x + 8, y + 9, x + 16, y + 9, 1, CLOSEBUTTON_TEXTCOLOR_DISABLED);
-    }
-    else
-    {
-        if(window->controlbox_state & MINIMIZEBUTTON_OVER)
-        {
-            gc_fill_rect(gc, x, y, pixels, pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR);
-            gc_draw_rect(gc, x + 8, y + 8, 8, 8, CLOSEBUTTON_MOUSEOVER_TEXTCOLOR);
-            gc_line(gc, x + 8, y + 9, x + 16, y + 9, 1, CLOSEBUTTON_MOUSEOVER_TEXTCOLOR);
-        }
-        else
-        {
-            gc_fill_rect(gc, x, y, pixels, pixels, bgcolor);
-            gc_draw_rect(gc, x + 8, y + 8, 8, 8, CLOSEBUTTON_TEXTCOLOR);
-            gc_line(gc, x + 8, y + 9, x + 16, y + 9, 1, CLOSEBUTTON_TEXTCOLOR);
-        }
-    }
-    */
 
     // draw the close button
     bitmap.data = (window->controlbox_state & CLOSEBUTTON_OVER) ?
@@ -390,8 +282,9 @@ void server_window_draw_controlbox(struct gc_t *gc,
 #undef pixels
 
 
-void server_window_toggle_maximize(struct gc_t *gc, 
-                                   struct server_window_t *window)
+void server_window_toggle_maximize(struct gc_t *gc,
+                                   struct server_window_t *window,
+                                   uint32_t seqid)
 {
     if(window->state == WINDOW_STATE_MAXIMIZED)
     {
@@ -400,7 +293,7 @@ void server_window_toggle_maximize(struct gc_t *gc,
         window->flags = window->saved.flags;
         server_window_resize_absolute(gc, window,
                                         window->saved.x, window->saved.y,
-                                        window->saved.w, window->saved.h, 1);
+                                        window->saved.w, window->saved.h, seqid);
     }
     else
     {
@@ -422,13 +315,14 @@ void server_window_toggle_maximize(struct gc_t *gc,
         window->state = WINDOW_STATE_MAXIMIZED;
         server_window_resize_absolute(gc, window,
                                   desktop_bounds.left, desktop_bounds.top,
-                                  neww, newh, 1);
+                                  neww, newh, seqid);
     }
 }
 
 
-void server_window_toggle_fullscreen(struct gc_t *gc, 
-                                     struct server_window_t *window)
+void server_window_toggle_fullscreen(struct gc_t *gc,
+                                     struct server_window_t *window,
+                                     uint32_t seqid)
 {
     if(window->state == WINDOW_STATE_FULLSCREEN)
     {
@@ -437,7 +331,7 @@ void server_window_toggle_fullscreen(struct gc_t *gc,
         window->flags = window->saved.flags;
         server_window_resize_absolute(gc, window,
                                         window->saved.x, window->saved.y,
-                                        window->saved.w, window->saved.h, 1);
+                                        window->saved.w, window->saved.h, seqid);
     }
     else
     {
@@ -452,7 +346,7 @@ void server_window_toggle_fullscreen(struct gc_t *gc,
                           WINDOW_NOCONTROLBOX | 
                           WINDOW_ALWAYSONTOP);
         server_window_resize_absolute(gc, window, 0, 0,
-                                        GLOB.screen.w, GLOB.screen.h, 1);
+                                        GLOB.screen.w, GLOB.screen.h, seqid);
     }
 }
 

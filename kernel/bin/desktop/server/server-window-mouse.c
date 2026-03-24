@@ -286,46 +286,46 @@ skip:
             if(window->drag_type == RESIZE_NORTH)
             {
                 int diffy = mstate->y - window->drag_off_y - window->drag_child->y;
-                server_window_resize(gc, window->drag_child, 0, diffy, 0, -diffy, 1);
+                server_window_resize(gc, window->drag_child, 0, diffy, 0, -diffy, 0);
             }
             else if(window->drag_type == RESIZE_SOUTH)
             {
                 int diffy = mstate->y - window->drag_child->y - window->drag_child->h;
-                server_window_resize(gc, window->drag_child, 0, 0, 0, diffy, 1);
+                server_window_resize(gc, window->drag_child, 0, 0, 0, diffy, 0);
             }
             else if(window->drag_type == RESIZE_WEST)
             {
                 int diffx = mstate->x - window->drag_off_x - window->drag_child->x;
-                server_window_resize(gc, window->drag_child, diffx, 0, -diffx, 0, 1);
+                server_window_resize(gc, window->drag_child, diffx, 0, -diffx, 0, 0);
             }
             else if(window->drag_type == RESIZE_EAST)
             {
                 int diffx = mstate->x - window->drag_child->x - window->drag_child->w;
-                server_window_resize(gc, window->drag_child, 0, 0, diffx, 0, 1);
+                server_window_resize(gc, window->drag_child, 0, 0, diffx, 0, 0);
             }
             else if(window->drag_type == RESIZE_NORTH_EAST)
             {
                 int diffy = mstate->y - window->drag_off_y - window->drag_child->y;
                 int diffx = mstate->x - window->drag_child->x - window->drag_child->w;
-                server_window_resize(gc, window->drag_child, 0, diffy, diffx, -diffy, 1);
+                server_window_resize(gc, window->drag_child, 0, diffy, diffx, -diffy, 0);
             }
             else if(window->drag_type == RESIZE_NORTH_WEST)
             {
                 int diffy = mstate->y - window->drag_off_y - window->drag_child->y;
                 int diffx = mstate->x - window->drag_off_x - window->drag_child->x;
-                server_window_resize(gc, window->drag_child, diffx, diffy, -diffx, -diffy, 1);
+                server_window_resize(gc, window->drag_child, diffx, diffy, -diffx, -diffy, 0);
             }
             else if(window->drag_type == RESIZE_SOUTH_EAST)
             {
                 int diffy = mstate->y - window->drag_child->y - window->drag_child->h;
                 int diffx = mstate->x - window->drag_child->x - window->drag_child->w;
-                server_window_resize(gc, window->drag_child, 0, 0, diffx, diffy, 1);
+                server_window_resize(gc, window->drag_child, 0, 0, diffx, diffy, 0);
             }
             else if(window->drag_type == RESIZE_SOUTH_WEST)
             {
                 int diffy = mstate->y - window->drag_child->y - window->drag_child->h;
                 int diffx = mstate->x - window->drag_off_x - window->drag_child->x;
-                server_window_resize(gc, window->drag_child, diffx, 0, -diffx, diffy, 1);
+                server_window_resize(gc, window->drag_child, diffx, 0, -diffx, diffy, 0);
             }
         }
     }
@@ -390,6 +390,7 @@ void server_window_mouseover(struct gc_t *gc, struct server_window_t *window,
         if(y >= 0 && y < WINDOW_TITLEHEIGHT - WINDOW_BORDERWIDTH)
         {
             int bx = window->w - WINDOW_BORDERWIDTH - CONTROL_BUTTON_LENGTH;
+            int state = window->controlbox_state;
 
             if(mstate->left_pressed)
             {
@@ -428,16 +429,17 @@ void server_window_mouseover(struct gc_t *gc, struct server_window_t *window,
 
                 // Since the button has visibly changed state, we need to 
                 // invalidate the area that needs updating
+                __draw_controlbox(gc, window, MY_X, MY_Y);
+                /*
                 server_window_draw_controlbox(gc, window, MY_X, MY_Y,
                                                   CONTROLBOX_FLAG_CLIP | 
                                                   CONTROLBOX_FLAG_INVALIDATE);
+                */
                 return;
             }
 
             if(mstate->left_released)
             {
-                int state = window->controlbox_state;
-
                 window->controlbox_state = 0;
 
                 if(x >= bx)
@@ -454,7 +456,7 @@ void server_window_mouseover(struct gc_t *gc, struct server_window_t *window,
                     // max button
                     if(state & MAXIMIZEBUTTON_DOWN)
                     {
-                        server_window_toggle_maximize(gc, window);
+                        server_window_toggle_maximize(gc, window, 0);
                         return;
                     }
                 }
@@ -488,9 +490,15 @@ void server_window_mouseover(struct gc_t *gc, struct server_window_t *window,
 
             // Since the button has visibly changed state, we need to 
             // invalidate the area that needs updating
-            server_window_draw_controlbox(gc, window, MY_X, MY_Y,
-                                              CONTROLBOX_FLAG_CLIP | 
-                                              CONTROLBOX_FLAG_INVALIDATE);
+            if(state != window->controlbox_state)
+            {
+                __draw_controlbox(gc, window, MY_X, MY_Y);
+                /*
+                server_window_draw_controlbox(gc, window, MY_X, MY_Y,
+                                                  CONTROLBOX_FLAG_CLIP | 
+                                                  CONTROLBOX_FLAG_INVALIDATE);
+                */
+            }
             return;
         }
     }

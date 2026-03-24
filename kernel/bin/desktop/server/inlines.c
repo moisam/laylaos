@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: inlines.c
  *    This file is part of LaylaOS.
@@ -27,6 +27,9 @@
 
 #undef INLINE
 #define INLINE      static inline __attribute__((always_inline))
+
+INLINE void invalidate_screen_rect(int top, int left, int bottom, int right);
+
 
 // get the absolute on-screen x-coordinate of this window
 INLINE int server_window_screen_x(struct server_window_t *window)
@@ -119,6 +122,33 @@ INLINE void server_window_set_size(struct server_window_t *window,
 }
 
 
+INLINE void __draw_controlbox(struct gc_t *gc,
+                              struct server_window_t *window,
+                              int wscreen_x, int wscreen_y)
+{
+    RectList dirty_regions;
+    Rect dirty_rect;
+
+    dirty_regions.root = &dirty_rect;
+    dirty_regions.last = &dirty_rect;
+
+    dirty_rect.top = wscreen_y;
+    dirty_rect.left = wscreen_x + window->w - 
+                            WINDOW_BORDERWIDTH - CONTROL_BUTTON_LENGTH3;
+    dirty_rect.bottom = wscreen_y + WINDOW_TITLEHEIGHT - 1;
+    dirty_rect.right = wscreen_x + window->w - 1;
+    dirty_rect.next = NULL;
+
+    server_window_paint(gc, root_window, window, &dirty_regions,
+                                FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
+
+    invalidate_screen_rect(dirty_rect.top,
+                           dirty_rect.left,
+                           dirty_rect.bottom,
+                           dirty_rect.right);
+}
+
+
 INLINE void reset_controlbox_state(struct gc_t *gc, 
                                    struct server_window_t *window)
 {
@@ -127,13 +157,23 @@ INLINE void reset_controlbox_state(struct gc_t *gc,
     window->controlbox_state &=
                     ~(CLOSEBUTTON_OVER|MAXIMIZEBUTTON_OVER|MINIMIZEBUTTON_OVER);
 
+    // if mouse has exited the window after hovering over the control box,
+    // we need to redraw the control box
     if(state != window->controlbox_state)
     {
+
+        __draw_controlbox(gc, window,
+                          server_window_screen_x(window), 
+                          server_window_screen_y(window));
+
+#if 0
         server_window_draw_controlbox(gc, window,
                                           server_window_screen_x(window),
                                           server_window_screen_y(window),
                                           CONTROLBOX_FLAG_CLIP | 
                                           CONTROLBOX_FLAG_INVALIDATE);
+#endif
+
     }
 }
 

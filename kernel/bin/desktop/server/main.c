@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: main.c
  *    This file is part of LaylaOS.
@@ -223,7 +223,24 @@ void draw_mouse_cursor(int invalidate)
     int ymax = _mouse_y;
     int xmax2 = _mouse_x + mouse_w;
     int ymax2 = _mouse_y + mouse_h;
-        
+
+    // Ensure we don't paint off the top of the screen
+    if(ymax < 0)
+    {
+        index += (-ymax * mouse_w);
+        y2 = 0;
+        ymax = 0;
+        _mouse_y = 0;
+    }
+
+    // Ensure we don't paint off the left border of the screen
+    if(_mouse_x < 0)
+    {
+        index += (-_mouse_x);
+        x2 = 0;
+        _mouse_x = 0;
+    }
+
     if(xmax2 > gc->w)
     {
         xmax2 = gc->w;
@@ -316,9 +333,7 @@ void draw_mouse_cursor(int invalidate)
     
     if(invalidate)
     {
-        invalidate_screen_rect(_mouse_y, _mouse_x, 
-                               _mouse_y + mouse_h - 1, 
-                               _mouse_x + mouse_w - 1);
+        invalidate_screen_rect(_mouse_y, _mouse_x, ymax2 - 1, xmax2 - 1);
     }
 }
 
@@ -344,8 +359,12 @@ void force_redraw_cursor(int _mouse_x, int _mouse_y)
 
     // Do a dirty update for the desktop, which will, in turn, do a 
     // dirty update for all affected child windows
-    server_window_paint(gc, root_window, &dirty_list, 
-                        FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
+    server_window_paint(gc, root_window, /* root_window->mouseover_child */ NULL, 
+                        &dirty_list, 
+                        FLAG_PAINT_CHILDREN         | 
+                        FLAG_PAINT_BORDER           |
+                        FLAG_PAINT_NO_CLIP_CHILDREN |
+                        FLAG_PAINT_NO_CLIP_SIBLINGS);
 
     // Update mouse position
     root_mouse_x = _mouse_x;
@@ -357,7 +376,7 @@ void force_redraw_cursor(int _mouse_x, int _mouse_y)
     int new_mouse_y = root_mouse_y - cursor[cur_cursor].hoty;
     int new_mouse_b = new_mouse_y + cursor[cur_cursor].h - 1;
     int new_mouse_r = new_mouse_x + cursor[cur_cursor].w - 1;
-    
+
     if(new_mouse_x < mouse_rect.left)
     {
         mouse_rect.left = new_mouse_x;
@@ -378,8 +397,11 @@ void force_redraw_cursor(int _mouse_x, int _mouse_y)
         mouse_rect.right = new_mouse_r;
     }
 
+    // invalidate the new rect
     invalidate_screen_rect(mouse_rect.top, mouse_rect.left, 
                            mouse_rect.bottom, mouse_rect.right);
+
+    old_cursor = cur_cursor;
 }
 
 
@@ -943,6 +965,7 @@ void server_window_may_hide(struct server_window_t *win)
     }
 }
 
+volatile int dont_update = 0;
 
 void *screen_updater(void *unused)
 {
@@ -966,7 +989,7 @@ void *screen_updater(void *unused)
             //__asm__ __volatile__("xchg %%bx, %%bx"::);
             struct timeval tv;
             tv.tv_sec = 0;
-            tv.tv_usec = (needed - elapsed) * 1000;
+            tv.tv_usec = dont_update ? 1000 : ((needed - elapsed) * 1000);
             select(0, NULL, NULL, NULL, &tv);
         }
     }
@@ -1533,12 +1556,14 @@ try:
                 
                 if(!(win->flags & WINDOW_HIDDEN))
                 {
-                    server_window_paint(gc, win, NULL,
+                    /*
+                    server_window_paint(gc, win, NULL, NULL,
                                         FLAG_PAINT_CHILDREN | 
                                         FLAG_PAINT_BORDER);
                     invalidate_window(win);
                     
                     draw_mouse_cursor(1);
+                    */
                     
                     win->pending_resize = 0;
                         
@@ -1548,7 +1573,8 @@ try:
                                                       win->pending_x,
                                                       win->pending_y,
                                                       win->pending_w,
-                                                      win->pending_h, 0);
+                                                      win->pending_h,
+                                                      win->pending_seqid);
                     }
                 }
 
@@ -1600,9 +1626,9 @@ try:
                 // if window is already maximized, do nothing
                 if(win->state == WINDOW_STATE_MAXIMIZED)
                 {
-                    send_resize_offer(win, win->x, win->y,
-                                      win->client_w, win->client_h, 
-                                      ev->seqid);
+                    send_err_event(win->clientfd->fd, win->winid, 
+                                   EVENT_WINDOW_RESIZE_OFFER, EINVAL, 
+                                   ev->seqid);
                     break;
                 }
 
@@ -1613,7 +1639,7 @@ try:
                 }
                 
                 // lastly, maximize
-                server_window_toggle_maximize(gc, win);
+                server_window_toggle_maximize(gc, win, ev->seqid);
 
                 break;
 
@@ -1646,11 +1672,14 @@ try:
                 break;
 
             case REQUEST_WINDOW_ENTER_FULLSCREEN:
-                GET_WINDOW_SILENT(win, ev->src);
+                GET_WINDOW(win, ev->src, EVENT_WINDOW_RESIZE_OFFER);
 
                 // if window is already fullscreen, do nothing
                 if(win->state == WINDOW_STATE_FULLSCREEN)
                 {
+                    send_err_event(win->clientfd->fd, win->winid, 
+                                   EVENT_WINDOW_RESIZE_OFFER, EINVAL, 
+                                   ev->seqid);
                     break;
                 }
                 
@@ -1659,6 +1688,9 @@ try:
                                  WINDOW_NORAISE | 
                                  WINDOW_NORESIZE))
                 {
+                    send_err_event(win->clientfd->fd, win->winid, 
+                                   EVENT_WINDOW_RESIZE_OFFER, EINVAL, 
+                                   ev->seqid);
                     break;
                 }
 
@@ -1669,17 +1701,20 @@ try:
                 }
 
                 // lastly, make it fullscreen
-                server_window_toggle_fullscreen(gc, win);
+                server_window_toggle_fullscreen(gc, win, ev->seqid);
 
                 //grab_mouse(win);
                 break;
 
             case REQUEST_WINDOW_EXIT_FULLSCREEN:
-                GET_WINDOW_SILENT(win, ev->src);
+                GET_WINDOW(win, ev->src, EVENT_WINDOW_RESIZE_OFFER);
 
                 // if window is not fullscreen, do nothing
                 if(win->state != WINDOW_STATE_FULLSCREEN)
                 {
+                    send_resize_offer(win, win->x, win->y,
+                                      win->client_w, win->client_h, 
+                                      ev->seqid);
                     break;
                 }
 
@@ -1690,7 +1725,7 @@ try:
                 }
 
                 // lastly, exit fullscreen
-                server_window_toggle_fullscreen(gc, win);
+                server_window_toggle_fullscreen(gc, win, ev->seqid);
 
                 //ungrab_mouse();
                 break;
@@ -1725,7 +1760,7 @@ try:
                     server_window_set_size(win, win->x, win->y,
                                                 win->client_w, win->client_h);
 
-                    server_window_paint(gc, win, (RectList *)0,
+                    server_window_paint(gc, win, NULL, NULL,
                                         FLAG_PAINT_CHILDREN | 
                                         FLAG_PAINT_BORDER);
                 }
@@ -1802,6 +1837,29 @@ try:
                 break;
 
             case REQUEST_GRAB_MOUSE:
+                /*
+                 * XXX: When the mouse is grabbed (but not confined), the user
+                 *      is unable to interact with other windows, including
+                 *      selecting another window to bring forward. Somewhere in
+                 *      grabbing code root_window->tracked_child is set and
+                 *      not unset properly.
+                 *
+                 * TODO: Fix this mess.
+                 *       For now, we don't grab the mouse unless it is confined
+                 *       to the grabbing window as well.
+                 */
+                GET_WINDOW(win, ev->src, EVENT_MOUSE_GRABBED);
+
+                if((win->flags & WINDOW_HIDDEN))
+                {
+                    send_err_event(clientfd->fd, ev->src,
+                                   EVENT_MOUSE_GRABBED, EINVAL, ev->seqid);
+                    break;
+                }
+
+                notify_mouse_grab(win, 1, ev->seqid);
+                break;
+
             case REQUEST_GRAB_AND_CONFINE_MOUSE:
                 GET_WINDOW(win, ev->src, EVENT_MOUSE_GRABBED);
 
@@ -1817,9 +1875,10 @@ try:
                 break;
 
             case REQUEST_UNGRAB_MOUSE:
-                GET_WINDOW_SILENT(win, ev->src);
-                
-                if(grabbed_mouse_window == win)
+                //GET_WINDOW_SILENT(win, ev->src);
+
+                //if(grabbed_mouse_window && grabbed_mouse_window->clientfd == clientfd)
+                //if(grabbed_mouse_window == win)
                 {
                     ungrab_mouse();
                 }
@@ -2038,6 +2097,18 @@ try:
                     }
 
                     A_memcpy(GLOB.themecolor, evbuf->data, count * sizeof(uint32_t));
+
+#define FIX_TRANSPARENCY(c)                     \
+    GLOB.themecolor[c] &= 0xFFFFFF00;           \
+    GLOB.themecolor[c] |= WINDOW_BORDER_ALPHA;
+
+                    // Ensure window border color retains its transparency
+                    FIX_TRANSPARENCY(THEME_COLOR_WINDOW_BORDERCOLOR);
+                    FIX_TRANSPARENCY(THEME_COLOR_WINDOW_BORDERCOLOR_INACTIVE);
+                    FIX_TRANSPARENCY(THEME_COLOR_WINDOW_TITLECOLOR);
+                    FIX_TRANSPARENCY(THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE);
+
+#undef FIX_TRANSPARENCY
 
                     // Now broadcast it to all apps
                     broadcast_new_theme();
@@ -2264,6 +2335,7 @@ void *conn_listener(void *_server_sockfd)
         {
             clientfds[client].fd = client;
             clientfds[client].clients = 0;
+
             FD_SET(client, &openfds);
             
             if(client > maxopenfd)
@@ -2283,9 +2355,9 @@ void *conn_alive_checker(void *unused)
     UNUSED(unused);
 
     int i;
-    char c;
+    //char c;
     int res;
-    
+
     while(1)
     {
         sleep(1);
@@ -2294,6 +2366,16 @@ void *conn_alive_checker(void *unused)
         {
             if(clientfds[i].fd > 0)
             {
+                struct xucred *creds;
+                socklen_t len = sizeof(struct xucred);
+
+                if((res = getsockopt(clientfds[i].fd, SOL_SOCKET, SO_PEERCRED, &creds, &len)) < 0)
+                {
+                    // client disconnected
+                    __atomic_store_n(&clientfds[i].flags, 1, __ATOMIC_SEQ_CST);
+                }
+
+                /*
                 if((res = recv(clientfds[i].fd, &c, 1, MSG_DONTWAIT|MSG_PEEK)) < 0)
                 {
                     if(errno == ENOTCONN || 
@@ -2308,6 +2390,7 @@ void *conn_alive_checker(void *unused)
                         __atomic_store_n(&clientfds[i].flags, 1, __ATOMIC_SEQ_CST);
                     }
                 }
+                */
             }
         }
     }
@@ -2401,7 +2484,7 @@ int main(int argc, char **argv)
     {
         fprintf(stderr, "%s: the server seems to already be running\n", argv[0]);
         fprintf(stderr, "%s: if you think this is an error, try removing "
-                        SERVER_SOCKET_PATH, argv[0]);
+                        SERVER_SOCKET_PATH "\n", argv[0]);
         fprintf(stderr, "%s: and try again\n", argv[0]);
         exit(EXIT_FAILURE);
     }
@@ -2639,7 +2722,7 @@ int main(int argc, char **argv)
 
             // Do a dirty update for the desktop, which will, in turn, do a 
             // dirty update for all affected child windows
-            server_window_paint(gc, root_window, NULL /* &dirty_list */, 
+            server_window_paint(gc, root_window, NULL, NULL, 
                                 FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
     
             draw_mouse_cursor(0);

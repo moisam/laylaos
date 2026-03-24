@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2024 (c)
+ *    Copyright 2024, 2025, 2026 (c)
  * 
  *    file: theme.c
  *    This file is part of LaylaOS.
@@ -111,7 +111,7 @@ void broadcast_new_theme(void)
     // Do a dirty update for the desktop, which will, in turn, do a 
     // dirty update for all affected child windows
     reinit_window_controlbox();
-    server_window_paint(gc, root_window, NULL, 
+    server_window_paint(gc, root_window, NULL, NULL,
                                 FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
     draw_mouse_cursor(0);
     invalidate_screen_rect(desktop_bounds.top, desktop_bounds.left, 

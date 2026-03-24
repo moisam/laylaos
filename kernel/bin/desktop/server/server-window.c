@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: server-window.c
  *    This file is part of LaylaOS.
@@ -47,6 +47,35 @@
 
 // defined in main.c
 extern Rect desktop_bounds;
+extern volatile int dont_update;
+
+
+static inline __attribute__((always_inline))
+void fix_prev_next(struct server_window_t *window, ListNode *current_node)
+{
+    // Re-point neighbors to each other 
+    if(current_node->prev)
+    {
+        current_node->prev->next = current_node->next;
+    }
+
+    if(current_node->next)
+    {
+        current_node->next->prev = current_node->prev;
+    }
+
+    // If the item was the root item, we need to make
+    // the node following it the new root
+    if(current_node == window->children->root_node)
+    {
+        window->children->root_node = current_node->next;
+    }
+
+    if(current_node == window->children->last_node)
+    {
+        window->children->last_node = current_node->prev;
+    }
+}
 
 
 void server_window_draw_border(struct gc_t *gc, struct server_window_t *window)
@@ -134,16 +163,23 @@ void server_window_draw_border(struct gc_t *gc, struct server_window_t *window)
     }
 
     // Long window titles can spill into the right border, so we draw the
-    // border last
+    // border last. Avoid overlapping the rectangles as this makes the
+    // corners of the semitransparent border darker than the rest of the
+    // border
     gc_fill_rect(gc, screen_x, screen_y, window->w,
                      WINDOW_BORDERWIDTH, border_color);
+
     gc_fill_rect(gc, screen_x, window->yh1 + 1 - WINDOW_BORDERWIDTH,
                      window->w, WINDOW_BORDERWIDTH, border_color);
 
-    gc_fill_rect(gc, screen_x, screen_y, WINDOW_BORDERWIDTH,
-                     window->h, border_color);
+    gc_fill_rect(gc, screen_x, screen_y + WINDOW_BORDERWIDTH, 
+                     WINDOW_BORDERWIDTH, window->h - (WINDOW_BORDERWIDTH * 2), 
+                     border_color);
+
     gc_fill_rect(gc, window->xw1 + 1 - WINDOW_BORDERWIDTH,
-                     screen_y, WINDOW_BORDERWIDTH, window->h, border_color);
+                     screen_y + WINDOW_BORDERWIDTH, 
+                     WINDOW_BORDERWIDTH, window->h - (WINDOW_BORDERWIDTH * 2), 
+                     border_color);
 
     gc_set_clipping(gc, &saved_clipping);
 }
@@ -151,19 +187,22 @@ void server_window_draw_border(struct gc_t *gc, struct server_window_t *window)
 
 // Apply clipping for window bounds without subtracting child window rects
 void server_window_apply_bound_clipping(struct server_window_t *window,
-                                        int in_recursion, 
+                                        struct server_window_t *exclude_from_clipping,
                                         RectList *dirty_regions,
-                                        struct clipping_t *clipping)
+                                        struct clipping_t *clipping,
+                                        int flags)
 {
     Rect *temp_rect, *current_dirty_rect, *clone_dirty_rect;
     List clip_windows;
     struct server_window_t *clipping_window;
+    //int in_recursion = (flags & FLAG_CLIP_IN_RECURSION);
 
     if(!window)
     {
         return;
     }
 
+    /*
     if((!(window->flags & WINDOW_NODECORATION)) && in_recursion)
     {
         temp_rect = Rect_new_unlocked(window->client_y,
@@ -172,6 +211,7 @@ void server_window_apply_bound_clipping(struct server_window_t *window,
                                       window->client_xw1);
     }
     else
+    */
     {
         temp_rect = Rect_new_unlocked(window->y, window->x, 
                                       window->yh1, window->xw1);
@@ -216,8 +256,21 @@ void server_window_apply_bound_clipping(struct server_window_t *window,
 
     // Otherwise, we first reduce our clipping area to the visibility area 
     // of our parent
-    server_window_apply_bound_clipping(window->parent, 1, 
-                                       dirty_regions, clipping);
+    server_window_apply_bound_clipping(window->parent, exclude_from_clipping,
+                                       dirty_regions, clipping,
+                                       flags | FLAG_CLIP_IN_RECURSION);
+
+    // We use this flag when painting the mouse cursor, so that each
+    // window under the mouse is painted (at least as far as the mouse's
+    // dirty box goes). This ensures if a window title is on top of another
+    // window, the window below gets drawn before the window on top, so that
+    // the semitransparent border does not show a "hole" looking at the
+    // desktop behind
+    if(flags & FLAG_PAINT_NO_CLIP_SIBLINGS)
+    {
+        intersect_clip_rect_unlocked(clipping, temp_rect);
+        return;
+    }
 
     // And finally, we subtract the rectangles of any siblings that are 
     // occluding us 
@@ -235,12 +288,15 @@ void server_window_apply_bound_clipping(struct server_window_t *window,
 
         clipping_window = (struct server_window_t *)current_node->payload;
 
-        Rect tmp;
-        tmp.top = clipping_window->y;
-        tmp.left = clipping_window->x;
-        tmp.bottom = clipping_window->yh1;
-        tmp.right = clipping_window->xw1;
-        subtract_clip_rect_unlocked(clipping, &tmp);
+        if(clipping_window != exclude_from_clipping)
+        {
+            Rect tmp;
+            tmp.top = clipping_window->y;
+            tmp.left = clipping_window->x;
+            tmp.bottom = clipping_window->yh1;
+            tmp.right = clipping_window->xw1;
+            subtract_clip_rect_unlocked(clipping, &tmp);
+        }
 
         Listnode_free_unlocked(current_node); 
         current_node = next_node;
@@ -257,15 +313,54 @@ void server_window_update_title(struct gc_t *gc,
     }
 
     // Start by limiting painting to the window's visible area
-    server_window_apply_bound_clipping(window, 0, 0, &window->clipping);
+    server_window_apply_bound_clipping(window, NULL, NULL, &window->clipping, 0);
+
+    // Having semitransparent borders is a bitch. We cannot simply redraw
+    // the border, as it will just darken the color already there. We need
+    // to redraw whatever is there below the border before drawing the border
+    Rect tmp;
+
+    tmp.top = window->client_y;
+    tmp.left = window->client_x;
+    tmp.bottom = window->client_yh1;
+    tmp.right = window->client_xw1;
+
+    // but subtract the window's client area to leave only the border area
+    subtract_clip_rect_unlocked(&window->clipping, &tmp);
+
+    server_window_paint(gc, root_window, window, window->clipping.clip_rects,
+                                FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
 
     // Draw border
-    server_window_draw_border(gc, window);
+    //server_window_draw_border(gc, window);
 
     clear_clip_rects(&window->clipping);
 
-    invalidate_screen_rect(window->y, window->x,
-                           window->client_y - 1, window->xw1);
+    invalidate_screen_rect(window->y, window->x, window->yh1, window->xw1);
+}
+
+
+static inline void repaint_siblings_above(struct gc_t *gc, 
+                                          struct server_window_t *window,
+                                          RectList *dirty_regions)
+{
+    struct server_window_t *sibling;
+    ListNode *current_node;
+    List siblings_above;
+
+    server_window_get_windows_above(window->parent, window, &siblings_above);
+    current_node = siblings_above.root_node;
+
+    while(current_node)
+    {
+        ListNode *next_node = current_node->next;
+
+        sibling = (struct server_window_t *)current_node->payload;
+        server_window_paint(gc, sibling, NULL, 
+                                dirty_regions, FLAG_PAINT_BORDER);
+        Listnode_free_unlocked(current_node);
+        current_node = next_node;
+    }
 }
 
 
@@ -286,12 +381,18 @@ void server_window_invalidate(struct gc_t *gc,
     dirty_rect.right = right + window->client_x;
     dirty_rect.next = NULL;
 
-    server_window_paint(gc, window, &dirty_regions, 0);
+    server_window_paint(gc, window, NULL, &dirty_regions, 0);
+
+    // Due to the semitransparent borders, we may need to redraw the borders
+    // of siblings that overlay us if we have painted in an area that is
+    // partially overlapped by the siblings
+    repaint_siblings_above(gc, window, &dirty_regions);
 }
 
 
 // Another override-redirect function
 void server_window_paint(struct gc_t *gc, struct server_window_t *window,
+                         struct server_window_t *exclude_from_clipping,
                          RectList *dirty_regions, int flags)
 {
     struct server_window_t *current_child;
@@ -304,8 +405,10 @@ void server_window_paint(struct gc_t *gc, struct server_window_t *window,
     }
 
     // Start by limiting painting to the window's visible area
-    server_window_apply_bound_clipping(window, 0, dirty_regions, 
-                                       &window->clipping);
+    server_window_apply_bound_clipping(window, exclude_from_clipping,
+                                       dirty_regions, 
+                                       &window->clipping,
+                                       (flags | FLAG_PAINT_NO_CLIP_SIBLINGS));
 
     // If we have window decorations turned on, draw them and then further
     // limit the clipping area to the inner drawable area of the window 
@@ -329,7 +432,7 @@ void server_window_paint(struct gc_t *gc, struct server_window_t *window,
     // its recursive nature, it would cause the screen rectangles of all of 
     // our parent's children to be subtracted from the clipping area -- which
     // would eliminate this window.
-    if(window->children)
+    if(window->children && !(flags & FLAG_PAINT_NO_CLIP_CHILDREN))
     {
         for(current_node = window->children->root_node;
             current_node != NULL;
@@ -344,10 +447,28 @@ void server_window_paint(struct gc_t *gc, struct server_window_t *window,
                 continue;
             }
 
-            tmp.top = current_child->y;
-            tmp.left = current_child->x;
-            tmp.bottom = current_child->yh1;
-            tmp.right = current_child->xw1;
+            if(current_child == exclude_from_clipping)
+            {
+                continue;
+            }
+
+            /*
+            if(flags & FLAG_PAINT_CHILDREN)
+            {
+                tmp.top = current_child->client_y;
+                tmp.left = current_child->client_x;
+                tmp.bottom = current_child->client_yh1;
+                tmp.right = current_child->client_xw1;
+            }
+            else
+            */
+            {
+                tmp.top = current_child->y;
+                tmp.left = current_child->x;
+                tmp.bottom = current_child->yh1;
+                tmp.right = current_child->xw1;
+            }
+
             subtract_clip_rect_unlocked(&window->clipping, &tmp);
         }
     }
@@ -405,7 +526,8 @@ void server_window_paint(struct gc_t *gc, struct server_window_t *window,
         }
         
         // Otherwise, recursively request the child to redraw its dirty areas
-        server_window_paint(gc, current_child, dirty_regions, flags);
+        server_window_paint(gc, current_child, exclude_from_clipping, 
+                                dirty_regions, flags | FLAG_PAINT_BORDER);
     }
 }
 
@@ -488,8 +610,36 @@ void server_window_get_windows_below(struct server_window_t *parent,
     }
 
     // We just need to get a list of all items in the
-    // child list at higher indexes than the passed window
+    // child list at lower indexes than the passed window
     // We start by finding the passed child in the list
+    for(current_node = parent->children->root_node;
+        current_node != NULL;
+        current_node = current_node->next)
+    {
+        current_window = (struct server_window_t *)current_node->payload;
+
+        if(child == current_window)
+        {
+            break;
+        }
+
+        if((current_window->flags & WINDOW_HIDDEN))
+        {
+            continue;
+        }
+
+        // Our good old rectangle intersection logic
+        if(current_window->x <= child->xw1 &&
+		   current_window->xw1 >= child->x &&
+		   current_window->y <= child->yh1 &&
+		   current_window->yh1 >= child->y)
+		{
+		    // Insert the overlapping window
+            List_add_unlocked(clip_windows, current_window);
+        }
+    }
+
+    /*
     current_node = parent->children->last_node;
 
     for( ; current_node != NULL; current_node = current_node->prev)
@@ -528,6 +678,7 @@ void server_window_get_windows_below(struct server_window_t *parent,
             List_add_unlocked(clip_windows, current_window);
         }
     }
+    */
 }
 
 
@@ -581,6 +732,88 @@ void add_child_on_top(struct server_window_t *window, ListNode *new_node)
 }
 
 
+static void 
+__paint_window_and_windows_below(struct gc_t *gc, 
+                                 struct server_window_t *window, 
+                                 Rect *newsz)
+{
+    RectList *replacement_list, *dirty_list;
+    List dirty_windows;
+    volatile int saved_dont_update;
+
+    // We'll hijack our dirty rect collection from our existing clipping 
+    // operations. So, first we'll get the visible regions of the original
+    // window position
+    server_window_apply_bound_clipping(window, NULL, NULL, &window->clipping, 0);
+
+    // Now that the context clipping tools made the list of dirty rects for us,
+    // we can go ahead and steal the list it made for our own purposes
+    if(!(replacement_list = RectList_new()))
+    {
+        clear_clip_rects(&window->clipping);
+        return;
+    }
+
+    dirty_list = window->clipping.clip_rects;
+    window->clipping.clip_rects = replacement_list;
+    window->clipping.clipping_on = 0;
+
+    // Now, let's get all of the siblings that we overlap before the move
+    server_window_get_windows_below(window->parent, window, &dirty_windows);
+
+    if(newsz)
+    {
+        server_window_set_size(window, newsz->left, newsz->top,
+                                       newsz->right, newsz->bottom);
+    }
+
+    saved_dont_update = dont_update;
+    dont_update = 1;
+
+    // The one thing that might still be dirty is the parent we're inside of
+    server_window_paint(gc, window->parent, window, dirty_list, FLAG_PAINT_NO_CLIP_CHILDREN);
+
+    ListNode *current_node = dirty_windows.root_node;
+
+    while(current_node)
+    {
+        server_window_paint(gc, (struct server_window_t *)
+                                  current_node->payload, window,
+                                  dirty_list,
+                                  FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
+        current_node = current_node->next;
+    }
+
+    dont_update = saved_dont_update;
+
+    Rect *r = dirty_list->root;
+
+    /*
+    while(r)
+    {
+        invalidate_screen_rect(r->top, r->left, r->bottom, r->right);
+        r = r->next;
+    }
+    */
+
+    while(dirty_windows.root_node)
+    {
+        current_node = dirty_windows.root_node;
+        dirty_windows.root_node = current_node->next;
+        Listnode_free_unlocked(current_node); 
+    }
+
+    while(dirty_list->root)
+    {
+        r = dirty_list->root;
+        dirty_list->root = r->next;
+        Rect_free_unlocked(r);
+    }
+
+    RectList_free_unlocked(dirty_list);
+}
+
+
 void server_window_raise(struct gc_t *gc, struct server_window_t *window, 
                          uint8_t do_draw)
 {
@@ -618,28 +851,7 @@ void server_window_raise(struct gc_t *gc, struct server_window_t *window,
     {
         if(window == (struct server_window_t *)current_node->payload)
         {
-            // Re-point neighbors to each other 
-            if(current_node->prev)
-            {
-                current_node->prev->next = current_node->next;
-            }
-
-            if(current_node->next)
-            {
-                current_node->next->prev = current_node->prev;
-            }
-
-            // If the item was the root item, we need to make
-            // the node following it the new root
-            if(current_node == parent->children->root_node)
-            {
-                parent->children->root_node = current_node->next;
-            }
-
-            if(current_node == parent->children->last_node)
-            {
-                parent->children->last_node = current_node->prev;
-            }
+            fix_prev_next(parent, current_node);
 
             current_node->prev = NULL;
             current_node->next = NULL;
@@ -684,7 +896,7 @@ void server_window_raise(struct gc_t *gc, struct server_window_t *window,
                 // exit fullscreen mode if needed
                 if(last_active->state == WINDOW_STATE_FULLSCREEN)
                 {
-                    server_window_toggle_fullscreen(gc, last_active);
+                    server_window_toggle_fullscreen(gc, last_active, 0);
                 }
 
                 // and update the title
@@ -702,8 +914,10 @@ may_draw:
 
     if(do_draw)
     {
-        server_window_paint(gc, window, (RectList *)0, 
+        __paint_window_and_windows_below(gc, window, NULL);
+        server_window_paint(gc, window, NULL, NULL, 
                             FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
+        may_draw_mouse_cursor(window);
         invalidate_screen_rect(window->y, window->x, window->yh1, window->xw1);
     }
 
@@ -718,110 +932,51 @@ may_draw:
 void server_window_move(struct gc_t *gc, struct server_window_t *window, 
                         int new_x, int new_y)
 {
-    int old_x = window->x;
-    int old_y = window->y;
-    Rect new_window_rect;
-
-    RectList *replacement_list, *dirty_list;
-    List dirty_windows;
+    volatile int saved_dont_update;
+    Rect newsz, oldsz;
 
     if(new_y < desktop_bounds.top)
     {
         return;
     }
 
+    saved_dont_update = dont_update;
+    dont_update = 1;
+
     // To make life a little bit easier, we'll make the not-unreasonable 
     // rule that if a window is moved, it must become the top-most window
     server_window_raise(gc, window, 0); // Raise it, but don't repaint it yet
 
-    // We'll hijack our dirty rect collection from our existing clipping 
-    // operations. So, first we'll get the visible regions of the original
-    // window position
-    server_window_apply_bound_clipping(window, 0, 0, &window->clipping);
+    newsz.left = new_x;
+    newsz.top = new_y;
+    newsz.right = window->client_w;
+    newsz.bottom = window->client_h;
 
-    // Temporarily update the window position
-    server_window_set_size(window, new_x, new_y, 
-                           window->client_w, window->client_h);
+    oldsz.left = window->x;
+    oldsz.top = window->y;
+    oldsz.right = window->xw1;
+    oldsz.bottom = window->yh1;
 
-    // Calculate the new bounds
-    new_window_rect.top = window->y;
-    new_window_rect.left = window->x;
-    new_window_rect.bottom = new_window_rect.top + window->h - 1;
-    new_window_rect.right = new_window_rect.left + window->w - 1;
-
-    // Reset the window position
-    server_window_set_size(window, old_x, old_y, 
-                           window->client_w, window->client_h);
-
-    // Now, we'll get the *actual* dirty area by subtracting the new location 
-    // of the window 
-    subtract_clip_rect(&window->clipping, &new_window_rect);
-
-    // Now that the context clipping tools made the list of dirty rects for us,
-    // we can go ahead and steal the list it made for our own purposes
-    if(!(replacement_list = RectList_new()))
-    {
-        clear_clip_rects(&window->clipping);
-        return;
-    }
-
-    dirty_list = window->clipping.clip_rects;
-    window->clipping.clip_rects = replacement_list;
-    window->clipping.clipping_on = 0;
-
-    // Now, let's get all of the siblings that we overlap before the move
-    server_window_get_windows_below(window->parent, window, &dirty_windows);
-
-    server_window_set_size(window, new_x, new_y, 
-                           window->client_w, window->client_h);
-
-    // And we'll repaint all of them using the dirty rects
-    // (removing them from the list as we go for convenience)
-    ListNode *current_node = dirty_windows.root_node;
-
-    while(current_node)
-    {
-        server_window_paint(gc, (struct server_window_t *)
-                                  current_node->payload, dirty_list,
-                                      FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
-        current_node = current_node->next;
-    }
-
-    // The one thing that might still be dirty is the parent we're inside of
-    server_window_paint(gc, window->parent, dirty_list, 0);
-
-    // We're done with the lists, so we can dump them
-    Rect *r = dirty_list->root;
-
-    while(r)
-    {
-        invalidate_screen_rect(r->top, r->left, r->bottom, r->right);
-        r = r->next;
-    }
-
-    while(dirty_windows.root_node)
-    {
-        current_node = dirty_windows.root_node;
-        dirty_windows.root_node = current_node->next;
-        Listnode_free_unlocked(current_node);
-    }
-
-    while(dirty_list->root)
-    {
-        r = dirty_list->root;
-        dirty_list->root = r->next;
-        Rect_free_unlocked(r);
-    }
-
-    RectList_free_unlocked(dirty_list);
+    __paint_window_and_windows_below(gc, window, &newsz);
 
     // With the dirtied siblings redrawn, we can do the final update of 
     // the window location and paint it at that new position
-    server_window_paint(gc, window, (RectList *)0, 
+    server_window_paint(gc, window, NULL, NULL, 
                         FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
 
+    // We have been brought to the foreground, but we may still have siblings
+    // that overlay us (e.g. desktop panels), so paint these now
+    repaint_siblings_above(gc, window, NULL);
+
+    dont_update = saved_dont_update;
+
     draw_mouse_cursor(0);
+
+    // Avoid flicker during window resizing by invalidating everything
+    // at the end
+    invalidate_screen_rect(oldsz.top, oldsz.left, oldsz.bottom, oldsz.right);
     invalidate_screen_rect(window->y, window->x, window->yh1, window->xw1);
+
     send_pos_changed_event(window);
 }
 
@@ -875,6 +1030,41 @@ void server_window_create_canvas(struct gc_t *gc,
     return;
 
 
+static inline void save_pending_and_send_offer(struct server_window_t *window,
+                                               int x, int y, int w, int h,
+                                               uint32_t seqid)
+{
+    if(window->pending_resize)
+    {
+        window->pending_x = x;
+        window->pending_y = y;
+        window->pending_w = w;
+        window->pending_h = h;
+
+        // if there was a pending resize request from the client, let them
+        // know this is cancelled now
+        if(window->pending_seqid)
+        {
+            send_err_event(window->clientfd->fd, window->winid, 
+                           EVENT_WINDOW_RESIZE_OFFER, EAGAIN, 
+                           window->pending_seqid);
+        }
+
+        window->pending_seqid = seqid;
+        return;
+    }
+
+    window->pending_x = 0;
+    window->pending_y = 0;
+    window->pending_w = 0;
+    window->pending_h = 0;
+    window->pending_seqid = seqid;
+    window->pending_resize = 1;
+
+    send_resize_offer(window, x, y, w, h, seqid);
+}
+
+
 void server_window_resize(struct gc_t *gc, struct server_window_t *window,
                                            int dx, int dy, int dw, int dh,
                                            uint32_t seqid)
@@ -907,25 +1097,10 @@ void server_window_resize(struct gc_t *gc, struct server_window_t *window,
     // To make life a little bit easier, we'll make the not-unreasonable 
     // rule that if a window is moved, it must become the top-most window
     server_window_raise(gc, window, 0); // Raise it, but don't repaint it yet
-    
-    if(window->pending_resize)
-    {
-        window->pending_x = window->x + dx;
-        window->pending_y = window->y + dy;
-        window->pending_w = window->client_w + dw;
-        window->pending_h = window->client_h + dh;
-        return;
-    }
 
-    window->pending_x = 0;
-    window->pending_y = 0;
-    window->pending_w = 0;
-    window->pending_h = 0;
-    window->pending_resize = 1;
-
-    send_resize_offer(window, window->x + dx, window->y + dy,
-                              window->client_w + dw,
-                              window->client_h + dh, seqid);
+    save_pending_and_send_offer(window, window->x + dx, window->y + dy,
+                                        window->client_w + dw,
+                                        window->client_h + dh, seqid);
 }
 
 
@@ -953,23 +1128,8 @@ void server_window_resize_absolute(struct gc_t *gc,
     // To make life a little bit easier, we'll make the not-unreasonable 
     // rule that if a window is moved, it must become the top-most window
     server_window_raise(gc, window, 0); // Raise it, but don't repaint it yet
-    
-    if(window->pending_resize)
-    {
-        window->pending_x = x;
-        window->pending_y = y;
-        window->pending_w = w;
-        window->pending_h = h;
-        return;
-    }
 
-    window->pending_x = 0;
-    window->pending_y = 0;
-    window->pending_w = 0;
-    window->pending_h = 0;
-    window->pending_resize = 1;
-
-    send_resize_offer(window, x, y, w, h, seqid);
+    save_pending_and_send_offer(window, x, y, w, h, seqid);
 }
 
 
@@ -1049,95 +1209,24 @@ void server_window_resize_accept(struct gc_t *gc,
 void server_window_resize_finalize(struct gc_t *gc, 
                                    struct server_window_t *window)
 {
-    int old_x = window->x;
-    int old_y = window->y;
-    int old_w = window->client_w;
-    int old_h = window->client_h;
-    Rect new_window_rect;
-    RectList *replacement_list, *dirty_list;
-    List dirty_windows;
-    
+    Rect newsz, oldsz;
+
     if(!window->resize.canvas)
     {
         return;
     }
 
-    // We'll hijack our dirty rect collection from our existing clipping 
-    // operations. So, first we'll get the visible regions of the original
-    // window position
-    server_window_apply_bound_clipping(window, 0, NULL, &window->clipping);
+    newsz.left = window->resize.x;
+    newsz.top = window->resize.y;
+    newsz.right = window->resize.w;
+    newsz.bottom = window->resize.h;
 
-    // Temporarily update the window position
-    server_window_set_size(window, window->resize.x, window->resize.y,
-                                   window->resize.w, window->resize.h);
+    oldsz.left = window->x;
+    oldsz.top = window->y;
+    oldsz.right = window->xw1;
+    oldsz.bottom = window->yh1;
 
-    // Calculate the new bounds
-    new_window_rect.top = window->y;
-    new_window_rect.left = window->x;
-    new_window_rect.bottom = new_window_rect.top + window->h - 1;
-    new_window_rect.right = new_window_rect.left + window->w - 1;
-
-    // Reset the window position
-    server_window_set_size(window, old_x, old_y, old_w, old_h);
-
-    // Now, we'll get the *actual* dirty area by subtracting the new location 
-    // of the window 
-    subtract_clip_rect(&window->clipping, &new_window_rect);
-
-    // Now that the context clipping tools made the list of dirty rects for us,
-    // we can go ahead and steal the list it made for our own purposes
-    if(!(replacement_list = RectList_new()))
-    {
-        clear_clip_rects(&window->clipping);
-        return;
-    }
-
-    dirty_list = window->clipping.clip_rects;
-    window->clipping.clip_rects = replacement_list;
-    window->clipping.clipping_on = 0;
-
-    // Now, let's get all of the siblings that we overlap before the move
-    server_window_get_windows_below(window->parent, window, &dirty_windows);
-
-    server_window_set_size(window, window->resize.x, window->resize.y,
-                                   window->resize.w, window->resize.h);
-
-    ListNode *current_node = dirty_windows.root_node;
-
-    while(current_node)
-    {
-        server_window_paint(gc, (struct server_window_t *)
-                                  current_node->payload, dirty_list,
-                                      FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
-        current_node = current_node->next;
-    }
-
-    // The one thing that might still be dirty is the parent we're inside of
-    server_window_paint(gc, window->parent, dirty_list, 0);
-
-    Rect *r = dirty_list->root;
-
-    while(r)
-    {
-        invalidate_screen_rect(r->top, r->left, r->bottom, r->right);
-        r = r->next;
-    }
-
-    while(dirty_windows.root_node)
-    {
-        current_node = dirty_windows.root_node;
-        dirty_windows.root_node = current_node->next;
-        Listnode_free_unlocked(current_node); 
-    }
-
-    while(dirty_list->root)
-    {
-        r = dirty_list->root;
-        dirty_list->root = r->next;
-        Rect_free_unlocked(r);
-    }
-
-    RectList_free_unlocked(dirty_list);
+    __paint_window_and_windows_below(gc, window, &newsz);
 
     if(window->shmid && window->shmid != window->resize.shmid)
     {
@@ -1162,78 +1251,27 @@ void server_window_resize_finalize(struct gc_t *gc,
     window->resize.canvas = 0;
     window->resize.canvas_pitch = 0;
     window->resize.shmid = 0;
+
+    // With the dirtied siblings redrawn, we can do the final update of 
+    // the window location and paint it at that new position
+    server_window_paint(gc, window, NULL, NULL, 
+                        FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
+
+    draw_mouse_cursor(1);
+
+    // Avoid flicker during window resizing by invalidating everything
+    // at the end
+    invalidate_screen_rect(oldsz.top, oldsz.left, oldsz.bottom, oldsz.right);
+    invalidate_screen_rect(window->y, window->x, window->yh1, window->xw1);
 }
 
 
 void server_window_hide(struct gc_t *gc, struct server_window_t *window)
 {
-    RectList *replacement_list, *dirty_list;
-    List dirty_windows;
-    
-    // We'll hijack our dirty rect collection from our existing clipping 
-    // operations. So, first we'll get the visible regions of the original
-    // window position
-    server_window_apply_bound_clipping(window, 0, 0, &window->clipping);
-
-    // Now that the context clipping tools made the list of dirty rects for us,
-    // we can go ahead and steal the list it made for our own purposes
-    if(!(replacement_list = RectList_new()))
-    {
-        clear_clip_rects(&window->clipping);
-        return;
-    }
-
-    dirty_list = window->clipping.clip_rects;
-    window->clipping.clip_rects = replacement_list;
-    window->clipping.clipping_on = 0;
-
-    // Now, let's get all of the siblings that we overlap before the move
-    server_window_get_windows_below(window->parent, window, &dirty_windows);
-
-    // And we'll repaint all of them using the dirty rects
-    // (removing them from the list as we go for convenience)
-    ListNode *current_node = dirty_windows.root_node;
-
-    while(current_node)
-    {
-        struct server_window_t *w = (struct server_window_t *)
-                                            current_node->payload;
-
-        server_window_paint(gc, w, dirty_list, 
-                            FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
-        invalidate_screen_rect(w->y, w->x, w->yh1, w->xw1);
-        current_node = current_node->next;
-    }
-
-    // The one thing that might still be dirty is the parent we're inside of
-    server_window_paint(gc, window->parent, dirty_list, 0);
-
-    // We're done with the lists, so we can dump them
-    Rect *r = dirty_list->root;
-
-    while(r)
-    {
-        invalidate_screen_rect(r->top, r->left, r->bottom, r->right);
-        r = r->next;
-    }
-
-    while(dirty_windows.root_node)
-    {
-        current_node = dirty_windows.root_node;
-        dirty_windows.root_node = current_node->next;
-        Listnode_free_unlocked(current_node); 
-    }
-
-    while(dirty_list->root)
-    {
-        r = dirty_list->root;
-        dirty_list->root = r->next;
-        Rect_free_unlocked(r);
-    }
-
-    RectList_free_unlocked(dirty_list);
-
     struct server_window_t *owner;
+
+    __paint_window_and_windows_below(gc, window, NULL);
+    invalidate_screen_rect(window->y, window->x, window->yh1, window->xw1);
 
     if(window->owner_winid && 
        (owner = server_window_by_winid(window->owner_winid)))
@@ -1287,28 +1325,7 @@ void server_window_remove_child(struct server_window_t *window,
     {
         if(child == (struct server_window_t *)current_node->payload)
         {
-            // Re-point neighbors to each other 
-            if(current_node->prev)
-            {
-                current_node->prev->next = current_node->next;
-            }
-
-            if(current_node->next)
-            {
-                current_node->next->prev = current_node->prev;
-            }
-
-            // If the item was the root item, we need to make
-            // the node following it the new root
-            if(current_node == window->children->root_node)
-            {
-                window->children->root_node = current_node->next;
-            }
-
-            if(current_node == window->children->last_node)
-            {
-                window->children->last_node = current_node->prev;
-            }
+            fix_prev_next(window, current_node);
 
             // Make sure the count of items is up-to-date
             window->children->count--; 
