@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: dev.c
  *    This file is part of LaylaOS.
@@ -40,6 +40,7 @@
 #include <kernel/ahci.h>
 #include <kernel/fio.h>
 #include <kernel/cdrom.h>
+#include <kernel/usb.h>
 //#include <kernel/mouse.h>
 #include <fs/sockfs.h>
 #include <fs/devpts.h>
@@ -96,6 +97,9 @@ struct bdev_ops_t bdev_tab[NR_DEV] =
 
     /* 22 = hdc, hdd */
     { ata_strategy, NULL, NULL, ata_ioctl, NULL, NULL, ZDIRENT, ZCACHE },
+
+    /* 180 = USB mass storage devices */
+    //[USB_MSD_DEV_MAJ] = { usb_msd_strategy, NULL, NULL, usb_msd_ioctl, NULL, NULL, ZDIRENT, ZCACHE },
 };
 
 
@@ -106,7 +110,12 @@ struct cdev_ops_t cdev_tab[NR_DEV] =
     /* 1 = mem char devices */
     { memdev_char_read, memdev_char_write, NULL,
       memdev_char_select, memdev_char_poll },
-    { NULL, NULL, NULL, NULL, NULL },
+
+    // 2 = master pseudoterminal devices
+	// handle pseudoterminal master devices (major 2) separately, as they read
+	// from the (slave's) write queue, and write to the (slave's) read queue
+    { ttyx_read, ttyx_write, tty_ioctl, pty_master_select, pty_master_poll },
+
     { NULL, NULL, NULL, NULL, NULL },
 
     /* 4 = ttyx (tty0, tty1, ...) */
@@ -150,6 +159,12 @@ struct cdev_ops_t cdev_tab[NR_DEV] =
 
     /* 29 = framebuffer device */
     { NULL /* fb_read */, NULL, fb_ioctl, NULL, NULL },
+
+    /* 136 = slave pseudoterminal devices */
+    [PTY_SLAVE_MAJ] = { ttyx_read, ttyx_write, tty_ioctl, tty_select, tty_poll },
+
+    /* 189 = USB controller devices /dev/usbN */
+    [USB_CTRL_DEV_MAJ] = { usb_ctrl_read, usb_ctrl_write, usb_ctrl_ioctl, NULL, NULL },
 };
 
 
@@ -178,7 +193,7 @@ void dev_init(void)
     add_dev_node("stdout", 0, (S_IFLNK | 0777));                // drwxrwxrwx
     add_dev_node("stderr", 0, (S_IFLNK | 0777));                // drwxrwxrwx
 
-    add_dev_node("fb0", TO_DEVID(29, 0), (S_IFCHR | 0440));     // cr--r-----
+    add_dev_node("fb0", TO_DEVID(29, 0), (S_IFCHR | 0444));     // cr--r--r--
     //add_dev_node("guiev", TO_DEVID(13, 64), (S_IFCHR | 0660));     // crw-rw----
 
     add_dev_node("loop-control", TO_DEVID(10, 237), (S_IFCHR | 0664)); // crw-rw-r--
@@ -186,7 +201,7 @@ void dev_init(void)
     /*
      * TODO: this should be under /dev/input.
      */
-    add_dev_node("mouse0", TO_DEVID(13, 32), (S_IFCHR | 0440)); // cr--r-----
+    add_dev_node("mouse0", TO_DEVID(13, 32), (S_IFCHR | 0444)); // cr--r--r--
 
     //add_dev_node("kbd", TO_DEVID(11, 0), (S_IFCHR | 0440));     // cr--r-----
 
@@ -234,24 +249,7 @@ void dev_init(void)
     {
         add_dev_node("initrd", TO_DEVID(1, 250), (S_IFBLK | 0444));
     }
-    
-    // add functions to handle master pseudoterminal devices
-    cdev_tab[PTY_MASTER_MAJ].read = ttyx_read /* pty_master_read */;
-    cdev_tab[PTY_MASTER_MAJ].write = ttyx_write /* pty_master_write */;
-    cdev_tab[PTY_MASTER_MAJ].ioctl = tty_ioctl;
 
-	// handle pseudoterminal master devices (major 2) separately, as they read
-	// from the (slave's) write queue, and write to the (slave's) read queue
-    cdev_tab[PTY_MASTER_MAJ].select = pty_master_select;
-    cdev_tab[PTY_MASTER_MAJ].poll = pty_master_poll;
-
-    // add functions to handle slave pseudoterminal devices
-    cdev_tab[PTY_SLAVE_MAJ].read = ttyx_read;
-    cdev_tab[PTY_SLAVE_MAJ].write = ttyx_write;
-    cdev_tab[PTY_SLAVE_MAJ].ioctl = tty_ioctl;
-    cdev_tab[PTY_SLAVE_MAJ].select = tty_select;
-    cdev_tab[PTY_SLAVE_MAJ].poll = tty_poll;
-    
     // add sound devices
     // dsp -> first digital audio device
     // dsp1 -> second digital audio
