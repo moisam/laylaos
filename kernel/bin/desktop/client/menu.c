@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: menu.c
  *    This file is part of LaylaOS.
@@ -39,6 +39,8 @@
 #include "../include/menu.h"
 #include "../include/keys.h"
 #include "../include/kbd.h"
+
+#define DEFINE_MENU_INLINES
 #include "inlines.c"
 
 
@@ -712,31 +714,6 @@ int create_menu_frame(struct window_t *window, struct menu_item_t *menu)
     gc_set_font(frame->gc, font);
     
     return 1;
-}
-
-
-static void inline hide_menu(struct menu_item_t *menu)
-{
-    if(menu->next_displayed)
-    {
-        hide_menu(menu->next_displayed);
-        menu->next_displayed = NULL;
-    }
-
-    simple_request(REQUEST_MENU_FRAME_HIDE, GLOB.server_winid, 
-                   menu->frame->winid);
-    menu->frame->flags |= WINDOW_HIDDEN;
-}
-
-
-static void inline window_hide_menu(struct window_t *window)
-{
-    if(window->displayed_menu)
-    {
-        hide_menu(window->displayed_menu);
-        window->displayed_menu = NULL;
-        window->flags &= ~WINDOW_SHOWMENU;
-    }
 }
 
 

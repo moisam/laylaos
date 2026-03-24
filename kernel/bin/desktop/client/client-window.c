@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: client-window.c
  *    This file is part of LaylaOS.
@@ -40,10 +40,19 @@
 #include "../include/menu.h"
 #include "../include/directrw.h"
 
+#define DEFINE_MENU_INLINES
 #include "inlines.c"
 
 
 #define GLOB        __global_gui_data
+
+#define GET_SERVER_REPLY(seqid, ev2)                 \
+    if(!(ev2 = get_server_reply(seqid))) return;     \
+    if(ev2->type == EVENT_ERROR) { free(ev2); return; }
+
+#define GET_SERVER_REPLY2(seqid, ev2, res)           \
+    if(!(ev2 = get_server_reply(seqid))) return res; \
+    if(ev2->type == EVENT_ERROR) { free(ev2); return res; }
 
 static mutex_t __winlist_lock;
 
@@ -468,15 +477,50 @@ void window_raise(struct window_t *window)
 }
 
 
+/*
+ * Helper function used by maximize and fullscreen functions to get the
+ * server's reply to state change and apply the new size to the window.
+ */
+static inline void handle_window_size_change(struct window_t *window, uint32_t seqid)
+{
+    struct event_t *ev2;
+    int x, y;
+    uint16_t w, h;
+
+    /*
+     * Get the EVENT_WINDOW_RESIZE_OFFER reply from the server.
+     * We can get an invalid response from the server, e.g. if we tried to
+     * maximize a window that is already maximized. In this case the macro
+     * will simply return from this function without modifying window state.
+     */
+    GET_SERVER_REPLY(seqid, ev2);
+
+    // might need to hide menus
+    window_hide_menu(window);
+
+    x = ev2->win.x;
+    y = ev2->win.y;
+    w = ev2->win.w;
+    h = ev2->win.h;
+    free(ev2);
+
+    window_resize(window, x, y, w, h);
+}
+
+
 void window_maximize(struct window_t *window)
 {
+    uint32_t seqid;
+
     if(!window)
     {
         return;
     }
 
-    window_request(window, REQUEST_WINDOW_MAXIMIZE);
+    seqid = simple_request(REQUEST_WINDOW_MAXIMIZE, GLOB.server_winid, window->winid);
     window->flags &= ~WINDOW_HIDDEN;
+
+    handle_window_size_change(window, seqid);
 }
 
 
@@ -506,25 +550,33 @@ void window_restore(struct window_t *window)
 
 void window_enter_fullscreen(struct window_t *window)
 {
+    uint32_t seqid;
+
     if(!window)
     {
         return;
     }
 
-    window_request(window, REQUEST_WINDOW_ENTER_FULLSCREEN);
+    seqid = simple_request(REQUEST_WINDOW_ENTER_FULLSCREEN, GLOB.server_winid, window->winid);
     window->flags &= ~WINDOW_HIDDEN;
+
+    handle_window_size_change(window, seqid);
 }
 
 
 void window_exit_fullscreen(struct window_t *window)
 {
+    uint32_t seqid;
+
     if(!window)
     {
         return;
     }
 
-    window_request(window, REQUEST_WINDOW_EXIT_FULLSCREEN);
+    seqid = simple_request(REQUEST_WINDOW_EXIT_FULLSCREEN, GLOB.server_winid, window->winid);
     window->flags &= ~WINDOW_HIDDEN;
+
+    handle_window_size_change(window, seqid);
 }
 
 
@@ -632,16 +684,7 @@ void window_resize(struct window_t *window, int16_t x, int16_t y,
     ev.dest = GLOB.server_winid;
     direct_write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
 
-    if(!(ev2 = get_server_reply(seqid)))
-    {
-        return;
-    }
-
-    if(ev2->type == EVENT_ERROR)
-    {
-        free(ev2);
-        return;
-    }
+    GET_SERVER_REPLY(seqid, ev2);
 
     int shmid = ev2->win.shmid;
     uint32_t canvas_size = ev2->win.canvas_size;
@@ -926,6 +969,8 @@ void window_set_size(struct window_t *window, int x, int y,
     ev.src = window->winid;
     ev.dest = GLOB.server_winid;
     direct_write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
+
+    handle_window_size_change(window, seqid);
 }
 
 
@@ -1044,16 +1089,7 @@ int window_new_canvas(struct window_t *window)
     seqid = simple_request(REQUEST_WINDOW_NEW_CANVAS, 
                                 GLOB.server_winid, window->winid);
 
-    if(!(ev = get_server_reply(seqid)))
-    {
-        return 0;
-    }
-
-    if(ev->type == EVENT_ERROR)
-    {
-        free(ev);
-        return 0;
-    }
+    GET_SERVER_REPLY2(seqid, ev, 0);
 
     window->canvas_size = ev->win.canvas_size;
     window->canvas_pitch = ev->win.canvas_pitch;
