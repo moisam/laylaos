@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2024, 2025 (c)
+ *    Copyright 2024, 2025, 2026 (c)
  * 
  *    file: i8254x.h
  *    This file is part of LaylaOS.
@@ -144,7 +144,7 @@ struct i8254x_t
 
 
 int i8254x_init(struct pci_dev_t *pci);
-int i8254x_intr(struct regs *r, int unit);
+int i8254x_intr(struct regs *r, void *arg);
 void i8254x_do_intr(int unit);
 void i8254x_receive(struct i8254x_t *dev);
 int i8254x_transmit(struct netif_t *ifp, struct packet_t *p);

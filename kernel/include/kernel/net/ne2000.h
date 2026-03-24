@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ne2000.h
  *    This file is part of LaylaOS.
@@ -124,7 +124,7 @@ struct ne2000_t
 
 
 int ne2000_init(struct pci_dev_t *pci);
-int ne2000_intr(struct regs *r, int unit);
+int ne2000_intr(struct regs *r, void *arg);
 void ne2000_do_intr(struct ne2000_t *ne);
 void ne2000_receive(struct ne2000_t *ne);
 int ne2000_transmit(struct netif_t *ifp, struct packet_t *p);
