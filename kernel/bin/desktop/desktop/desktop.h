@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: desktop.h
  *    This file is part of LaylaOS.
@@ -31,6 +31,9 @@
 #include <stdint.h>
 #include "../include/window-defs.h"
 #include "../include/rect.h"
+
+// default backgrounds path
+#define BACKGROUNDS_DIR_PATH                "/usr/share/gui/desktop/backgrounds"
 
 // private desktop requests
 #define REQUEST_GET_DESKTOP_BACKGROUND      (REQUEST_APPLICATION_PRIVATE + 0)

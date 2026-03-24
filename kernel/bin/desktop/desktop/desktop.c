@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: desktop.c
  *    This file is part of LaylaOS.
@@ -36,6 +36,7 @@
 #include <sys/shm.h>
 #include <sys/hash.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include "../include/client/window.h"
 #include "../include/client/paths.h"
 #include "../include/gui.h"
@@ -396,6 +397,7 @@ int main(int argc, char **argv)
     /* volatile */ struct event_t *ev = NULL;
     struct window_attribs_t attribs;
     struct sigaction act;
+    struct stat st;
 
     gui_init(argc, argv);
 
@@ -426,6 +428,16 @@ int main(int argc, char **argv)
         fprintf(stderr, "%s: failed to create window: %s\n", 
                         argv[0], strerror(errno));
         gui_exit(EXIT_FAILURE);
+    }
+
+    // load default background if it is available
+    // if this fails, the default background color is automatically used
+    if(stat(BACKGROUNDS_DIR_PATH "/desktop-background9.jpeg", &st) != -1)
+    {
+        background_image_path = strdup(BACKGROUNDS_DIR_PATH "/desktop-background9.jpeg");
+        background_is_image = 1;
+        background_image_aspect = DESKTOP_BACKGROUND_CENTERED;
+        load_desktop_background();
     }
 
     draw_desktop_background();
