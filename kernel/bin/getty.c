@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: getty.c
  *    This file is part of LaylaOS.
@@ -36,10 +36,14 @@
 #include <fcntl.h>
 #include <time.h>
 #include <termios.h>
+#include <pwd.h>
+#include <grp.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <sys/utsname.h>
 #include <kernel/tty.h>
+
+#include "login-creds.c"
 
 #define LOGIN_CMD                   "/bin/login"
 #define ISSUE_FILE                  "/etc/issue"
@@ -452,7 +456,7 @@ int main(int argc, char **argv)
 {
     int fd;
     char ttypath[32];
-    char *login_args[4];
+    char *login_args[5];
 
     parse_line_args(argc, argv);
 
@@ -514,6 +518,7 @@ int main(int argc, char **argv)
 
     parse_issue_file();
 
+    // set some env vars for the login program
     if(extra_argc)
     {
         setenv("TERM", *extra_argv, 1);
@@ -523,18 +528,27 @@ int main(int argc, char **argv)
         setenv("TERM", "xterm-color", 1);
     }
 
+    set_locale();
+    setenv("TERMINFO_DIRS", "/usr/local/share/terminfo:/usr/share/terminfo", 1);
+    setenv("TERMINFO", "/usr/share/terminfo", 1);
+    setenv("PATH", DEFAULT_PATH, 1);
+    setenv("PAGER", "less", 1);
+    setenv("MANPAGER", "less", 1);
+
+    // set login args
     login_args[0] = loginprog;
-    login_args[3] = NULL;
+    login_args[1] = "-p";   // preserve env
+    login_args[4] = NULL;
 
     if(auto_username)
     {
-        login_args[1] = "-f";
-        login_args[2] = auto_username;
+        login_args[2] = "-f";
+        login_args[3] = auto_username;
     }
     else
     {
-        login_args[1] = NULL;
         login_args[2] = NULL;
+        login_args[3] = NULL;
     }
     
     while(1)

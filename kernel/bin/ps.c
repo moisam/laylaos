@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ps.c
  *    This file is part of LaylaOS.
@@ -400,31 +400,35 @@ void update_col_widths(struct proc_t *proc)
 #define SKIP_LETTERS(p, buf)        { p = buf; while(*p && *p != '\t') p++; }
 
 
-struct proc_t *do_entry(struct dirent *dent)
+static int __read_stat(struct proc_t *proc, char *procname, char *threadname)
 {
     FILE *f;
+    char *nl, *tok;
+    char *cmd = NULL;
     char space[] = " ";
-    char *p, *nl, *tok;
     int field = 0;
-    struct proc_t *proc;
-    
+
     pid_t pid = -1, tgid = -1, ppid = -1, pgid = -1, sid = -1;
-    uid_t euid = -1;
     int ctty = -1, prio = 0, nice = 0, threads = 1;
-    char *cmd = NULL, *user = NULL, *cmdline = NULL;
-    char state = '-';
     long utime = 0, stime = 0;
     long unsigned int wchan = 0, majflt = 0, rss = 0;
-    size_t vmsize = 0;
-    
+    char state = '-';
+
     /*
      * Read most of the process's info from /proc/pid/stat
      */
-    sprintf(buf, "/proc/%s/stat", dent->d_name);
-    
+    if(threadname)
+    {
+        sprintf(buf, "/proc/%s/task/%s/stat", procname, threadname);
+    }
+    else
+    {
+        sprintf(buf, "/proc/%s/stat", procname);
+    }
+
     if(!(f = fopen(buf, "r")))
     {
-        return NULL;
+        return 0;
     }
     
     if(fgets(buf, sizeof(buf), f) != NULL)
@@ -540,47 +544,57 @@ struct proc_t *do_entry(struct dirent *dent)
             field++;
             tok = strtok(NULL, space);
         }
-        
-        /*
-        if(strstr(buf, "Pid:") == buf)
-        {
-            pid = atoi(SKIP_SPACES(p, buf + 4));
-        }
-        else if(strstr(buf, "Pgid:") == buf)
-        {
-            pgid = atoi(SKIP_SPACES(p, buf + 5));
-        }
-        else if(strstr(buf, "Tgid:") == buf)
-        {
-            tgid = atoi(SKIP_SPACES(p, buf + 5));
-        }
-        else if(strstr(buf, "Uid:") == buf)
-        {
-            SKIP_SPACES(p, buf + 4);
-            // skip the 'uid' field
-            SKIP_LETTERS(p, p);
-            // the 'uid' field is followed by '\t', then the 'euid' field,
-            // which is what we want
-            euid = atoi(++p);
-        }
-        else if(strstr(buf, "Name:") == buf)
-        {
-            name = strdup(SKIP_SPACES(p, buf + 5));
-        }
-        */
     }
     
     fclose(f);
-    
+
+    proc->cmd = cmd;
+    proc->tgid = tgid;
+    proc->pid = pid;
+    //proc->tid = tid;
+    proc->state = state;
+    proc->ppid = ppid;
+    proc->pgid = pgid;
+    proc->sid = sid;
+    proc->ctty = ctty;
+    //proc->tpgid = tpgid;
+    proc->utime = utime;
+    proc->stime = stime;
+    proc->prio = prio;
+    proc->nice = nice;
+    proc->threads = threads;
+    proc->wchan = wchan;
+    proc->majflt = majflt;
+    proc->rss = rss;
+
+    return 1;
+}
+
+
+static int __read_status(struct proc_t *proc, char *procname, char *threadname)
+{
+    FILE *f;
+    char *p;
+    uid_t euid = -1;
+    size_t vmsize = 0;
+
     /*
      * Read euid and vmsize from /proc/pid/status
      */
-    euid = 0;
-    sprintf(buf, "/proc/%s/status", dent->d_name);
+    //euid = 0;
+
+    if(threadname)
+    {
+        sprintf(buf, "/proc/%s/task/%s/status", procname, threadname);
+    }
+    else
+    {
+        sprintf(buf, "/proc/%s/status", procname);
+    }
 
     if(!(f = fopen(buf, "r")))
     {
-        return NULL;
+        return 0;
     }
 
     while(fgets(buf, sizeof(buf), f) != NULL)
@@ -606,122 +620,219 @@ struct proc_t *do_entry(struct dirent *dent)
 
     fclose(f);
 
+    proc->euid = euid;
+    proc->vmsize = vmsize;
+
+    return 1;
+}
+
+
+static int __read_cmdline(struct proc_t *proc, char *procname)
+{
+    FILE *f;
+    char *nl;
+    char *cmdline = NULL;
+
+    sprintf(buf, "/proc/%s/cmdline", procname);
+
+    if(!(f = fopen(buf, "r")))
+    {
+        return 0;
+    }
+    
+    if(fgets(buf, sizeof(buf), f) != NULL)
+    {
+        if((nl = strchr(buf, '\n')))
+        {
+            *nl = '\0';
+        }
+
+        if(*buf)
+        {
+            cmdline = strdup(buf);
+            free(proc->cmd);
+            proc->cmd = cmdline;
+        }
+    }
+
+    fclose(f);
+
+    return 1;
+}
+
+
+struct proc_t *do_entry(char *myname, struct dirent *dent, struct proc_t **tail)
+{
+    char tmpname[1024];
+    struct proc_t *proc, *tmp;
+
+    // make a copy of the name, as we might open another directory and
+    // libc stores dirent names in a static buffer
+    strcpy(tmpname, dent->d_name);
+
+    *tail = NULL;
+
+    if(!(proc = malloc(sizeof(struct proc_t))))
+    {
+        return NULL;
+    }
+
+    proc->next = NULL;
+
+    if(!__read_stat(proc, tmpname, NULL))
+    {
+        fprintf(stderr, "%s: failed to read /proc/%s/stat: %s\n", 
+                        myname, tmpname, strerror(errno));
+        free(proc);
+        return NULL;
+    }
+
+    if(!__read_status(proc, tmpname, NULL))
+    {
+        fprintf(stderr, "%s: failed to read /proc/%s/status: %s\n", 
+                        myname, tmpname, strerror(errno));
+        FREE(proc->cmd);
+        free(proc);
+        return NULL;
+    }
+
     // filter user processes if not -a,e,A,d
     if(!show_all)
     {
-        if(euid != my_euid)
+        if(proc->euid != my_euid)
         {
-            FREE(cmd);
+            FREE(proc->cmd);
+            free(proc);
             return NULL;
         }
     }
     
-    if(!show_leaders && pid == pgid)
+    if(!show_leaders && proc->pid == proc->pgid)
     {
-        FREE(cmd);
+        FREE(proc->cmd);
+        free(proc);
         return NULL;
     }
 
     //printf("do_entry: show_noterm %d, ctty %d\n", show_noterm, ctty);
 
-    if(!show_noterm && ctty <= 0)
+    if(!show_noterm && proc->ctty <= 0)
     {
-        FREE(cmd);
+        FREE(proc->cmd);
+        free(proc);
         return NULL;
     }
 
-    if(show_running_only && state != 'R')
+    if(show_running_only && proc->state != 'R')
     {
-        FREE(cmd);
+        FREE(proc->cmd);
+        free(proc);
         return NULL;
     }
     
-    if(!show_threads && pid != tgid)
+    if(!show_threads && proc->pid != proc->tgid)
     {
-        for(proc = proc_head; proc != NULL; proc = proc->next)
+        for(tmp = proc_head; tmp != NULL; tmp = tmp->next)
         {
-            if(proc->tgid == tgid)
+            if(tmp->tgid == proc->tgid)
             {
-                proc->utime += utime;
-                proc->stime += stime;
+                tmp->utime += proc->utime;
+                tmp->stime += proc->stime;
                 break;
             }
         }
         
-        FREE(cmd);
+        FREE(proc->cmd);
+        free(proc);
         return NULL;
     }
 
     /*
      * Get the user's name
      */
-    user = get_user(euid);
+    proc->user = get_user(proc->euid);
 
     /*
      * Get the process's commandline
      */
     if(show_cmd_args)
     {
-        sprintf(buf, "/proc/%s/cmdline", dent->d_name);
-
-        if(!(f = fopen(buf, "r")))
+        if(!__read_cmdline(proc, tmpname))
         {
-            FREE(cmd);
-            //FREE(user);
+            fprintf(stderr, "%s: failed to read /proc/%s/cmdline: %s\n", 
+                            myname, tmpname, strerror(errno));
+            FREE(proc->cmd);
+            free(proc);
             return NULL;
         }
+    }
     
-        if(fgets(buf, sizeof(buf), f) != NULL)
+    update_col_widths(proc);
+    *tail = proc;
+
+    /*
+     * Now get thread info if the user chose to print thread info
+     * and the process is multi-threaded
+     */
+    if(show_threads && proc->threads > 1)
+    {
+        DIR *procdir;
+        struct dirent *dent;
+
+        sprintf(buf, "/proc/%s/task", tmpname);
+
+        if(!(procdir = opendir(buf)))
         {
-            if((nl = strchr(buf, '\n')))
+            fprintf(stderr, "%s: failed to read %s: %s\n", myname, buf, strerror(errno));
+            return proc;
+        }
+
+        while((dent = readdir(procdir)) != NULL)
+        {
+            // go through the entries in the /proc/pid/task directory, creating
+            // entries for all the threads except the main thread
+            if(dent->d_name[0] >= '0' && dent->d_name[0] <= '9' &&
+               strcmp(tmpname, dent->d_name) != 0)
             {
-                *nl = '\0';
-            }
-            
-            if(*buf)
-            {
-                cmdline = strdup(buf);
-                free(cmd);
-                cmd = cmdline;
+                if(!(tmp = malloc(sizeof(struct proc_t))))
+                {
+                    closedir(procdir);
+                    return proc;
+                }
+
+                tmp->next = NULL;
+                (*tail)->next = tmp;
+                *tail = tmp;
+
+                if(!__read_stat(tmp, tmpname, dent->d_name))
+                {
+                    fprintf(stderr, "%s: failed to read /proc/%s/task/%s/stat: %s\n", 
+                                    myname, tmpname, dent->d_name, strerror(errno));
+                    free(tmp);
+                    closedir(procdir);
+                    return proc;
+                }
+
+                if(!__read_status(tmp, tmpname, dent->d_name))
+                {
+                    fprintf(stderr, "%s: failed to read /proc/%s/task/%u/status: %s\n", 
+                                    myname, tmpname, tmp->pid, strerror(errno));
+                    FREE(tmp->cmd);
+                    free(tmp);
+                    closedir(procdir);
+                    return proc;
+                }
+
+                FREE(tmp->cmd);
+                tmp->cmd = proc->cmd;
+                tmp->user = proc->user;
+                update_col_widths(tmp);
             }
         }
 
-        fclose(f);
+        closedir(procdir);
     }
-    
-    // now allocate and return the result
-    if(!(proc = malloc(sizeof(struct proc_t))))
-    {
-        FREE(cmd);
-        //FREE(user);
-        return NULL;
-    }
-    
-    proc->tgid = tgid;
-    proc->cmd = cmd;
-    proc->pid = pid;
-    //proc->tid = tid;
-    proc->state = state;
-    proc->ppid = ppid;
-    proc->pgid = pgid;
-    proc->sid = sid;
-    proc->euid = euid;
-    proc->ctty = ctty;
-    //proc->tpgid = tpgid;
-    proc->utime = utime;
-    proc->stime = stime;
-    proc->prio = prio;
-    proc->nice = nice;
-    proc->threads = threads;
-    proc->user = user;
-    proc->wchan = wchan;
-    proc->majflt = majflt;
-    proc->rss = rss;
-    proc->vmsize = vmsize;
-    proc->next = NULL;
-    
-    update_col_widths(proc);
-    
+
     return proc;
 }
 
@@ -921,8 +1032,8 @@ int main(int argc, char **argv)
     char *arg;
     DIR *procdir;
     struct dirent *dent;
-    struct proc_t *proc;
-    
+    struct proc_t *proc, *tail;
+
     my_euid = geteuid();
 
     /*
@@ -1129,35 +1240,35 @@ int main(int argc, char **argv)
     {
         page_size = 4096;
     }
-    
+
     if(!(procdir = opendir("/proc")))
     {
         fprintf(stderr, "%s: failed to read /proc: %s\n", argv[0], strerror(errno));
         exit(1);
     }
-    
+
     while((dent = readdir(procdir)) != NULL)
     {
         if(dent->d_name[0] >= '0' && dent->d_name[0] <= '9')
         {
-            if((proc = do_entry(dent)))
+            if((proc = do_entry(argv[0], dent, &tail)))
             {
                 if(proc_head == NULL)
                 {
                     proc_head = proc;
-                    proc_tail = proc;
+                    proc_tail = tail;
                 }
                 else
                 {
                     proc_tail->next = proc;
-                    proc_tail = proc;
+                    proc_tail = tail;
                 }
             }
         }
     }
-    
+
     closedir(procdir);
-    
+
     if(proc_head)
     {
         print_header();

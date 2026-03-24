@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: init.c
  *    This file is part of LaylaOS.
@@ -794,6 +794,22 @@ static void spawn_daemons(void)
 }
 
 
+static void create_var_tmp(const char *path)
+{
+    int fd;
+
+    if((fd = open(path, O_RDWR | O_CREAT)) < 0)
+    {
+        INIT_WARN("failed to create %s: %s", path, strerror(errno));
+        return;
+    }
+
+    fchmod(fd, 0664);
+
+    close(fd);
+}
+
+
 int init(void)
 {
     int i;
@@ -807,6 +823,10 @@ int init(void)
     }
 
     INIT_MSG("finished mounting filesystems");
+
+    // create /var/run/utmp and /var/run/wtmp
+    create_var_tmp("/var/run/utmp");
+    create_var_tmp("/var/run/wtmp");
 
     // now setup our SIGINT and SIGHUP signal handlers, which we use to handle
     // system shutdown and reboot

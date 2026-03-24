@@ -17,12 +17,15 @@ LIBCPATH:=$(SYSROOT)/usr/local/lib/libc.a
 #CPPFLAGS:=-fprofile-arcs -ftest-coverage
 CPPFLAGS?=
 
-PROGS=dispman getty login chvt \
+PROGS=dispman getty chvt \
       cal more reboot ps umount free \
-      daemon init losetup
+      daemon init losetup getopt
 
 # these should be installed from coreutils:
 # echo cat ls
+
+# this should be installed from shadow:
+# login
 
 # extra setup for the x86-64 kernel
 LIBAELF:=desktop/libaelf$(if $(HOST) == "x86_64",64,32).a
@@ -208,7 +211,7 @@ GUI_PROGS:=$(GUI_DIR)/server/guiserver \
            $(GUI_DIR)/png_test
 
 
-all: check-config $(PROGS) lspci strace mount $(LIBGUI) $(LIBGUISO) $(GUI_PROGS) widgets epilogue install
+all: check-config $(PROGS) lspci lsusb strace mount $(LIBGUI) $(LIBGUISO) $(GUI_PROGS) widgets epilogue install
 
 check-config:
 	if [ "$(HOST)" != "x86_64" ]; then  \
@@ -226,7 +229,7 @@ check-config:
 	echo "        HOST     = $(HOST)"
 
 epilogue:
-	echo "    Compiled: " $(PROGS) lspci strace $(GUI_PROGS)
+	echo "    Compiled: " $(PROGS) lspci lsusb strace $(GUI_PROGS)
 	echo "    Compiled: " $(LIBGUI) $(LIBGUISO)
 	echo "    Compiled: " $(GUIWIDGET_OBJS)
 
@@ -246,6 +249,10 @@ lspci: pcilib.o lspci.o
 	echo "    Linking   " $@
 	$(CC) -o $@ lspci.o pcilib.o $(CFLAGS) $(CPPFLAGS)
 
+lsusb: lsusb-lib.o lsusb.o
+	echo "    Linking   " $@
+	$(CC) -o $@ lsusb.o lsusb-lib.o $(CFLAGS) $(CPPFLAGS) -lusb-1.0
+
 strace: strace-arg-print.o strace-eoptions.o strace.o
 	echo "    Linking   " $@
 	$(CC) -o $@ strace-arg-print.o strace-eoptions.o strace.o $(CFLAGS) $(CPPFLAGS)
@@ -260,7 +267,8 @@ $(LIBGUI): $(LIBGUI_OBJS)
 
 $(LIBGUISO): $(LIBGUI_OBJS)
 	echo "    Creating shared lib " $@
-	$(CC) $(CFLAGS) $(CPPFLAGS) -shared -fPIC -DPIC -o $@ $(LIBGUI_OBJS) -ljpeg
+	$(CC) $(CFLAGS) $(CPPFLAGS) -shared -fPIC -DPIC -o $@ $(LIBGUI_OBJS) -ljpeg -lfreetype
+	patchelf --set-soname libgui.so $@
 
 widgets:
 	for i in $(GUIWIDGET_OBJS) ; do \
@@ -368,7 +376,7 @@ $(GUI_DIR)/png_test: $(PNGTEST_OBJS)
 clean:
 	echo "    Removing *.o and executables"
 	rm -f *.o
-	rm -f $(PROGS) lspci strace mount $(GUI_PROGS)
+	rm -f $(PROGS) lspci lsusb strace mount $(GUI_PROGS)
 	echo "    Removing " `find . -name '*.o'`
 	rm -f `find . -name '*.o'`
 	echo "    Removing guiserver desktop"
