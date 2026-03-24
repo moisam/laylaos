@@ -98,6 +98,8 @@ enum
 #define WINDOW_BORDERCOLOR                  0x2E3238FF
 #endif
 
+#define WINDOW_BORDER_ALPHA                 0x000000AA
+
 /* For widgets that want to look "3D" */
 
 #define GLOBAL_LIGHT_SIDE_COLOR             0xF2F2F3FF
@@ -114,7 +116,7 @@ enum
 /* Close button colors */
 
 // disabled state
-#define CLOSEBUTTON_TEXTCOLOR_DISABLED      0x5D6366FF
+#define CLOSEBUTTON_TEXTCOLOR_DISABLED      0x919191FF /* 0x5D6366FF */
 
 // normal state
 #define CLOSEBUTTON_BGCOLOR                 0x3B4047FF
@@ -134,7 +136,7 @@ enum
 /* Maximize button colors */
 
 // disabled state
-#define MAXIMIZEBUTTON_TEXTCOLOR_DISABLED   0x5D6366FF
+#define MAXIMIZEBUTTON_TEXTCOLOR_DISABLED   0x919191FF /* 0x5D6366FF */
 
 // normal state
 #define MAXIMIZEBUTTON_BGCOLOR              0x3B4047FF
@@ -154,7 +156,7 @@ enum
 /* Minimize button colors */
 
 // disabled state
-#define MINIMIZEBUTTON_TEXTCOLOR_DISABLED   0x5D6366FF
+#define MINIMIZEBUTTON_TEXTCOLOR_DISABLED   0x919191FF /* 0x5D6366FF */
 
 // normal state
 #define MINIMIZEBUTTON_BGCOLOR              0x3B4047FF
