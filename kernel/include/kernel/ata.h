@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ata.h
  *    This file is part of LaylaOS.
@@ -133,6 +133,7 @@
 #define ATA_IDENT_COMMANDSETS       164
 #define ATA_IDENT_UDMA_MODE         176
 #define ATA_IDENT_MAX_LBA_EXT       200
+#define ATA_IDENT_LOGICSECTSZ       212
 
 /* Transfer modes */
 #define ATA_XFER_MODE_PIO           0x00
@@ -187,12 +188,16 @@
 
 
 // macros to get words and dwords from the MBR
-#define U16(buf, i)         (unsigned int)((buf[i] | (buf[i+1]<<8)) & 0xffff)
-#define U32(buf, i)         (unsigned int)(buf[i] | (buf[i+1]<<8) |         \
-                                           (buf[i+2]<<16) | (buf[i+3]<<24))
+#define U16(buf, i)         (((unsigned int)((buf)[i]) |     \
+                            ((unsigned int)((buf)[i + 1])<<8)) & 0xffff)
 
-#define get_dword(buf)	((uint32_t)(*(buf)) | (uint32_t)(*(buf+1)<<8) | \
-                        ((uint32_t)(*(buf+2))<<16) | (uint32_t)(*(buf+3)<<24))
+#define U32(buf, i)         ((uint32_t)((buf)[i]) |          \
+                            ((uint32_t)((buf)[i + 1])<<8) |  \
+                            ((uint32_t)((buf)[i + 2])<<16) | \
+                            ((uint32_t)((buf)[i + 3])<<24))
+
+#define get_dword(buf)	((uint32_t)((buf)[0]) | ((uint32_t)((buf)[1])<<8) | \
+                        ((uint32_t)((buf)[2])<<16) | ((uint32_t)((buf)[3])<<24))
 
 
 #ifndef ATAPI_SECTOR_SIZE
@@ -287,8 +292,13 @@ struct ata_dev_s
     size_t dma_buf_size;         /**< DMA buffer size */
     
     // these fields are used by AHCI disks
-    struct ahci_dev_t *ahci;     /**< pointer to AHCI device (obviously only
-                                      used by AHCI devices) */
+    volatile union
+    {
+        struct ahci_dev_t *ahci;     /**< pointer to AHCI device (obviously only
+                                          used by AHCI devices) */
+        void *priv;                  /**< used by other drivers, e.g. USB */
+    };
+
     int port_index;              /**< AHCI port index (obviously only
                                       used by AHCI devices) */
 };
@@ -356,6 +366,18 @@ void ata_init(struct pci_dev_t *pci);
  * @return  zero or a positive result on success, -(errno) on failure.
  */
 long ata_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
+
+/**
+ * @brief Get ATA disk block size.
+ *
+ * Get physical block size from the disk's IDENTIFY information buffer.
+ *
+ * @param   dev         ATA device
+ * @param   ide_buf     buffer containing disk 512-byte IDENTIFY information
+ *
+ * @return  nothing.
+ */
+void ata_get_blocksz(struct ata_dev_s *dev, uint8_t *ide_buf);
 
 
 /**********************************
@@ -502,7 +524,7 @@ int ide_wait_irq(void);
  *
  * @return  1 if the IRQ was handled, 0 if not.
  */
-int ide_irq_callback(struct regs *r, int arg);
+int ide_irq_callback(struct regs *r, void *arg);
 
 
 /*********************************************
@@ -520,5 +542,9 @@ long atapi_write_packet(struct ata_dev_s *dev,
 long common_ata_ioctl(dev_t devid, struct ata_dev_s *dev, 
                       struct parttab_s *part, 
                       unsigned int cmd, char *arg, int kernel);
+
+int read_disk_mbr(char *module, void *dev, size_t bytes_per_sector,
+                  int (*read_sector)(void *, uintptr_t, uintptr_t, uint32_t),
+                  void (*register_dev)(void *, struct parttab_s *, int));
 
 #endif      /* __ATA_H__ */

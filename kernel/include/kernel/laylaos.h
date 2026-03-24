@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: laylaos.h
  *    This file is part of LaylaOS.
@@ -37,7 +37,6 @@
 
 // define some system-wide upper limits
 #define MAX_NR_TASKS            4096
-//#define MAX_NR_DISK_BUFFERS     1024
 
 // for debugging
 #ifdef __DEBUG
@@ -181,74 +180,21 @@ extern unsigned long simple_strtoul(const char *__restrict nptr,
 
 #ifdef __x86_64__
 
-// memory limits of different kernel structs
+// memory limits of different kernel regions
 
-// page cache occupies top memory (upto ~122GiB)
-#define PCACHE_MEM_START        0xFFFF858000000000  /**< page cache start */
-#define PCACHE_MEM_END          0xFFFFFFFFFFFFFFFF  /**< page cache end   */
+#define MMIO_START              0xFFFF900000000000  /**< MMIO start */
+#define MMIO_END                0xFFFFA00000000000  /**< MMIO end   */
 
-// 2TiB for tmpfs
-#define TMPFS_START             0xFFFF838000000000  /**< tmpfs memory start */
-#define TMPFS_END               0xFFFF858000000000  /**< tmpfs memory end   */
+#define KMODULE_START           0xFFFFA00000000000  /**< kernel module start */
+#define KMODULE_END             0xFFFFB00000000000  /**< kernel module end   */
 
-// 2TiB for page tables (actually only 8GiB is used here)
-#define PAGE_TABLE_START        0xFFFF818000000000  /**< page tables start */
-#define PAGE_TABLE_END          0xFFFF818200000000  /**< page tables end   */
-//#define PAGE_TABLE_END          0xFFFF838000000000  /**< page tables end   */
+#define INITRD_START            0xFFFFB00000000000  /**< initrd start */
+#define INITRD_END              0xFFFFC00000000000  /**< initrd end   */
 
-// 1TiB for heap
-#define KHEAP_START             0xFFFF808000000000  /**< kernel heap start */
-#define KHEAP_MAX_ADDR          0xFFFF818000000000  /**< kernel heap end   */
+#define HIMEM_START             0xFFFFC00000000000  /**< himem start */
 
-// everything else occupies the lower 256GiB of the upper half
-// 1GiB
-#define MMIO_START              0xFFFF800340000000  /**< MMIO start */
-#define MMIO_END                0xFFFF800380000000  /**< MMIO end   */
-
-// 2GiB
-#define INITRD_START            0xFFFF8002C0000000  /**< initrd start */
-#define INITRD_END              0xFFFF800340000000  /**< initrd end   */
-
-// 4GiB
-#define KMODULE_START           0xFFFF8001C0000000  /**< kernel module start */
-#define KMODULE_END             0xFFFF8002C0000000  /**< kernel module end   */
-
-// 1GiB
-#define DISK_BUFFER_START       0xFFFF800180000000  /**< disk buffers start */
-#define DISK_BUFFER_END         0xFFFF8001C0000000  /**< disk buffers end   */
-
-// 1GiB
-#define USER_KSTACK_START       0xFFFF800140000000  /**< kernel stack start */
-#define USER_KSTACK_END         0xFFFF800180000000  /**< kernel stack end   */
-
-// 1GiB
-#define DMA_BUF_MEM_START       0xFFFF800100000000  /**< DMA memory start */
-#define DMA_BUF_MEM_END         0xFFFF800140000000  /**< DMA memory end   */
-
-
-#define VBE_BACKBUF_START       0xFFFF8000C8000000  /**< VBE backbuf start */
-#define VBE_BACKBUF_END         0xFFFF8000D0000000  /**< VBE backbuf end   */
-
-#define VBE_FRONTBUF_START      0xFFFF8000C0000000  /**< VBE frontbuf start */
-#define VBE_FRONTBUF_END        0xFFFF8000C8000000  /**< VBE frontbuf end   */
-
-#if 0
-#define VBE_BACKBUF_START       0x0000000058000000  /**< VBE backbuf start */
-#define VBE_BACKBUF_END         0x000000005D000000  /**< VBE backbuf end   */
-
-// 1GiB
-#define VBE_FRONTBUF_START      0xFFFF8000C0000000  /**< VBE frontbuf start */
-#define VBE_FRONTBUF_END        0xFFFF800100000000  /**< VBE frontbuf end   */
-#endif
-
-
-// 1GiB
-#define PIPE_MEMORY_START       0xFFFF800080000000  /**< pipe memory start */
-#define PIPE_MEMORY_END         0xFFFF8000C0000000  /**< pipe memory end   */
-
-// 1GiB
-#define ACPI_MEMORY_START       0xFFFF800040000000  /**< ACPI memory start */
-#define ACPI_MEMORY_END         0xFFFF800080000000  /**< ACPI memory end   */
+#define KHEAP_START             0xFFFFD00000000000  /**< kernel heap start */
+#define KHEAP_MAX_ADDR          0xFFFFF00000000000  /**< kernel heap end   */
 
 // kernel goes in the top half, -128GiB to 0GiB
 #define KERNEL_MEM_START        0xFFFF800000000000  /**< kernel memory start */
@@ -346,43 +292,13 @@ static inline void dump_regs(struct regs *r)
 
 // memory limits of different kernel structs
 
-#define PCACHE_MEM_START        0xFF000000      /**< page cache start */
-#define PCACHE_MEM_END          0xFFFFFFFF      /**< page cache end   */
-
-#define TMPFS_START             0xFBC00000      /**< tmpfs memory start */
-#define TMPFS_END               0xFF000000      /**< tmpfs memory end   */
-
 #define INITRD_START            0xFAC00000      /**< initrd start */
 #define INITRD_END              0xFBC00000      /**< initrd end   */
 
 #define KMODULE_START           0xF7C00000      /**< kernel module start */
 #define KMODULE_END             0xFAC00000      /**< kernel module end   */
 
-#define DISK_BUFFER_START       0xF7800000      /**< disk buffers start */
-#define DISK_BUFFER_END         0xF7C00000      /**< disk buffers end   */
-
-#define USER_KSTACK_START       0xF7400000      /**< kernel stack start */
-#define USER_KSTACK_END         0xF7800000      /**< kernel stack end   */
-
-#define DMA_BUF_MEM_START       0xF7000000      /**< DMA memory start */
-#define DMA_BUF_MEM_END         0xF7400000      /**< DMA memory end   */
-
-#define PAGE_TABLE_START        0xE7E00000      /**< page tables start */
-#define PAGE_TABLE_END          0xF7000000      /**< page tables end   */
-
 /* 26 << 22 */
-#define VBE_BACKBUF_START       0x06800000      /**< VBE backbuf start */
-#define VBE_BACKBUF_END         0x06D00000      /**< VBE backbuf end   */
-
-#define VBE_FRONTBUF_START      0xE7400000      /**< VBE frontbuf start */
-#define VBE_FRONTBUF_END        0xE7900000      /**< VBE frontbuf end   */
-
-#define PIPE_MEMORY_START       0xE7000000      /**< pipe memory start */
-#define PIPE_MEMORY_END         0xE7400000      /**< pipe memory end   */
-
-#define ACPI_MEMORY_START       0xE6C00000      /**< ACPI memory start */
-#define ACPI_MEMORY_END         0xE7000000      /**< ACPI memory end   */
-
 #define KHEAP_START             0xC0400000      /**< kernel heap start */
 #define KHEAP_MAX_ADDR          0xE6BFF000      /**< kernel heap end   */
 

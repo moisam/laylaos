@@ -79,6 +79,13 @@ struct XSDT
 } __attribute__ ((packed));
 
 
+struct MCFG
+{
+    struct ACPISDTHeader h;
+    uint64_t Reserved;
+} __attribute__ ((packed));
+
+
 /*
  * EntryType types.
  * See: https://wiki.osdev.org/MADT

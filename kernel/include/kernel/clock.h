@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: clock.h
  *    This file is part of LaylaOS.
@@ -36,24 +36,9 @@
  */
 
 #include <sys/types.h>
+#include <signal.h>
 #include "bits/timert-def.h"
-
-
-/**
- * @struct clock_waiter_t
- * @brief The clock_waiter_t structure.
- *
- * A structure to represent a single clock waiter (task that is waiting on
- * one of the kernel clocks).
- */
-struct clock_waiter_t
-{
-    int64_t delta;                  /**< time delta in ticks */
-    pid_t pid;                      /**< waiter task */
-    ktimer_t timerid;               /**< timer id */
-    struct clock_waiter_t *next;    /**< next waiter task in list */
-    int used;
-};
+#include "bits/posixtimer-def.h"
 
 
 /**
@@ -105,11 +90,11 @@ extern time_t startup_time;
  * clocks. Currently there are only two queues for the CLOCK_REALTIME and 
  * CLOCK_MONOTONIC clocks, respectively.
  */
-extern struct clock_waiter_t waiter_head[];
+extern struct posix_timer_t waiter_head[];
 
 
-long __clock_wait(struct clock_waiter_t *head, pid_t pid,
-                  int64_t delta, ktimer_t timerid);
+long __clock_wait(struct posix_timer_t *head,
+                  volatile struct posix_timer_t *timer, int64_t delta);
 
 
 /**
@@ -228,11 +213,9 @@ void clock_check_waiters(void);
  *
  * @return  pointer to a \a clock_waiter_t on success, NULL on failure.
  */
-struct clock_waiter_t *get_waiter(volatile struct clock_waiter_t *head,
-                                  pid_t pid, ktimer_t timerid,
-                                  int64_t *remaining_ticks, int unlink);
-
-void waiter_free(struct clock_waiter_t *w);
+void get_waiter(volatile struct posix_timer_t *head,
+                volatile struct posix_timer_t *timer,
+                int64_t *remaining_ticks, int unlink);
 
 /**
  * @brief Nanosleep on a clock.
@@ -240,9 +223,6 @@ void waiter_free(struct clock_waiter_t *w);
  * Perform a nanosleep on clock \a clock_id. Internal function that is
  * called by syscall_clock_nanosleep() and syscall_timer_settime().
  *
- * @param   pid         the waiting task's pid
- * @param   clock_id    clock id (only CLOCK_REALTIME and CLOCK_MONOTONIC are
- *                        currently supported)
  * @param   flags       flags, either 0 or TIMER_ABSTIME
  * @param   __rqtp      requested wait time
  * @param   __rmtp      if not NULL, the remaining time is returned here
@@ -250,9 +230,10 @@ void waiter_free(struct clock_waiter_t *w);
  *
  * @return  zero on success, -(errno) on failure.
  */
-long do_clock_nanosleep(pid_t pid, clockid_t clock_id, int flags, 
-                        struct timespec *__rqtp, struct timespec *__rmtp,
-                        ktimer_t timerid);
+long do_clock_nanosleep(int flags, 
+                        volatile struct timespec *__rqtp, 
+                        volatile struct timespec *__rmtp,
+                        volatile struct posix_timer_t *timer);
 
 /**
  * @brief Handler for syscall clock_nanosleep().

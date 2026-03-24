@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ksignal.h
  *    This file is part of LaylaOS.
@@ -268,7 +268,7 @@ long syscall_sigprocmask(int how, sigset_t *userset, sigset_t *oldset);
  *
  * @return  zero on success, -(errno) on failure.
  */
-long syscall_sigsuspend(struct regs *r, sigset_t *set);
+long syscall_sigsuspend(sigset_t *set);
 
 /**
  * @brief Core dump.
@@ -305,8 +305,7 @@ long syscall_signaltstack(stack_t *ss, stack_t *old_ss);
  *
  * @return  zero on success, -(errno) on failure.
  */
-long add_task_signal(struct task_t *t, int signum, 
-                     siginfo_t *siginfo, int force);
+long add_task_signal(struct task_t *t, int signum, siginfo_nopad_t *siginfo, int force);
 
 
 /***************************

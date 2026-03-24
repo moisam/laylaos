@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: pcache.h
  *    This file is part of LaylaOS.
@@ -107,7 +107,7 @@ struct cached_page_t *get_cached_page(struct fs_node_t *node,
  *
  * @return  nothing.
  */
-void free_cached_page(struct pcache_key_t *pkey, struct cached_page_t *pcache);
+//void free_cached_page(struct pcache_key_t *pkey, struct cached_page_t *pcache);
 
 /**
  * @brief Flush cached pages.

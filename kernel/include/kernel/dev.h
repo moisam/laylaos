@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: dev.h
  *    This file is part of LaylaOS.
@@ -75,7 +75,7 @@ struct cdev_ops_t
 
     long (*ioctl)(dev_t dev, unsigned int cmd, char *arg, int kernel);
                         /**< device ioctl() function */
-    long (*select)(struct file_t *f, int which);     /**< device select()
+    long (*select)(struct file_t *f, int which, int record);/**< device select()
                                                           function */
     long (*poll)(struct file_t *, struct pollfd *);  /**< device poll()
                                                           function */
@@ -97,7 +97,7 @@ struct bdev_ops_t
     long (*close)(dev_t dev);    /**< device close() function */
     long (*ioctl)(dev_t dev, unsigned int cmd, char *arg, int kernel);
                                 /**< device ioctl() function */
-    long (*select)(struct file_t *, int);            /**< device select()
+    long (*select)(struct file_t *, int, int);       /**< device select()
                                                           function */
     long (*poll)(struct file_t *, struct pollfd *);  /**< device poll()
                                                           function */
@@ -486,10 +486,12 @@ ssize_t inputdev_write(struct file_t *f, off_t *pos,
  *
  * @param   f       open file struct
  * @param   which   the select operation to perform
+ * @param   record  if non-zero, selrecord() is called to record a select
+ *                    request on the given file descriptor
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-long inputdev_select(struct file_t *f, int which);
+long inputdev_select(struct file_t *f, int which, int record);
 
 /**
  * @brief Perform a poll operation on an input core device (major = 13).
@@ -517,10 +519,12 @@ long inputdev_poll(struct file_t *f, struct pollfd *pfd);
  *
  * @param   f       open file struct
  * @param   which   the select operation to perform
+ * @param   record  if non-zero, selrecord() is called to record a select
+ *                    request on the given file descriptor
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-long memdev_char_select(struct file_t *f, int which);
+long memdev_char_select(struct file_t *f, int which, int record);
 
 /**
  * @brief Perform a poll operation on a memory core device (major = 1).
@@ -562,10 +566,12 @@ ssize_t mousedev_read(dev_t dev, unsigned char *buf, size_t count);
  *
  * @param   dev     device id
  * @param   which   the select operation to perform
+ * @param   record  if non-zero, selrecord() is called to record a select
+ *                    request on the given file descriptor
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-long mousedev_select(dev_t dev, int which);
+long mousedev_select(dev_t dev, int which, int record);
 
 /**
  * @brief Perform a poll operation on /dev/mouse0.
@@ -643,10 +649,12 @@ ssize_t snddev_read(struct file_t *f, off_t *pos,
  *
  * @param   f       open file struct
  * @param   which   the select operation to perform
+ * @param   record  if non-zero, selrecord() is called to record a select
+ *                    request on the given file descriptor
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-long snddev_select(struct file_t *f, int which);
+long snddev_select(struct file_t *f, int which, int record);
 
 /**
  * @brief Perform a poll operation on a sound device (major = 14).
@@ -709,10 +717,12 @@ ssize_t miscdev_write(struct file_t *f, off_t *pos,
  *
  * @param   f       open file struct
  * @param   which   the select operation to perform
+ * @param   record  if non-zero, selrecord() is called to record a select
+ *                    request on the given file descriptor
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-long miscdev_select(struct file_t *f, int which);
+long miscdev_select(struct file_t *f, int which, int record);
 
 
 /**

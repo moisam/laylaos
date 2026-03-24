@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: asm.h
  *    This file is part of LaylaOS.
@@ -48,6 +48,13 @@
  * halt the processor
  */
 #define hlt()           __asm__ __volatile__ ("hlt")
+
+/**
+ * \def cpuid
+ * the cpuid instruction
+ */
+#define cpuid(in, a, b, c, d)   \
+    __asm__ __volatile__ ("cpuid": "=a" (a), "=b" (b), "=c" (c), "=d" (d) : "a" (in));
 
 
 /**

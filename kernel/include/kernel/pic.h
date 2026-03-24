@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: pic.h
  *    This file is part of LaylaOS.
@@ -111,10 +111,11 @@ void pic_disable(void);
  * Enable the given IRQ.
  *
  * @param   irq_line    IRQ to enable
+ * @param   apic_flags  APIC flags (not used on PIC)
  *
  * @return  nothing.
  */
-void enable_irq(unsigned char irq_line);
+void enable_irq(unsigned char irq_line, uint16_t apic_flags);
 
 /**
  * @brief Disable an IRQ.

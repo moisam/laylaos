@@ -70,6 +70,11 @@ void kernel_mutex_unlock(volatile struct kernel_mutex_t *mutex);
         (lock)->recursive_count = (lock)->recursive_count - 1;      \
     else kernel_mutex_unlock(lock);
 
+#define kernel_mutex_lock_infinite_wait(lock)                       \
+    while(kernel_mutex_trylock(lock) != 0) {                        \
+        __asm__ __volatile__("pause":::);                           \
+    }
+
 
 void scheduler(void);
 

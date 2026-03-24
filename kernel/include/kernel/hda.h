@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: hda.h
  *    This file is part of LaylaOS.
@@ -85,8 +85,10 @@
 #define VERB_GET_CONFIG_DEFAULT     0xf1c00
 #define VERB_GET_CONN_LIST          0xf0200
 #define VERB_GET_CONN_SELECT        0xf0100
+#define VERB_SET_CONN_SELECT        0x70100
 #define VERB_GET_PIN_CONTROL        0xf0700
 #define VERB_SET_PIN_CONTROL        0x70700
+#define VERB_GET_PIN_SENSE          0xf0900
 #define VERB_GET_EAPD_BTL           0xf0c00
 #define VERB_SET_EAPD_BTL           0x70c00
 #define VERB_GET_POWER_STATE        0xf0500
@@ -101,6 +103,8 @@
 #define WIDGET_PARAM_SUBNODE_COUNT          0x4
 #define WIDGET_PARAM_FUNC_GROUP_TYPE        0x5
 #define WIDGET_PARAM_WIDGET_CAPS            0x9
+#define WIDGET_PARAM_PIN_CAPS               0xc
+#define WIDGET_PARAM_CONNLIST_LEN           0xe
 #define WIDGET_PARAM_OUT_AMP_CAPS           0x12
 
 
@@ -432,7 +436,7 @@ int hda_get_bits_per_sample(struct hda_dev_t *hda);
  *
  * @return  always zero.
  */
-int hda_play_stop(struct hda_dev_t *hda, int cmd);
+int hda_play_stop(volatile struct hda_dev_t *hda, int cmd);
 
 /**
  * @brief Create dummy HDA device.

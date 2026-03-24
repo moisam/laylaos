@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: pci.h
  *    This file is part of LaylaOS.
@@ -33,6 +33,36 @@
 #include <kernel/irq.h>
 
 
+extern struct irq_redir_t pci_acpi_irq[256][32];
+
+
+/*
+ * Struct to represent an Enhanced Configuration Allocation Mechanism (ECAM)
+ * entry in the MCFG table.
+ */
+struct ecam_t
+{
+    uint64_t baseaddr;      /**< Base address */
+    uint16_t segment;       /**< PCI segment group */
+    uint8_t bus_start;      /**< Starting PCI bus number */
+    uint8_t bus_end;        /**< Ending PCI bus number */
+    uint32_t res;           /**< Reserved */
+} __attribute__((packed));
+
+
+struct pci_bar_t
+{
+    unsigned long base;
+
+#define PCI_IOTYPE_INVALID  0
+#define PCI_IOTYPE_MMIO     1
+#define PCI_IOTYPE_IO       2
+    unsigned int iotype;
+
+    size_t iosize;
+};
+
+
 /**
  * @struct pci_dev_t
  * @brief The pci_dev_t structure.
@@ -43,7 +73,8 @@ struct pci_dev_t
 {
     uint8_t base_class;     /**< device base class */
     uint8_t sub_class;      /**< device subclass */
-    uint8_t bus;            /**< bus number */
+    uint16_t segment;       /**< segment number (for PCIe) */
+    uint16_t bus;           /**< bus number */
     uint8_t dev;            /**< device number */
     uint8_t function;       /**< function number */
     uint16_t vendor;        /**< device vendor id */
@@ -52,6 +83,7 @@ struct pci_dev_t
     uint8_t prog_if;        /**< programming interface */
     uint8_t rev;            /**< revision number */
     unsigned int bar[6];    /**< Base Address Registers (BARs) */
+    volatile uintptr_t config_space; /**< device config space (for PCIe) */
     struct pci_dev_t *next; /**< next PCI device on kernel list */
     
     struct handler_t irq_handler;   /**< IRQ handler */
@@ -59,7 +91,7 @@ struct pci_dev_t
                                  identify different devices) */
 
 //#define PCIDEV_FLAG_ALIVE           1
-    int flags;              /**< flags (currently unused) */
+    //int flags;              /**< flags (currently unused) */
 };
 
 
@@ -182,16 +214,13 @@ void pci_enable_iospace(struct pci_dev_t *pci);
  * Write a 32-bit word to the given \a pci device's I/O space at the given
  * \a offset.
  *
- * @param   bus         bus number
- * @param   slot        device number
- * @param   func        function number
+ * @param   pci         PCI device
  * @param   offset      offet into I/O space
  * @param   val         32-bit value to write
  *
  * @return  nothing.
  */
-void pci_config_write_long(uint8_t bus, uint8_t slot, uint8_t func, 
-                           uint8_t offset, uint32_t val);
+void pci_config_write_long(struct pci_dev_t *pci, uint8_t offset, uint32_t val);
 
 /**
  * @brief Write byte to PCI I/O space.
@@ -199,16 +228,13 @@ void pci_config_write_long(uint8_t bus, uint8_t slot, uint8_t func,
  * Write an 8-bit value to the given \a pci device's I/O space at the given
  * \a offset.
  *
- * @param   bus         bus number
- * @param   slot        device number
- * @param   func        function number
+ * @param   pci         PCI device
  * @param   offset      offet into I/O space
  * @param   val         8-bit value to write
  *
  * @return  nothing.
  */
-void pci_config_write_byte(uint8_t bus, uint8_t slot, uint8_t func, 
-                           uint8_t offset, uint8_t val);
+void pci_config_write_byte(struct pci_dev_t *pci, uint8_t offset, uint8_t val);
 
 /**
  * @brief Write word to PCI I/O space.
@@ -216,16 +242,13 @@ void pci_config_write_byte(uint8_t bus, uint8_t slot, uint8_t func,
  * Write a 16-bit word to the given \a pci device's I/O space at the given
  * \a offset.
  *
- * @param   bus         bus number
- * @param   slot        device number
- * @param   func        function number
+ * @param   pci         PCI device
  * @param   offset      offet into I/O space
  * @param   val         16-bit value to write
  *
  * @return  nothing.
  */
-void pci_config_write(uint8_t bus, uint8_t slot, uint8_t func, 
-                      uint8_t offset, uint16_t val);
+void pci_config_write(struct pci_dev_t *pci, uint8_t offset, uint16_t val);
 
 /**
  * @brief Read long word from PCI I/O space.
@@ -233,15 +256,12 @@ void pci_config_write(uint8_t bus, uint8_t slot, uint8_t func,
  * Read a 32-bit word from the given \a pci device's I/O space from the given
  * \a offset.
  *
- * @param   bus         bus number
- * @param   slot        device number
- * @param   func        function number
+ * @param   pci         PCI device
  * @param   offset      offet into I/O space
  *
  * @return  32-bit value.
  */
-uint32_t pci_config_read_long(uint8_t bus, uint8_t slot, uint8_t func, 
-                              uint8_t offset);
+uint32_t pci_config_read_long(struct pci_dev_t *pci, uint8_t offset);
 
 /**
  * @brief Read byte from PCI I/O space.
@@ -249,15 +269,12 @@ uint32_t pci_config_read_long(uint8_t bus, uint8_t slot, uint8_t func,
  * Read an 8-bit word from the given \a pci device's I/O space from the given
  * \a offset.
  *
- * @param   bus         bus number
- * @param   slot        device number
- * @param   func        function number
+ * @param   pci         PCI device
  * @param   offset      offet into I/O space
  *
  * @return  8-bit value.
  */
-uint8_t pci_config_read_byte(uint8_t bus, uint8_t slot, uint8_t func, 
-                             uint8_t offset);
+uint8_t pci_config_read_byte(struct pci_dev_t *pci, uint8_t offset);
 
 /**
  * @brief Read word from PCI I/O space.
@@ -265,15 +282,12 @@ uint8_t pci_config_read_byte(uint8_t bus, uint8_t slot, uint8_t func,
  * Read a 16-bit word from the given \a pci device's I/O space from the given
  * \a offset.
  *
- * @param   bus         bus number
- * @param   slot        device number
- * @param   func        function number
+ * @param   pci         PCI device
  * @param   offset      offet into I/O space
  *
  * @return  16-bit value.
  */
-uint16_t pci_config_read(uint8_t bus, uint8_t slot, uint8_t func, 
-                         uint8_t offset);
+uint16_t pci_config_read(struct pci_dev_t *pci, uint8_t offset);
 
 /**
  * @brief Check PCI buses.
@@ -297,7 +311,10 @@ void pci_check_all_buses(void);
  * @return  nothing.
  */
 void pci_register_irq_handler(struct pci_dev_t *pci, 
-                              int (*handler)(struct regs *, int),
+                              int (*handler)(struct regs *, void *),
                               char *name);
+
+
+void pci_get_bar_info(struct pci_dev_t *pci, struct pci_bar_t *out);
 
 #endif      /* __PCI_H__ */

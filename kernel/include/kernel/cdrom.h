@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: cdrom.h
  *    This file is part of LaylaOS.
@@ -88,6 +88,25 @@ static inline uint32_t _4btol(uint8_t *src)
 {
     return ((uint32_t)src[0] << 24) | ((uint32_t)src[1] << 16) | ((uint32_t)src[2] << 8) | src[3];
 }
+
+
+/*
+ * Structure to represent the data returned by the REQUEST SENSE command.
+ */
+struct sense_data_t
+{
+    uint8_t err_code;
+    uint8_t reserved1;
+    uint8_t sense_key;
+    uint32_t info;
+    uint8_t additional_sense_len;
+    uint32_t cmd_specific_info;
+    uint8_t additional_sense_code;
+    uint8_t additional_sense_code_qualifier;
+    uint8_t field_replacable_unit_code;
+    uint8_t sense_key_specific[3];
+    uint8_t additional_sense_bytes[1];
+} __attribute__((packed));
 
 
 /**

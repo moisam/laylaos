@@ -104,7 +104,7 @@ static struct parttab_s *part_from_gpt_ent(struct gpt_part_entry_t *ent)
         part->dev = NULL;
 
         /*
-        printk("    Partition %d\n", dev_index);
+        //printk("    Partition %d\n", dev_index);
         printk("      attribs 0x%x\n", part->attribs);
         printk("      lba %u\n", part->lba);
         printk("      total_sectors %u\n", part->total_sectors);

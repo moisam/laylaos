@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: kbd.h
  *    This file is part of LaylaOS.
@@ -212,7 +212,7 @@ void kbd_reset_system(void);
  *
  * @return  1 if the IRQ was handled, 0 if not.
  */
-int sharedps2_callback(struct regs *r, int arg);
+int sharedps2_callback(struct regs *r, void *arg);
 
 /**
  * @brief Initialise PS/2 devices.

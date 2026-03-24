@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: ioapic.h
  *    This file is part of LaylaOS.
@@ -34,6 +34,15 @@
 #define IOAPIC_ACTIVE_HIGH_LOW          (1 << 1)
 #define IOAPIC_TRIGGER_EDGE_LOW         (1 << 3)
 
+struct ioapic_t
+{
+    uint8_t id, max_redirect;
+    uint32_t phys_base, irq_base;
+    uintptr_t virt_base;
+};
+
+extern struct ioapic_t ioapics[MAX_IOAPIC];
+
 
 /***********************
  * Function prototypes
@@ -41,7 +50,7 @@
 
 //void ioapic_init(uintptr_t phys_base);
 void ioapic_disable_irq(uint32_t i);
-void ioapic_enable_irq(uint32_t i);
+void ioapic_enable_irq(uint32_t i, uint16_t apic_flags);
 void ioapic_add(uint32_t int_base, uint32_t phys_base);
 void ioapic_redirect_legacy_irqs(void);
 
