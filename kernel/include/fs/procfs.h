@@ -427,6 +427,10 @@ size_t get_task_mmaps(struct task_t *task, char **_buf);
 size_t get_task_smaps(struct task_t *task, char **_buf);
 size_t get_task_posix_timers(struct task_t *task, char **_buf);
 size_t get_task_io(struct task_t *task, char **buf);
+size_t get_task_comm(struct task_t *task, char **buf);
+size_t get_task_exe(struct task_t *task, char **buf);
+size_t get_task_cwd(struct task_t *task, char **buf);
+size_t get_task_root(struct task_t *task, char **buf);
 
 int copy_task_dirpath(dev_t dev, ino_t ino,
                       char *buf, size_t bufsz, int kernel);
@@ -449,6 +453,9 @@ size_t get_vmstat(char **buf);
 size_t get_loadavg(char **buf);
 size_t get_meminfo(char **buf);
 size_t get_modules(char **buf);
+size_t get_cmdline(char **buf);
+size_t get_self(char **buf);
+size_t get_thread_self(char **buf);
 
 size_t get_mounts(char **buf);
 size_t get_mountstats(char **buf);

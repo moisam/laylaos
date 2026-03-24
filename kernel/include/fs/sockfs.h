@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: sockfs.h
  *    This file is part of LaylaOS.
@@ -107,10 +107,12 @@ long sockfs_ioctl(struct file_t *fp, int cmd, char *data, int kernel);
  *
  * @param   fp      open file struct
  * @param   which   the select operation to perform
+ * @param   record  if non-zero, selrecord() is called to record a select
+ *                    request on the given file descriptor
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-long sockfs_select(struct file_t *fp, int which);
+long sockfs_select(struct file_t *fp, int which, int record);
 
 /**
  * @brief Perform a poll operation on a socket.

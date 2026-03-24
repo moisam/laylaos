@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: pipefs.h
  *    This file is part of LaylaOS.
@@ -99,10 +99,12 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
  *
  * @param   f       open file struct
  * @param   which   the select operation to perform
+ * @param   record  if non-zero, selrecord() is called to record a select
+ *                    request on the given file descriptor
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-long pipefs_select(struct file_t *f, int which);
+long pipefs_select(struct file_t *f, int which, int record);
 
 /**
  * @brief Perform a poll operation on a pipe.

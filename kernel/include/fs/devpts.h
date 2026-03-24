@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: devpts.h
  *    This file is part of LaylaOS.
@@ -233,10 +233,12 @@ struct tty_t *devpts_get_struct_tty(dev_t dev);
  *
  * @param   f       open file struct
  * @param   which   the select operation to perform
+ * @param   record  if non-zero, selrecord() is called to record a select
+ *                    request on the given file descriptor
  *
  * @return  1 if there are selectable events, 0 otherwise.
  */
-long pty_master_select(struct file_t *f, int which);
+long pty_master_select(struct file_t *f, int which, int record);
 
 /**
  * @brief Perform a poll operation on a master pty device.

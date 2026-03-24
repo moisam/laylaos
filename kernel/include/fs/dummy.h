@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: dummy.h
  *    This file is part of LaylaOS.
@@ -63,10 +63,12 @@ long dummyfs_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
  *
  * @param   f       open file struct
  * @param   which   the select operation to perform
+ * @param   record  if non-zero, selrecord() is called to record a select
+ *                    request on the given file descriptor
  *
  * @return  always 1.
  */
-long dummyfs_select(struct file_t *f, int which);
+long dummyfs_select(struct file_t *f, int which, int record);
 
 /**
  * @brief Perform a dummy poll operation.

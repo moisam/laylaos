@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: ext2_hash.h
  *    This file is part of LaylaOS.
@@ -117,19 +117,18 @@ struct htree_incore_t
     uint32_t hash_seed[4];
     uint16_t limit;
     uint16_t count;
+    int bufsz;
+    int8_t levels;
+    int8_t ext_dir_type;
+    int8_t lookup_flags;
     uint8_t hash_ver;
-    size_t lblock;
     size_t cur_ent, first_ent;
-    int levels;
-    int ext_dir_type;
-    int lookup_flags;
-    struct ext2_superblock_t *super;
+    //struct ext2_superblock_t *super;
     struct mount_info_t *d;
     struct cached_page_t *htree_block;
     struct fs_node_t *dir;
     volatile struct htree_incore_t *parent;
     void *buf;
-    int bufsz;
 };
 
 /*********************************
