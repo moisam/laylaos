@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: fcntl.c
  *    This file is part of LaylaOS.
@@ -91,7 +91,8 @@ long fcntl_setlock(struct file_t *fp, int cmd, struct flock *lock)
 
     if(lock->l_type == F_RDLCK)
     {
-        if(!(fp->flags & O_RDONLY) && !(fp->flags & O_RDWR))
+        /* read lock -- must be open with O_RDONLY or O_RDWR flags */
+        if(fp->flags & O_WRONLY)
         {
             return -EBADF;
         }
@@ -99,6 +100,7 @@ long fcntl_setlock(struct file_t *fp, int cmd, struct flock *lock)
         return add_lock(fp, lock);
     }
 
+    /* write lock -- must be open with O_WRONLY or O_RDWR flags */
     if(!(fp->flags & O_WRONLY) && !(fp->flags & O_RDWR))
     {
         return -EBADF;

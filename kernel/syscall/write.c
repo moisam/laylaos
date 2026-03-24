@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: write.c
  *    This file is part of LaylaOS.
@@ -91,15 +91,12 @@ static inline long write_internal(struct file_t *f,
     if(!count)
     {
         res = 0;
-        //goto fin;
         COPY_VAL_TO_USER(copied, &res);
         return res;
     }
 
     /* this call shouldn't modify f->pos */
     res = f->node->write(f, &pos, buf, count, 0);
-
-//fin:
     
     if(res >= 0)
     {

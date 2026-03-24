@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ids.c
  *    This file is part of LaylaOS.
@@ -45,8 +45,15 @@ long syscall_setgid(gid_t newgid)
 {
     if(!suser(this_core->cur_task))
     {
-        // normal user
-        if(gid_perm(newgid, 0) || this_core->cur_task->ssgid == newgid)
+        /*
+         * Regular user. POSIX says we shall set egid if the new value is
+         * equal to rgid or sgid, and leave rgid and sgid alone, and not 
+         * touch the supplementary group list.
+         *
+         * See: https://pubs.opengroup.org/onlinepubs/9699919799/functions/setgid.html
+         */
+        if(newgid == this_core->cur_task->gid || newgid == this_core->cur_task->ssgid)
+        //if(gid_perm(newgid, 0) || this_core->cur_task->ssgid == newgid)
         {
             setid(this_core->cur_task, egid, newgid);
         }
@@ -57,7 +64,12 @@ long syscall_setgid(gid_t newgid)
     }
     else
     {
-        // root user
+        /*
+         * Root can do whatever. POSIX says we shall set rgid, egid and sgid to
+         * the new value.
+         *
+         * See: https://pubs.opengroup.org/onlinepubs/9699919799/functions/setgid.html
+         */
         setrootid(this_core->cur_task, gid, newgid);
     }
     
@@ -90,9 +102,13 @@ long syscall_setuid(uid_t newuid)
 {
     if(!suser(this_core->cur_task))
     {
-        // regular user
-        if(newuid == this_core->cur_task->uid || 
-           this_core->cur_task->ssuid == this_core->cur_task->uid)
+        /*
+         * Regular user. POSIX says we shall set euid if the new value is
+         * equal to ruid or suid, and leave ruid and suid alone.
+         *
+         * See: https://pubs.opengroup.org/onlinepubs/9699919799/functions/setuid.html
+         */
+        if(newuid == this_core->cur_task->uid || newuid == this_core->cur_task->ssuid)
         {
             setid(this_core->cur_task, euid, newuid);
         }
@@ -103,7 +119,12 @@ long syscall_setuid(uid_t newuid)
     }
     else
     {
-        // root can do whatever
+        /*
+         * Root can do whatever. POSIX says we shall set ruid, euid and suid to
+         * the new value.
+         *
+         * See: https://pubs.opengroup.org/onlinepubs/9699919799/functions/setuid.html
+         */
         setrootid(this_core->cur_task, uid, newuid);
     }
 
@@ -343,7 +364,14 @@ long syscall_setreuid(uid_t newruid, uid_t neweuid)
 
         setid(t, euid, neweuid);
     }
-    
+
+    /*
+     * if ruid is being set, or euid is set to a value != ruid, we need to
+     * set ssuid.
+     *
+     * See: https://pubs.opengroup.org/onlinepubs/9699919799/functions/setreuid.html
+     *      https://github.com/torvalds/linux/blob/d91a46d6805af41e7f2286e0fc22d498f45a682b/kernel/sys.c#L614
+     */
     if(newruid != (uid_t)-1 || (neweuid != (uid_t)-1 && neweuid != olduid))
     {
         setid(t, ssuid, t->euid);
@@ -388,6 +416,12 @@ long syscall_setregid(gid_t newrgid, gid_t newegid)
         setid(t, egid, newegid);
     }
     
+    /*
+     * if rgid is being set, or egid is set to a value != rgid, we need to
+     * set ssgid.
+     *
+     * See: https://pubs.opengroup.org/onlinepubs/9699919799/functions/setregid.html
+     */
     if(newrgid != (gid_t)-1 || (newegid != (gid_t)-1 && newegid != oldgid))
     {
         setid(t, ssgid, t->egid);

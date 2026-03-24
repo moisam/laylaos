@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: select.c
  *    This file is part of LaylaOS.
@@ -59,7 +59,7 @@ struct seltab_entry_t
     void *channel;              // the select channel waiters are waiting on
     int nwaiters;               // # of waiting tasks
 
-#define INIT_WAITERS_SIZE       32
+#define INIT_WAITERS_SIZE       8
     int waiters_size;           // # of items alloc'd to the waiters array
 
     volatile struct kernel_mutex_t lock; // to synchronize access
@@ -68,11 +68,11 @@ struct seltab_entry_t
 };
 
 
-#define INIT_HASHSZ             256
+#define INIT_HASHSZ             512
 struct hashtab_t *seltab = NULL;
 volatile struct kernel_mutex_t seltab_lock = { 0, };
 
-static long selscan(fd_set *, fd_set *, int);
+static long selscan(fd_set *, fd_set *, int, int);
 
 
 /*
@@ -166,59 +166,6 @@ void task_cancel_select(struct task_t *task)
 #define FDS_BITS_ELEMENTS       _howmany(NR_OPEN, _NFDBITS)
 #endif
 
-/*
-static inline int validate_fds(fd_set *ibits, int nfd)
-{
-    struct file_t *f;
-    int i, j, fd, msk, stop;
-    unsigned long *bits, k;
-
-    for(msk = 0; msk < 3; msk++)
-    {
-        bits = ibits[msk].fds_bits;
-        stop = 0;
-
-        for(i = 0; i < FDS_BITS_ELEMENTS; i++, bits++)
-        {
-            k = 1;
-
-            for(j = 0; j < NFDBITS; j++, k <<= 1)
-            {
-                if(*bits & k)
-                {
-                    fd = (i * NFDBITS) + j;
-
-                    if(fd >= nfd)
-                    {
-                        stop = 1;
-                        break;
-                    }
-
-                    f = cur_task->ofiles->ofile[fd];
-
-                    if(f == NULL)
-                    {
-                        KDEBUG("selscan: error\n");
-                        return -EBADF;
-                    }
-                
-                    if(!f->node || !f->node->select)
-                    {
-                        *bits &= ~k;
-                    }
-                }
-            }
-
-            if(stop)
-            {
-                break;
-            }
-        }
-    }
-
-    return 0;
-}
-*/
 
 static long select_internal(u_int nd, fd_set *in, fd_set *ou, fd_set *ex,
                             struct timespec *ts)
@@ -228,21 +175,12 @@ static long select_internal(u_int nd, fd_set *in, fd_set *ou, fd_set *ex,
     unsigned long timo;
     unsigned long long oticks;
 
-    //A_memset(ibits, 0, sizeof(ibits));
-    //A_memset(obits, 0, sizeof(obits));
-    
-    //printk("select_internal: in 0x%lx, out 0x%lx, ex 0x%lx\n", in, ou, ex);
-
     for(int j = 0; j < FDS_BITS_ELEMENTS; j++)
     {
-        //ibits[0].__fds_bits[j] = 0;
-        //ibits[1].__fds_bits[j] = 0;
-        //ibits[2].__fds_bits[j] = 0;
         obits[0].__fds_bits[j] = 0;
         obits[1].__fds_bits[j] = 0;
         obits[2].__fds_bits[j] = 0;
     }
-
 
     if(nd > FD_SETSIZE /* || exceeds_rlimit(cur_task, RLIMIT_NOFILE, nd) */)
     {
@@ -253,7 +191,7 @@ static long select_internal(u_int nd, fd_set *in, fd_set *ou, fd_set *ex,
     {
         nd = NR_OPEN;
     }
-    
+
     /*
      * Try to make the select() syscall a bit quicker by copying the file
      * descriptors manually, instead of calling copy_from_user(), which is
@@ -273,9 +211,9 @@ static long select_internal(u_int nd, fd_set *in, fd_set *ou, fd_set *ex,
             ibits[x].__fds_bits[j] = 0; \
     }
 
-    getbits(in, 0);
-    getbits(ou, 1);
-    getbits(ex, 2);
+    getbits(ex, 0);
+    getbits(in, 1);
+    getbits(ou, 2);
 
 #undef getbits
     
@@ -303,32 +241,10 @@ static long select_internal(u_int nd, fd_set *in, fd_set *ou, fd_set *ex,
 
 retry:
 
-    /*
-    kernel_mutex_lock(&cur_task->ofiles->mutex);
-
-    if(validate_fds(ibits, nd) < 0)
-    {
-        kernel_mutex_unlock(&cur_task->ofiles->mutex);
-        return -EBADF;
-    }
-    */
-
     set_task_waking_signal(this_core->cur_task, 0);
     __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
 
-    error = selscan(ibits, obits, nd);
-
-    /*
-    if(memcmp(this_core->cur_task->command, "sdl2-do", 7) == 0)
-    //if(this_core->cur_task->pid >= 63 && this_core->cur_task->pid != 64)
-    {
-        printk("select: err %ld, timo %ld\n", error, timo);
-    }
-    */
-
-    /*
-    kernel_mutex_unlock(&cur_task->ofiles->mutex);
-    */
+    error = selscan(ibits, obits, nd, !(ts && ts->tv_sec == 0 && ts->tv_nsec == 0));
 
     /*
      * Negative result is error, positive result is fd count.
@@ -361,33 +277,6 @@ retry:
         oticks = ticks;
     }
 
-
-    /*
-    if(timo)
-    {
-        prep_wait(timo);
-    }
-
-    if(get_task_properties(this_core->cur_task) & PROPERTY_SELECT_EVENT)
-    {
-        if(timo)
-        {
-            end_wait();
-        }
-
-        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
-        goto retry;
-    }
-
-    set_task_state(this_core->cur_task, TASK_SLEEPING);
-    scheduler();
-
-    if(timo)
-    {
-        end_wait();
-    }
-    */
-
     if(timo)
     {
         block_task_timeout(this_core->cur_task, timo);
@@ -413,27 +302,6 @@ retry:
 
     goto retry;
 
-#if 0
-    if(timo < 100)
-    {
-        error = block_task2(&selwait, timo);
-    }
-    else
-    {
-        if((error = block_task2(&selwait, 100)) != EINTR)
-        {
-            goto retry;
-        }
-    }
-
-    if(error == 0)
-    {
-        goto retry;
-    }
-    
-    error = -error;
-#endif
-
 done:
 
     /* select is not restarted after signals... */
@@ -448,15 +316,13 @@ done:
     if(name)    \
     {   \
         for(int j = 0; j < FDS_BITS_ELEMENTS; j++)  \
-            /* we know these are kosher as we check them on entry */ \
+            /* we know these are kosher as we checked them on entry */ \
             name->__fds_bits[j] = obits[x].__fds_bits[j]; \
     }
 
-//            COPY_VAL_TO_USER(&name->__fds_bits[j], &obits[x].__fds_bits[j]);
-
-        putbits(in, 0);
-        putbits(ou, 1);
-        putbits(ex, 2);
+        putbits(ex, 0);
+        putbits(in, 1);
+        putbits(ou, 2);
 
 #undef putbits
 
@@ -549,126 +415,85 @@ long syscall_pselect(struct syscall_args *__args)
 /*
  * Scan for select events.
  */
-static long selscan(fd_set *ibits, fd_set *obits, int nfd)
+static long selscan(fd_set *ibits, fd_set *obits, int nfd, int record)
 {
     KDEBUG("selscan:\n");
 
     struct file_t *f;
-    static int flag[3] = { FREAD, FWRITE, 0 };
     long n = 0;
-    int i, j, fd, msk, stop;
-    unsigned long *bits, k;
+    int i, j, fd, stop = 0;
+    unsigned long *in, *ou, *ex, k, all;
 
-    for(msk = 0; msk < 3; msk++)
+    ex = ibits[0].fds_bits;
+    in = ibits[1].fds_bits;
+    ou = ibits[2].fds_bits;
+
+    for(i = 0; i < FDS_BITS_ELEMENTS; i++, ex++, in++, ou++)
     {
-        bits = ibits[msk].fds_bits;
-        stop = 0;
+        all = (*in | *ou | *ex);
 
-        for(i = 0; i < FDS_BITS_ELEMENTS; i++, bits++)
+        if(all == 0)
         {
-            if(*bits == 0)
-            {
-                continue;
-            }
-
-            k = 1;
-
-            for(j = 0; j < NFDBITS; j++, k <<= 1)
-            {
-                /*
-                 * This assumes little endian arch. We need to make k = (1 << NFDBITS)
-                 * and shift to the right if we port to big endian archs (as well as
-                 * counting i down instead of up).
-                 */
-                if(*bits & k)
-                {
-                    fd = (i * NFDBITS) + j;
-
-                    if(fd >= nfd /* || fd >= NR_OPEN */)
-                    {
-                        stop = 1;
-                        break;
-                    }
-
-                    f = this_core->cur_task->ofiles->ofile[fd];
-
-                    if(f == NULL)
-                    {
-                        KDEBUG("selscan: error\n");
-                        return -EBADF;
-                    }
-                
-                    if(!f->node || !f->node->select)
-                    {
-                        continue;
-                    }
-
-                    if(f->node->select(f, flag[msk]))
-                    {
-                        FD_SET(fd, &obits[msk]);
-                        n++;
-                    }
-                }
-            }
-
-            if(stop)
-            {
-                break;
-            }
+            continue;
         }
-    }
 
+        k = 1;
 
-#if 0
-
-    register int msk, i, j, fd;
-    register fd_mask bits;
-    struct file_t *f;
-    int n = 0;
-    static int flag[3] = { FREAD, FWRITE, 0 };
-    struct task_t *ct = cur_task;
-
-    for(msk = 0; msk < 3; msk++)
-    {
-        for(i = 0; i < nfd; i += NFDBITS)
+        for(j = 0; j < NFDBITS; j++, k <<= 1)
         {
-            bits = ibits[msk].fds_bits[i/NFDBITS];
-            while((j = ffs(bits)) && (fd = i + --j) < nfd)
+            /*
+             * This assumes little endian arch. We need to make k = (1 << NFDBITS)
+             * and shift to the right if we port to big endian archs (as well as
+             * counting i down instead of up).
+             */
+            if(all & k)
             {
-                bits &= ~(1 << j);
-                f = ct->ofiles->ofile[fd];
-                
+                fd = (i * NFDBITS) + j;
+
+                if(fd >= nfd /* || fd >= NR_OPEN */)
+                {
+                    stop = 1;
+                    break;
+                }
+
+                f = this_core->cur_task->ofiles->ofile[fd];
+
                 if(f == NULL)
                 {
                     KDEBUG("selscan: error\n");
                     return -EBADF;
                 }
-                
+
                 if(!f->node || !f->node->select)
                 {
                     continue;
                 }
-                
-                if(f->node->select(f, flag[msk]))
+
+                if((*ex & k) && f->node->select(f, 0, record))
                 {
-                    FD_SET(fd, &obits[msk]);
+                    FD_SET(fd, &obits[0]);
                     n++;
                 }
-                /*
-                else
-                if(IS_SOCKET(f->node) &&
-                   ((struct socket_t *)f->node->data)->state & SOCKET_STATE_SHUT_REMOTE)
+
+                if((*in & k) && f->node->select(f, FREAD, record))
                 {
-                    return -EPIPE;
+                    FD_SET(fd, &obits[1]);
+                    n++;
                 }
-                */
+
+                if((*ou & k) && f->node->select(f, FWRITE, record))
+                {
+                    FD_SET(fd, &obits[2]);
+                    n++;
+                }
             }
         }
+
+        if(stop)
+        {
+            break;
+        }
     }
-
-#endif
-
-    KDEBUG("selscan: done\n");
 
     return n;
 }
@@ -740,7 +565,7 @@ void selrecord(struct selinfo *sip)
     // the list and add ourselves.
     for(w = se->waiters, lw = &se->waiters[se->waiters_size]; w < lw; w++)
     {
-        if(*w && *w == ct)
+        if(*w == ct)
         {
             elevated_priority_unlock(&se->lock);
             return;
@@ -765,6 +590,13 @@ void selrecord(struct selinfo *sip)
         // zero out the new memory (top half of realloc'd memory) and add
         // the new entry
         A_memset(&tmpw[se->waiters_size], 0, half);
+        /*
+        for(int z = se->waiters_size; z < se->waiters_size * 2; z++)
+        {
+            tmpw[z] = 0;
+        }
+        */
+
         tmpw[se->waiters_size] = ct;
 
         se->waiters_size *= 2;
@@ -814,7 +646,6 @@ void selwakeup(struct selinfo *sip)
             *w = NULL;
             se->nwaiters--;
 
-            //printk("selwakeup: pid %d, %d, %lx (this %d)\n", t->pid, t->state, t->saved_context.rip, ct->pid);
             if(ct == t)
             {
                 continue;
@@ -822,25 +653,6 @@ void selwakeup(struct selinfo *sip)
 
             __sync_or_and_fetch(&t->properties, PROPERTY_SELECT_EVENT);
             unblock_task_no_preempt(t);
-#if 0
-            // do two runs to ensure any task that has slept just before we 
-            // came in and entered the inner loop is not missed
-            for(runs = 0; runs < 2; runs++)
-            {
-                if(t->state == TASK_READY || t->state == TASK_RUNNING)
-                {
-                    __asm__ __volatile__("pause":::);
-                    continue;
-                }
-
-                t->state = TASK_READY;
-                t->wait_channel = NULL;
-
-                append_to_ready_queue_locked(t, 1);
-                break;
-            }
-#endif
-
         }
     }
 

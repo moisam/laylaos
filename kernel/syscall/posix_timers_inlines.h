@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: posix_timers_inlines.h
  *    This file is part of LaylaOS.
@@ -33,14 +33,13 @@
 /*
  * Reset a POSIX timer.
  */
-INLINE void timer_reset(pid_t tgid, struct posix_timer_t *timer)
+INLINE void timer_reset(volatile struct posix_timer_t *timer)
 {
     if(timer)
     {
         if(timer->val.it_interval.tv_sec || timer->val.it_interval.tv_nsec)
         {
-            do_clock_nanosleep(tgid, timer->clockid, timer->flags,
-                               &timer->val.it_interval, NULL, timer->timerid);
+            do_clock_nanosleep(timer->flags, &timer->val.it_interval, NULL, timer);
         }
     }
 }
@@ -49,15 +48,16 @@ INLINE void timer_reset(pid_t tgid, struct posix_timer_t *timer)
 /*
  * Notify task of POSIX timer expiration.
  */
-INLINE void timer_notify_expired(pid_t tgid, struct posix_timer_t *timer)
+INLINE void timer_notify_expired(volatile struct posix_timer_t *timer)
 {
-    volatile struct task_t *task = get_task_by_tgid(tgid);
+    volatile struct task_t *task = get_task_by_tgid(timer->tgid);
 
     if(task && timer)
     {
         if(timer->timerid == ITIMER_REAL_ID || timer->timerid == ITIMER_PROF_ID)
         {
-            siginfo_t itimer_siginfo = { .si_code = SI_TIMER };
+            siginfo_nopad_t itimer_siginfo = { .sinp_code = SI_TIMER };
+
             add_task_signal((struct task_t *)task, timer->sigev.sigev_signo, &itimer_siginfo, 1);
         }
         else if(timer->sigev.sigev_notify == SIGEV_SIGNAL)
@@ -73,15 +73,10 @@ INLINE void timer_notify_expired(pid_t tgid, struct posix_timer_t *timer)
 }
 
 
-INLINE void timer_unwait(volatile struct clock_waiter_t *head,
-                         pid_t tgid, ktimer_t timerid)
+INLINE void timer_unwait(volatile struct posix_timer_t *head,
+                         volatile struct posix_timer_t *timer)
 {
-    struct clock_waiter_t *w;
-    
-    if((w = get_waiter(head, tgid, timerid, NULL, 1)))
-    {
-        waiter_free(w);
-    }
+    get_waiter(head, timer, NULL, 1);
 }
 
 #endif      /* DEFINE_POSIX_TIMER_INLINES */

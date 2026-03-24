@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: symlink.c
  *    This file is part of LaylaOS.
@@ -245,8 +245,8 @@ long follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
     // procfs links have a filesize of 0 by default
     size_t bufsz = (link->dev == PROCFS_DEVID) ? PROCFS_LINK_SIZE :
                    (link->size > PATH_MAX) ? PATH_MAX : link->size;
-    char *buf = (char *)kmalloc(bufsz + 1);
-    //int dirfd = AT_FDCWD;
+    char __buf[256];
+    char *buf = (bufsz < 255) ? __buf : kmalloc(bufsz + 1);
 
     KDEBUG("follow_symlink: bufsz %d\n", bufsz);
     
@@ -256,12 +256,14 @@ long follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
         return -ENOMEM;
     }
 
+#define MAY_FREE(buf)       if(buf != __buf) kfree(buf);
+
     // read the symlink contents
     res = read_symlink(link, buf, bufsz, 1);
 
     if(res < 0)
     {
-        kfree(buf);
+        MAY_FREE(buf);
         return res;
     }
     
@@ -281,13 +283,13 @@ long follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
 
         if(get_dentry(parent, &dent) < 0)
         {
-            kfree(buf);
+            MAY_FREE(buf);
             return -EINVAL;
         }
 
         if(dent->path == NULL)
         {
-            kfree(buf);
+            MAY_FREE(buf);
             release_dentry(dent);
             return -EINVAL;
         }
@@ -298,7 +300,7 @@ long follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
 
         if(!(buf2 = kmalloc(bufsz)))
         {
-            kfree(buf);
+            MAY_FREE(buf);
             release_dentry(dent);
             return -ENOMEM;
         }
@@ -312,17 +314,9 @@ long follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
             ksprintf(buf2, bufsz, "%s/%s", dent->path, buf);
         }
 
-        kfree(buf);
+        MAY_FREE(buf);
         release_dentry(dent);
         buf = buf2;
-
-        /*
-        if((dirfd = open_tmp_fd(parent)) < 0)
-        {
-            kfree(buf);
-            return -EMFILE;
-        }
-        */
     }
     
     KDEBUG("follow_symlink: fd %d\n", dirfd);
@@ -332,15 +326,10 @@ long follow_symlink(struct fs_node_t *link, struct fs_node_t *parent,
 
     KDEBUG("follow_symlink: done -- fd %d, res %d\n", dirfd, res);
     
-    /*
-    if(buf[0] != '/')
-    //if(dirfd != AT_FDCWD)
-    {
-        syscall_close(dirfd);
-    }
-    */
-    
-    kfree(buf);
+    MAY_FREE(buf);
+
+#undef MAY_FREE
+
     return res;
 }
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: execve.c
  *    This file is part of LaylaOS.
@@ -206,7 +206,7 @@ static long count_invk_args(char **argv, char ***nargv, size_t *tlen)
 
 static int may_alloc_page(uintptr_t addr)
 {
-    pt_entry *pt = get_page_entry((void *)addr);
+    pt_entry *pt = get_page_entry(addr);
 
     if(!pt)
     {
@@ -470,7 +470,7 @@ long syscall_execveat(int dirfd, char *path,
     size_t arglen = 0, envlen = 0, invklen = 0;
     uintptr_t stack = 0, argp = 0, envp = 0, invkp = 0, eip = 0;
     char **new_argv = NULL, **new_env = NULL, **new_invk = NULL;
-    size_t *auxv = NULL;
+    //size_t *auxv = NULL;
     struct fs_node_t *filenode = NULL;
     struct cached_page_t *buf = NULL;
     struct mount_info_t *dinfo;
@@ -494,10 +494,13 @@ long syscall_execveat(int dirfd, char *path,
 
 #define AUXV_MEMSZ          (AUXV_SIZE * sizeof(size_t) * 2)
 
+    /*
     if(!(auxv = kmalloc(AUXV_MEMSZ)))
     {
         return -ENOMEM;
     }
+    */
+    size_t auxv[AUXV_SIZE * 2];
 
     A_memset(auxv, 0, AUXV_MEMSZ);
     
@@ -511,7 +514,7 @@ long syscall_execveat(int dirfd, char *path,
     // get the executable's file node
     if((res = get_exec_filenode(dirfd, path, open_flags, &filenode)) < 0)
     {
-        kfree(auxv);
+        //kfree(auxv);
         return res;
 	}
 
@@ -519,19 +522,9 @@ long syscall_execveat(int dirfd, char *path,
     if(!(buf = get_cached_page(filenode, 0, 0)))
     {
         release_node(filenode);
-        kfree(auxv);
+        //kfree(auxv);
         return -EACCES;
 	}
-
-    // get a kernel stack (if we don't already have one)
-    if(!this_core->cur_task->kstack_virt)
-    {
-        if(get_kstack(this_core->cur_task) != 0)
-        {
-            res = -ENOMEM;
-            goto die;
-        }
-    }
     
     // Count argv & envp and copy args & env to kernel memory.
     // We do this before freeing user space, after which we'll have no access
@@ -854,7 +847,7 @@ long syscall_execveat(int dirfd, char *path,
 
     if(!argp)
     {
-        kfree(auxv);
+        //kfree(auxv);
         syscall_exit(-1);
     }
     
@@ -871,7 +864,7 @@ long syscall_execveat(int dirfd, char *path,
 
     if(!envp)
     {
-        kfree(auxv);
+        //kfree(auxv);
         syscall_exit(-1);
     }
 
@@ -880,7 +873,7 @@ long syscall_execveat(int dirfd, char *path,
 
     if(!invkp)
     {
-        kfree(auxv);
+        //kfree(auxv);
         syscall_exit(-1);
     }
 
@@ -914,7 +907,7 @@ long syscall_execveat(int dirfd, char *path,
     //printk("stack %lx, auxv %lx\n", stack, auxv);
     A_memcpy((void *)stack, auxv, AUXV_MEMSZ);
 
-    kfree(auxv);
+    //kfree(auxv);
     
     /*
      * At this point, the new stack looks like:
@@ -1012,7 +1005,6 @@ long syscall_execveat(int dirfd, char *path,
     ksigemptyset((sigset_t *)&this_core->cur_task->signal_timer);
 
     set_task_waking_signal(this_core->cur_task, 0);
-    //this_core->cur_task->woke_by_signal = 0;
 
     A_memset((void *)&this_core->cur_task->signal_stack, 0, sizeof(stack_t));
 
@@ -1053,7 +1045,7 @@ long syscall_execveat(int dirfd, char *path,
     {
         __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_VFORK);
 
-        if(get_task_state(this_core->cur_task->parent) == TASK_WAITING)
+        if(get_task_state(this_core->cur_task->parent) == TASK_SLEEPING)
         {
             unblock_task(this_core->cur_task->parent);
         }
@@ -1114,10 +1106,12 @@ die:
         release_cached_page(buf);
     }
 
+    /*
     if(auxv)
     {
         kfree(auxv);
     }
+    */
 
     if(res)
     {

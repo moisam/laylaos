@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: open.c
  *    This file is part of LaylaOS.
@@ -199,36 +199,4 @@ error:
 	f->refs = 0;
 	return res;
 }
-
-
-/*
- * Open a temporary file descriptor.
- */
-/*
-int open_tmp_fd(struct fs_node_t *node)
-{
-	struct file_t *f;
-	int fd, res = 0;
-
-    if(!node)
-    {
-        return -EINVAL;
-    }
-
-	if((res = falloc(&fd, &f)) != 0)
-	{
-	    return res;
-	}
-
-    f->mode = node->mode;
-    f->flags = O_RDWR;
-    f->refs = 1;
-    f->node = node;
-    f->pos = 0;
-
-    INC_NODE_REFS(node);
-    
-    return fd;
-}
-*/
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: syscall.c
  *    This file is part of LaylaOS.
@@ -600,8 +600,6 @@ void syscall_dispatcher(struct regs *r)
     long res;
     unsigned syscall_num = GET_SYSCALL_NUMBER(r);
     unsigned long long oticks = ticks;
-    
-    //if(ct->pid >= 16) printk("syscall_dispatcher: syscall %d\n", GET_SYSCALL_NUMBER(r));
 
     if(syscall_num >= (unsigned)NR_SYSCALLS)
     {
@@ -667,8 +665,8 @@ void syscall_dispatcher(struct regs *r)
         // led to problems with nested syscalls/irqs.
         // TODO: find a cleaner way to avoid this unnecessary if/else.
         if(syscall_num == __NR_fork || syscall_num == __NR_vfork ||
-           syscall_num == __NR_clone || syscall_num == __NR_pause || 
-           syscall_num == __NR_sigsuspend)
+           syscall_num == __NR_clone /* || syscall_num == __NR_pause || 
+           syscall_num == __NR_sigsuspend */)
         {
             res = func(r, GET_SYSCALL_ARG1(r));
         }
@@ -681,7 +679,6 @@ void syscall_dispatcher(struct regs *r)
         if(res == -ERESTARTSYS)
         {
             __atomic_store_n(&(this_core->cur_task->interrupted_syscall), syscall_num, __ATOMIC_SEQ_CST);
-            //ct->interrupted_syscall = syscall_num;
             res = -EINTR;
         }
 
@@ -696,12 +693,11 @@ skip:
         SIGNAL(PTRACE_EVENT_SYSCALL_EXIT);
     }
 
-    
     //ct->regs = NULL;
     syscall_profiles[syscall_num].ticks += ticks - oticks;
-    
+
     /* check for signals */
-    
+
     /* idle_task can't receive signals */
     //if(ct != idle_task)
     if(syscall_num != __NR_sigreturn &&
@@ -978,9 +974,24 @@ long syscall_mount(char *source, char *target, char *fstype,
         return -EINVAL;
     }
 
-    if((res = vfs_path_to_devid(source, fstype, &dev)) < 0)
+    // Special case -- if we are remounting sysroot, and the source field 
+    // is an asterisk '*', and the mount options are "sysroot,rw,remount",
+    // replace the asterisk with the actual sysroot device.
+    // I do this out of pure laziness, so I don't have to keep editing
+    // the /etc/fstab file every time I want to test the OS under a
+    // different emulator.
+    if(source[0] == '*' && source[1] == '\0' && 
+       target[0] == '/' && target[1] == '\0' &&
+       options && memcmp(options, "sysroot,rw,remount", 18) == 0)
     {
-        return res;
+        dev = system_root_node->ptr ? system_root_node->ptr->dev : system_root_node->dev;
+    }
+    else
+    {
+        if((res = vfs_path_to_devid(source, fstype, &dev)) < 0)
+        {
+            return res;
+        }
     }
     
     res = vfs_mount(dev, target, fstype, flags, options);
@@ -1094,7 +1105,7 @@ long syscall_stime(long *buf)
  *
  * Returns -EINTR if the task is not terminated by a signal.
  */
-long syscall_pause(struct regs *r)
+long syscall_pause(void)
 {
     while(1)
     {
@@ -1109,48 +1120,6 @@ long syscall_pause(struct regs *r)
         {
             return -EINTR;
         }
-
-#if 0
-    	volatile struct task_t *ct = this_core->cur_task;
-        volatile sigset_t ocaught, ncaught;
-        volatile int signum;
-
-        /*
-        //block_task(ct, 1);
-        block_task2((struct task_t *)ct, 100);
-        */
-        set_task_waitchan(ct, ct);
-        set_task_state(ct, TASK_SLEEPING);
-        scheduler();
-
-        ksigemptyset((sigset_t *)&ocaught);
-        ksigorset((sigset_t *)&ocaught, (sigset_t *)&ocaught, 
-                                        (sigset_t *)&ct->signal_caught);
-
-        struct regs rtmp;
-        A_memcpy(&rtmp, r, sizeof(struct regs));
-        __atomic_store_n(&(ct->interrupted_syscall), __NR_pause, __ATOMIC_SEQ_CST);
-        check_pending_signals(&rtmp);
-
-        //ksigemptyset(&ncaught);
-        ksignotset((sigset_t *)&ncaught, (sigset_t *)&ocaught);
-        ksigandset((sigset_t *)&ncaught, (sigset_t *)&ncaught, 
-                                         (sigset_t *)&ct->signal_caught);
-
-        for(signum = 1; signum < NSIG; signum++)
-        {
-            if(ksigismember((sigset_t *)&ncaught, signum))
-            {
-                struct sigaction *action = &ct->sig->signal_actions[signum];
-                
-                if(action->sa_handler != SIG_IGN && 
-                   action->sa_handler != SIG_DFL)
-                {
-                    return -EINTR;
-                }
-            }
-        }
-#endif
     }
     
     KDEBUG("syscall_pause: done\n");
@@ -1285,13 +1254,13 @@ long syscall_brk(long incr, volatile uintptr_t *res)
         // now alloc memory for the new pages, starting from the current
         // brk (aligned to the nearest lower page size), up to the new
         // brk address.
-        uintptr_t i;
+        volatile uintptr_t i;
         int err = 0;
         pt_entry *pt;
-        
+
         for(i = align_down(t->end_data); i < end; i += PAGE_SIZE)
         {
-            pt = get_page_entry((void *)i);
+            pt = get_page_entry(i);
             
             if(!pt)
             {
@@ -1321,8 +1290,8 @@ long syscall_brk(long incr, volatile uintptr_t *res)
                 i > t->end_data;
                 i -= PAGE_SIZE)
             {
-                pt_entry *pt = get_page_entry((void *)i);
-            
+                pt_entry *pt = get_page_entry(i);
+
                 if(pt)
                 {
                     vmmngr_free_page(pt);
@@ -1634,6 +1603,7 @@ long syscall_getrandom(void *buf, size_t buflen, unsigned int flags,
     return 0;
 }
 
+//unsigned long long func_times[10];
 
 /*
  * Read /proc/syscalls.
@@ -1675,6 +1645,24 @@ size_t get_syscalls(char **buf)
         strcpy(p, tmp);
         p += len;
     }
+
+    /*
+    for(i = 0; i < 8; i++)
+    {
+        ksprintf(tmp, 64, "func %d %9llu\n", i, func_times[i]);
+        len = strlen(tmp);
+        
+        if(count + len >= bufsz)
+        {
+            PR_REALLOC(*buf, bufsz, count);
+            p = *buf + count;
+        }
+
+        count += len;
+        strcpy(p, tmp);
+        p += len;
+    }
+    */
 
     return count;
 }

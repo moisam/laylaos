@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ptrace.c
  *    This file is part of LaylaOS.
@@ -361,18 +361,19 @@ long ptrace_signal(int signum, int reason)
 
     if(signum == SIGTRAP || signum == (SIGTRAP | 0x80))
     {
-        //struct sigaction *action = &tracee->sig->signal_actions[SIGTRAP];
-
-        tracee->siginfo[SIGTRAP].si_signo = SIGTRAP;
+        //tracee->siginfo[SIGTRAP].si_signo = SIGTRAP;
+        tracee->siginfo[SIGTRAP].sinp_signo = SIGTRAP;
 
         if(reason == PTRACE_EVENT_SYSCALL_ENTER ||
            reason == PTRACE_EVENT_SYSCALL_EXIT)
         {
-            tracee->siginfo[SIGTRAP].si_code = signum;
+            //tracee->siginfo[SIGTRAP].si_code = signum;
+            tracee->siginfo[SIGTRAP].sinp_code = signum;
         }
         else
         {
-            tracee->siginfo[SIGTRAP].si_code = SI_KERNEL;
+            //tracee->siginfo[SIGTRAP].si_code = SI_KERNEL;
+            tracee->siginfo[SIGTRAP].sinp_code = SI_KERNEL;
         }
     }
 

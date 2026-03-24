@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: posix_timers.c
  *    This file is part of LaylaOS.
@@ -49,15 +49,15 @@
 /*
  * Get POSIX timer.
  */
-struct posix_timer_t *get_posix_timer(pid_t tgid, ktimer_t timerid)
+struct posix_timer_t *get_posix_timer(volatile struct task_t *task, ktimer_t timerid)
 {
     struct posix_timer_t *timer;
-    volatile struct task_t *task = get_task_by_tgid(tgid);
     
     if(!task || !task->common)
     {
-        printk("kernel: trying to get POSIX timer for a NULL task (pid %d)\n",
-            task ? task->pid : -1);
+        switch_tty(1);
+        printk("kernel: trying to get POSIX timer for a NULL task tgid %d and timerid %d (pid %d)\n",
+            tgid(task), timerid, task ? task->pid : -1);
 
         kpanic("Invalid POSIX timer task");
         //screen_refresh(NULL);
@@ -87,8 +87,7 @@ long syscall_timer_settime(ktimer_t timerid, int flags,
 {
     long res;
     struct itimerspec newval;
-    struct posix_timer_t *timer;
-    struct clock_waiter_t *head;
+    struct posix_timer_t *timer, *head;
 	volatile struct task_t *ct = this_core->cur_task;
 
     if(!timerid)
@@ -98,8 +97,7 @@ long syscall_timer_settime(ktimer_t timerid, int flags,
     
     kernel_mutex_lock(&ct->common->mutex);
 
-    if(!(timer = get_posix_timer(tgid(ct), timerid)))
-    //if(!(timer = get_posix_timer(ct, timerid)))
+    if(!(timer = get_posix_timer(ct, timerid)))
     {
         kernel_mutex_unlock(&ct->common->mutex);
         return -EINVAL;
@@ -126,8 +124,8 @@ long syscall_timer_settime(ktimer_t timerid, int flags,
         
         // remove old timer if it was active
         head = &waiter_head[(timer->clockid == CLOCK_REALTIME) ? 1 : 0];
-        timer_unwait(head, tgid(ct), timer->timerid);
-        //timer_unwait(head, ct, timer->timerid);
+
+        timer_unwait(head, timer);
 
         A_memcpy(&timer->val, &newval, sizeof(struct itimerspec));
         timer->flags = flags;
@@ -143,9 +141,8 @@ long syscall_timer_settime(ktimer_t timerid, int flags,
             KDEBUG("syscall_timer_settime: isec %ld\n", timer->val.it_interval.tv_sec);
             KDEBUG("syscall_timer_settime: insec %ld\n", timer->val.it_interval.tv_nsec);
 
-            res = do_clock_nanosleep(tgid(ct), timer->clockid, flags,
-            //res = do_clock_nanosleep(ct, timer->clockid, flags,
-                                     &newval.it_value, NULL, timer->timerid);
+            timer->tgid = tgid(ct);
+            res = do_clock_nanosleep(flags, &newval.it_value, NULL, timer);
 
             KDEBUG("syscall_timer_settime: res %d, id %d\n", res, timer->timerid);
 
@@ -168,9 +165,8 @@ long syscall_timer_settime(ktimer_t timerid, int flags,
 long timer_gettime_internal(ktimer_t timerid, struct itimerspec *curr_value, int kernel)
 {
     struct itimerspec oldval;
-    struct posix_timer_t *timer;
-    struct clock_waiter_t *head;
-    int64_t remaining_ticks;
+    struct posix_timer_t *timer, *head;
+    int64_t remaining_ticks = 0;
 	volatile struct task_t *ct = this_core->cur_task;
 
     if(!timerid)
@@ -180,7 +176,7 @@ long timer_gettime_internal(ktimer_t timerid, struct itimerspec *curr_value, int
     
     kernel_mutex_lock(&ct->common->mutex);
 
-    if(!(timer = get_posix_timer(tgid(ct), timerid)))
+    if(!(timer = get_posix_timer(ct, timerid)))
     {
         kernel_mutex_unlock(&ct->common->mutex);
         return -EINVAL;
@@ -189,10 +185,8 @@ long timer_gettime_internal(ktimer_t timerid, struct itimerspec *curr_value, int
     A_memset(&oldval, 0, sizeof(struct itimerspec));
     head = &waiter_head[(timer->clockid == CLOCK_REALTIME) ? 1 : 0];
 
-    if(get_waiter(head, tgid(ct), timerid, &remaining_ticks, 0))
-    {
-        ticks_to_timespec(remaining_ticks, &oldval.it_value);
-    }
+    get_waiter(head, timer, &remaining_ticks, 0);
+    ticks_to_timespec(remaining_ticks, &oldval.it_value);
     
     A_memcpy(&oldval.it_interval, &timer->val.it_interval,
                 sizeof(struct timespec));
@@ -297,8 +291,7 @@ static void free_timer(volatile struct posix_timer_t *timer)
  */
 long syscall_timer_delete(ktimer_t timerid)
 {
-    struct posix_timer_t *timer, *tmp;
-    struct clock_waiter_t *head;
+    struct posix_timer_t *timer, *tmp, *head;
 	volatile struct task_t *ct = this_core->cur_task;
 
     if(!timerid)
@@ -308,7 +301,7 @@ long syscall_timer_delete(ktimer_t timerid)
 
     kernel_mutex_lock(&ct->common->mutex);
 
-    if(!(timer = get_posix_timer(tgid(ct), timerid)))
+    if(!(timer = get_posix_timer(ct, timerid)))
     {
         kernel_mutex_unlock(&ct->common->mutex);
         return -EINVAL;
@@ -316,7 +309,8 @@ long syscall_timer_delete(ktimer_t timerid)
 
     // remove timer if it is armed
     head = &waiter_head[(timer->clockid == CLOCK_REALTIME) ? 1 : 0];
-    timer_unwait(head, tgid(ct), timerid);
+
+    timer_unwait(head, timer);
 
     if(timer == ct->posix_timers)
     {
@@ -357,8 +351,7 @@ long syscall_timer_getoverrun(ktimer_t timerid)
 
     kernel_mutex_lock(&ct->common->mutex);
 
-    if(!(timer = get_posix_timer(tgid(ct), timerid)))
-    //if(!(timer = get_posix_timer(ct, timerid)))
+    if(!(timer = get_posix_timer(ct, timerid)))
     {
         kernel_mutex_unlock(&ct->common->mutex);
         return -EINVAL;
@@ -380,8 +373,7 @@ long syscall_timer_getoverrun(ktimer_t timerid)
  */
 void disarm_timers(pid_t tgid)
 {
-    volatile struct posix_timer_t *timer, *next;
-    volatile struct clock_waiter_t *head;
+    volatile struct posix_timer_t *timer, *next, *head;
     volatile struct task_t *task = get_task_by_tgid(tgid);
 
     if(!task || !task->common)
@@ -397,7 +389,9 @@ void disarm_timers(pid_t tgid)
     {
         next = timer->next;
         head = &waiter_head[(timer->clockid == CLOCK_REALTIME) ? 1 : 0];
-        timer_unwait(head, tgid, timer->timerid);
+
+        timer_unwait(head, timer);
+
         free_timer(timer);
         timer = next;
     }

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: kill.c
  *    This file is part of LaylaOS.
@@ -98,10 +98,13 @@ long syscall_kill(pid_t pid, int signum)
     }
     else if(pid > 0)
     {
+        err = -ESRCH;
+
         for_each_taskptr(t)
         {
             if(*t && (*t)->pid == pid)
             {
+                err = 0;
                 SEND_SIGNAL(*t, signum, force);
                 break;
             }

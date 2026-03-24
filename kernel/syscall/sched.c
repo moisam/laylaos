@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: sched.c
  *    This file is part of LaylaOS.
@@ -288,23 +288,6 @@ long syscall_sched_get_priority_min(int policy)
  */
 long syscall_sched_yield(void)
 {
-    /*
-     * XXX: This is done in the scheduler.
-     */
-#if 0
-    /*
-     * The sched (7) manpage says:
-     *    A [SCHED_FIFO] thread calling sched_yield(2) will be put at the end
-     *    of the list.
-     */
-    if(this_core->cur_task->sched_policy == SCHED_FIFO ||
-       this_core->cur_task->sched_policy == SCHED_RR)
-    {
-        KDEBUG("%s: pid %d\n", __func__, this_core->cur_task->pid);
-        move_to_queue_end_locked(this_core->cur_task);
-    }
-#endif
-
     scheduler();
 
     return 0;

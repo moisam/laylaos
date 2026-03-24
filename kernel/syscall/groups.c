@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: groups.c
  *    This file is part of LaylaOS.
@@ -40,7 +40,7 @@
 int gid_perm(gid_t gid, int use_rgid)
 {
     gid_t mygid = use_rgid ? this_core->cur_task->gid : this_core->cur_task->egid;
-    
+
     // check for invalid gid
     if(gid == (gid_t)-1)
     {

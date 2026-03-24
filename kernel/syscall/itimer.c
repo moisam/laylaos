@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: itimer.c
  *    This file is part of LaylaOS.
@@ -48,7 +48,8 @@
  *****************************************************************************/
 
 
-static void arm_itimer(struct posix_timer_t *timer, struct itimerval *val, ktimer_t timerid, int signo)
+static void arm_itimer(struct posix_timer_t *timer, struct itimerval *val, 
+                       ktimer_t timerid, int signo)
 {
     timer->sigev.sigev_notify = SIGEV_SIGNAL;
     timer->sigev.sigev_signo = signo;
@@ -75,11 +76,13 @@ static void activate_itimer(struct posix_timer_t *timer)
 
     if(timer->val.it_value.tv_sec || timer->val.it_value.tv_nsec)
     {
-        res = do_clock_nanosleep(tgid(this_core->cur_task), timer->clockid, 0,
-                                     &timer->val.it_value, NULL, timer->timerid);
+
+
+        timer->tgid = tgid(this_core->cur_task);
+        res = do_clock_nanosleep(0, &timer->val.it_value, NULL, timer);
 
         // time has already passed (otherwise we should get -EINTR)
-        if(res == 0 || res == -EINVAL)
+        if(/* res == 0 || */ res == -EINVAL)
         {
             A_memset(&timer->val, 0, sizeof(struct itimerspec));
         }

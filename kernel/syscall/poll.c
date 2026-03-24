@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: poll.c
  *    This file is part of LaylaOS.
@@ -88,8 +88,6 @@ static int poll_internal(struct pollfd *fds, nfds_t nfds,
     {
         COPY_FROM_USER(fdcopy, fds, sizeof(struct pollfd) * nfds);
     }
-
-    //printk("poll_internal: 1\n");
     
     for(i = 0; i < nfds; i++)
     {
@@ -125,14 +123,6 @@ retry:
     error = pollscan(fdcopy, nfds);
 
     /*
-    if(memcmp(this_core->cur_task->command, "sdl2-do", 7) == 0)
-    //if(this_core->cur_task->pid >= 63 && this_core->cur_task->pid != 64)
-    {
-        printk("poll: err %ld, timo %ld\n", error, timo);
-    }
-    */
-
-    /*
      * Negative result is error, positive result is fd count.
      * Either way, wrap up and return.
      */
@@ -161,33 +151,6 @@ retry:
         oticks = ticks;
     }
 
-
-    /*
-    if(timo)
-    {
-        prep_wait(timo);
-    }
-
-    if(get_task_properties(this_core->cur_task) & PROPERTY_SELECT_EVENT)
-    {
-        if(timo)
-        {
-            end_wait();
-        }
-
-        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
-        goto retry;
-    }
-
-    set_task_state(this_core->cur_task, TASK_SLEEPING);
-    scheduler();
-
-    if(timo)
-    {
-        end_wait();
-    }
-    */
-
     if(timo)
     {
         block_task_timeout(this_core->cur_task, timo);
@@ -212,27 +175,6 @@ retry:
     }
 
     goto retry;
-
-#if 0
-    if(timo < 100)
-    {
-        error = block_task2(&pollwait, timo);
-    }
-    else
-    {
-        if((error = block_task2(&pollwait, 100)) != EINTR)
-        {
-            goto retry;
-        }
-    }
-
-    if(error == 0)
-    {
-        goto retry;
-    }
-    
-    error = -error;
-#endif
     
 done:
 
