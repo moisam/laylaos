@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Process viewer
+Command=/bin/desktop/ltermapp /usr/bin/htop
+IconPath=Default
+Icon=htop
+ShowOnDesktop=no
+Category=System Tools
+

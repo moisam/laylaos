@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=DOSBox-X
+Command=/usr/bin/dosbox-x
+IconPath=Default
+Icon=dosbox-x
+ShowOnDesktop=no
+Category=Games
+

@@ -1,0 +1,12 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Lite text editor
+Command=/usr/bin/lite
+IconPath=Default
+Icon=lite
+ShowOnDesktop=no
+Category=Accessories
+
