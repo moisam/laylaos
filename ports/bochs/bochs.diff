@@ -1,0 +1,177 @@
+diff -rub ./bochs-3.0/configure ./bochs-3.0/configure
+--- ./bochs-3.0/configure	2025-02-16 09:15:29.000000000 +0000
++++ ./bochs-3.0/configure	2025-10-28 17:54:22.827383448 +0000
+@@ -4018,7 +4018,7 @@
+   *-solaris*)
+     ADD_FLAGS="-D_XOPEN_SOURCE_EXTENDED=1 -D__EXTENSIONS__"      # required for correct function prototypes
+     LIBS="$LIBS -lsocket -lnsl"
+-    DEFAULT_GUI=x11
++    DEFAULT_GUI=x11;; *-laylaos*) DEFAULT_GUI=sdl2
+     ;;
+   *)
+     DEFAULT_GUI=x11
+@@ -25389,7 +25389,7 @@
+   elif test "$with_sdl2" = yes; then
+     SOUNDLOW_OBJS="$SOUNDLOW_OBJS soundsdl.o"
+     if test "$bx_plugins" = 1; then
+-      SDL_SOUND_LINK_OPTS="$SDL_SOUND_LINK_OPTS `sdl2-config --libs`"
++      SDL_SOUND_LINK_OPTS="$SDL_SOUND_LINK_OPTS `$PKG_CONFIG sdl2 --libs`"
+     fi
+     soundlow_drivers="$soundlow_drivers sdl"
+     if test "$soundlow_default" = "dummy"; then
+@@ -25397,7 +25397,7 @@
+     fi
+     printf "%s\n" "#define BX_HAVE_SOUND_SDL 1" >>confdefs.h
+ 
+-    SDL2_VERSION=`sdl2-config --version`
++    SDL2_VERSION=`$PKG_CONFIG sdl2 --version`
+     # SDL version >= 2.0.5 supports audio capture
+     sdl2_audio_capture=0
+ 
+@@ -26136,14 +26136,14 @@
+   SPECIFIC_GUI_OBJS="$SPECIFIC_GUI_OBJS \$(GUI_OBJS_SDL2)"
+   # GUI_*FLAGS are added to the compilation of every bochs file, not just
+   # the files in gui/*.cc.
+-  SDL2_CFLAGS=`sdl2-config --cflags`
++  SDL2_CFLAGS=`$PKG_CONFIG sdl2 --cflags`
+   GUI_CFLAGS="$GUI_CFLAGS $SDL2_CFLAGS"
+   GUI_CXXFLAGS="$GUI_CXXFLAGS $SDL2_CFLAGS"
+-  GUI_LINK_OPTS_SDL2="`sdl2-config --libs`"
++  GUI_LINK_OPTS_SDL2="`$PKG_CONFIG sdl2 --libs`"
+   GUI_LINK_OPTS="$GUI_LINK_OPTS \$(GUI_LINK_OPTS_SDL2)"
+   # The plugin version uses multi-threading support in Bochs core
+   if test "$bx_plugins" = 1; then
+-    NONPLUGIN_GUI_LINK_OPTS="`sdl2-config --libs`"
++    NONPLUGIN_GUI_LINK_OPTS="`$PKG_CONFIG sdl2 --libs`"
+   fi
+   # The enhanced X debugger depends on GTK2
+   if test "$DEFAULT_GUI" != win32; then
+@@ -26837,7 +26837,7 @@
+ printf "%s\n" "$ac_cv_lib_curses_mvaddch" >&6; }
+ if test "x$ac_cv_lib_curses_mvaddch" = xyes
+ then :
+-  GUI_LINK_OPTS_TERM="`$PKG_CONFIG --libs curses`"
++  GUI_LINK_OPTS_TERM=$NCURSES_PATH
+ fi
+ 
+     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for mvaddch in -lncurses" >&5
+@@ -26877,7 +26877,7 @@
+ printf "%s\n" "$ac_cv_lib_ncurses_mvaddch" >&6; }
+ if test "x$ac_cv_lib_ncurses_mvaddch" = xyes
+ then :
+-  GUI_LINK_OPTS_TERM="`$PKG_CONFIG --libs ncurses`"
++  GUI_LINK_OPTS_TERM=$NCURSES_PATH
+ fi
+ 
+     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for mvaddch in -ltermlib" >&5
+@@ -26917,7 +26917,7 @@
+ printf "%s\n" "$ac_cv_lib_termlib_mvaddch" >&6; }
+ if test "x$ac_cv_lib_termlib_mvaddch" = xyes
+ then :
+-  GUI_LINK_OPTS_TERM="`$PKG_CONFIG --libs termlib`"
++  GUI_LINK_OPTS_TERM=$NCURSES_PATH
+ fi
+ 
+     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for mvaddch in -lpdcurses" >&5
+@@ -26957,7 +26957,7 @@
+ printf "%s\n" "$ac_cv_lib_pdcurses_mvaddch" >&6; }
+ if test "x$ac_cv_lib_pdcurses_mvaddch" = xyes
+ then :
+-  GUI_LINK_OPTS_TERM="`$PKG_CONFIG --libs pdcurses`"
++  GUI_LINK_OPTS_TERM=$NCURSES_PATH
+ fi
+ 
+   else
+@@ -26998,7 +26998,7 @@
+ printf "%s\n" "$ac_cv_lib_curses_mvaddch" >&6; }
+ if test "x$ac_cv_lib_curses_mvaddch" = xyes
+ then :
+-  GUI_LINK_OPTS_TERM='-lcurses'
++  GUI_LINK_OPTS_TERM=$NCURSES_PATH
+ fi
+ 
+     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for mvaddch in -lncurses" >&5
+@@ -27038,7 +27038,7 @@
+ printf "%s\n" "$ac_cv_lib_ncurses_mvaddch" >&6; }
+ if test "x$ac_cv_lib_ncurses_mvaddch" = xyes
+ then :
+-  GUI_LINK_OPTS_TERM='-lncurses'
++  GUI_LINK_OPTS_TERM=$NCURSES_PATH
+ fi
+ 
+     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for mvaddch in -ltermlib" >&5
+@@ -27078,7 +27078,7 @@
+ printf "%s\n" "$ac_cv_lib_termlib_mvaddch" >&6; }
+ if test "x$ac_cv_lib_termlib_mvaddch" = xyes
+ then :
+-  GUI_LINK_OPTS_TERM='-ltermlib'
++  GUI_LINK_OPTS_TERM=$NCURSES_PATH
+ fi
+ 
+     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for mvaddch in -lpdcurses" >&5
+@@ -27118,7 +27118,7 @@
+ printf "%s\n" "$ac_cv_lib_pdcurses_mvaddch" >&6; }
+ if test "x$ac_cv_lib_pdcurses_mvaddch" = xyes
+ then :
+-  GUI_LINK_OPTS_TERM='-lpdcurses'
++  GUI_LINK_OPTS_TERM=$NCURSES_PATH
+ fi
+ 
+   fi
+diff -rub ./bochs-3.0/gui/keymap.cc ./bochs-3.0/gui/keymap.cc
+--- ./bochs-3.0/gui/keymap.cc	2025-02-16 09:15:29.000000000 +0000
++++ ./bochs-3.0/gui/keymap.cc	2025-11-27 13:57:41.329868353 +0000
+@@ -96,7 +96,7 @@
+     keymapCount = 0;
+ }
+ 
+-#if defined(WIN32) || defined(__ANDROID__)
++#if defined(WIN32) || defined(__ANDROID__) || defined(__laylaos__)
+ char* basename(char *path)
+ {
+   char *ptr;
+diff -rub ./bochs-3.0/iodev/hdimage/hdimage.cc ./bochs-3.0/iodev/hdimage/hdimage.cc
+--- ./bochs-3.0/iodev/hdimage/hdimage.cc	2025-02-16 09:15:29.000000000 +0000
++++ ./bochs-3.0/iodev/hdimage/hdimage.cc	2026-01-29 16:51:29.305852283 +0000
+@@ -45,6 +45,11 @@
+ #include <sys/ioctl.h>
+ #include <sys/wait.h>
+ #endif
++#ifdef __laylaos__
++#include <sys/ioctl.h>
++#include <sys/wait.h>
++#include <sys/mount.h>      // BLKGETSIZE64
++#endif
+ 
+ #ifndef O_ACCMODE
+ #define O_ACCMODE (O_WRONLY | O_RDWR)
+@@ -387,7 +392,7 @@
+       BX_PANIC(("fstat() returns error!"));
+       return -1;
+     }
+-#ifdef linux
++#if defined(linux) || defined(__laylaos__)
+     if (S_ISBLK(stat_buf.st_mode)) { // Is this a special device file (e.g. /dev/sde) ?
+       ioctl(fd, BLKGETSIZE64, fsize); // yes it's!
+     }
+@@ -553,7 +558,7 @@
+ {
+ #ifdef WIN32
+   return (bool)CopyFile(src, dst, FALSE);
+-#elif defined(linux)
++#elif defined(linux) || defined(__laylaos__)
+   pid_t pid, ws;
+ 
+   if ((src == NULL) || (dst == NULL)) {
+@@ -561,7 +566,11 @@
+   }
+ 
+   if (!(pid = fork())) {
++#if defined(__laylaos__)
++    execl("/usr/bin/cp", "/usr/bin/cp", src, dst, (char *)0);
++#else
+     execl("/bin/cp", "/bin/cp", src, dst, (char *)0);
++#endif
+     return 0;
+   }
+   wait(&ws);

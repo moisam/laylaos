@@ -1,0 +1,244 @@
+diff -rub ./dosbox-x-v2025.10.07/include/byteorder.h ./dosbox-x-v2025.10.07/include/byteorder.h
+--- ./dosbox-x-v2025.10.07/include/byteorder.h	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/include/byteorder.h	2025-10-12 06:10:25.469248503 +0100
+@@ -110,7 +110,7 @@
+ 
+ #include <endian.h>
+ 
+-#elif defined(__HAIKU__)
++#elif defined(__HAIKU__) || defined(__laylaos__)
+ 
+ #define _BSD_SOURCE
+ #include <endian.h>
+diff -rub ./dosbox-x-v2025.10.07/src/cpu/dynamic_alloc_common.h ./dosbox-x-v2025.10.07/src/cpu/dynamic_alloc_common.h
+--- ./dosbox-x-v2025.10.07/src/cpu/dynamic_alloc_common.h	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/cpu/dynamic_alloc_common.h	2025-10-12 06:16:01.574055622 +0100
+@@ -76,7 +76,7 @@
+         else cache_code_start_ptr = NULL; /* MAP_FAILED is NOT NULL (or at least we cannot assume that) */
+     }
+ #endif
+-#if defined(C_HAVE_MEMFD_CREATE) && !defined(__ANDROID__) && !defined(ANDROID) /* Try a Linux memfd which we can mmap twice, one read/write, one read/execute */
++#if defined(C_HAVE_MEMFD_CREATE) && !defined(__ANDROID__) && !defined(ANDROID) && !defined(__laylaos__) /* Try a Linux memfd which we can mmap twice, one read/write, one read/execute */
+ /* Android NDK doesn't really have memfd_create, but automake claims so? */
+     if (cache_code_start_ptr == NULL) {
+         assert(cache_fd < 0);
+diff -rub ./dosbox-x-v2025.10.07/src/dos/drive_local.cpp ./dosbox-x-v2025.10.07/src/dos/drive_local.cpp
+--- ./dosbox-x-v2025.10.07/src/dos/drive_local.cpp	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/dos/drive_local.cpp	2025-10-12 06:19:57.922411554 +0100
+@@ -55,7 +55,7 @@
+ #include "render.h"
+ #include "jfont.h"
+ 
+-#if defined(EMSCRIPTEN) || defined(HAIKU)
++#if defined(EMSCRIPTEN) || defined(HAIKU) || defined(__laylaos__)
+ #include <fcntl.h>
+ #endif
+ 
+diff -rub ./dosbox-x-v2025.10.07/src/dosbox.cpp ./dosbox-x-v2025.10.07/src/dosbox.cpp
+--- ./dosbox-x-v2025.10.07/src/dosbox.cpp	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/dosbox.cpp	2026-01-17 12:35:13.229977157 +0000
+@@ -1610,7 +1610,11 @@
+     Pstring->Set_help("You can specify a different background color theme for the welcome banner from the default one.");
+     Pstring->SetBasic(true);
+ 
++#ifdef __laylaos__
++    Pstring = secprop->Add_path("configuration tool theme", Property::Changeable::WhenIdle, "Windows Default");
++#else
+     Pstring = secprop->Add_path("configuration tool theme", Property::Changeable::WhenIdle, "");
++#endif
+     Pstring->Set_values(color_themes_config);
+     Pstring->Set_help(
+                       "Theme for the configuration tool.\n"
+diff -rub ./dosbox-x-v2025.10.07/src/gui/sdlmain.cpp ./dosbox-x-v2025.10.07/src/gui/sdlmain.cpp
+--- ./dosbox-x-v2025.10.07/src/gui/sdlmain.cpp	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/gui/sdlmain.cpp	2026-01-18 17:10:15.408760353 +0000
+@@ -177,6 +177,11 @@
+ #endif
+ #include <limits.h>
+ 
++#if defined(__laylaos__)
++#include <gui/gui.h>
++#include "SDL_syswm.h"
++#endif
++
+ #include <output/output_direct3d.h>
+ #include <output/output_opengl.h>
+ #include <output/output_surface.h>
+@@ -857,6 +862,54 @@
+ }
+ #endif
+ 
++#if defined(__laylaos__)
++void UpdateWindowDimensions_LaylaOS(void) {
++    SDL_SysWMinfo wminfo;
++    memset(&wminfo,0,sizeof(wminfo));
++    SDL_VERSION(&wminfo.version);
++
++#if defined(C_SDL2)
++    SDL_Window* GFX_GetSDLWindow(void);
++
++    if (SDL_GetWindowWMInfo(GFX_GetSDLWindow(),&wminfo) >= 0) {
++        if (wminfo.subsystem == SDL_SYSWM_LAYLAOS && wminfo.info.laylaos.window != NULL) {
++            /*
++            fprintf(stderr, "UpdateWindowDimensions_LaylaOS: w %d, h %d, fl %x\n",
++                            wminfo.info.laylaos.window->w,
++                            wminfo.info.laylaos.window->h,
++                            wminfo.info.laylaos.window->flags);
++            */
++
++            UpdateWindowDimensions(wminfo.info.laylaos.window->w,
++                                   wminfo.info.laylaos.window->h);
++            UpdateWindowMaximized((wminfo.info.laylaos.window->flags & WINDOW_STATE_MAXIMIZED));
++        }
++    }
++#endif
++}
++
++void LaylaOS_GetWindowDPI(ScreenSizeInfo &info) {
++    info.clear();
++
++    info.screen_position_pixels.x        = 0;
++    info.screen_position_pixels.y        = 0;
++
++    info.screen_dimensions_pixels.width  = __global_gui_data.screen.w;
++    info.screen_dimensions_pixels.height = __global_gui_data.screen.h;
++
++    /*
++     * TODO: Get the actual DPI
++     */
++    static int dpi = 96;
++
++    info.screen_dpi.width = dpi;
++    info.screen_dpi.height = dpi;
++
++    info.screen_dimensions_mm.width = (25.4 * screen_size_info.screen_dimensions_pixels.width) / dpi;
++    info.screen_dimensions_mm.height = (25.4 * screen_size_info.screen_dimensions_pixels.height) / dpi;
++}
++#endif
++
+ void UpdateWindowDimensions(void)
+ {
+ #if defined(C_SDL2)
+@@ -887,6 +940,10 @@
+     void Linux_GetWindowDPI(ScreenSizeInfo &info);
+     Linux_GetWindowDPI(/*&*/screen_size_info);
+ #endif
++#if defined(__laylaos__)
++    UpdateWindowDimensions_LaylaOS();
++    LaylaOS_GetWindowDPI(/*&*/screen_size_info);
++#endif
+     PrintScreenSizeInfo();
+ }
+ 
+@@ -2721,6 +2778,9 @@
+ #elif defined(LINUX)
+     void Linux_GetDesktopResolution(int *width,int *height);
+     Linux_GetDesktopResolution(width,height); /* this is MESSY but there's too much namespace collision going on here */
++#elif defined(__laylaos__)
++    *width = __global_gui_data.screen.w;
++    *height = __global_gui_data.screen.h;
+ #else
+     *width = 1024; // guess
+     *height = 768;
+diff -rub ./dosbox-x-v2025.10.07/src/gui/whereami.c ./dosbox-x-v2025.10.07/src/gui/whereami.c
+--- ./dosbox-x-v2025.10.07/src/gui/whereami.c	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/gui/whereami.c	2025-10-12 06:23:32.744207800 +0100
+@@ -175,7 +175,7 @@
+   return length;
+ }
+ 
+-#elif defined(__linux__) || defined(__CYGWIN__) || defined(__sun) || defined(WAI_USE_PROC_SELF_EXE)
++#elif defined(__linux__) || defined(__CYGWIN__) || defined(__sun) || defined(WAI_USE_PROC_SELF_EXE) || defined(__laylaos__)
+ 
+ #include <stdio.h>
+ #include <stdlib.h>
+diff -rub ./dosbox-x-v2025.10.07/src/hardware/serialport/libserial.cpp ./dosbox-x-v2025.10.07/src/hardware/serialport/libserial.cpp
+--- ./dosbox-x-v2025.10.07/src/hardware/serialport/libserial.cpp	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/hardware/serialport/libserial.cpp	2025-10-12 06:36:09.271348389 +0100
+@@ -256,7 +256,7 @@
+ }
+ #endif
+ 
+-#if defined (LINUX) || defined (MACOSX) || defined (BSD) || defined (HAIKU)
++#if defined (LINUX) || defined (MACOSX) || defined (BSD) || defined (HAIKU) || defined(__laylaos__)
+ 
+ #include <string.h> // strlen
+ #include <stdlib.h>
+diff -rub ./dosbox-x-v2025.10.07/src/ints/bios_vhd.cpp ./dosbox-x-v2025.10.07/src/ints/bios_vhd.cpp
+--- ./dosbox-x-v2025.10.07/src/ints/bios_vhd.cpp	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/ints/bios_vhd.cpp	2025-10-12 06:30:37.852711240 +0100
+@@ -17,6 +17,10 @@
+  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ */
+ 
++#if defined(__laylaos__)
++#include <limits.h>
++#endif
++
+ #include <assert.h>
+ #include <stdlib.h>
+ #include <time.h>
+diff -rub ./dosbox-x-v2025.10.07/src/libs/physfs/physfs_platforms.h ./dosbox-x-v2025.10.07/src/libs/physfs/physfs_platforms.h
+--- ./dosbox-x-v2025.10.07/src/libs/physfs/physfs_platforms.h	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/libs/physfs/physfs_platforms.h	2025-10-12 16:45:06.889501016 +0100
+@@ -45,6 +45,10 @@
+ #  define PHYSFS_PLATFORM_UNIX 1
+ #  define PHYSFS_PLATFORM_POSIX 1
+ #  define PHYSFS_NO_CDROM_SUPPORT 1
++#elif defined(__layaos__)
++#  define PHYSFS_PLATFORM_LAYLAOS 1
++#  define PHYSFS_PLATFORM_UNIX 1
++#  define PHYSFS_PLATFORM_POSIX 1
+ #elif defined(__linux)
+ #  define PHYSFS_PLATFORM_LINUX 1
+ #  define PHYSFS_PLATFORM_UNIX 1
+diff -rub ./dosbox-x-v2025.10.07/src/libs/physfs/physfs_platform_unix.c ./dosbox-x-v2025.10.07/src/libs/physfs/physfs_platform_unix.c
+--- ./dosbox-x-v2025.10.07/src/libs/physfs/physfs_platform_unix.c	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/libs/physfs/physfs_platform_unix.c	2025-10-12 16:46:28.938446734 +0100
+@@ -24,7 +24,7 @@
+ #include <limits.h>
+ 
+ #if PHYSFS_NO_CDROM_SUPPORT
+-#elif PHYSFS_PLATFORM_LINUX
++#elif PHYSFS_PLATFORM_LINUX || PHYSFS_PLATFORM_LAYLAOS
+ #  define PHYSFS_HAVE_MNTENT_H 1
+ #elif defined __CYGWIN__
+ #  define PHYSFS_HAVE_MNTENT_H 1
+diff -rub ./dosbox-x-v2025.10.07/src/Makefile.am ./dosbox-x-v2025.10.07/src/Makefile.am
+--- ./dosbox-x-v2025.10.07/src/Makefile.am	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/Makefile.am	2025-10-12 07:16:50.990561263 +0100
+@@ -30,8 +30,9 @@
+ 
+ dosbox_x_SOURCES = dosbox.cpp $(ico_stuff)
+ dosbox_x_LDADD = debug/libdebug.a dos/libdos.a shell/libshell.a builtin/libbuiltin.a \
+-               ints/libints.a hardware/serialport/libserial.a hardware/parport/libparallel.a \
++               ints/libints.a \
+                libs/passthroughio/libpassthroughio.a gui/libgui.a libs/gui_tk/libgui_tk.a hardware/libhardware.a \
++               hardware/serialport/libserial.a hardware/parport/libparallel.a \
+ 	       cpu/libcpu.a hardware/reSID/libresid.a fpu/libfpu.a gui/libgui.a \
+ 		   misc/libmisc.a output/liboutput.a hardware/mame/libmame.a libs/zmbv/libzmbv.a libs/decoders/internal/libopusint.a
+ 
+diff -rub ./dosbox-x-v2025.10.07/src/misc/cross.cpp ./dosbox-x-v2025.10.07/src/misc/cross.cpp
+--- ./dosbox-x-v2025.10.07/src/misc/cross.cpp	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/misc/cross.cpp	2025-10-12 12:04:00.501032960 +0100
+@@ -126,7 +126,7 @@
+ 	}
+ #elif defined(RISCOS)
+ 	in = "/<DosBox-X$Dir>/resources";
+-#elif defined(LINUX)
++#elif defined(LINUX) || defined(__laylaos__)
+ 	const char *xdg_data_home = getenv("XDG_DATA_HOME");
+ 	const std::string data_home = xdg_data_home && xdg_data_home[0] == '/' ? xdg_data_home: "~/.local/share";
+ 	in = data_home + "/dosbox-x";
+diff -rub ./dosbox-x-v2025.10.07/src/output/output_tools.cpp ./dosbox-x-v2025.10.07/src/output/output_tools.cpp
+--- ./dosbox-x-v2025.10.07/src/output/output_tools.cpp	2025-10-07 16:49:14.000000000 +0100
++++ ./dosbox-x-v2025.10.07/src/output/output_tools.cpp	2026-01-17 18:45:01.174750145 +0000
+@@ -82,6 +82,8 @@
+ # else
+     output = "surface";
+ # endif
++#elif defined(__laylaos__)
++    output = "surface";
+ #elif defined(C_OPENGL) && (!(defined(LINUX) && !defined(C_SDL2)) || (defined(MACOSX) && !defined(__arm64__)))
+     /* NTS: Lately, especially on Macbooks with Retina displays, OpenGL gives better performance
+             than the CG bitmap-based "surface" output.
