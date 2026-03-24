@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ne2000.c
  *    This file is part of LaylaOS.
@@ -171,15 +171,15 @@ static struct packet_t *ne2000_alloc_packet(size_t len)
 
 int ne2000_init(struct pci_dev_t *pci)
 {
-    int unit = 0;
-    
     if(!pci)
     {
         return -EINVAL;
     }
-    
-    register struct ne2000_t *ne = &ne2000_dev[unit];
-    register int i;
+
+    int unit = 0;
+    struct ne2000_t *ne = &ne2000_dev[unit];
+    int i;
+    void *tmpphys;
 
     init_kernel_mutex(&ne->outq.lock);
     ne->outq.max = MAX_OUT_PACKETS;
@@ -203,14 +203,13 @@ int ne2000_init(struct pci_dev_t *pci)
 	 * NOTE: is 2048 actually enough per packet?
 	 *       are 16 buffers enough in case we get overrun by incoming packets?
 	 */
-    if(!(ne2000_in_buffers = (char *)
-            vmmngr_alloc_and_map(NE2000_IN_BUFFER_TOTALMEM, 0,
-                                 PTE_FLAGS_PW, NULL, REGION_DMA)))
+    if(!(tmpphys = pmmngr_alloc_blocks(NE2000_IN_BUFFER_TOTALMEM / PAGE_SIZE)))
     {
         printk("net: failed to alloc ne2000 receive buffers\n");
         return -ENOMEM;
     }
-    
+
+    ne2000_in_buffers = (char *)PHYS_TO_HIMEM(tmpphys);
     ne2000_in_buffer_use_bitmap = 0;
     ne2000_in_packet_bitmap = 0;
 
@@ -300,19 +299,20 @@ int ne2000_init(struct pci_dev_t *pci)
 }
 
 
-int ne2000_intr(struct regs *r, int unit)
+int ne2000_intr(struct regs *r, void *arg)
 {
     UNUSED(r);
+    struct pci_dev_t *pci = arg;
 
     //printk("ne2000_intr[%d]:\n", this_core->cpuid);
 
-    if(unit != 0)
+    if(pci->unit != 0)
     {
-        printk("ne2000_intr[%d]: unit %d\n", this_core->cpuid, unit);
+        printk("ne2000_intr[%d]: unit %d\n", this_core->cpuid, pci->unit);
         return 0;
     }
 
-    register struct ne2000_t *ne = &ne2000_dev[unit];
+    register struct ne2000_t *ne = &ne2000_dev[pci->unit];
     uint8_t i;
 
     if(!ne->iobase)

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2024, 2025 (c)
+ *    Copyright 2024, 2025, 2026 (c)
  * 
  *    file: i8254x.c
  *    This file is part of LaylaOS.
@@ -83,9 +83,7 @@ int i8254x_init(struct pci_dev_t *pci)
     }
     
     register struct i8254x_t *dev = &i8254x_dev[unit];
-    uintptr_t bar0, phys, virt, phys2, virt2;
-    //virtual_addr vinbuf, voutbuf;
-    //physical_addr pinbuf, poutbuf;
+    uintptr_t bar0, txphys = 0, rxphys = 0 /* , phys2, virt2 */;
     uint16_t word;
     uint32_t dword;
     int res = 0;
@@ -129,17 +127,13 @@ int i8254x_init(struct pci_dev_t *pci)
 
     // determine the size of the BAR
     bar0 = pci->bar[0];
-    pci_config_write_long(pci->bus, pci->dev, pci->function, 
-                                    BAR0_OFFSET, 0xffffffff);
-    dev->iosize = pci_config_read_long(pci->bus, pci->dev, pci->function, 
-                                    BAR0_OFFSET);
+    pci_config_write_long(pci, BAR0_OFFSET, 0xffffffff);
+    dev->iosize = pci_config_read_long(pci, BAR0_OFFSET);
     dev->iosize &= ~0xf;    // mask the lower 4 bits
     dev->iosize = (~(dev->iosize) & 0xffffffff) + 1;     // invert and add 1
-    pci_config_write_long(pci->bus, pci->dev, pci->function, 
-                                    BAR0_OFFSET, bar0);
-    bar0 = pci_config_read_long(pci->bus, pci->dev, pci->function, 
-                                    BAR0_OFFSET);
-    
+    pci_config_write_long(pci, BAR0_OFFSET, bar0);
+    bar0 = pci_config_read_long(pci, BAR0_OFFSET);
+
     printk("net: BAR0 " _XPTR_ ", iosize " _XPTR_ "\n", bar0, dev->iosize);
 
 #undef BAR0_OFFSET
@@ -200,41 +194,40 @@ int i8254x_init(struct pci_dev_t *pci)
         pcidev_outl(dev, i8254x_REG_MTA + (dword * 4), 0);
     }
 
-#define PAGE_FLAGS      (PTE_FLAGS_PW | I86_PTE_NOT_CACHEABLE)
-
     /*
      * Alloc memory and set up the receive descriptors.
      * Each descriptor is 16 bytes, so a page gives us 256 descriptors.
      */
-    if(get_next_addr(&phys, &virt, PAGE_FLAGS, REGION_DMA) != 0)
+    if(!(rxphys = (uintptr_t)pmmngr_alloc_block()))
     {
         res = -ENOMEM;
         goto err;
     }
 
-    dev->rx_desc = (volatile struct i8254x_rx_desc_t *)virt;
+    dev->rx_desc = (volatile struct i8254x_rx_desc_t *)mmio_map(rxphys, rxphys + PAGE_SIZE);
 
     for(dword = 0; dword < i8254x_IN_BUFFER_COUNT; dword += 2)
     {
         // a page will hold two buffers as bufsize is 2K
-        if(get_next_addr(&phys2, &virt2, PTE_FLAGS_PW, REGION_DMA) != 0)
+        if(!(dev->rx_desc[dword].address = (uintptr_t)pmmngr_alloc_block()))
         {
             res = -ENOMEM;
             goto err;
         }
 
-        dev->inbuf_virt[dword] = virt2;
-        dev->rx_desc[dword].address = (volatile uint64_t)phys2;
+        dev->inbuf_virt[dword] = mmio_map(dev->rx_desc[dword].address,
+                                          dev->rx_desc[dword].address + PAGE_SIZE);
         dev->rx_desc[dword].status = 0;
 
-        dev->inbuf_virt[dword + 1] = virt2 + i8254x_IN_BUFFER_SIZE;
-        dev->rx_desc[dword + 1].address = (volatile uint64_t)phys2 + i8254x_IN_BUFFER_SIZE;
+        dev->inbuf_virt[dword + 1] = dev->inbuf_virt[dword] + i8254x_IN_BUFFER_SIZE;
+        dev->rx_desc[dword + 1].address = dev->rx_desc[dword].address + i8254x_IN_BUFFER_SIZE;
         dev->rx_desc[dword + 1].status = 0;
     }
 
     // setup the receive descriptor ring buffer
-    pcidev_outl(dev, i8254x_REG_RDBAH, (uint32_t)(phys >> 32));
-    pcidev_outl(dev, i8254x_REG_RDBAL, (uint32_t)(phys & 0xFFFFFFFF));
+    pcidev_outl(dev, i8254x_REG_RDBAH, (uint32_t)(rxphys >> 32));
+    pcidev_outl(dev, i8254x_REG_RDBAL, (uint32_t)(rxphys & 0xFFFFFFFF));
+
     dword = pcidev_inl(dev, i8254x_REG_RDBAH);
 	printk("net: RX ring desc %x", dword);
     dword = pcidev_inl(dev, i8254x_REG_RDBAL);
@@ -269,35 +262,36 @@ int i8254x_init(struct pci_dev_t *pci)
      * Alloc memory and set up the transmission descriptors.
      * Each descriptor is 16 bytes, so a page gives us 256 descriptors.
      */
-    if(get_next_addr(&phys, &virt, PAGE_FLAGS, REGION_DMA) != 0)
+    if(!(txphys = (uintptr_t)pmmngr_alloc_block()))
     {
         res = -ENOMEM;
         goto err;
     }
 
-    dev->tx_desc = (volatile struct i8254x_tx_desc_t *)virt;
+    dev->tx_desc = (volatile struct i8254x_tx_desc_t *)mmio_map(txphys, txphys + PAGE_SIZE);
 
     for(dword = 0; dword < i8254x_OUT_BUFFER_COUNT; dword += 2)
     {
         // a page will hold two buffers as bufsize is 2K
-        if(get_next_addr(&phys2, &virt2, PTE_FLAGS_PW, REGION_DMA) != 0)
+        if(!(dev->tx_desc[dword].address = (uintptr_t)pmmngr_alloc_block()))
         {
             res = -ENOMEM;
             goto err;
         }
 
-        dev->outbuf_virt[dword] = virt2;
-        dev->tx_desc[dword].address = (volatile uint64_t)phys2;
+        dev->outbuf_virt[dword] = mmio_map(dev->tx_desc[dword].address,
+                                           dev->tx_desc[dword].address + PAGE_SIZE);
         dev->tx_desc[dword].cmd = 0;
 
-        dev->outbuf_virt[dword + 1] = virt2 + i8254x_OUT_BUFFER_SIZE;
-        dev->tx_desc[dword + 1].address = (volatile uint64_t)phys2 + i8254x_OUT_BUFFER_SIZE;
+        dev->outbuf_virt[dword + 1] = dev->outbuf_virt[dword] + i8254x_OUT_BUFFER_SIZE;
+        dev->tx_desc[dword + 1].address = dev->tx_desc[dword].address + i8254x_OUT_BUFFER_SIZE;
         dev->tx_desc[dword + 1].cmd = 0;
     }
 
     // setup the receive descriptor ring buffer
-    pcidev_outl(dev, i8254x_REG_TDBAH, (uint32_t)(phys >> 32));
-    pcidev_outl(dev, i8254x_REG_TDBAL, (uint32_t)(phys & 0xFFFFFFFF));
+    pcidev_outl(dev, i8254x_REG_TDBAH, (uint32_t)(txphys >> 32));
+    pcidev_outl(dev, i8254x_REG_TDBAL, (uint32_t)(txphys & 0xFFFFFFFF));
+
     dword = pcidev_inl(dev, i8254x_REG_TDBAH);
 	printk("net: TX ring desc %x", dword);
     dword = pcidev_inl(dev, i8254x_REG_TDBAL);
@@ -313,8 +307,6 @@ int i8254x_init(struct pci_dev_t *pci)
 
     // set the transmit control register
     pcidev_outl(dev, i8254x_REG_TCTL, (TCTL_EN | TCTL_PSP));
-
-#undef PAGE_FLAGS
 
 	dev->netif.unit = pci->unit;
 	dev->netif.flags = IFF_UP | IFF_RUNNING | IFF_BROADCAST;
@@ -356,13 +348,13 @@ err:
 
     if(dev->tx_desc)
     {
-        vmmngr_free_page(get_page_entry((void *)dev->tx_desc));
+        vmmngr_free_pages((virtual_addr)dev->tx_desc, PAGE_SIZE);
         dev->tx_desc = 0;
     }
 
     if(dev->rx_desc)
     {
-        vmmngr_free_page(get_page_entry((void *)dev->rx_desc));
+        vmmngr_free_pages((virtual_addr)dev->rx_desc, PAGE_SIZE);
         dev->rx_desc = 0;
     }
 
@@ -370,11 +362,12 @@ err:
 }
 
 
-int i8254x_intr(struct regs *r, int unit)
+int i8254x_intr(struct regs *r, void *arg)
 {
     UNUSED(r);
 
-    register struct i8254x_t *dev = &i8254x_dev[unit];
+    struct pci_dev_t *pci = arg;
+    register struct i8254x_t *dev = &i8254x_dev[pci->unit];
     uint32_t i, j;
 
     if(!dev->iobase)
