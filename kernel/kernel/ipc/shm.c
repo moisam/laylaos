@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: shm.c
  *    This file is part of LaylaOS.
@@ -415,8 +415,8 @@ long syscall_shmat(int shmid, void *shmaddr, int shmflg, volatile void **result)
 
         for(res = 0, virt2 = virt; virt2 < end; virt2 += PAGE_SIZE, res++)
         {
-            pt_entry *page = get_page_entry((void *)virt2);
-            
+            pt_entry *page = get_page_entry(virt2);
+
             if(!page)
             {
                 kpanic("invalid page pointer in syscall_shmat");
@@ -434,7 +434,7 @@ long syscall_shmat(int shmid, void *shmaddr, int shmflg, volatile void **result)
         /* map the physical frames into the given address range */
         for(res = 0, virt2 = virt; virt2 < end; virt2 += PAGE_SIZE, res++)
         {
-            pt_entry *page = get_page_entry((void *)virt2);
+            pt_entry *page = get_page_entry(virt2);
             
             if(page)
             {
@@ -592,7 +592,7 @@ int memregion_to_shmid(void *virt, struct memregion_t *memregion)
         return -EINVAL;
     }
 
-    pt_entry *page = get_page_entry(virt);
+    pt_entry *page = get_page_entry((virtual_addr)virt);
 
     if(!page)
     {
