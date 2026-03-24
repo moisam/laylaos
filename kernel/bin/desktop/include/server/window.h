@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: window.h
  *    This file is part of LaylaOS.
@@ -49,8 +49,14 @@
 #include "../gui-global.h"
 
 // Flags to server_window_paint()
-#define FLAG_PAINT_CHILDREN         0x01
-#define FLAG_PAINT_BORDER           0x02
+#define FLAG_PAINT_CHILDREN             0x01
+#define FLAG_PAINT_BORDER               0x02
+#define FLAG_PAINT_NO_CLIP_CHILDREN     0x04
+#define FLAG_PAINT_NO_CLIP_SIBLINGS     0x08
+
+// Flags to server_window_apply_bound_clipping()
+#define FLAG_CLIP_IN_RECURSION          0x01
+#define FLAG_CLIP_NO_SIBLINGS           0x08
 
 // forward declaration to avoid cyclic dependencies
 struct gc_t;
@@ -66,6 +72,7 @@ void cancel_active_child(struct server_window_t *parent,
 uint8_t *create_canvas(uint32_t canvas_size, int *__shmid);
 struct server_window_t *server_window_by_winid(winid_t winid);
 void draw_mouse_cursor(int invalidate);
+void may_draw_mouse_cursor(struct server_window_t *win);
 void server_window_may_hide(struct server_window_t *win);
 
 // server-window.c
@@ -73,16 +80,18 @@ void server_window_draw_border(struct gc_t *gc,
                                 struct server_window_t *window);
 
 void server_window_apply_bound_clipping(struct server_window_t *window,
-                                        int in_recursion, 
+                                        struct server_window_t *exclude_from_clipping,
                                         RectList *dirty_regions, 
-                                        struct clipping_t *clipping);
+                                        struct clipping_t *clipping,
+                                        int flags);
 
 void server_window_update_title(struct gc_t *gc, 
                                 struct server_window_t *window);
 void server_window_invalidate(struct gc_t *gc, struct server_window_t *window,
                                 int top, int left, int bottom, int right);
 void server_window_paint(struct gc_t *gc, struct server_window_t *window,
-                                RectList *dirty_regions, int flags);
+                         struct server_window_t *exclude_from_clipping,
+                         RectList *dirty_regions, int flags);
 
 void server_window_get_windows_above(struct server_window_t *parent, 
                                      struct server_window_t *child, 
@@ -104,9 +113,6 @@ void server_window_resize_accept(struct gc_t *gc,
 void server_window_resize(struct gc_t *gc, struct server_window_t *window,
                                     int dx, int dy, int dw, int dh, 
                                     uint32_t seqid);
-void server_window_resize_hidden(struct gc_t *gc, 
-                                    struct server_window_t *window,
-                                    int dx, int dy, int dw, int dh);
 void server_window_resize_absolute(struct gc_t *gc,
                                     struct server_window_t *window,
                                     int x, int y, int w, int h, 
@@ -134,9 +140,9 @@ void server_window_draw_controlbox(struct gc_t *gc,
 void server_window_toggle_minimize(struct gc_t *gc, 
                                     struct server_window_t *window);
 void server_window_toggle_maximize(struct gc_t *gc, 
-                                    struct server_window_t *window);
+                                    struct server_window_t *window, uint32_t seqid);
 void server_window_toggle_fullscreen(struct gc_t *gc, 
-                                    struct server_window_t *window);
+                                    struct server_window_t *window, uint32_t seqid);
 
 void server_window_close(struct gc_t *gc, struct server_window_t *window);
 

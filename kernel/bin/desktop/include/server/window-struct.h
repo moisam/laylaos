@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: window-struct.h
  *    This file is part of LaylaOS.
@@ -98,7 +98,8 @@ struct server_window_t
     int pending_x, pending_y;
     int pending_w, pending_h;
     int pending_resize;
-    
+    uint32_t pending_seqid;
+
     struct resource_t *icon;
     
     union
