@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: kheap.h
  *    This file is part of LaylaOS.
@@ -36,12 +36,6 @@
 
 extern volatile struct kernel_mutex_t kheap_lock;
 
-void kfree(void *p);
-void *kmalloc(size_t sz);
-void *krealloc(void *addr, size_t sz);
-
-#if 0
-
 /**
  * @brief Free dynamic memory.
  *
@@ -52,17 +46,7 @@ void *krealloc(void *addr, size_t sz);
  *
  * @return  nothing.
  */
-static inline void kfree(void *p)
-{
-    int old_prio = 0, old_policy = 0;
-    elevate_priority(cur_task, &old_prio, &old_policy);
-
-    kernel_mutex_lock(&kheap_lock);
-    dlfree(p);
-    kernel_mutex_unlock(&kheap_lock);
-
-    restore_priority(cur_task, old_prio, old_policy);
-}
+void kfree(void *p);
 
 /**
  * @brief Allocate dynamic memory.
@@ -74,19 +58,7 @@ static inline void kfree(void *p)
  *
  * @return  pointer to allocated memory on success, NULL on failure.
  */
-static inline void *kmalloc(size_t sz)
-{
-    int old_prio = 0, old_policy = 0;
-    elevate_priority(cur_task, &old_prio, &old_policy);
-
-    kernel_mutex_lock(&kheap_lock);
-    void *res = dlmalloc(sz);
-    kernel_mutex_unlock(&kheap_lock);
-
-    restore_priority(cur_task, old_prio, old_policy);
-
-    return res;
-}
+void *kmalloc(size_t sz);
 
 /**
  * @brief Reallocate dynamic memory.
@@ -99,31 +71,18 @@ static inline void *kmalloc(size_t sz)
  *
  * @return  pointer to reallocated memory on success, NULL on failure.
  */
-static inline void *krealloc(void *addr, size_t sz)
-{
-    int old_prio = 0, old_policy = 0;
-    elevate_priority(cur_task, &old_prio, &old_policy);
-
-    kernel_mutex_lock(&kheap_lock);
-    void *res = dlrealloc(addr, sz);
-    kernel_mutex_unlock(&kheap_lock);
-
-    restore_priority(cur_task, old_prio, old_policy);
-
-    return res;
-}
-
-#endif
-
+void *krealloc(void *addr, size_t sz);
 
 /**
  * @brief Initialise kernel heap.
  *
  * Called during boot to initialize the kernel heap.
  *
+ * @param   newtop      heap start address
+ *
  * @return  nothing.
  */
-void kheap_init(void);
+void kheap_init(void *newtop);
 
 /**
  * @brief Allocate dynamic memory.

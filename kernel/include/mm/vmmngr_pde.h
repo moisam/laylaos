@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: vmmngr_pde.h
  *    This file is part of LaylaOS.
@@ -75,7 +75,7 @@
  * \def PDE_VIRT_FRAME
  * Get page directory entry's (PDE) virtual frame
  */
-#define PDE_VIRT_FRAME(e)       ((e) & I86_PDE_VIRT_FRAME)
+//#define PDE_VIRT_FRAME(e)       ((e) & I86_PDE_VIRT_FRAME)
 
 /**
  * \def PDE_ADD_ATTRIB
@@ -100,8 +100,10 @@
  * \def PDE_SET_VIRT_FRAME
  * Set a page directory entry's (PDE) virtual frame
  */
+/*
 #define PDE_SET_VIRT_FRAME(eptr, addr)  \
         *(eptr) = (*(eptr) & ~I86_PDE_VIRT_FRAME) | addr
+*/
 
 /**
  * \def PDE_MAKE_COW
@@ -147,7 +149,7 @@ typedef uint64_t pd_entry;              /**< 64-bit page directory entry */
  * \def I86_PDE_VIRT_FRAME
  * Page Directory Entry (PDE) virtual frame mask
  */
-#define I86_PDE_VIRT_FRAME              0xfffffffffffff000
+//#define I86_PDE_VIRT_FRAME              0xfffffffffffff000
 
 /**
  * \def PML4_INDEX

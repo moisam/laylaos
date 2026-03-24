@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: mmngr_phys.h
  *    This file is part of LaylaOS.
@@ -127,7 +127,9 @@ static inline unsigned char get_frame_shares(physical_addr frame_addr)
  * @return  nothing.
  */
 void pmmngr_init(unsigned long mbd, physical_addr bitmap);
-//void pmmngr_init(multiboot_info_t *mbd, physical_addr bitmap);
+
+void pmmngr_early_init(unsigned long addr, volatile size_t *mmapsz, 
+                       physical_addr *first_available);
 
 /**
  * @brief Initialize physical memory region.

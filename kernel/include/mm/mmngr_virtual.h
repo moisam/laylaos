@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: mmngr_virtual.h
  *    This file is part of LaylaOS.
@@ -41,20 +41,7 @@
 #include <mm/vmmngr_pde.h>
 #include <kernel/mutex.h>
 
-/*
- * Types of kernel memory regions
- */
-#define REGION_PAGETABLE        1       /**< pagetable memory region */
-#define REGION_KSTACK           2       /**< kernel stack memory region */
-#define REGION_PIPE             3       /**< pipefs memory region */
-#define REGION_VBE_BACKBUF      4       /**< VBE back buffer memory region */
-#define REGION_VBE_FRONTBUF     5       /**< VBE front buffer memory region */
-#define REGION_KMODULE          6       /**< kernel modules memory region */
-#define REGION_PCACHE           7       /**< page cache memory region */
-#define REGION_DMA              8       /**< DMA memory region */
-#define REGION_ACPI             9       /**< ACPI memory region */
-#define REGION_MMIO             10      /**< Memory-mapped IO memory region */
-#define REGION_LAST             10
+#define PHYS_TO_HIMEM(p)        (((uintptr_t)p) | HIMEM_START)
 
 
 #ifdef __x86_64__
@@ -116,7 +103,6 @@ typedef uint32_t virtual_addr;      /**< 32-bit virtual address */
 
 // defined in kernel/task.h
 struct task_t;
-//#include <kernel/task.h>
 
 
 /**
@@ -141,7 +127,6 @@ typedef struct ptable ptable;
 struct pdirectory
 {
 	pd_entry m_entries_phys[PAGES_PER_DIR];   /**< physical ptable entries */
-	pd_entry m_entries_virt[PAGES_PER_DIR];   /**< virtual ptable entries */
 };
 
 typedef struct pdirectory pdirectory;
@@ -264,23 +249,6 @@ void vmmngr_free_pages(virtual_addr addr, size_t sz);
 void vmmngr_change_page_flags(virtual_addr addr, size_t sz, int flags);
 
 /**
- * @brief Initialise a page directory entry.
- *
- * Helper function called by vmmngr_initialize() and other VMM functions to
- * init pd table entries.
- *
- * @param   dir         page directory
- * @param   index       the index of the pdtable entry we want to map
- * @param   ptable      physical address of the table we want to map
- * @param   vtable      virtual address of the table
- * @param   userflag    if non-zero, map the page as user-accessible
- *
- * @return  nothing.
- */
-void init_pd_entry(pdirectory *dir, int index, physical_addr ptable,
-                   virtual_addr vtable, int userflag);
-
-/**
  * @brief Map a page.
  *
  * Map the given virtual address to the given physical address, giving the
@@ -292,7 +260,7 @@ void init_pd_entry(pdirectory *dir, int index, physical_addr ptable,
  *
  * @return  nothing.
  */
-void vmmngr_map_page(void *phys, void *virt, int flags);
+void vmmngr_map_page(physical_addr phys, virtual_addr virt, int flags);
 
 /**
  * @brief Unmap a page.
@@ -303,7 +271,7 @@ void vmmngr_map_page(void *phys, void *virt, int flags);
  *
  * @return  nothing.
  */
-void vmmngr_unmap_page(void *virt);
+void vmmngr_unmap_page(virtual_addr virt);
 
 /**
  * @brief Free page directory.
@@ -329,20 +297,6 @@ void free_pd(virtual_addr addr);
 physical_addr get_phys_addr(virtual_addr virt);
 
 /**
- * @brief Get a temporary virtual address.
- *
- * Allocate a physical page and map it to a virtual address and return the
- * mapped virtual address.
- *
- * @param   __addr      the virtual address is returned here
- * @param   tmp         the page entry is returned here
- * @param   flags       page flags
- *
- * @return  nothing.
- */
-void get_tmp_virt_addr(virtual_addr *__addr, pt_entry **tmp, int flags);
-
-/**
  * @brief Get page table count.
  *
  * Get the number of pages used to map page tables and page directories.
@@ -352,103 +306,10 @@ void get_tmp_virt_addr(virtual_addr *__addr, pt_entry **tmp, int flags);
 size_t used_pagetable_count(void);
 
 /**
- * @brief Get virtual address.
- *
- * Convert a physical address to a virtual address. The address is chosen
- * based on the requested memory \a region.
- *
- * @param   phys    physical address
- * @param   flags   page flags
- * @param   region  kernel memory region
- *
- * @return  virtual address.
- */
-virtual_addr phys_to_virt(physical_addr phys, int flags, int region);
-
-/**
- * @brief Get virtual address with offset.
- *
- * Convert a physical address range to a virtual address range. The address
- * range is chosen based on the requested memory \a region.
- *
- * If the passed physical address (\a pstart) is not page-aligned, the 
- * returned address has the same offset as \a pstart (that is, \a pstart - 
- * align_down(\a pstart)).
- *
- * @param   pstart  start of physical address region
- * @param   pend    end of physical address region
- * @param   flags   page flags
- * @param   region  kernel memory region
- *
- * @return  virtual address.
- */
-virtual_addr phys_to_virt_off(physical_addr pstart, physical_addr pend,
-                              int flags, int region);
-
-/**
- * @brief Get virtual address.
- *
- * Get the next valid address from a range of addresses. For example, when
- * allocating kernel stacks, addresses can range between USER_KSTACK_START and
- * USER_KSTACK_END. When the system starts running, allocation happens in a
- * linear way, but as the system keeps running, we'll eventually reach the 
- * point where we hit the USER_KSTACK_END address, at which point we need
- * to restart allocating from USER_KSTACK_START or somewhere in the middle.
- * This function does this. It returns the first available address within
- * the given range of addresses, allocating a physical memory page in the
- * process. We use it to get addresses for other things, like when we allocate
- * page tables, for example.
- *
- * @param   phys    the physical address of the alloc'd page frame is 
- *                    returned here
- * @param   virt    similar to the above, except the virtual address is 
- *                    returned here
- * @param   flags   the flags to set on the alloc'd physical memory frame
- * @param   region  kernel memory region
- *
- * @return  0 on success, -1 on failure.
- */
-int get_next_addr(physical_addr *phys, virtual_addr *virt, 
-                  int flags, int region);
-
-/**
- * @brief Get virtual address range.
- *
- * Allocate physical memory frames and map them to continuous virtual addresses
- * in the kernel's memory space. The virtual addresses depend on the given
- * \a region, which segregates kernel memory into different sections (see 
- * the memmap.txt file for a description of these sections).
- *
- * This function works similar to get_next_addr(), except the
- * latter allocates and maps a single page in the given address region.
- *
- * @param   sz              size of desired memory to allocate in bytes
- *                            (rounded up to the nearest page)
- * @param   pcontiguous     if set, the physical pages are allocated 
- *                            contiguously, i.e. each physical frame follows 
- *                            the other (this is used to reserve page 
- *                            directories, where the directory must fall on
- *                            two sequential physical frames)
- * @param   flags           the flags to set on the alloc'd physical memory 
- *                            frame
- * @param   phys            if not NULL, the physical address of the first
- *                            mapped page is stored here (this is only useful
- *                            for contiguous allocations)
- * @param   region          kernel memory region
- *
- * @return  the first virtual address in the reserved memory range, 
- *          0 on failure.
- */
-virtual_addr vmmngr_alloc_and_map(size_t sz, int pcontiguous,
-                                  int flags, physical_addr *phys, 
-                                  int region);
-
-/**
  * @brief Map an MMIO address space.
  *
  * For devices that use Memory-Mapped I/O, this function maps the device's
  * physical MMIO address space to the kernel's virtual address space.
- * The mapped virtual addresses will be in the \ref REGION_MMIO region.
  *
  * If the passed physical address (\a pstart) is not page-aligned, the 
  * returned address has the same offset as \a pstart (that is, \a pstart - 
@@ -462,6 +323,20 @@ virtual_addr vmmngr_alloc_and_map(size_t sz, int pcontiguous,
 virtual_addr mmio_map(physical_addr pstart, physical_addr pend);
 
 /**
+ * @brief Map a kernel module.
+ *
+ * If the passed physical address (\a pstart) is not page-aligned, the 
+ * returned address has the same offset as \a pstart (that is, \a pstart - 
+ * align_down(\a pstart)).
+ *
+ * @param   pstart  start of physical address region
+ * @param   pend    end of physical address region
+ *
+ * @return  virtual address.
+ */
+virtual_addr kmod_map(physical_addr pstart, physical_addr pend);
+
+/**
  * @brief Get page entry.
  *
  * Get the page table entry representing the given virtual address.
@@ -472,7 +347,7 @@ virtual_addr mmio_map(physical_addr pstart, physical_addr pend);
  *
  * @return  page table entry.
  */
-pt_entry *get_page_entry_pd(pdirectory *page_directory, void *virt);
+pt_entry *get_page_entry_pd(pdirectory *page_directory, virtual_addr virt);
 
 /**
  * @brief Get page entry.
@@ -483,7 +358,7 @@ pt_entry *get_page_entry_pd(pdirectory *page_directory, void *virt);
  *
  * @return  page table entry.
  */
-pt_entry *get_page_entry(void *virt);
+pt_entry *get_page_entry(virtual_addr virt);
 
 /**
  * @brief Initialize the virtual memory manager.
@@ -539,13 +414,21 @@ size_t get_task_pagecount(struct task_t *task);
  * Helper functions.
  ***********************************/
 
+/**
+ * @var pagetable_count
+ * @brief pagetable count.
+ *
+ * The number of mapped page tables.
+ */
+extern volatile size_t pagetable_count;
+
 #ifndef __x86_64__
 int page_fault_check_table(pdirectory *pd, 
                            volatile virtual_addr faulting_address);
 #endif
 
 // defined in arch/x86_64/mmngr_virtual_x86_64.c
-extern pt_entry *__get_page_entry_pd(pdirectory *pml4, void *virt, int __flags);
+pt_entry *__get_page_entry_pd(pdirectory *pml4, virtual_addr virt, int __flags);
 
 
 #ifdef __x86_64__
@@ -559,14 +442,6 @@ extern pt_entry *__get_page_entry_pd(pdirectory *pml4, void *virt, int __flags);
                                              page directory */
 #define FLAG_GETPDE_ISPDP           8   /**< requested entry is a 
                                              page directory pointer */
-
-/**
- * @var pagetable_count
- * @brief pagetable count.
- *
- * The number of mapped page tables.
- */
-extern volatile size_t pagetable_count;
 
 #endif      /* !__x86_64__ */
 
