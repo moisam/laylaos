@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: bottom-panel.h
  *    This file is part of LaylaOS.
@@ -28,7 +28,7 @@
 #ifndef BOTTOM_PANEL_H
 #define BOTTOM_PANEL_H
 
-#define BOTTOMPANEL_HEIGHT      25
+#define BOTTOMPANEL_HEIGHT      27
 #define BOTTOMPANEL_BGCOLOR     0x2C3235FF
 
 #define TOPCELL_BGCOLOR         0x666666FF
