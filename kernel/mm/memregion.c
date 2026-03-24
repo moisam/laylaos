@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: memregion.c
  *    This file is part of LaylaOS.
@@ -838,8 +838,8 @@ static long msync_internal(struct memregion_t *memregion, size_t sz, int flags)
         
         while(i < laddr)
         {
-            pt_entry *page = get_page_entry((void *)i);
-      
+            volatile pt_entry *page = get_page_entry(i);
+
             if(!page || !PTE_PRESENT(*page) || 
                         !PTE_WRITABLE(*page) || !PTE_DIRTY(*page))
             {
@@ -1245,7 +1245,7 @@ long memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
         return -EINVAL;
     }
 
-    pt_entry *e = get_page_entry_pd(pd, (void *)__addr);
+    pt_entry *e = get_page_entry_pd(pd, __addr);
 
     if(!e)
     {
@@ -1325,8 +1325,11 @@ long memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
                     kpanic("invalid pointer in memregion_load_page()\n");
                 }
 
+                /*
                 PTE_SET_FRAME(e, pcache->phys);
                 PTE_ADD_ATTRIB(e, PTE_FLAGS_PWU);
+                */
+                __atomic_store_n(e, pcache->phys | PTE_FLAGS_PWU, __ATOMIC_SEQ_CST);
 
                 if((memregion->prot & PROT_WRITE))
                 {
@@ -1340,7 +1343,7 @@ long memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
             }
             else
             {
-                e = get_page_entry_pd(pd, (void *)__addr);
+                e = get_page_entry_pd(pd, __addr);
                 //dec_frame_shares(pcache->phys);
 
                 if(!vmmngr_alloc_page(e, PTE_FLAGS_PWU))
@@ -1367,27 +1370,6 @@ long memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
 
         __asm__ __volatile__("xchg %%bx, %%bx":::);
         return -ENOMEM;
-        /*
-        if(!vmmngr_alloc_page(e, PTE_FLAGS_PWU))
-        {
-            return -ENOMEM;
-        }
-        
-        if((res = vfs_read_node(memregion->inode, &file_pos, 
-                                (unsigned char *)addr, read_size, 1)) < 0)
-        {
-            vmmngr_free_page(e);
-            vmmngr_flush_tlb_entry(__addr);
-            return res;
-        }
-        
-        // if reading past EOF (or the mmaped range), fill the rest of 
-        // page with zeroes
-        if(res != PAGE_SIZE)
-        {
-            A_memset((void *)(addr + res), 0, PAGE_SIZE - res);
-        }
-        */
     }
 
 fin:
@@ -1477,7 +1459,7 @@ STATIC_INLINE size_t __count_resident_pages(struct memregion_t *memregion,
 
     for(addr = start; addr < end; addr += PAGE_SIZE)
     {
-        if(!(e = __get_page_entry_pd(pml4_src, (void *)addr, 0)))
+        if(!(e = __get_page_entry_pd(pml4_src, addr, 0)))
         {
             continue;
         }
@@ -1604,7 +1586,7 @@ size_t memregion_kernel_pagecount(volatile struct task_t *task)
 
     for(addr = start; addr < end; addr += PAGE_SIZE)
     {
-        if(!(e = __get_page_entry_pd((pdirectory *)task->pd_virt, (void *)addr, 0)))
+        if(!(e = __get_page_entry_pd((pdirectory *)task->pd_virt, addr, 0)))
         {
             continue;
         }

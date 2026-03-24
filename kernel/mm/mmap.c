@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: mmap.c
  *    This file is part of LaylaOS.
@@ -48,8 +48,6 @@
 #include <kernel/user.h>
 #include <kernel/tty.h>
 
-//#include <fs/dentry.h>
-
 
 #define VALID_FLAGS         (MAP_SHARED | MAP_PRIVATE | MAP_ANONYMOUS | \
                              MAP_FIXED | MAP_GROWSDOWN | MAP_STACK | \
@@ -69,8 +67,6 @@ virtual_addr get_user_addr(virtual_addr size, virtual_addr min, virtual_addr max
 
     while(memregion)
     {
-        //printk("get_user_addr: addr 0x%lx\n", memregion->addr);
-
         if(memregion->addr < min)
         {
             memregion = memregion->next;
@@ -109,45 +105,16 @@ virtual_addr get_user_addr(virtual_addr size, virtual_addr min, virtual_addr max
 
         if(diff >= size)
         {
-            pt_entry *e = get_page_entry_pd((pdirectory *)this_core->cur_task->pd_virt, 
-                                            (void *)end);
+            pt_entry *e = get_page_entry_pd((pdirectory *)this_core->cur_task->pd_virt, end);
 
             if(e && PTE_FRAME(*e))
             {
-                /*
-                switch_tty(1);
-
-                printk("Current process: pid %d, comm %s\n",
-                       cur_task->pid, cur_task->command);
-
-                for(struct memregion_t *tmp = cur_task->mem->first_region; tmp != NULL; tmp = tmp->next)
-                {
-                    char *path;
-                    struct dentry_t *dent;
-                
-                    path = "*";
-                
-                    if(tmp->inode && get_dentry(tmp->inode, &dent) == 0)
-                    {
-                        if(dent->path)
-                        {
-                            path = dent->path;
-                        }
-                    }
-
-                    printk("memregion: addr %lx - %lx (type %d, prot %x, fl %x, %s)\n", tmp->addr, tmp->addr + (tmp->size * PAGE_SIZE), tmp->type, tmp->prot, tmp->flags, path);
-                }
-
-                screen_refresh(NULL);
-                */
-
                 __asm__ __volatile__("xchg %%bx, %%bx"::);
                 switch_tty(1);
                 printk("mmap: addr %lx in use but not in a memregion\n", end);
                 kpanic("mmap error\n");
             }
 
-            //if(cur_task->pid >= 59) __asm__ __volatile__("xchg %%bx, %%bx"::);
             return end;
         }
 
@@ -329,8 +296,6 @@ long syscall_mmap(struct syscall_args *__args)
         end = aligned_addr + aligned_size;
     }
 
-    //printk("mmap: task %d, s %lx, e %lx\n", ct->pid, aligned_addr, end);
-
     // allocate a new memregion struct
     if((res = memregion_alloc_and_attach(ct, node,
                                offset, (off_t)length,
@@ -340,9 +305,6 @@ long syscall_mmap(struct syscall_args *__args)
                                     MEMREGION_FLAG_USER,
                                fixed)) != 0)
     {
-        //printk("mmap: ********** cannot attach memregion\n");
-        //screen_refresh(NULL);
-
         kernel_mutex_unlock(&(ct->mem->mutex));
         return res;
     }
@@ -375,9 +337,6 @@ long syscall_mmap(struct syscall_args *__args)
 
             if(!vmmngr_alloc_pages(aligned_addr, (size_t)aligned_size, page_flags))
             {
-                //printk("mmap: ********** removing memregion\n");
-                //screen_refresh(NULL);
-
                 kernel_mutex_unlock(&(ct->mem->mutex));
                 memregion_detach(ct, memregion_containing(ct, aligned_addr), 1);
                 return -ENOMEM;
@@ -418,8 +377,6 @@ long syscall_munmap(void *addr, size_t length)
 {
     long res;
 	struct task_t *ct = (struct task_t *)this_core->cur_task;
-
-    //printk("munmap: task %d, addr %lx, length %lx\n", ct->pid, addr, length);
 
     // check addr is aligned
     if(!PAGE_ALIGNED(addr))
@@ -464,8 +421,6 @@ long syscall_mprotect(void *addr, size_t length, int prot)
     virtual_addr aligned_size, end;
     long res;
 	struct task_t *ct = (struct task_t *)this_core->cur_task;
-
-    //printk("mprotect: addr %lx, length %lx\n", addr, length);
 
     // check addr is aligned
     if(!PAGE_ALIGNED(addr))
@@ -513,12 +468,12 @@ long syscall_mprotect(void *addr, size_t length, int prot)
 static void remap_pages(virtual_addr dest, virtual_addr src, size_t memsz)
 {
     virtual_addr dest_end = dest + memsz;
-    pt_entry *de, *se;
+    volatile pt_entry *de, *se;
 
     while(dest < dest_end)
     {
-        if(!(de = get_page_entry((void *)dest)) ||
-           !(se = get_page_entry((void *)src)))
+        if(!(de = get_page_entry(dest)) ||
+           !(se = get_page_entry(src)))
         {
             break;
         }
@@ -894,7 +849,7 @@ long syscall_mincore(void *__addr, size_t length, unsigned char *vec)
 
     for(i = 0; addr < end; addr += PAGE_SIZE, i++)
     {
-        pt_entry *page = get_page_entry((void *) addr);
+        pt_entry *page = get_page_entry(addr);
 
         if(page && PTE_PRESENT(*page))
         {

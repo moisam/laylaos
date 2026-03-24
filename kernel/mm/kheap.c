@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: kheap.c
  *    This file is part of LaylaOS.
@@ -37,16 +37,21 @@
 
 volatile struct kernel_mutex_t kheap_lock;
 
-static void *sbrk_top = (void *)KHEAP_START;
+static void *sbrk_top = NULL;
+static void *kheap_start = NULL;
 static int cur_heap_sz = 0;
 
 
 /*
  * Initialise kernel heap.
  */
-void kheap_init(void)
+void kheap_init(void *newtop)
 {
     init_kernel_mutex(&kheap_lock);
+
+    sbrk_top = newtop;
+    kheap_start = newtop;
+
     void *test = kmalloc(1);
     kfree(test);
 }
@@ -130,7 +135,7 @@ void *kheap_brk(int incr)
 {
     if(incr > 0)
     {
-        virtual_addr old_end_data = KHEAP_START + cur_heap_sz;
+        virtual_addr old_end_data = (virtual_addr)kheap_start + cur_heap_sz;
         virtual_addr end_data_seg = old_end_data + incr;
         
         // if the new size is not page-aligned, make it so
@@ -140,12 +145,12 @@ void *kheap_brk(int incr)
         // brk (aligned to the nearest lower page size), up to the new
         // brk address.
         volatile virtual_addr i;
-        
+
         for(i = align_down(old_end_data);
             i < end_data_seg; i += PAGE_SIZE)
         {
-            pt_entry *pt = get_page_entry((void *)i);
-            
+            pt_entry *pt = get_page_entry(i);
+
             if(!pt)
             {
                 kpanic("failed to expand kernel heap!");
@@ -160,13 +165,13 @@ void *kheap_brk(int incr)
                     empty_loop();
                 }
 
-                vmmngr_flush_tlb_entry(i);
+                //vmmngr_flush_tlb_entry(i);
             }
         }
 
         cur_heap_sz += incr;
-        sbrk_top = (void *) (KHEAP_START + cur_heap_sz);
-        
+        sbrk_top = (void *) ((virtual_addr)kheap_start + cur_heap_sz);
+
         return (void *)old_end_data;
     }
     else if(incr < 0)

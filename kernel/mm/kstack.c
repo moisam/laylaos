@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: kstack.c
  *    This file is part of LaylaOS.
@@ -53,62 +53,18 @@ volatile size_t kstack_count = 0;
 int get_kstack(volatile struct task_t *task)
 {
     physical_addr phys = 0;
-    virtual_addr virt = 0;
 
-    /***
-    if((virt = vmmngr_alloc_and_map(PAGE_SIZE * 2, 0,
-                                    PTE_FLAGS_PWU, &phys, 
-                                    REGION_KSTACK)) == 0)
+    if(!(phys = (physical_addr)pmmngr_alloc_block()))
     {
-        // nothing found
         return -1;
     }
 
-    vmmngr_change_page_flags(virt, PAGE_SIZE, 0);
-    virt += (PAGE_SIZE * 2);
-    ***/
-
-    if(get_next_addr(&phys, &virt, PTE_FLAGS_PWU, REGION_KSTACK) != 0)
-    {
-        // nothing found
-        return -1;
-    }
-
-    task->kstack_virt = virt + PAGE_SIZE;
+    task->kstack_virt = PHYS_TO_HIMEM(phys) + PAGE_SIZE;
     task->kstack_phys = phys + PAGE_SIZE;
 
     kstack_count++;
 
-    //KDEBUG("new task kstack @ 0x%x - 0x%x\n", *phys, *virt);
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
-
-    /*
-    phys = 0;
-    virt = 0;
-
-    if(get_next_addr(&phys, &virt, PTE_FLAGS_PWU, REGION_KSTACK) != 0)
-    {
-        // nothing found
-        free_kstack(task);
-        return -1;
-    }
-
-    task->tss_stack_virt = virt + PAGE_SIZE;
-    task->tss_stack_phys = phys + PAGE_SIZE;
-    */
-
     return 0;
-}
-
-
-static inline void __free_kstack(virtual_addr vaddr)
-{
-    vaddr -= PAGE_SIZE;
-
-    pt_entry *pt = get_page_entry((void *)vaddr);
-
-    vmmngr_free_page(pt);
-    vmmngr_flush_tlb_entry(vaddr);
 }
 
 
@@ -123,30 +79,10 @@ static inline void __free_kstack(virtual_addr vaddr)
  */
 void free_kstack(volatile struct task_t *task)
 {
-    struct kernel_region_t *r = &kernel_regions[REGION_KSTACK];
+    pmmngr_free_block((void *)(task->kstack_phys - PAGE_SIZE));
 
-    elevated_priority_lock_recursive(r->mutex, r->lock_count);
-
-    __free_kstack(task->kstack_virt);
     task->kstack_virt = 0;
     task->kstack_phys = 0;
-
-    /***
-    pt = get_page_entry((void *)(vaddr - PAGE_SIZE));
-    vmmngr_free_page(pt);
-    vmmngr_flush_tlb_entry(vaddr);
-    ***/
-
-    /*
-    if(task->tss_stack_virt)
-    {
-        __free_kstack(task->tss_stack_virt);
-        task->tss_stack_virt = 0;
-        task->tss_stack_phys = 0;
-    }
-    */
-
-    elevated_priority_unlock_recursive(r->mutex, r->lock_count);
 
     kstack_count--;
 }
