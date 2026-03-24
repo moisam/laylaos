@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2024 (c)
+ *    Copyright 2024, 2025, 2026 (c)
  * 
  *    file: show_background.c
  *    This file is part of LaylaOS.
@@ -35,7 +35,6 @@
 #include "defs.h"
 
 #define GLOB                    __global_gui_data
-#define BACKGROUNDS_DIR_PATH    "/usr/share/gui/desktop/backgrounds"
 
 #define TEMPLATE_FGCOLOR        0xFFFFFFFF
 

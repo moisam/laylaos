@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2024 (c)
+ *    Copyright 2024, 2025, 2026 (c)
  * 
  *    file: show_theme.c
  *    This file is part of LaylaOS.
@@ -46,7 +46,7 @@ struct
       "Default",
       {
           0xCDCFD4FF, 0x3B4047FF, 0x3B4047FF,   // windows
-          0xCDCFD4FF, 0x535E64FF, 0x2E3238FF,
+          0xCDCFD4FF, /* 0x535E64FF */ 0x919191FF, 0x2E3238FF,
           0x2E3238FF,
           0xCDCFD4FF, 0x222226FF, 0x222226FF,   // buttons
           0xB4B4B8FF, 0x222226FF, 0x222226FF,
@@ -66,7 +66,7 @@ struct
       "Blue",
       {
           0xCDCFD4FF, 0x3366CCFF, 0x8F8F91FF,   // windows
-          0xCDCFD4FF, 0x535E64FF, 0x2856B2FF,
+          0xCDCFD4FF, /* 0x535E64FF */ 0x919191FF, 0x2856B2FF,
           0x7B7B7CFF,
           0xCDCFD4FF, 0x222226FF, 0x222226FF,   // buttons
           0xB4B4B8FF, 0x222226FF, 0x222226FF,
@@ -86,7 +86,7 @@ struct
       "Orange",
       {
           0xCDCFD4FF, 0xFF8000FF, 0x004C00FF,   // windows
-          0xCDCFD4FF, 0x535E64FF, 0xDC7105FF,
+          0xCDCFD4FF, /* 0x535E64FF */ 0x919191FF, 0xDC7105FF,
           0x013601FF,
           0xCDCFD4FF, 0x222226FF, 0x222226FF,   // buttons
           0xB4B4B8FF, 0x222226FF, 0x222226FF,
