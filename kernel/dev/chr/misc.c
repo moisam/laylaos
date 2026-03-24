@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: misc.c
  *    This file is part of LaylaOS.
@@ -102,10 +102,11 @@ long miscdev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
 /*
  * Perform a select operation on a misc device (major = 10).
  */
-long miscdev_select(struct file_t *f, int which)
+long miscdev_select(struct file_t *f, int which, int record)
 {
     UNUSED(f);
     UNUSED(which);
+    UNUSED(record);
 
     return 0;
 }

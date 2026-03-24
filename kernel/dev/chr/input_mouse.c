@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: input_mouse.c
  *    This file is part of LaylaOS.
@@ -127,7 +127,7 @@ ssize_t mousedev_read(dev_t dev, unsigned char *buf, size_t count)
 /*
  * Perform a select operation on /dev/mouse0.
  */
-int mousedev_select(dev_t dev, int which)
+int mousedev_select(dev_t dev, int which, int record)
 {
     UNUSED(dev);
 
@@ -139,7 +139,10 @@ int mousedev_select(dev_t dev, int which)
                 return 1;
             }
 
-            selrecord(&mouse_ssel);
+            if(record)
+            {
+                selrecord(&mouse_ssel);
+            }
             return 0;
 
     	case FWRITE:

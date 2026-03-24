@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: mem_chr.c
  *    This file is part of LaylaOS.
@@ -126,10 +126,12 @@ ssize_t memdev_char_write(struct file_t *f, off_t *pos,
 /*
  * Perform a select operation on a memory core device (major = 1).
  */
-long memdev_char_select(struct file_t *f, int which)
+long memdev_char_select(struct file_t *f, int which, int record)
 {
     dev_t dev;
     int n;
+
+    UNUSED(record);
 
     if(!f || !f->node || !S_ISCHR(f->node->mode))
 	{

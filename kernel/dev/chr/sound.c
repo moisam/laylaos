@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: sound.c
  *    This file is part of LaylaOS.
@@ -332,6 +332,8 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
     {
         return -ENOTTY;
     }
+
+    //printk("snddev_write: buf 0x%lx, count %d, dummy %d\n", buf, count, (hda->flags & HDA_FLAG_DUMMY));
     
     if(/* !buf || */ !count)
     {
@@ -347,6 +349,12 @@ ssize_t snddev_write(struct file_t *f, off_t *pos,
 
     if(hda->flags & HDA_FLAG_DUMMY)
     {
+        // give it a slight delay so the user application thinks we scheduled
+        // sound to play
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, 2);
+
         hda->bytes_played += count;
         return count;
     }
@@ -390,11 +398,13 @@ ssize_t snddev_read(struct file_t *f, off_t *pos,
 /*
  * Perform a select operation on a sound device (major = 14).
  */
-long snddev_select(struct file_t *f, int which)
+long snddev_select(struct file_t *f, int which, int record)
 {
     dev_t dev;
     //int res;
     struct hda_dev_t *hda;
+
+    UNUSED(record);
 
     if(!f || !f->node)
     {

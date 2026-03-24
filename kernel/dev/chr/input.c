@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: input.c
  *    This file is part of LaylaOS.
@@ -83,7 +83,7 @@ ioctl_func inputioctl[] =
 
 */
 
-typedef long (*select_func)(dev_t dev, int which);
+typedef long (*select_func)(dev_t dev, int which, int record);
 typedef long (*poll_func)(dev_t dev, struct pollfd *pfd);
 
 select_func inputselect[] =
@@ -198,7 +198,7 @@ int inputdev_ioctl(dev_t dev, unsigned int cmd, char *arg)
 /*
  * Perform a select operation on an input core device (major = 13).
  */
-long inputdev_select(struct file_t *f, int which)
+long inputdev_select(struct file_t *f, int which, int record)
 {
     dev_t dev;
     int n;
@@ -220,8 +220,8 @@ long inputdev_select(struct file_t *f, int which)
     {
         return 0;
     }
-    
-    return inputselect[n](dev, which);
+
+    return inputselect[n](dev, which, record);
 }
 
 
