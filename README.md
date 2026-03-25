@@ -3,7 +3,14 @@
 LaylaOS is a hobby operating system with a kernel that is written in C. The project started around 2015 and took almost 9 years to reach a stable point where I felt it could be shared with the world.
 It is meant as a learning tool to better understand the internal workings of an Operating System's kernel, how system calls work and how to implement a Graphical User Interface (GUI) environment.
 
-It is **definitely** not a system meant for everyday use (not yet, at least).
+This OS has been tested on:
+
+* [Bochs](https://bochs.sourceforge.io/)
+* [QEmu](https://www.qemu.org/)
+* [Oracle VM VirtualBox](https://www.virtualbox.org/)
+* Real hardware (Toshiba Satellite Pro, Intel i3, 500GB HDD, 8GB RAM)
+
+This OS is **definitely** not a system meant for everyday use (not yet, at least).
 
 # Screenshots
 
@@ -13,8 +20,10 @@ It is **definitely** not a system meant for everyday use (not yet, at least).
 # Features
 
 The project's features include:
+
 * 64 bit monolithic multitasking pre-emptive kernel written in C (the 32 bit code is included here but is not fully functional)
 * Symmetric Multiprocessing (SMP), supports up to 32 cores
+* USB support (UHCI/OHCI/EHCI)
 * Network stack (TCP, UDP, raw and Unix sockets, IPv4)
 * ATA/ATAPI and AHCI support
 * Basic Intel HDA sound support
@@ -37,31 +46,100 @@ The project's features include:
 # TODO list
 
 This is mostly to keep track of where we are at and what needs to be done next:
+
 * Add IPv6 support to the network stack
 * More syscalls including POSIX message queues syscalls
 * More GUI functionality (text editor, screenshot facility, paint program, desktop themes, archiver, web browser, etc.)
 * Ext3, Ext4, NFS filesystem support (maybe NTFS at some point)
 * Kernel logging and perhaps a syslogd server
 * Swap support
-* USB support
+* USB xHCI support
 
-# Prebuilt packages
+# Running LaylaOS
+
+You can either try the Live CD, the bootable disk image, or build LaylaOS from source. The following sections give more detail on each one of these options.
+
+## 1. The Live CD
+
+Here is how you can run the Live CD image of LaylaOS:
+
+1. Download the Live CD image from the [releases page](https://github.com/moisam/laylaos/releases).
+2. To run under [Bochs](https://bochs.sourceforge.io/):
+   * Download the `bochsrc` file from the [build-scrpits folder](https://github.com/moisam/laylaos/tree/main/build-scripts).
+   * In the `bochsrc` file you just downloaded, comment these lines (i.e. put a leading `#` at the beginning of the line):
+
+     ```
+     ata0-master:  type=disk, path="/DOWNLOADS_PATH/bootable_disk.img", mode=flat, translation=auto
+     boot: disk
+     ```
+
+   * Uncomment these lines (i.e. remove the leading `#`), replacing **DOWNLOADS_PATH** with the actual path where you downloaded the Live CD image:
+
+     ```
+     #ata0-master:  type=cdrom, path="/DOWNLOADS_PATH/laylaos.iso", status=inserted
+     #boot: cdrom
+     ```
+     
+   * Change to the directory where you downloaded the image and type:
+     ```
+     bochs -q
+     ```
+3. To run under [QEmu](https://www.qemu.org/):
+   * Change to the directory where you downloaded the image and type this command, replacing **DOWNLOADS_PATH** with the actual path where you downloaded the Live CD image:
+     ```
+     qemu-system-x86_64 -accel tcg,thread=single -cpu core2duo \
+                        -m 2048 -M pc -no-reboot -no-shutdown \
+                        -drive format=raw,file=/DOWNLOADS_PATH/bootable_disk.img,index=0,media=disk \
+                        -boot d -serial stdio \
+                        -smp 1 -usb -vga std \
+                        -device intel-hda,debug=4 -device hda-duplex -audiodev id=pa,driver=pa,server=/run/user/$(id -u)/pulse/native
+     ```
+
+## 2. The Bootable Disk Image
 
 You can download a prebuilt bootable disk image that includes everything (including the ported software) from the [releases page](https://github.com/moisam/laylaos/releases).
 Be mindful, however, that the unzipped disk image is likely to be big (6+ GiB in size). You can use this image to run LaylaOS under [Bochs](https://bochs.sourceforge.io/) or [QEmu](https://www.qemu.org/).
 
-If you want to try LaylaOS under [Oracle VM VirtualBox](https://www.virtualbox.org/), you will need to convert the bootable disk image into a VDI image. This can be done by running:
-`VBoxManage convertfromraw bootable_disk.img bootable_disk.vdi`
+Here is how you can run the Bootable Disk Image of LaylaOS:
 
-You can then create a new virtual machine under VirtualBox using the disk image. You will probably face a problem as the image contains two files (`/boot/grub/grub.cfg` and `/etc/fstab`) with a hardcoded boot device name (something like `/dev/hda4`). To be able to use this disk as a SATA (or AHCI) disk under VirtualBox you need to either:
+1. Download the disk image from the [releases page](https://github.com/moisam/laylaos/releases).
+2. To run under [Bochs](https://bochs.sourceforge.io/):
+   * Download the `bochsrc` file from the [build-scrpits folder](https://github.com/moisam/laylaos/tree/main/build-scripts).
+   * Find the following line, and replace **DOWNLOADS_PATH** with the actual path where you downloaded the Live CD image:
+
+     ```
+     ata0-master:  type=disk, path="/DOWNLOADS_PATH/bootable_disk.img", mode=flat, translation=auto
+     ```
+
+   * Change to the directory where you downloaded the image and type:
+     ```
+     bochs -q
+     ```
+3. To run under [QEmu](https://www.qemu.org/), use the same command at the end of the last section.
+4. To run under [Oracle VM VirtualBox](https://www.virtualbox.org/), see the next section.
+
+## 3. Running under Oracle VM VirtualBox
+
+To run LaylaOS under [Oracle VM VirtualBox](https://www.virtualbox.org/), you will need to convert the bootable disk image into a VDI image. This can be done by running the following command from the directory where you downloaded the disk image:
+
+```
+VBoxManage convertfromraw bootable_disk.img bootable_disk.vdi
+```
+
+You can then create a new virtual machine under VirtualBox using the disk image. You will probably face a problem as the image contains two files (`/boot/grub/grub.cfg` and `/etc/fstab`) with a hardcoded boot device name (something like `/dev/hda4`). 
+
+To be able to use this disk as a SATA (or AHCI) disk under VirtualBox you need to either:
+
 * Edit these two files in the disk image you downloaded and change the device name to `/dev/sda4` (assuming you connect the disk at SATA port 0; the image contains 4 partitions)
-* Build LaylaOS from source and create the bootable disk image using: `./create_bootable_disk.sh rootdev sda4`
+* Build LaylaOS from source and create the bootable disk image using:
+  ```
+  ./create_bootable_disk.sh rootdev sda4
+  ```
 
-See below if you decided to build LaylaOS from source.
-
-# How to build
+## 4. Building from source
 
 To build LaylaOS from source:
+
 1. Download this repository and unzip the zip file
 2. Change directory to the unzipped source directory, e.g. `cd ~/downloads/laylaos-master`
 3. Change directory to the `build-scripts` subdirectory in the source tree: `cd build-scripts`
@@ -79,5 +157,7 @@ To build LaylaOS from source:
 - ACPICA is released under a dual Intel and Unix-compatible licenses.
 - Timidity files (needed for sound in DOOM) are in the public domain (see their `copyright.txt` file).
 - The monospace font used in the system console and the GUI terminal is [Dina font](https://www.dcmembers.com/jibsen/download/61/), which is released under a free license.
+
+
 - libaelf32.a and libaelf64.a are part of asmlib, the [software optimisation library](https://www.agner.org/optimize/#asmlib) by Agner Fog, which is released under GPL.
 - All other ported software come with their respective licenses.
