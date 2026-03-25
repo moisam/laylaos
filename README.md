@@ -23,8 +23,10 @@ The project's features include:
 
 * 64 bit monolithic multitasking pre-emptive kernel written in C (the 32 bit code is included here but is not fully functional)
 * Symmetric Multiprocessing (SMP), supports up to 32 cores
+* Multiuser support
 * USB support (UHCI/OHCI/EHCI)
 * Network stack (TCP, UDP, raw and Unix sockets, IPv4)
+* PCI and PCIe support
 * ATA/ATAPI and AHCI support
 * Basic Intel HDA sound support
 * PS2 keyboard and mouse
@@ -56,6 +58,8 @@ This is mostly to keep track of where we are at and what needs to be done next:
 * USB xHCI support
 
 # Running LaylaOS
+
+LaylaOS has multiuser support. If you want to log in as a normal user, the username and password are both `user`. If you want to log in as root, the username and password as both `root`.
 
 You can either try the Live CD, the bootable disk image, or build LaylaOS from source. The following sections give more detail on each one of these options.
 
