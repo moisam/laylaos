@@ -11,10 +11,6 @@ DOWNLOAD_PREFIX="musl-"
 DOWNLOAD_SUFFIX=".tar.gz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
 PATCH_FILE=musl.diff
-PATCH2_FILE=musl2.diff
-PATCH3_FILE=musl3.diff
-PATCH4_FILE=musl4.diff
-PATCH5_FILE=musl5.diff
 CWD=`pwd`
 
 # where the downloaded and extracted source will end up
@@ -48,10 +44,11 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 
 cd ${DOWNLOAD_PORTS_PATH}
 patch -i ${CWD}/${PATCH_FILE} -p0
-patch -i ${CWD}/${PATCH2_FILE} -p0
-patch -i ${CWD}/${PATCH3_FILE} -p0
-patch -i ${CWD}/${PATCH4_FILE} -p0
-patch -i ${CWD}/${PATCH5_FILE} -p0
+
+for n in 2 3 4 5 6; do
+    patch -i ${CWD}/musl${n}.diff -p0
+done
+
 cd ${CWD}
 
 # we will replace some of musl's original files with our own
