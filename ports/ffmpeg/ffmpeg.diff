@@ -1,6 +1,6 @@
 diff -rub ./ffmpeg-6.1.1/configure ./ffmpeg-6.1.1/configure
 --- ./ffmpeg-6.1.1/configure	2023-12-31 00:07:26.000000000 +0000
-+++ ./ffmpeg-6.1.1/configure	2024-02-10 12:27:50.477157226 +0000
++++ ./ffmpeg-6.1.1/configure	2024-02-10 12:27:50.477157000 +0000
 @@ -5782,7 +5782,7 @@
      gnu/kfreebsd)
          add_cppflags -D_BSD_SOURCE
@@ -10,3 +10,30 @@ diff -rub ./ffmpeg-6.1.1/configure ./ffmpeg-6.1.1/configure
          ;;
      qnx)
          add_cppflags -D_QNX_SOURCE
+diff -rub ./ffmpeg-6.1.1/libavformat/avformat.h ./ffmpeg-6.1.1/libavformat/avformat.h
+--- ./ffmpeg-6.1.1/libavformat/avformat.h	2023-11-11 00:25:17.000000000 +0000
++++ ./ffmpeg-6.1.1/libavformat/avformat.h	2026-06-27 12:07:09.920607558 +0100
+@@ -1020,6 +1020,8 @@
+ 
+ struct AVCodecParserContext *av_stream_get_parser(const AVStream *s);
+ 
++int64_t av_stream_get_first_dts(const AVStream *st);
++
+ #if FF_API_GET_END_PTS
+ /**
+  * Returns the pts of the last muxed packet + its duration
+diff -rub ./ffmpeg-6.1.1/libavformat/mux_utils.c ./ffmpeg-6.1.1/libavformat/mux_utils.c
+--- ./ffmpeg-6.1.1/libavformat/mux_utils.c	2023-11-10 00:30:16.000000000 +0000
++++ ./ffmpeg-6.1.1/libavformat/mux_utils.c	2026-06-27 12:03:37.291423228 +0100
+@@ -40,6 +40,11 @@
+ }
+ #endif
+ 
++int64_t av_stream_get_first_dts(const AVStream *st)
++{
++    return cffstream(st)->first_dts;
++}
++
+ int avformat_query_codec(const AVOutputFormat *ofmt, enum AVCodecID codec_id,
+                          int std_compliance)
+ {

@@ -45,7 +45,9 @@ cd ${DOWNLOAD_SRCDIR}/build2
     --sysinclude=${CROSSCOMPILE_SYSROOT_PATH}/usr/include \
     --cc=${CC} --cxx=${CXX} --nm=${NM} --ar=${AR} --as=${AS} \
     --strip=${STRIP} --ranlib=${RANLIB} --ld=${CC} \
-    --pkg-config=${PKG_CONFIG} --enable-pic --disable-avx \
+    --pkg-config=${PKG_CONFIG} \
+    --enable-pic \
+    --enable-sse --enable-sse2 --enable-sse3 --enable-sse4 --enable-sse42 --enable-avx --enable-asm \
     --extra-cflags="-D__laylaos__ -D__${ARCH}__ -mstackrealign" \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
