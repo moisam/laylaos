@@ -62,16 +62,25 @@ static void memregion_add_free(struct memregion_t *memregion)
     memregion->next = NULL;
     memregion->prev = NULL;
 
-    if(memregion->refs == 0 && memregion->inode)
+    if(memregion->refs == 0)
     {
-        struct fs_node_t *node = memregion->inode;
+        if(memregion->inode)
+        {
+            struct fs_node_t *node = memregion->inode;
 
-        memregion->inode = NULL;
-        release_node(node);
-        memregion->fpos = 0;
-        memregion->flen = 0;
+            memregion->inode = NULL;
+            release_node(node);
+            memregion->fpos = 0;
+            memregion->flen = 0;
+        }
+
+        if(memregion->so && __sync_fetch_and_sub(&memregion->so->refs, 1) <= 1)
+        {
+            kfree(memregion->so);
+            memregion->so = NULL;
+        }
     }
-    
+
     kernel_mutex_lock(&memregion_freelist_mutex);
 
     if(memregion_freelist_tail)
@@ -216,7 +225,9 @@ long alloc_and_insert(struct task_t *task, struct fs_node_t *inode,
     {
         memregion_insert_rightto(task, memregion, rightto);
     }
-    
+
+    rb_insert(task->mem, memregion);
+
     *res = memregion;
     return 0;
 }
@@ -280,16 +291,17 @@ long memregion_change_prot(struct task_t *task,
                            virtual_addr start, virtual_addr end,
                            int prot, int detach)
 {
-    struct memregion_t *tmp, *memregion = task->mem->first_region;
-    //size_t sz = (end - start);
-    //size_t pages = sz / PAGE_SIZE;
+    struct memregion_t *tmp, *memregion;
     int found = 0;
     int flags = 0;
     int break_loop, split_left, split_right;
-    //off_t fpos;
     virtual_addr start2, end2;
 
-    // prepare page flags
+    if(start >= end)
+    {
+        return -EINVAL;
+    }
+
     if(prot != PROT_NONE)
     {
         flags = I86_PTE_PRESENT |
@@ -298,11 +310,23 @@ long memregion_change_prot(struct task_t *task,
                     (end <= USER_MEM_END)) ? I86_PTE_USER : 0);
     }
 
+    memregion = memregion_containing(task, start);
+
+    // If 'start' lands in an unmapped hole, find the next available region
+    if(!memregion)
+    {
+        memregion = task->mem->first_region;
+
+        while(memregion && memregion->addr + (memregion->size * PAGE_SIZE) <= start)
+        {
+            memregion = memregion->next;
+        }
+    }
+
     while(memregion)
     {
         start2 = memregion->addr;
         end2 = start2 + (memregion->size * PAGE_SIZE);
-
 
         /*
          * The possible layouts could be:
@@ -371,8 +395,12 @@ long memregion_change_prot(struct task_t *task,
          *               +------+
          */
 
-        // no overlap
-        if(end <= start2 || start >= end2)
+        if(end <= start2)
+        {
+            break;
+        }
+
+        if(start >= end2)
         {
             memregion = memregion->next;
             continue;
@@ -386,27 +414,15 @@ long memregion_change_prot(struct task_t *task,
         {
             if(end == end2)
             {
-                // case (H) - perfect match
-                // case (I)
-                // CHANGE PROT FOR WHOLE REGION AND BREAK LOOP
                 break_loop = 1;
             }
             else if(end < end2)
             {
-                // case (D)
-                // case (C)
-                // CHANGE PROT LEFT SIDE (start to end)
-                // BREAK RIGHT SIDE (end to end2)
-                // BREAK LOOP
                 split_right = 1;
                 break_loop = 1;
             }
-            else    // end > end2
+            else
             {
-                // case (E)
-                // case (G)
-                // CHANGE PROT FOR WHOLE REGION
-                // CONTINUE LOOPING (end2 to end)
                 break_loop = 0;
             }
         }
@@ -414,79 +430,55 @@ long memregion_change_prot(struct task_t *task,
         {
             if(end == end2)
             {
-                // case (B)
-                // CHANGE PROT RIGHT SIDE (start to end)
-                // BREAK LEFT SIDE (start2 to start)
-                // BREAK LOOP
                 split_left = 1;
                 break_loop = 1;
             }
             else if(end < end2)
             {
-                // case (F)
-                // CHANGE PROT MIDDLE (start to end)
-                // BREAK LEFT SIDE (start2 to start)
-                // BREAK RIGHT SIDE (end to end2)
-                // BREAK LOOP
                 split_right = 1;
                 split_left = 1;
                 break_loop = 1;
             }
-            else    // end > end2
+            else
             {
-                // case (A)
-                // CHANGE PROT MIDDLE (start to end2)
-                // BREAK LEFT SIDE (start2 to start)
-                // CONTINUE LOOPING (end2 to end)
                 split_left = 1;
                 break_loop = 0;
             }
         }
-        /*
-        else        // start < start2
-        {
-            if(end == end2)
-            {
-                // case (I)
-                // CHANGE PROT FOR WHOLE REGION AND BREAK LOOP
-            }
-            else if(end < end2)
-            {
-                // case (C)
-                // CHANGE PROT LEFT SIDE (start2 to end)
-                // BREAK RIGHT SIDE (end to end2)
-                // BREAK LOOP
-            }
-            else    // end > end2
-            {
-                // case (G)
-                // CHANGE PROT FOR WHOLE REGION
-                // CONTINUE LOOPING (end2 to end)
-            }
-        }
-        */
 
-        // split the left segment
+        if((memregion->so != NULL) && (split_left || split_right))
+        {
+            return -EINVAL;
+        }
+
+        // Split the left segment
         if(split_left)
         {
+            // Erase the old oversized node geometry from the tree before changing its properties
+            rb_remove(task->mem, memregion);
+
             if(alloc_and_insert(task, memregion->inode, start2, start,
                                 memregion->prot, memregion->type, 
                                 memregion->flags,
                                 memregion, NULL, &tmp) != 0)
             {
+                // Re-insert on failure to keep the memory map structurally safe
+                rb_insert(task->mem, memregion);
                 return -ENOMEM;
             }
 
             memregion->addr = start;
             memregion->size -= tmp->size;
             
-            // adjust the newly alloc'd region's file pos
+            // Re-insert the adjusted node with its new keys back to the tree
+            rb_insert(task->mem, memregion);
+            
             if(memregion->inode)
             {
                 tmp->fpos = memregion->fpos;
                 tmp->flen = start - start2;
                 memregion->fpos += tmp->flen;
-            
+
                 if(tmp->flen >= memregion->flen)
                 {
                     tmp->flen = memregion->flen;
@@ -499,21 +491,26 @@ long memregion_change_prot(struct task_t *task,
             }
         }
 
-        // split the right segment
+        // Split the right segment
         if(split_right)
         {
+            // Erase before changing size constraints
+            rb_remove(task->mem, memregion);
+
             if(alloc_and_insert(task, memregion->inode, end, end2,
                                 memregion->prot, memregion->type, 
                                 memregion->flags,
                                 NULL, memregion, &tmp) != 0)
-
             {
+                rb_insert(task->mem, memregion);
                 return -ENOMEM;
             }
 
             memregion->size -= tmp->size;
+            
+            // Re-insert adjusted node
+            rb_insert(task->mem, memregion);
 
-            // adjust the newly alloc'd region's file pos
             if(memregion->inode)
             {
                 tmp->fpos = memregion->fpos + (end - start2);
@@ -528,7 +525,6 @@ long memregion_change_prot(struct task_t *task,
             }
         }
 
-        // remove the overlapped segment
         tmp = memregion->next;
         
         if(detach)
@@ -537,14 +533,9 @@ long memregion_change_prot(struct task_t *task,
         }
         else
         {
-            uintptr_t private_flag = 
-                        (memregion->flags & MEMREGION_FLAG_PRIVATE) ?
-                                                        I86_PTE_PRIVATE : 0;
-
+            uintptr_t private_flag = (memregion->flags & MEMREGION_FLAG_PRIVATE) ? I86_PTE_PRIVATE : 0;
             memregion->prot = prot;
-            vmmngr_change_page_flags(memregion->addr,
-                                        (memregion->size * PAGE_SIZE),
-                                            flags | private_flag);
+            vmmngr_change_page_flags(memregion->addr, (memregion->size * PAGE_SIZE), flags | private_flag);
         }
 
         if(break_loop)
@@ -647,78 +638,81 @@ long memregion_attach(struct task_t *task, struct memregion_t *memregion,
 
     virtual_addr end = attachat + (size * PAGE_SIZE);
 
-    //printk("memregion_attach: s %lx, e %lx\n", attachat, end);
-
     long overlaps = memregion_check_overlaps(task, attachat, end);
     long res;
-    struct memregion_t *tmp;
 
-    // If mmap() is not called with the MAP_FIXED flag, we don't remove
-    // overlapping mappings.
     if(overlaps)
     {
         if(!remove_overlaps)
         {
-            //printk("memregion_attach: overlaps found\n");
             return -EEXIST;
         }
 
         if((res = memregion_remove_overlaps(task, attachat, end)) != 0)
         {
-            //printk("memregion_attach: cannot remove overlaps\n");
             return res;
         }
     }
 
     memregion->addr = attachat;
     memregion->size = size;
-    //memregion->refs++;
     __sync_fetch_and_add(&memregion->refs, 1);
     
     if(task->mem->first_region == NULL)
     {
-        //printk("memregion_attach: inserting first\n");
         task->mem->first_region = memregion;
         task->mem->last_region = memregion;
+        memregion->next = NULL;
+        memregion->prev = NULL;
+        rb_insert(task->mem, memregion);
     }
     else
     {
-        for(tmp = task->mem->first_region; tmp != NULL; tmp = tmp->next)
+        // Insert the node into the balanced Red-Black tree first
+        // This calculates the structural parents and color limits
+        rb_insert(task->mem, memregion);
+
+        // Use the tree nodes to find the immediate sequential list neighbors
+        // If a node has a left child, its in-order predecessor is the largest element there
+        volatile struct memregion_t *pred = NULL;
+
+        // Traverse the tree hierarchy locally to extract structural insertion neighbors
+        if(memregion->rb_left)
         {
-            if(tmp->addr < attachat && tmp->next)
+            pred = memregion->rb_left;
+
+            while(pred->rb_right)
             {
-                continue;
+                pred = pred->rb_right;
+            }
+        }
+        else
+        {
+            volatile struct memregion_t *p = memregion->rb_parent;
+            volatile struct memregion_t *ch = memregion;
+
+            while(p && ch == p->rb_left)
+            {
+                ch = p;
+                p = p->rb_parent;
             }
 
-            if(tmp->addr < attachat)
-            {
-                memregion_insert_rightto(task, memregion, tmp);
-            }
-            else
-            {
-                memregion_insert_leftto(task, memregion, tmp);
-            }
-            
-            break;
-        }
-        
-        if(tmp == NULL)
-        {
-            kpanic("cannot add memregion to task (in memregion_attach)\n");
+            pred = p;
         }
 
-        /*
-        for(tmp = task->mem->first_region; tmp != NULL; tmp = tmp->next)
+        // Stitch the node straight into the linear linked list using our predecessor
+        if(pred)
         {
-            printk("memregion_attach: tmp->addr %lx\n", tmp->addr);
+            memregion_insert_rightto(task, memregion, (struct memregion_t *)pred);
         }
-        */
+        else
+        {
+            // No predecessor means this node has the absolute lowest address space; insert at head
+            memregion_insert_leftto(task, memregion, task->mem->first_region);
+        }
     }
-    
-    //screen_refresh(NULL);
 
     task->image_size += memregion->size;
-
     return 0;
 }
 
@@ -759,6 +753,13 @@ static void memregion_detach_from_task(struct task_t *task,
     {
         task->mem->last_region = memregion->prev;
     }
+
+    /*
+    if(memregion == task->mem->last_found_region)
+    {
+        task->mem->last_found_region = NULL;
+    }
+    */
 }
 
 
@@ -825,6 +826,7 @@ static long msync_internal(struct memregion_t *memregion, size_t sz, int flags)
 
     size_t write_size, file_end, mem_end;
     off_t file_pos;
+    pdirectory *pml4 = (pdirectory *)this_core->cur_task->pd_virt;
 
     if((memregion->flags & MEMREGION_FLAG_SHARED) &&
        (memregion->flags & MEMREGION_FLAG_USER) &&
@@ -838,7 +840,8 @@ static long msync_internal(struct memregion_t *memregion, size_t sz, int flags)
         
         while(i < laddr)
         {
-            volatile pt_entry *page = get_page_entry(i);
+            volatile pt_entry *page = __get_page_entry_pd(pml4, i, 0);
+            //volatile pt_entry *page = get_page_entry(i);
 
             if(!page || !PTE_PRESENT(*page) || 
                         !PTE_WRITABLE(*page) || !PTE_DIRTY(*page))
@@ -929,6 +932,7 @@ long memregion_detach(struct task_t *task, struct memregion_t *memregion,
 
     // detach region from task
     memregion_detach_from_task(task, memregion);
+    rb_remove(task->mem, memregion);
     
     // release memory
     if(free_pages)
@@ -986,7 +990,7 @@ struct task_vm_t *task_mem_dup(struct task_vm_t *mem)
 {
     struct task_vm_t *copy;
     struct memregion_t *memregion, *prev = NULL, *tmp = NULL;
-    
+
     if(!mem)
     {
         return NULL;
@@ -1018,6 +1022,11 @@ bailout:
                     release_node(node);
                 }
 
+                if(memregion->so != NULL)
+                {
+                    __sync_fetch_and_sub(&memregion->so->refs, 1);
+                }
+
                 tmp = memregion->next;
                 kfree(memregion);
                 memregion = tmp;
@@ -1039,6 +1048,12 @@ bailout:
         }
         
         A_memcpy(tmp, memregion, sizeof(struct memregion_t));
+
+        if(memregion->so != NULL)
+        {
+            __sync_fetch_and_add(&memregion->so->refs, 1);
+        }
+
         tmp->refs = 1;
         tmp->next = NULL;
         tmp->prev = prev;
@@ -1057,8 +1072,10 @@ bailout:
         {
             prev->next = tmp;
         }
-        
+
         prev = tmp;
+
+        rb_insert(copy, tmp);
     }
     
     copy->last_region = tmp;
@@ -1073,33 +1090,79 @@ bailout:
 }
 
 
-void task_mem_free(struct task_vm_t *mem)
+static inline int consolidate_with_next(struct task_t *task, struct memregion_t *memregion)
 {
-    struct memregion_t *memregion, *next = NULL;
-    
-    if(!mem)
-    {
-        return;
-    }
-    
-    kernel_mutex_lock(&(mem->mutex));
+    struct memregion_t *tmp;
+    virtual_addr end = memregion->addr + (memregion->size * PAGE_SIZE);
 
-    for(memregion = mem->first_region; memregion != NULL; memregion = next)
+    if(end == memregion->next->addr &&
+       memregion->type != MEMREGION_TYPE_SHMEM &&
+       memregion->so == NULL &&     // don't mess with the vmso for now
+       memregion->inode == memregion->next->inode &&
+       memregion->type == memregion->next->type &&
+       memregion->prot == memregion->next->prot &&
+       memregion->flags == memregion->next->flags)
     {
-        next = memregion->next;
-        kfree(memregion);
-    }
-    
-    mem->first_region = NULL;
+        if(memregion->inode == NULL ||
+           (memregion->fpos + memregion->flen) == memregion->next->fpos)
+        {
+            if(memregion->inode)
+            {
+                memregion->flen += memregion->next->flen;
+            }
 
-    kernel_mutex_unlock(&(mem->mutex));
+            tmp = memregion->next;
+            memregion->size += tmp->size;
+            memregion->next = tmp->next;
+
+            if(memregion->next)
+            {
+                memregion->next->prev = memregion;
+            }
+
+            if(tmp == task->mem->last_region)
+            {
+                task->mem->last_region = memregion;
+            }
+
+            /*
+            if(tmp == task->mem->last_found_region)
+            {
+                task->mem->last_found_region = NULL;
+            }
+            */
+
+            rb_remove(task->mem, tmp);
+
+            // add region to free list
+            __sync_fetch_and_sub(&tmp->refs, 1);
+            memregion_add_free(tmp);
+
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+
+void memregion_consolidate_one(struct task_t *task, struct memregion_t *memregion)
+{
+    if(memregion->next)
+    {
+        consolidate_with_next(task, memregion);
+    }
+
+    if(memregion->prev)
+    {
+        consolidate_with_next(task, memregion->prev);
+    }
 }
 
 
 void memregion_consolidate(struct task_t *task)
 {
-    struct memregion_t *tmp, *memregion = task->mem->first_region;
-    virtual_addr end;
+    struct memregion_t *memregion = task->mem->first_region;
 
     if(!memregion)
     {
@@ -1117,59 +1180,7 @@ void memregion_consolidate(struct task_t *task)
 
     while(memregion->next)
     {
-        end = memregion->addr + (memregion->size * PAGE_SIZE);
-        
-        if(end == memregion->next->addr &&
-           memregion->type != MEMREGION_TYPE_SHMEM &&
-           memregion->inode == memregion->next->inode &&
-           memregion->type == memregion->next->type &&
-           memregion->prot == memregion->next->prot &&
-           memregion->flags == memregion->next->flags)
-        {
-            if(memregion->inode == NULL ||
-               (memregion->fpos + memregion->flen) == memregion->next->fpos)
-            {
-                //printk("memregion_consolidate: before - fp %lx, fs %lx, mp %lx, ms %lx\n", memregion->fpos, memregion->flen, memregion->addr, memregion->size * PAGE_SIZE);
-
-                if(memregion->inode)
-                {
-                    memregion->flen += memregion->next->flen;
-                }
-                /*
-                else
-                {
-                    memregion->flen = 0;
-                    memregion->fpos = 0;
-                }
-                */
-
-                tmp = memregion->next;
-                memregion->size += tmp->size;
-                memregion->next = tmp->next;
-
-                if(memregion->next)
-                {
-                    memregion->next->prev = memregion;
-                }
-
-                if(tmp == task->mem->last_region)
-                {
-                    task->mem->last_region = memregion;
-                }
-
-                // add region to free list
-                //tmp->refs--;
-                __sync_fetch_and_sub(&tmp->refs, 1);
-                memregion_add_free(tmp);
-
-                //printk("memregion_consolidate: after - fp %lx, fs %lx, mp %lx, ms %lx\n", memregion->fpos, memregion->flen, memregion->addr, memregion->size * PAGE_SIZE);
-            }
-            else
-            {
-                memregion = memregion->next;
-            }
-        }
-        else
+        if(!consolidate_with_next(task, memregion))
         {
             memregion = memregion->next;
         }
@@ -1232,7 +1243,7 @@ static inline void release_and_wakeup_waiters(struct cached_page_t *pcache)
  *   0 on success, -errno on failure.
  */
 long memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
-                         volatile virtual_addr __addr)
+                         volatile pt_entry *e, volatile virtual_addr __addr)
 {
     //struct file_t file;
     off_t file_pos;
@@ -1245,24 +1256,60 @@ long memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
         return -EINVAL;
     }
 
+    /*
     pt_entry *e = get_page_entry_pd(pd, __addr);
 
     if(!e)
     {
         return -ENOMEM;
     }
-    
+    */
+
     virtual_addr addr = align_down(__addr);
 
     // if no backing file, zero-fill the page
     if(!memregion->inode)
     {
-        if(!vmmngr_alloc_page(e, PTE_FLAGS_PWU))
+        if(memregion->so)
         {
-            return -ENOMEM;
-        }
+            size_t index = (addr - memregion->addr) / PAGE_SIZE;
+            volatile int shared = 0;
 
-        A_memset((void *)addr, 0, PAGE_SIZE);
+            kernel_mutex_lock(&memregion->so->mutex);
+
+            if(memregion->so->phys[index] == 0)
+            {
+                if(!vmmngr_alloc_page((pt_entry *)e, PTE_FLAGS_PWU))
+                {
+                    kernel_mutex_unlock(&memregion->so->mutex);
+                    return -ENOMEM;
+                }
+
+                A_memset((void *)addr, 0, PAGE_SIZE);
+                memregion->so->phys[index] = PTE_FRAME(*e);
+            }
+            else
+            {
+                shared = 1;
+                __atomic_store_n(e, memregion->so->phys[index] | PTE_FLAGS_PWU, __ATOMIC_SEQ_CST);
+            }
+
+            kernel_mutex_unlock(&memregion->so->mutex);
+
+            if(shared)
+            {
+                inc_frame_shares(memregion->so->phys[index]);
+            }
+        }
+        else
+        {
+            if(!vmmngr_alloc_page((pt_entry *)e, PTE_FLAGS_PWU))
+            {
+                return -ENOMEM;
+            }
+
+            A_memset((void *)addr, 0, PAGE_SIZE);
+        }
     }
     else
     {
@@ -1296,7 +1343,7 @@ long memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
             {
                 //read_size = 0;
 
-                if(!vmmngr_alloc_page(e, PTE_FLAGS_PWU))
+                if(!vmmngr_alloc_page((pt_entry *)e, PTE_FLAGS_PWU))
                 {
                     return -ENOMEM;
                 }
@@ -1346,7 +1393,7 @@ long memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
                 e = get_page_entry_pd(pd, __addr);
                 //dec_frame_shares(pcache->phys);
 
-                if(!vmmngr_alloc_page(e, PTE_FLAGS_PWU))
+                if(!vmmngr_alloc_page((pt_entry *)e, PTE_FLAGS_PWU))
                 {
                     //pcache->flags &= ~PCACHE_FLAG_BUSY;
                     release_cached_page(pcache);
@@ -1392,31 +1439,30 @@ fin:
 
     __asm__ __volatile__("":::"memory");
     vmmngr_flush_tlb_entry(__addr);
-    
+
     return 0;
 }
 
 
 struct memregion_t *memregion_containing(volatile struct task_t *task, virtual_addr addr)
 {
-    volatile struct memregion_t *memregion;
-    virtual_addr start = align_down(addr);
-    virtual_addr end = start + PAGE_SIZE - 1;
-    
-    for(memregion = task->mem->first_region; 
-        memregion != NULL; 
-        memregion = memregion->next)
-    {
-        virtual_addr start2 = memregion->addr;
-        virtual_addr end2 = start2 + (memregion->size * PAGE_SIZE) - 1;
+    volatile struct memregion_t *cur = task->mem->rb_root;
 
-        // no overlap
-        if(end < start2 || start > end2)
+    while(cur != NULL)
+    {
+        if(addr >= cur->addr && addr < (cur->addr + (cur->size * PAGE_SIZE)))
         {
-            continue;
+            return (struct memregion_t *)cur;
         }
-        
-        return (struct memregion_t *)memregion;
+
+        if(addr < cur->addr)
+        {
+            cur = cur->rb_left;
+        }
+        else
+        {
+            cur = cur->rb_right;
+        }
     }
     
     return NULL;
@@ -1426,22 +1472,33 @@ struct memregion_t *memregion_containing(volatile struct task_t *task, virtual_a
 long memregion_check_overlaps(struct task_t *task,
                               virtual_addr start, virtual_addr end)
 {
-    volatile struct memregion_t *memregion = task->mem->first_region;
-    end--;
+    end--; 
 
-    while(memregion)
+    if(start > end)
     {
-        virtual_addr start2 = memregion->addr;
-        virtual_addr end2 = start2 + (memregion->size * PAGE_SIZE) - 1;
-                
-        // no overlap
-        if(end < start2 || start > end2)
+        return -EINVAL;
+    }
+
+    volatile struct memregion_t *cur = task->mem->rb_root;
+
+    while(cur != NULL)
+    {
+        virtual_addr start2 = cur->addr;
+        virtual_addr end2 = start2 + (cur->size * PAGE_SIZE) - 1;
+
+        if(start <= end2 && end >= start2)
         {
-            memregion = memregion->next;
-            continue;
+            return -EEXIST;
         }
 
-        return -EEXIST;
+        if(end < start2)
+        {
+            cur = cur->rb_left;
+        } 
+        else
+        {
+            cur = cur->rb_right;
+        }
     }
 
     return 0;

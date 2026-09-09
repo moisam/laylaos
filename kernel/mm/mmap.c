@@ -38,6 +38,7 @@
 #include <fcntl.h>
 #include <mm/mmap.h>
 #include <mm/memregion.h>
+#include <mm/kheap.h>
 #include <kernel/laylaos.h>
 #include <kernel/task.h>
 #include <kernel/syscall.h>
@@ -47,6 +48,7 @@
 #include <kernel/ipc.h>
 #include <kernel/user.h>
 #include <kernel/tty.h>
+#include <kernel/pcache.h>
 
 
 #define VALID_FLAGS         (MAP_SHARED | MAP_PRIVATE | MAP_ANONYMOUS | \
@@ -54,8 +56,117 @@
                              MAP_EXECUTABLE | MAP_NORESERVE | \
                              MAP_FIXED_NOREPLACE)
 
+#if 0
 
-#define REGION_END(m)       ((m)->addr + ((m)->size * PAGE_SIZE))
+// Use the tree to find the absolute first region whose end address is greater than 'min'
+static struct memregion_t *find_first_eligible_region(volatile struct memregion_t *root, virtual_addr min)
+{
+    volatile struct memregion_t *curr = root;
+    struct memregion_t *candidate = NULL;
+
+    while(curr != NULL)
+    {
+        // If the whole subtree's max address is below min, skip it entirely
+        if(curr->subtree_max_high < min)
+        {
+            break;
+        }
+
+        // If this current region finishes after our min boundary, it's a valid candidate
+        if(REGION_END(curr) > min)
+        {
+            candidate = (struct memregion_t *)curr;
+            // Dive left to see if there is an even lower address candidate that fits
+            curr = curr->rb_left;
+        }
+        else
+        {
+            // Otherwise, dive right to find higher addresses
+            curr = curr->rb_right;
+        }
+    }
+
+    return candidate;
+}
+
+
+virtual_addr get_user_addr(virtual_addr size_bytes, virtual_addr min, virtual_addr max)
+{
+    struct task_vm_t *mm = this_core->cur_task->mem;
+    
+    if(size_bytes == 0)
+    {
+        return 0;
+    }
+
+    size_bytes = (size_bytes + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+    if(mm->first_region == NULL)
+    {
+        return (min + size_bytes <= max) ? min : 0;
+    }
+
+    // Can we fit it BEFORE the absolute lowest region in memory?
+    if(min + size_bytes <= mm->first_region->addr)
+    {
+        if(min + size_bytes <= max)
+        {
+            return min;
+        }
+    }
+
+    // Jump instantly to the first region that could border an eligible gap
+    struct memregion_t *curr = find_first_eligible_region(mm->rb_root, min);
+
+    if(!curr)
+    {
+        curr = mm->first_region;
+    }
+
+    while(curr != NULL)
+    {
+        virtual_addr end = REGION_END(curr);
+
+        if(end >= max)
+        {
+            break;
+        }
+
+        virtual_addr next_start = (curr->next != NULL) ? curr->next->addr : max;
+
+        if(next_start > max)
+        {
+            next_start = max;
+        }
+
+        // Calculate the unallocated hole size between the two regions
+        if(next_start > end)
+        {
+            virtual_addr diff = next_start - end;
+
+            // Ensure the hole fits our requested size and respects our min/max bounds
+            if(diff >= size_bytes && (end >= min) && (end + size_bytes <= max))
+            {
+                pt_entry *e = __get_page_entry_pd((pdirectory *)this_core->cur_task->pd_virt, end, 0);
+
+                if(e && PTE_FRAME(*e))
+                {
+                    printk("mmap: addr %lx in use but not in a memregion\n", end);
+                    kpanic("mmap error\n");
+                }
+
+                return end;
+            }
+        }
+
+        curr = curr->next;
+    }
+
+    return 0;
+}
+
+#endif
+
 
 /*
  * Reserve memory in userspace.
@@ -105,12 +216,29 @@ virtual_addr get_user_addr(virtual_addr size, virtual_addr min, virtual_addr max
 
         if(diff >= size)
         {
-            pt_entry *e = get_page_entry_pd((pdirectory *)this_core->cur_task->pd_virt, end);
+            pt_entry *e = __get_page_entry_pd((pdirectory *)this_core->cur_task->pd_virt, end, 0);
 
             if(e && PTE_FRAME(*e))
             {
                 __asm__ __volatile__("xchg %%bx, %%bx"::);
                 switch_tty(1);
+
+                printk("end %lx, size %lx, diff %lx\n", end, size, diff);
+                printk("memregion addr %lx, sz %lx, type %d\n", memregion->addr, memregion->size, memregion->type);
+
+                if(memregion->next)
+                {
+                    printk("memregion addr %lx, sz %lx, type %d\n", memregion->next->addr, memregion->next->size, memregion->next->type);
+                }
+
+                /*
+                struct memregion_t *tmp;
+                for(tmp = this_core->cur_task->mem->first_region; tmp != NULL; tmp = tmp->next)
+                {
+                    printk("memregion addr %lx, sz %lx, type %d\n", tmp->addr, tmp->size, tmp->type);
+                }
+                */
+
                 printk("mmap: addr %lx in use but not in a memregion\n", end);
                 kpanic("mmap error\n");
             }
@@ -203,7 +331,7 @@ long syscall_mmap(struct syscall_args *__args)
     {
         return -EINVAL;
     }
-    
+
     // check for conflicting flags - one of the two must be passed to us
     if(FLAG_SET(flags, MAP_PRIVATE) == FLAG_SET(flags, MAP_SHARED))
     {
@@ -256,7 +384,7 @@ long syscall_mmap(struct syscall_args *__args)
             (flags & MAP_STACK) || 
             (prot & PROT_GROWSDOWN)) ?
                 MEMREGION_TYPE_STACK :
-                    (((flags & MAP_EXECUTABLE) || (flags & PROT_EXEC)) ?
+                    (((flags & MAP_EXECUTABLE) || (prot & PROT_EXEC)) ?
                         MEMREGION_TYPE_TEXT : MEMREGION_TYPE_DATA);
 
     // check if the underlying filesystem supports file execution
@@ -297,6 +425,7 @@ long syscall_mmap(struct syscall_args *__args)
     }
 
     // allocate a new memregion struct
+    /*
     if((res = memregion_alloc_and_attach(ct, node,
                                offset, (off_t)length,
                                aligned_addr, end,
@@ -305,6 +434,31 @@ long syscall_mmap(struct syscall_args *__args)
                                     MEMREGION_FLAG_USER,
                                fixed)) != 0)
     {
+        kernel_mutex_unlock(&(ct->mem->mutex));
+        return res;
+    }
+    */
+    struct memregion_t *memregion = NULL;
+
+    if((res = memregion_alloc(node, prot, type, 
+                                (flags & (MAP_SHARED | MAP_PRIVATE)) | 
+                                    MEMREGION_FLAG_USER, &memregion)) != 0)
+    {
+        kernel_mutex_unlock(&(ct->mem->mutex));
+        return res;
+    }
+
+    memregion->addr = aligned_addr;
+    memregion->size = (end - aligned_addr) / PAGE_SIZE;
+    memregion->fpos = offset;
+    memregion->flen = (off_t)length;
+    memregion->prev = NULL;
+    memregion->next = NULL;
+
+    if((res = memregion_attach(ct, memregion, aligned_addr, memregion->size, fixed)) != 0)
+    {
+        __sync_fetch_and_sub(&memregion->refs, 1);
+        memregion_free(memregion);
         kernel_mutex_unlock(&(ct->mem->mutex));
         return res;
     }
@@ -317,6 +471,22 @@ long syscall_mmap(struct syscall_args *__args)
     {
         if(!FLAG_SET(flags, MAP_PRIVATE))
         {
+            //struct memregion_t *memregion = memregion_containing(ct, aligned_addr);
+            size_t pages = memregion->size;
+            size_t sz = sizeof(struct vmso_t) + (sizeof(physical_addr) * pages);
+
+            if(/* !memregion || */ !(memregion->so = kmalloc(sz)))
+            {
+                memregion_detach(ct, memregion /* memregion_containing(ct, aligned_addr) */, 1);
+                kernel_mutex_unlock(&(ct->mem->mutex));
+                return -ENOMEM;
+            }
+
+            A_memset(memregion->so, 0, sz);
+            memregion->so->refs = 1;
+            memregion->so->pagecount = pages;
+
+#if 0
             int page_flags = 0;
 
             // prepare page flags
@@ -343,6 +513,7 @@ long syscall_mmap(struct syscall_args *__args)
             }
         
             A_memset((void *)aligned_addr, 0, aligned_size);
+#endif
         }
     }
 
@@ -356,12 +527,14 @@ long syscall_mmap(struct syscall_args *__args)
     
     screen_refresh(NULL);
     */
-    
-    memregion_consolidate(ct);
+
+    memregion_consolidate_one(ct, memregion);
     kernel_mutex_unlock(&(ct->mem->mutex));
-    
+
     addr = (void *)aligned_addr;
-    COPY_TO_USER(res_addr, &addr, sizeof(void *));
+
+    //COPY_TO_USER(res_addr, &addr, sizeof(void *));
+    COPY_VAL_TO_USER(res_addr, &addr);
 
     //printk("mmap: task %d, addr %lx\n", ct->pid, aligned_addr);
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
@@ -670,7 +843,8 @@ long syscall_mremap(struct syscall_args *__args)
 
     if(flags & MREMAP_FIXED)
     {
-        printk("syscall_mremap: 4\n");
+        //printk("syscall_mremap: 4\n");
+
         /* This flag must be specified with MREMAP_FIXED */
         if(!(flags & MREMAP_MAYMOVE))
         {
@@ -864,5 +1038,129 @@ long syscall_mincore(void *__addr, size_t length, unsigned char *vec)
     kernel_mutex_unlock(&(ct->mem->mutex));
     
     return copy_to_user(vec, arr, arrsz);
+}
+
+
+/*
+ * Handler for syscall madvise().
+ */
+long syscall_madvise(void *__addr, size_t length, int advice)
+{
+    off_t file_pos, file_end;
+    virtual_addr addr = (virtual_addr)__addr, aligned_size, end;
+    struct memregion_t *memregion = NULL;
+    struct cached_page_t *pcache = NULL;
+	struct task_t *ct = (struct task_t *)this_core->cur_task;
+	pt_entry *e;
+    
+    if(!addr || !length)
+    {
+        return -EINVAL;
+    }
+
+    if(!PAGE_ALIGNED(addr))
+    {
+        return -EINVAL;
+    }
+
+    /*
+     * NOTE: so far, we only support this (partially).
+     * TODO: support other flags, see the madvise man page.
+     */
+	if(advice != MADV_DONTNEED)
+	{
+        return -EINVAL;
+	}
+    
+    if((memregion = memregion_containing(ct, addr)) == NULL)
+    {
+        return -ENOMEM;
+    }
+
+    /*
+     * NOTE: shared memory regions are handled separately by the shm module.
+     * TODO: add support for madvise in the shm module.
+     */
+    if(memregion->type == MEMREGION_TYPE_SHMEM)
+    {
+        return -EINVAL;
+    }
+
+    // do not allow user tasks to change kernel memory mappings
+    if(memregion->type == MEMREGION_TYPE_KERNEL)
+    {
+        return -EINVAL;
+    }
+
+    aligned_size = align_up(length);
+    end = addr + aligned_size;
+
+    if(end > REGION_END(memregion))
+    {
+        //return -ENOMEM;
+        end = REGION_END(memregion);
+        aligned_size = end - addr;
+    }
+
+    // if no backing file, just free the pages
+    if(!memregion->inode)
+    {
+        vmmngr_free_pages(addr, aligned_size);
+        return 0;
+    }
+
+    // TODO: the following code does not handle:
+    //   - pages that read past the end of file, which are alloc'd and zero filled
+    //   - pages that are copied on write
+    file_pos = memregion->fpos + (addr - memregion->addr);
+    file_end = file_pos + aligned_size;
+
+    while(addr < end)
+    {
+        // overflow or reading past end of file
+        if(file_pos > file_end)
+        {
+            return -ENOMEM;
+        }
+
+        if(!(e = get_page_entry(addr)))
+        {
+            return -ENOMEM;
+        }
+
+        if(!(pcache = get_cached_page(memregion->inode, file_pos, PCACHE_PEEK_ONLY)))
+        {
+            return -ENOMEM;
+        }
+
+        if(pcache->phys != PTE_FRAME(*e))
+        {
+            release_cached_page(pcache);
+            return -ENOMEM;
+        }
+
+        if(get_frame_shares(pcache->phys) <= 2)
+        {
+            switch_tty(1);
+            printk("madvise: wrong refs on page dev 0x%x, ino 0x%x, flags 0x%x, pid %d, curpid %d\n", pcache->dev, pcache->ino, pcache->flags, pcache->pid, ct->pid);
+            printk("madvise: off %ld, refs %d\n", pcache->offset, get_frame_shares(pcache->phys));
+            kpanic("madvise: infinite loop\n");
+
+            release_cached_page(pcache);
+            return -ENOMEM;
+        }
+
+        __atomic_store_n(e, 0, __ATOMIC_SEQ_CST);
+        __asm__ __volatile__("":::"memory");
+        vmmngr_flush_tlb_entry(addr);
+
+        dec_frame_shares(pcache->phys);
+        release_cached_page(pcache);
+
+        addr += PAGE_SIZE;
+        file_pos += PAGE_SIZE;
+    }
+
+    return 0;
 }
 

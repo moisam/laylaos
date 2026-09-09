@@ -35,6 +35,7 @@
 #include <mm/mmngr_phys.h>
 #include <mm/mmngr_virtual.h>
 #include <mm/mmap.h>
+#include <mm/kheap.h>
 #include <gui/vbe.h>
 #include <string.h>
 
@@ -50,6 +51,15 @@ static char *mem_type[] =
     "ACPI NVS", 
     "Bad mem"
 };
+
+// struct to represent a memory region
+struct sysmem_region_t
+{
+    struct sysmem_region_t *next;
+    size_t start, end;
+    unsigned int type;
+};
+
 
 // in case a frame is shared, this table shows the number of tasks sharing
 // a single frame
@@ -67,9 +77,6 @@ volatile unsigned char *frame_shares;
 static volatile size_t _mmngr_memory_size = 0;
 static uintptr_t highest_usable_addr = 0;
 
-// number of blocks currently in use
-//static volatile size_t _mmngr_used_blocks = 0;
-
 // maximum number of available memory blocks
 static volatile size_t _mmngr_max_blocks = 0;
 
@@ -80,7 +87,6 @@ static volatile size_t _mmngr_max_usable_blocks = 0;
 static volatile size_t _mmngr_available_blocks = 0;
 
 // memory map bit array. Each bit represents a memory block
-//static volatile uint32_t __mmngr_memory_map[0x60000];
 static volatile uint32_t *_mmngr_memory_map = 0;
 
 // How many items are in the memory map bit array
@@ -91,6 +97,10 @@ static volatile size_t _mmngr_usable_memory_map_size = 0;
 
 // Index of the lowest available frame address (to speed lookups)
 static volatile uintptr_t lowest_available_index = 0;
+
+// System memory regions as passed to us by the bootloader
+static struct sysmem_region_t *sysmem_regions = NULL;
+
 
 // set any bit (frame) within the memory map bit array
 static void mmap_set(uintptr_t bit)
@@ -122,26 +132,25 @@ static int mmap_test(uintptr_t bit)
 // finds first free frame in the bit array and returns its index
 static uintptr_t mmap_first_free(void)
 {
-    volatile size_t i;
-    volatile uint32_t j;
+    size_t i;
+    
+    for(i = lowest_available_index; i < _mmngr_usable_memory_map_size; i++)
+    {
+        uint32_t dword = _mmngr_memory_map[i];
 
-	// find the first free bit
-	for(i = lowest_available_index; i < _mmngr_usable_memory_map_size; i++)
-	{
-		if(_mmngr_memory_map[i] != 0xffffffff)
-		{
-			for(j = 0; j < 32; j++)
-			{
-			    // test each bit in the dword
-				if(!(_mmngr_memory_map[i] & ((uint32_t)1 << j)))
-				{
-					lowest_available_index = i;
-                    __asm__ __volatile__("":::"memory");
-					return i * 4 * 8 + j;
-				}
-			}
-		}
-	}
+        if(dword != 0xFFFFFFFF)
+        {
+            uint32_t free_bits = ~dword;
+
+            // __builtin_ctz calculates the index of the first '1' bit
+            int j = __builtin_ctz(free_bits);
+
+            lowest_available_index = i;
+            __asm__ __volatile__("":::"memory");
+
+            return (i << 5) + j; 
+        }
+    }
 
 	return 0;
 }
@@ -150,29 +159,54 @@ static uintptr_t mmap_first_free(void)
 // finds first free "size" number of frames and returns its index
 static uintptr_t mmap_first_free_s(size_t size)
 {
-    volatile size_t i;
-    volatile uint32_t j;
-    volatile int skip;
-    size_t mapsz = _mmngr_usable_memory_map_size * 32;
+    if (size == 0) return 0;
+    if (size == 1) return mmap_first_free();
 
-	for(i = 0, j = 0; i < mapsz; i += j + 1)
-	{
-	    skip = 0;
+    size_t bit_index = 0;
+    size_t total_bits = _mmngr_usable_memory_map_size * 32;
 
-		for(j = 0; j < size; j++)
-		{
-		    if(mmap_test(i + j))
-		    {
-		        skip = 1;
-		        break;
-		    }
-		}
+    while(bit_index < total_bits)
+    {
+        // If we are sitting on a 32-bit boundary, check the whole DWORD
+        if((bit_index & 31) == 0 && size >= 32)
+        {
+            size_t dword_idx = bit_index >> 5;
 
-		if(!skip)
-		{
-		    return i;
-		}
-	}
+            if(_mmngr_memory_map[dword_idx] == 0xFFFFFFFF)
+            {
+                bit_index += 32;
+                continue;
+            }
+        }
+
+        size_t offset;
+        int contiguous_found = 1;
+
+        for(offset = 0; offset < size; offset++)
+        {
+            size_t target_bit = bit_index + offset;
+            
+            if(target_bit >= total_bits)
+            {
+                return 0;       // end of physical memory
+            }
+
+            size_t idx = target_bit >> 5;
+            size_t bit = target_bit & 31;
+
+            if(_mmngr_memory_map[idx] & ((uint32_t)1 << bit))
+            {
+                bit_index = target_bit + 1;
+                contiguous_found = 0;
+                break;
+            }
+        }
+
+        if(contiguous_found)
+        {
+            return bit_index;
+        }
+    }
 
 	return 0;
 }
@@ -438,10 +472,9 @@ void pmmngr_early_init(unsigned long addr, volatile size_t *mmapsz,
 
         mmap = (multiboot_memory_map_t *)MMAP_NEXT_ENTRY();
     }
-    
+
     _mmngr_memory_size  =   highest_addr / 1024;
 	_mmngr_max_blocks	=	(_mmngr_memory_size * 1024) / PMMNGR_BLOCK_SIZE;
-	//_mmngr_used_blocks	=	_mmngr_max_blocks;
 	_mmngr_memory_map_size = (_mmngr_max_blocks + 31) / 32;
 	_mmngr_max_usable_blocks =	highest_usable_addr / PMMNGR_BLOCK_SIZE;
 	_mmngr_usable_memory_map_size = (_mmngr_max_usable_blocks + 31) / 32;
@@ -552,12 +585,7 @@ void pmmngr_init(unsigned long addr, physical_addr bitmap)
             _mmngr_available_blocks += (align_up(len) / PMMNGR_BLOCK_SIZE);
         }
 
-#ifdef MULTIBOOT2_BOOTLOADER_MAGIC
-        mmap = (multiboot_memory_map_t *)((uintptr_t)mmap + mmtag->entry_size);
-#else       /* !MULTIBOOT2_BOOTLOADER_MAGIC */
-        mmap = (multiboot_memory_map_t *)((uintptr_t)mmap + 
-                                           mmap->size + sizeof(mmap->size));
-#endif      /* MULTIBOOT2_BOOTLOADER_MAGIC */
+        mmap = (multiboot_memory_map_t *)MMAP_NEXT_ENTRY();
     }
     
     /*
@@ -603,6 +631,22 @@ void pmmngr_init(unsigned long addr, physical_addr bitmap)
 }
 
 
+struct sysmem_region_t *region_for_address(physical_addr addr)
+{
+    struct sysmem_region_t *region;
+
+    for(region = sysmem_regions; region != NULL; region = region->next)
+    {
+        if(addr >= region->start && addr < region->end)
+        {
+            return region;
+        }
+    }
+
+    return NULL;
+}
+
+
 void pmmngr_init_region(physical_addr base, size_t size)
 {
 	volatile uintptr_t align = base / PMMNGR_BLOCK_SIZE;
@@ -616,7 +660,6 @@ void pmmngr_init_region(physical_addr base, size_t size)
 	for( ; blocks > 0; blocks--)
 	{
 		mmap_unset(align++);
-		//_mmngr_used_blocks--;
 	}
 
 	// First block is always set. This insures allocs can't be 0
@@ -629,7 +672,6 @@ void pmmngr_deinit_region(physical_addr base, size_t size)
 {
 	volatile uintptr_t align = base / PMMNGR_BLOCK_SIZE;
 	volatile size_t blocks = size / PMMNGR_BLOCK_SIZE;
-	//volatile int is_set;
 	
 	if(size % PMMNGR_BLOCK_SIZE)
 	{
@@ -638,15 +680,7 @@ void pmmngr_deinit_region(physical_addr base, size_t size)
 
 	for( ; blocks > 0; blocks--)
 	{
-	    //is_set = mmap_test(align);
 		mmap_set(align++);
-
-		/*
-		if(!is_set)
-		{
-		    _mmngr_used_blocks++;
-        }
-        */
 	}
 
     __asm__ __volatile__("":::"memory");
@@ -714,12 +748,35 @@ try: ;
 	}
 
 	mmap_set(frame);
-	//_mmngr_used_blocks++;
     __asm__ __volatile__("":::"memory");
 
     elevated_priority_unlock(&physmem_lock);
     
 	return (void *)(frame * PMMNGR_BLOCK_SIZE);
+}
+
+
+void pmmngr_free_block_unlocked(void *p)
+{
+	uintptr_t frame = (uintptr_t)p / PMMNGR_BLOCK_SIZE;
+
+    if(frame_shares[frame] == 0)
+    {
+    	mmap_unset(frame);
+    	frame /= 32;
+
+        if(frame < lowest_available_index)
+        {
+            lowest_available_index = frame;
+        }
+    }
+    else
+    {
+        /* frame is shared. don't release it yet */
+        frame_shares[frame]--;
+    }
+
+    __asm__ __volatile__("":::"memory");
 }
 
 
@@ -732,7 +789,6 @@ void pmmngr_free_block(void *p)
     if(frame_shares[frame] == 0)
     {
     	mmap_unset(frame);
-    	//_mmngr_used_blocks--;
     	frame /= 32;
 
         if(frame < lowest_available_index)
@@ -780,7 +836,6 @@ try: ;
 		mmap_set(frame + i);
 	}
 
-	//_mmngr_used_blocks += size;
     __asm__ __volatile__("":::"memory");
     elevated_priority_unlock(&physmem_lock);
 
@@ -898,7 +953,6 @@ done:
 		mmap_set(frame + i);
 	}
 
-	//_mmngr_used_blocks += size;
     __asm__ __volatile__("":::"memory");
     elevated_priority_unlock(&physmem_lock);
 
@@ -924,7 +978,6 @@ void pmmngr_free_blocks(void *p, size_t size)
         if(frame_shares[frame + i] == 0)
         {
     	    mmap_unset(frame + i);
-    	    //_mmngr_used_blocks--;
         }
         else
         {
@@ -957,27 +1010,30 @@ size_t pmmngr_get_available_block_count(void)
 
 size_t pmmngr_get_free_block_count(void)
 {
-	//return _mmngr_max_blocks - _mmngr_used_blocks;
+    size_t i, unused = 0;
+    size_t count = _mmngr_usable_memory_map_size;
 
-    volatile size_t i;
-    size_t unused = 0, count = _mmngr_usable_memory_map_size;
+    for(i = 0; i < count; i++)
+    {
+        uint32_t dword = _mmngr_memory_map[i];
 
-	for(i = 0; i < count; i++)
-	{
-		if(_mmngr_memory_map[i] != 0xffffffff)
-		{
-			for(volatile uint32_t j = 0; j < 32; j++)
-			{
-			    // test each bit in the dword
-				if(!(_mmngr_memory_map[i] & ((uint32_t)1 << j)))
-				{
-				    unused++;
-				}
-			}
-		}
-	}
+        if(dword == 0xffffffff)
+        {
+            continue;
+        }
 
-	return unused;
+        if(dword == 0)
+        {
+            unused += 32;
+            continue;
+        }
+
+        uint32_t free_bits = ~dword;
+
+        unused += __builtin_popcount(free_bits);
+    }
+
+    return unused;
 }
 
 

@@ -153,6 +153,7 @@ int vmmngr_alloc_pages(virtual_addr addr, size_t sz, int flags)
     virtual_addr i = addr;
     void *p;
     pt_entry *page;
+    int full_flush = (sz >= MAX_TLB_INVLPG_SIZE);
 
 	if(pmmngr_get_free_block_count() <= (sz / PAGE_SIZE))
 	{
@@ -160,6 +161,11 @@ int vmmngr_alloc_pages(virtual_addr addr, size_t sz, int flags)
 	}
 
     flags |= I86_PTE_PRESENT;
+
+    if(full_flush)
+    {
+        vmmngr_flush_tlb_range(/* i, sz */);
+    }
     
     while(i < laddr)
     {
@@ -173,20 +179,32 @@ int vmmngr_alloc_pages(virtual_addr addr, size_t sz, int flags)
                 // rollback everything
                 i -= PAGE_SIZE;
 
+                if(full_flush)
+                {
+                    vmmngr_flush_tlb_range(/* i, sz */);
+                }
+
                 while(i >= addr)
                 {
+                    if(!full_flush)
+                    {
+                        vmmngr_flush_tlb_entry(i);
+                    }
+
                     vmmngr_free_page(get_page_entry(i));
-                    vmmngr_flush_tlb_entry(i);
                     i -= PAGE_SIZE;
                 }
 
                 return 0;
             }
 
+            if(!full_flush)
+            {
+                vmmngr_flush_tlb_entry(i);
+            }
+
             __atomic_store_n(page, (uintptr_t)p | flags, __ATOMIC_SEQ_CST);
             __asm__ __volatile__("":::"memory");
-
-            vmmngr_flush_tlb_entry(i);
         }
 
         i += PAGE_SIZE;
@@ -215,61 +233,6 @@ void vmmngr_free_page(pt_entry *e)
 
     __atomic_store_n(e, 0, __ATOMIC_SEQ_CST);
     __asm__ __volatile__("":::"memory");
-}
-
-
-/*
- * Free pages in physical memory.
- */
-void vmmngr_free_pages(virtual_addr addr, size_t sz)
-{
-    virtual_addr laddr = addr + sz;
-    virtual_addr i = addr;
-
-    pt_entry *e;
-    void *p;
-    
-    while(i < laddr)
-    {
-        if((e = get_page_entry(i)))
-        {
-            if((p = (void *)PTE_FRAME(*e)))
-            {
-                pmmngr_free_block(p);
-            }
-
-            __atomic_store_n(e, 0, __ATOMIC_SEQ_CST);
-            __asm__ __volatile__("":::"memory");
-        }
-
-        vmmngr_flush_tlb_entry(i);
-        i += PAGE_SIZE;
-    }
-}
-
-
-/*
- * Change page flags.
- */
-void vmmngr_change_page_flags(virtual_addr addr, size_t sz, int flags)
-{
-    virtual_addr laddr = addr + sz;
-    virtual_addr i = addr;
-    
-    while(i < laddr)
-    {
-        pt_entry *page = get_page_entry(i);
-  
-        if(page && PTE_PRESENT(*page))
-        {
-            PTE_CLEAR_ATTRIBS(page);
-            PTE_ADD_ATTRIB(page, flags);
-            __asm__ __volatile__("":::"memory");
-            vmmngr_flush_tlb_entry(i);
-        }
-
-        i += PAGE_SIZE;
-    }
 }
 
 
