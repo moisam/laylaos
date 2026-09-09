@@ -41,7 +41,7 @@
 long get_dot_dot(struct fs_node_t **dir, struct fs_node_t **dotdot)
 {
     KDEBUG("get_dot_dot:\n");
-    struct dirent *entry;
+    struct dirent *entry = NULL;
     struct fs_node_t *tmp;
     long i;
     ino_t ino;
@@ -213,6 +213,7 @@ long getpath(struct fs_node_t *dir, char **__path)
         }
 
         KDEBUG("getpath: node @ 0x%x, parent @ 0x%x\n", node, parent);
+        dp = NULL;
 
         if((res = vfs_finddir_by_inode(parent, node, &dp)) < 0)
         {

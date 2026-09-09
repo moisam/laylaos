@@ -461,6 +461,7 @@ void remove_old_dentries(unsigned long long older_than_ticks)
     struct bdev_ops_t *dev, *ldev = &bdev_tab[NR_DEV];
     struct dentry_list_t *list, *llist;
     struct dentry_t *ent, *ent2, *prev;
+    struct fs_node_t *fnode;
     unsigned long long older_than = ticks - older_than_ticks;
 
     // check that the given time have passed since booting
@@ -486,6 +487,16 @@ void remove_old_dentries(unsigned long long older_than_ticks)
             {
                 if(ent->refs || ent->last_accessed >= older_than)
                 {
+                    prev = ent;
+                    ent = ent->dev_next;
+                    continue;
+                }
+
+                // do not remove the dentry if the node is still cached,
+                // so tasks looking at /proc/[pid]/fd can read the right link
+                if((fnode = get_node(ent->dev, ent->inode, GETNODE_IGNORE_STALE|GETNODE_PEEK_ONLY)))
+                {
+                    release_node(fnode);
                     prev = ent;
                     ent = ent->dev_next;
                     continue;
