@@ -199,8 +199,9 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
     UNUSED(pos);
 
     struct fs_node_t *node = f->node;
-    volatile size_t count = _count;
-    volatile unsigned long head, tail;
+    size_t count = _count;
+    unsigned long head, tail;
+    int was_full;
 
     if(!(f->mode & PREAD_MODE))
     {
@@ -216,32 +217,34 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
         return -EFAULT;
     }
 
+    /*
     if(count == 0)
     {
         return 0;
     }
-
-    // now read
-    unsigned char *d = buf;
-    //unsigned char *s = (unsigned char *)node->size;
-    head = node->blocks[1];
-    tail = node->blocks[0];
+    */
 
     if(node->size == 0)
     {
         kpanic("pipefs: reading from a deallocated pipe\n");
     }
 
+    // now read
+    unsigned char *d = buf;
+
     // if the pipe is empty:
     //   - return 0 if the writing end is closed
     //   - return -EAGAIN if this is a non-blocking file descriptor
     //   - sleep and wait for input otherwise
-    while(EMPTY_PIPE(head, tail))
+    while(1)
     {
-        set_task_waking_signal(this_core->cur_task, 0);
-        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        head = __atomic_load_n(&node->blocks[1], __ATOMIC_RELAXED);
+        tail = __atomic_load_n(&node->blocks[0], __ATOMIC_RELAXED);
 
-        selwakeup(&node->select_channel);   // wakeup writers
+        if(!EMPTY_PIPE(head, tail))
+        {
+            break;
+        }
 
         if(node->refs < 2)     // no more writers
         {
@@ -253,22 +256,29 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
             return -EAGAIN;
         }
 
-        selrecord(&node->select_channel);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+
+        //selrecord(&node->select_channel);
+        selwakeup(&node->select_channel);   // wakeup writers
 
         // wait for writers
         set_task_waitchan(this_core->cur_task, &node->select_channel);
+        //set_task_state(this_core->cur_task, TASK_SLEEPING);
+        //scheduler();
         block_task_timeout(this_core->cur_task, 2);
 
        	if(get_task_waking_signal(this_core->cur_task))
         {
             return -EINTR;
         }
-
-        head = node->blocks[1];
-        tail = node->blocks[0];
     }
 
     kernel_mutex_lock(&node->lock);
+
+    head = __atomic_load_n(&node->blocks[1], __ATOMIC_RELAXED);
+    tail = __atomic_load_n(&node->blocks[0], __ATOMIC_RELAXED);
+    was_full = FULL_PIPE(node, head, tail);
 
     while(count != 0 && !EMPTY_PIPE(head, tail))
     {
@@ -301,13 +311,16 @@ ssize_t pipefs_read(struct file_t *f, off_t *pos,
 
         head = (head + 1) & (PIPE_SIZE(node) - 1);
         */
-        node->blocks[1] = head;
-        tail = node->blocks[0];
     }
+
+    __atomic_store_n(&node->blocks[1], head, __ATOMIC_RELEASE);
 
     kernel_mutex_unlock(&node->lock);
 
-    selwakeup(&node->select_channel);   // wakeup writers
+    if(was_full)
+    {
+        selwakeup(&node->select_channel);   // wakeup writers
+    }
 
     return d - buf;
 }
@@ -322,8 +335,9 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
     UNUSED(pos);
 
     struct fs_node_t *node = f->node;
-    volatile size_t count = _count;
-    volatile unsigned long head, tail;
+    size_t count = _count;
+    unsigned long head, tail;
+    int was_empty;
 
     if(!(f->mode & PWRITE_MODE))
     {
@@ -345,21 +359,23 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
         return -EPIPE;
     }
 
+    /*
     if(count == 0)
     {
         return 0;
     }
-
-    // now write
-    unsigned char *d = buf;
-    //unsigned char *s = (unsigned char *)node->size;
-    head = node->blocks[1];
-    tail = node->blocks[0];
+    */
 
     if(node->size == 0)
     {
         kpanic("pipefs: writing to a deallocated pipe\n");
     }
+
+    // now write
+    unsigned char *d = buf;
+
+    head = __atomic_load_n(&node->blocks[1], __ATOMIC_RELAXED);
+    tail = __atomic_load_n(&node->blocks[0], __ATOMIC_RELAXED);
 
     /*
      * According to pipe(7) manpage, O_NONBLOCK and the size of the write
@@ -396,21 +412,14 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
         }
     }
 
-    kernel_mutex_lock(&node->lock);
+    was_empty = EMPTY_PIPE(head, tail);
 
     while(count != 0)
     {
         size_t n;
-        //count--;
 
         while(FULL_PIPE(node, head, tail))
         {
-            set_task_waking_signal(this_core->cur_task, 0);
-            __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
-
-            kernel_mutex_unlock(&node->lock);
-            selwakeup(&node->select_channel);   // wakeup readers
-
             if(node->refs < 2)     // no readers
             {
                 user_add_task_signal(this_core->cur_task, SIGPIPE, 1);
@@ -422,10 +431,16 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
                 return d - buf;
             }
 
-            selrecord(&node->select_channel);
+            set_task_waking_signal(this_core->cur_task, 0);
+            __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+
+            //selrecord(&node->select_channel);
+            selwakeup(&node->select_channel);   // wakeup readers
 
             // wait for readers
             set_task_waitchan(this_core->cur_task, &node->select_channel);
+            //set_task_state(this_core->cur_task, TASK_SLEEPING);
+            //scheduler();
             block_task_timeout(this_core->cur_task, 2);
 
         	if(get_task_waking_signal(this_core->cur_task))
@@ -433,11 +448,14 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
         	    return -EINTR;
         	}
 
-            head = node->blocks[1];
-            tail = node->blocks[0];
-
-            kernel_mutex_lock(&node->lock);
+            head = __atomic_load_n(&node->blocks[1], __ATOMIC_RELAXED);
+            tail = __atomic_load_n(&node->blocks[0], __ATOMIC_RELAXED);
         }
+
+        kernel_mutex_lock(&node->lock);
+
+        head = __atomic_load_n(&node->blocks[1], __ATOMIC_RELAXED);
+        tail = __atomic_load_n(&node->blocks[0], __ATOMIC_RELAXED);
 
         // try and write as much as possible to reduce writing overhead
         if(tail < head)
@@ -468,13 +486,17 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
 
         tail = (tail + 1) & (PIPE_SIZE(node) - 1);
         */
-        node->blocks[0] = tail;
-        head = node->blocks[1];
+
+        __atomic_store_n(&node->blocks[0], tail, __ATOMIC_RELEASE);
+        kernel_mutex_unlock(&node->lock);
+
+        head = __atomic_load_n(&node->blocks[1], __ATOMIC_RELAXED);
     }
 
-    kernel_mutex_unlock(&node->lock);
-
-    selwakeup(&node->select_channel);   // wakeup readers
+    if(was_empty)
+    {
+        selwakeup(&node->select_channel);   // wakeup readers
+    }
 
     return d - buf;
 }
@@ -485,10 +507,8 @@ ssize_t pipefs_write(struct file_t *f, off_t *pos,
  */
 long pipefs_select(struct file_t *f, int which, int record)
 {
-    volatile unsigned long head, tail;
-
-    head = f->node->blocks[1];
-    tail = f->node->blocks[0];
+    unsigned long head = __atomic_load_n(&f->node->blocks[1], __ATOMIC_RELAXED);
+    unsigned long tail = __atomic_load_n(&f->node->blocks[0], __ATOMIC_RELAXED);
 
 	switch(which)
 	{
@@ -548,15 +568,13 @@ long pipefs_select(struct file_t *f, int which, int record)
 long pipefs_poll(struct file_t *f, struct pollfd *pfd)
 {
     long res = 0;
-    volatile unsigned long head, tail;
-
-    head = f->node->blocks[1];
-    tail = f->node->blocks[0];
+    unsigned long head = __atomic_load_n(&f->node->blocks[1], __ATOMIC_RELAXED);
+    unsigned long tail = __atomic_load_n(&f->node->blocks[0], __ATOMIC_RELAXED);
 
     if(pfd->events & POLLIN)
     {
-        if(!EMPTY_PIPE(head, tail) ||
-           f->node->refs != 2)
+        if(!EMPTY_PIPE(head, tail) /* ||
+           f->node->refs != 2 */)
         {
             pfd->revents |= POLLIN;
             res = 1;
@@ -569,8 +587,8 @@ long pipefs_poll(struct file_t *f, struct pollfd *pfd)
 
     if(pfd->events & POLLOUT)
     {
-        if(!FULL_PIPE(f->node, head, tail) ||
-           f->node->refs != 2)
+        if(!FULL_PIPE(f->node, head, tail) /* ||
+           f->node->refs != 2 */)
         {
             pfd->revents |= POLLOUT;
             res = 1;

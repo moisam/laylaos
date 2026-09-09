@@ -498,7 +498,7 @@ static size_t __get_task_mmaps(struct task_t *task, char **_buf, int extra_info)
     struct fs_node_t *node = NULL;
     char *path = NULL;
     struct dentry_t *dent = NULL;
-    size_t buflen = 0, bufsz = 2048;
+    size_t buflen = 0, bufsz = 4096;
     volatile size_t len = 0;
     ino_t ino;
     dev_t dev;
@@ -542,10 +542,12 @@ static size_t __get_task_mmaps(struct task_t *task, char **_buf, int extra_info)
         memregion = memregion->next)
     {
         // make sure we have enough space, otherwise expand the buffer
-        if(buflen + _F1_ + _F2_ + _F3_ + _F4_ + _F5_ + _F6_ >= bufsz)
+        size_t wantedlen = buflen + _F1_ + _F2_ + _F3_ + _F4_ + _F5_ + _F6_;
+
+        if(wantedlen >= bufsz)
         {
             *_buf = buf;
-            PR_REALLOC_OR_UNLOCK(buf, bufsz, buflen, &(task->mem->mutex));
+            PR_REALLOC_OR_UNLOCK2(buf, wantedlen, bufsz, buflen, &(task->mem->mutex));
             *_buf = buf;
             p = buf + buflen;
         }
@@ -640,10 +642,12 @@ static size_t __get_task_mmaps(struct task_t *task, char **_buf, int extra_info)
 
                         // make sure we have enough space, otherwise expand 
                         // the buffer
-                        if(buflen + x + 1 >= bufsz)
+                        wantedlen += x + 1;
+
+                        if(wantedlen >= bufsz)
                         {
                             *_buf = buf;
-                            PR_REALLOC_OR_UNLOCK(buf, bufsz, buflen, &(task->mem->mutex));
+                            PR_REALLOC_OR_UNLOCK2(buf, wantedlen, bufsz, buflen, &(task->mem->mutex));
                             *_buf = buf;
                             p = buf + buflen;
                         }
@@ -676,10 +680,12 @@ static size_t __get_task_mmaps(struct task_t *task, char **_buf, int extra_info)
             // 30 is the length of each line,
             // 16 is the number of lines plus 1 to account for the (possibly 
             // long) last line
-            if(buflen + (30 * 16) + 1 >= bufsz)
+            wantedlen = buflen + (30 * 16) + 1;
+
+            if(wantedlen >= bufsz)
             {
                 *_buf = buf;
-                PR_REALLOC_OR_UNLOCK(buf, bufsz, buflen, &(task->mem->mutex));
+                PR_REALLOC_OR_UNLOCK2(buf, wantedlen, bufsz, buflen, &(task->mem->mutex));
                 *_buf = buf;
                 p = buf + buflen;
             }
@@ -834,15 +840,24 @@ size_t get_task_io(struct task_t *task, char **buf)
         return 0;
     }
 
-    PR_MALLOC(*buf, 128);
+    PR_MALLOC(*buf, 256);
     p = *buf;
 
-    ksprintf(p, 128, "rchar: %10lu\nwchar: %10lu\n",
+    ksprintf(p, 256, "rchar: %10lu\nwchar: %10lu\n",
                      task->read_count, task->write_count);
     p += strlen(p);
 
-    ksprintf(p, 128, "syscr: %10u\nsyscw: %10u\n",
+    ksprintf(p, 256, "syscr: %10u\nsyscw: %10u\n",
                      task->read_calls, task->write_calls);
+    p += strlen(p);
+
+    /*
+     * TODO: these should reflect count of bytes actually read/written to disk.
+     *
+     * See: https://man7.org/linux/man-pages/man5/proc_pid_io.5.html
+     */
+    ksprintf(p, 256, "read_bytes: %10lu\nwrite_bytes: %10lu\n",
+                     task->read_count, task->write_count);
 
     //switch_tty(1);
     //printk("*** %s\n", *buf);

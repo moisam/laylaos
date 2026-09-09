@@ -80,11 +80,13 @@ static unsigned long long cpu_speed(void)
 }
 
 
-size_t detect_cpu(char **buf)
+size_t detect_cpu(char **buf, void *arg)
 {
 	unsigned long long cpuspeed;
 	int i, j;
 	char *p;
+
+    UNUSED(arg);
 
 	if(!(*buf = kmalloc(BUFSZ)))
 	{
@@ -115,6 +117,9 @@ size_t detect_cpu(char **buf)
         }
 
         ksprintf(p, BUFSZ, "stepping      : %u\n", processor_local_data[i].stepping);
+        p += strlen(p);
+
+        ksprintf(p, BUFSZ, "microcode     : %u\n", processor_local_data[i].microcode);
         p += strlen(p);
 
         ksprintf(p, BUFSZ, "cpu MHz       : %llu\n", cpuspeed);

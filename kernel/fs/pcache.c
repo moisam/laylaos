@@ -41,6 +41,7 @@
 
 
 #define INIT_HASHSZ             2048
+
 struct hashtab_t *pcachetab = NULL;
 volatile struct kernel_mutex_t pcachetab_lock = { 0, };
 
@@ -92,8 +93,9 @@ static inline void release_page_memory(struct cached_page_t *pcache)
             release_node(node);
         }
     }
-    
-    A_memset(pcache, 0, sizeof(struct cached_page_t));
+
+    //A_memset(pcache, 0, sizeof(struct cached_page_t));
+    A_memset(pcache, 0, sizeof(struct cached_page_t) + sizeof(struct pcache_key_t));
     kfree(pcache);
     __asm__ __volatile__("":::"memory");
 }
@@ -445,7 +447,9 @@ loop:
 
                 if(bdev_tab[maj].strategy(&req) < 0)
                 {
-                    break;
+                    free_cached_page(pkey, pcache);
+                    return NULL;
+                    //break;
                 }
             }
 
@@ -595,7 +599,7 @@ int sync_cached_page(struct cached_page_t *pcache)
 
         i = 0;
 
-        // Read as much as we can
+        // Write as much as we can
         if(how_many > 1)
         {
             //printk("sync_cached_page: how_many %d\n", how_many);
@@ -608,7 +612,8 @@ int sync_cached_page(struct cached_page_t *pcache)
 
             if(bdev_tab[maj].strategy(&req) < 0)
             {
-                return 0;
+                //return 0;
+                return -EIO;
             }
 
             n -= how_many;
@@ -617,7 +622,7 @@ int sync_cached_page(struct cached_page_t *pcache)
             res += d->block_size * how_many;
         }
 
-        // Read the rest of the sectors (or all the sectors if we could
+        // Write the rest of the sectors (or all the sectors if we could
         // not find consecutive sectors above)
 
         while(n--)
@@ -633,7 +638,8 @@ int sync_cached_page(struct cached_page_t *pcache)
 
                 if(bdev_tab[maj].strategy(&req) < 0)
                 {
-                    break;
+                    //break;
+                    return -EIO;
                 }
             }
 
@@ -719,7 +725,7 @@ static inline void release_pcache_internal(volatile struct hashtab_item_t *hitem
 }
 
 
-static void flush_dirty_pages(int maj)
+void flush_dirty_pages(int maj)
 {
     struct cached_page_t *pcache;
     volatile struct hashtab_item_t *hitem /* , *prev */;

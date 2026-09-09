@@ -75,7 +75,7 @@ void init_fstab(void)
     memset(fstab, 0, sizeof(fstab));
     memset(mounttab, 0, sizeof(struct mount_info_t) * NR_SUPER);
     memset(node_table, 0, sizeof(struct fs_node_t *) * NR_INODE);
-    memset(ftab, 0, sizeof(struct file_t) * NR_FILE);
+    memset(ftab, 0, sizeof(struct file_t) * NR_FILETABLE);
     
     // we need to register this first in order to read initrd
     fs_register("ext2", &ext2fs_ops);

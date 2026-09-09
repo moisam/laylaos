@@ -1174,6 +1174,7 @@ static size_t count_free_clusters(struct fat_private_t *priv)
 
     tmpnode.inode = PCACHE_NOINODE;
     tmpnode.dev = priv->dev;
+    tmpnode.flags = FS_NODE_HEADER_ONLY;
 
     printk("count_free_clusters: dev 0x%x\n", priv->dev);
 
@@ -1256,6 +1257,7 @@ static size_t alloc_cluster(struct fat_private_t *priv)
 
     tmpnode.inode = PCACHE_NOINODE;
     tmpnode.dev = priv->dev;
+    tmpnode.flags = FS_NODE_HEADER_ONLY;
 
     for(fat_sector = priv->first_fat_sector;
         fat_sector < priv->first_fat_sector + priv->fat_size;
@@ -1367,6 +1369,7 @@ static size_t __next_cluster(struct fat_private_t *priv,
 
     tmpnode.inode = PCACHE_NOINODE;
     tmpnode.dev = priv->dev;
+    tmpnode.flags = FS_NODE_HEADER_ONLY;
 
     if(priv->fattype == FAT_32 || priv->fattype == FAT_EX)
     {
@@ -2040,11 +2043,10 @@ static struct dirent *fatfs_entry_to_dirent(struct fat_private_t *priv,
  * need them.
  * The 'name' argument MUST be '.' or '..' only, nothing else.
  */
-static struct dirent *create_root_dirent(char *name)
+static struct dirent *create_root_dirent(char *name, struct dirent *__ent)
 {
     unsigned int reclen = GET_DIRENT_LEN(4);
-
-    struct dirent *entry = kmalloc(reclen);
+    struct dirent *entry = __ent ? __ent : kmalloc(reclen);
 
     if(!entry)
     {
@@ -2094,7 +2096,9 @@ long fatfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
     size_t fnamelen = strlen(filename);
 
     // for safety
+    /*
     *entry = NULL;
+    */
 
     if(!fnamelen)
     {
@@ -2113,7 +2117,7 @@ long fatfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
         (filename[1] == '\0' ||
          (filename[1] == '.' && filename[2] == '\0'))))
     {
-        *entry = create_root_dirent(filename);
+        *entry = create_root_dirent(filename, *entry);
         return *entry ? 0 : -ENOMEM;
     }
 
@@ -2134,13 +2138,13 @@ long fatfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
 
     if(lfn)
     {
-        *entry = fatfs_entry_to_dirent(priv, dent, NULL, lfn, strlen(lfn),
+        *entry = fatfs_entry_to_dirent(priv, dent, *entry, lfn, strlen(lfn),
                                                 stream_off + dbuf_off);
         kfree(lfn);
     }
     else
     {
-        *entry = fatfs_entry_to_dirent(priv, dent, NULL, filename, fnamelen,
+        *entry = fatfs_entry_to_dirent(priv, dent, *entry, filename, fnamelen,
                                                 stream_off + dbuf_off);
     }
 

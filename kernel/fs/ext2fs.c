@@ -348,7 +348,7 @@ long ext2_read_super(dev_t dev, struct mount_info_t *d, size_t bytes_per_sector)
     req.blockno = bgd_block;
     req.write = 0;
 
-    printk("ext2: reading block group descriptor table\n");
+    printk("ext2: reading block group descriptor table (sz %ld)\n", bgd_size);
 
     if(bdev_tab[maj].strategy(&req) < 0)
     {
@@ -790,6 +790,7 @@ STATIC_INLINE int get_block_table(struct bgd_table_info_t *bgd,
 
     tmp.inode = PCACHE_NOINODE;
     tmp.dev = dev;
+    tmp.flags = FS_NODE_HEADER_ONLY;
 
     if(table_block == 0)
     {
@@ -797,7 +798,10 @@ STATIC_INLINE int get_block_table(struct bgd_table_info_t *bgd,
         printk("ext2: in get_block_table():\n");
         printk("ext2: dev 0x%x, n 0x%x\n", dev, n);
         printk("ext2: off0 0x%lx, off1 0x%lx, off2 0x%lx\n", off0, off1, off2);
+        printk("ext2: inogrp %d, inoidx %d, inosz %d\n", inode_group(bgd->super, n), inode_index(bgd->super, n), inode_size(bgd->super));
         printk("ext2: invalid table_block: 0x%lx\n", table_block);
+        //for(int z = 0; z < 512; z++) printk("%x ", ((char *)(&bgd->bgd_table[inode_group(bgd->super, n)]))[z]);
+        //printk("\n");
         kpanic("Invalid/corrupt disk\n");
     }
 
@@ -833,6 +837,7 @@ int get_block_bitmap(struct bgd_table_info_t *bgd,
 
     tmp.inode = PCACHE_NOINODE;
     tmp.dev = dev;
+    tmp.flags = FS_NODE_HEADER_ONLY;
 
     if(table_block == 0)
     {
@@ -1276,6 +1281,7 @@ size_t ext2_bmap(struct fs_node_t *node, size_t lblock,
 
     tmpnode.dev = node->dev;
     tmpnode.inode = PCACHE_NOINODE;
+    tmpnode.flags = FS_NODE_HEADER_ONLY;
 
     // check direct block pointers
     if(lblock < 12)
@@ -1714,6 +1720,7 @@ void ext2_free(dev_t dev, uint32_t block_no)
     // task runs next
     tmpnode.dev = dev;
     tmpnode.inode = PCACHE_NOINODE;
+    tmpnode.flags = FS_NODE_HEADER_ONLY;
 
     if((pcache = get_cached_page((struct fs_node_t *)&tmpnode, block_no, 
                                     PCACHE_PEEK_ONLY | PCACHE_IGNORE_STALE)))
@@ -1884,14 +1891,14 @@ struct dirent *ext2_entry_to_dirent(struct ext2_dirent_t *ext2_ent,
 {
     unsigned int reclen = GET_DIRENT_LEN(namelen);
     unsigned char d_type = DT_UNKNOWN;
-    
+
     struct dirent *entry = __ent ? __ent : kmalloc(reclen);
-    
+
     if(!entry)
     {
         return NULL;
     }
-    
+
     if(ext_dir_type)
     {
         switch(ext2_ent->type_indicator)
@@ -1993,10 +2000,12 @@ long ext2_finddir_internal(struct fs_node_t *dir, char *filename,
     size_t offset = 0, blocks;
 
     // for safety
+    /*
     if(entry)
     {
         *entry = NULL;
     }
+    */
 
     if(!fnamelen)
     {
@@ -2132,7 +2141,7 @@ long ext2_finddir_by_inode_internal(struct fs_node_t *dir,
 
             if(matching_node(dir->dev, ent->inode, node))
             {
-                *entry = ext2_entry_to_dirent(ent, NULL, n, len,
+                *entry = ext2_entry_to_dirent(ent, *entry /* NULL */, n, len,
                             offset + (blk - (unsigned char *)buf->virt), 0);
                 release_cached_page(buf);
                 return 0;

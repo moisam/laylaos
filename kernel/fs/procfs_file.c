@@ -72,11 +72,13 @@ do {                                                    \
 /*
  * Read /proc/devices.
  */
-size_t get_device_list(char **_buf)
+size_t get_device_list(char **_buf, void *arg)
 {
     volatile size_t buflen = 0;
     volatile char *buf;
     size_t len = 0;
+
+    UNUSED(arg);
 
     *_buf = NULL;
     PR_MALLOC(buf, 1024);
@@ -175,13 +177,15 @@ size_t get_device_list(char **_buf)
 /*
  * Read /proc/interrupts.
  */
-size_t get_interrupt_info(char **_buf)
+size_t get_interrupt_info(char **_buf, void *arg)
 {
     size_t len, count = 0, bufsz = 2048;
     size_t rowlen;
     char *buf, *p;
     //char tmp[128];
     int i, k;
+
+    UNUSED(arg);
 
     PR_MALLOC(buf, bufsz);
     p = buf;
@@ -236,7 +240,7 @@ STATIC_INLINE int is_special_fs(char *fsname)
 /*
  * Read /proc/filesystems.
  */
-size_t get_fs_list(char **_buf)
+size_t get_fs_list(char **_buf, void *arg)
 {
     struct fs_info_t *f = fstab;
     struct fs_info_t *lf = &fstab[NR_FILESYSTEMS];
@@ -244,6 +248,8 @@ size_t get_fs_list(char **_buf)
     // max fs name is 8 chars, plus 8 for the 'nodev' prefix and spaces
     size_t bufsz = (16 + 2) * NR_FILESYSTEMS;
     char *buf, *p;
+
+    UNUSED(arg);
 
     PR_MALLOC(buf, bufsz);
     p = buf;
@@ -271,12 +277,14 @@ size_t get_fs_list(char **_buf)
 /*
  * Read /proc/uptime.
  */
-size_t get_uptime(char **buf)
+size_t get_uptime(char **buf, void *arg)
 {
     volatile struct task_t *idle_task;
     time_t uptime = monotonic_time.tv_sec;  // now();
     time_t idle = 0;
     int i;
+
+    UNUSED(arg);
 
     for(i = 0; i < processor_count; i++)
     {
@@ -297,9 +305,11 @@ size_t get_uptime(char **buf)
 /*
  * Read /proc/cmdline.
  */
-size_t get_cmdline(char **buf)
+size_t get_cmdline(char **buf, void *arg)
 {
     size_t len = strlen(kernel_cmdline) + 2;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, len);
     ksprintf(*buf, len, "%s\n", kernel_cmdline);
@@ -311,8 +321,10 @@ size_t get_cmdline(char **buf)
 /*
  * Read /proc/self.
  */
-size_t get_self(char **buf)
+size_t get_self(char **buf, void *arg)
 {
+    UNUSED(arg);
+
     PR_MALLOC(*buf, 16);
     ksprintf(*buf, 16, "/proc/%u", tgid(this_core->cur_task));
 
@@ -323,8 +335,10 @@ size_t get_self(char **buf)
 /*
  * Read /proc/thread-self.
  */
-size_t get_thread_self(char **buf)
+size_t get_thread_self(char **buf, void *arg)
 {
+    UNUSED(arg);
+
     PR_MALLOC(*buf, 32);
     ksprintf(*buf, 32, "/proc/%u/task/%u",
                        tgid(this_core->cur_task), this_core->cur_task->pid);
@@ -336,8 +350,10 @@ size_t get_thread_self(char **buf)
 /*
  * Read /proc/version.
  */
-size_t get_version(char **buf)
+size_t get_version(char **buf, void *arg)
 {
+    UNUSED(arg);
+
     PR_MALLOC(*buf, 64);
     ksprintf(*buf, 64, "%s %s %s\n", ostype, osrelease, version);
 
@@ -348,12 +364,14 @@ size_t get_version(char **buf)
 /*
  * Read /proc/vmstat.
  */
-size_t get_vmstat(char **buf)
+size_t get_vmstat(char **buf, void *arg)
 {
     size_t memfree = pmmngr_get_free_block_count();
     size_t ptables = used_pagetable_count();
     size_t kstacks = get_kstack_count();
     size_t shms = get_shm_page_count();
+
+    UNUSED(arg);
     
     PR_MALLOC(*buf, 128);
     ksprintf(*buf, 128, "nr_free_pages %lu\n"
@@ -369,12 +387,14 @@ size_t get_vmstat(char **buf)
 /*
  * Read /proc/loadavg.
  */
-size_t get_loadavg(char **buf)
+size_t get_loadavg(char **buf, void *arg)
 {
     char *p;
     int running = get_running_task_count();
     int total = total_tasks /* get_total_task_count() */;
     unsigned long avg[3];
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, 256);
     p = *buf;
@@ -421,7 +441,7 @@ static void get_mapped_pagecount(size_t *mapped, size_t *anon)
 /*
  * Read /proc/meminfo.
  */
-size_t get_meminfo(char **buf)
+size_t get_meminfo(char **buf, void *arg)
 {
     char *p;
     size_t memtotal = PAGES_TO_KBS(pmmngr_get_memory_size());
@@ -435,6 +455,8 @@ size_t get_meminfo(char **buf)
     size_t dirty = PAGES_TO_KBS(get_dirty_cached_block_count());
     size_t tmpfs = PAGES_TO_KBS(get_tmpfs_pagecount());
     size_t mapped, anon;
+
+    UNUSED(arg);
 
     get_mapped_pagecount(&mapped, &anon);
 
@@ -478,12 +500,14 @@ size_t get_meminfo(char **buf)
 /*
  * Read /proc/modules.
  */
-size_t get_modules(char **buf)
+size_t get_modules(char **buf, void *arg)
 {
     struct kmodule_t *mod;
     size_t len, count = 0, bufsz = 512;
     char tmp[512];
     char *p;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, bufsz);
     p = *buf;
@@ -710,8 +734,9 @@ cont:
 /*
  * Read /proc/mounts.
  */
-size_t get_mounts(char **buf)
+size_t get_mounts(char **buf, void *arg)
 {
+    UNUSED(arg);
     return __get_mounts(buf, FORMAT_FOR_MOUNTS);
 }
 
@@ -719,8 +744,9 @@ size_t get_mounts(char **buf)
 /*
  * Read /proc/mountinfo.
  */
-size_t get_mountinfo(char **buf)
+size_t get_mountinfo(char **buf, void *arg)
 {
+    UNUSED(arg);
     return __get_mounts(buf, FORMAT_FOR_MOUNTINFO);
 }
 
@@ -728,8 +754,9 @@ size_t get_mountinfo(char **buf)
 /*
  * Read /proc/mountstats.
  */
-size_t get_mountstats(char **buf)
+size_t get_mountstats(char **buf, void *arg)
 {
+    UNUSED(arg);
     return __get_mounts(buf, FORMAT_FOR_MOUNTSTATS);
 }
 
@@ -737,7 +764,7 @@ size_t get_mountstats(char **buf)
 /*
  * Read /proc/stat.
  */
-size_t get_sysstat(char **buf)
+size_t get_sysstat(char **buf, void *arg)
 {
     //struct task_t *idle_task = get_idle_task();
     unsigned long tmp;
@@ -745,8 +772,11 @@ size_t get_sysstat(char **buf)
     unsigned long *irq_hits, total_irq_hits = 0;
     unsigned long irq_ticks = 0, softirq = 0;
     unsigned int running = 0, blocked = 0;
+    unsigned long long iowait = 0;
     int i, j, state;
     char *p;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, 8192);
     p = *buf;
@@ -796,11 +826,16 @@ size_t get_sysstat(char **buf)
         sys += processor_local_data[i].sys_time;
         user += processor_local_data[i].user_time;
         softirq += processor_local_data[i].softirq_ticks;
+        iowait += processor_local_data[i].iowait;
 
         if(processor_local_data[i].idle_task)
         {
             idle += processor_local_data[i].idle_task->sys_time;
             idle += processor_local_data[i].idle_task->user_time;
+
+            // idle times are included in total times so we need to subtract
+            sys -= processor_local_data[i].idle_task->sys_time;
+            user -= processor_local_data[i].idle_task->user_time;
         }
 
         for(j = 0; j < 256; j++)
@@ -812,33 +847,41 @@ size_t get_sysstat(char **buf)
     }
 
     // now print to the buffer
-    ksprintf(p, 8192, "cpu %lu %lu %lu %lu %lu %lu\n",
-                      user, // time spent in user mode
-                      0,    // TODO: time spent in user mode with low priority (nice)
-                      sys,  // time spent in system mode
-                      idle, // time spent in idle task
+    ksprintf(p, 8192, "cpu %10lu %10lu %10lu %10lu %20llu %10lu %10lu \n",
+                      user,      // time spent in user mode
+                      0UL,       // TODO: time spent in user mode with low priority (nice)
+                      sys,       // time spent in system mode
+                      idle,      // time spent in idle task
+                      iowait,    // time spent waiting for I/O to complete
                       irq_ticks, // time servicing IRQs
-                      softirq   // time seriving soft IRQs
+                      softirq    // time servicing soft IRQs
                       );
     p += strlen(p);
 
     for(i = 0; i < processor_count; i++)
     {
+        user = processor_local_data[i].user_time;
+        sys = processor_local_data[i].sys_time;
+
         if(processor_local_data[i].idle_task)
         {
             tmp  = processor_local_data[i].idle_task->sys_time;
             tmp += processor_local_data[i].idle_task->user_time;
+
+            // idle times are included in total times so we need to subtract
+            sys -= processor_local_data[i].idle_task->sys_time;
+            user -= processor_local_data[i].idle_task->user_time;
         }
         else
         {
             tmp = 0;
         }
 
-        ksprintf(p, 8192, "cpu%d %lu %lu %lu %lu ",
+        ksprintf(p, 8192, "cpu%d %10lu %10lu %10lu %10lu ",
                  i,
-                 processor_local_data[i].user_time,
-                 0,    // TODO: time spent in user mode with low priority (nice)
-                 processor_local_data[i].sys_time,
+                 user,
+                 0UL,    // TODO: time spent in user mode with low priority (nice)
+                 sys,
                  tmp);
         p += strlen(p);
 
@@ -849,27 +892,28 @@ size_t get_sysstat(char **buf)
             tmp += processor_local_data[i].irq_ticks[j];
         }
 
-        ksprintf(p, 8192, "%lu %lu\n",
+        ksprintf(p, 8192, "%20llu %10lu %10lu \n",
+                 processor_local_data[i].iowait,
                  tmp,
                  processor_local_data[i].softirq_ticks);
         p += strlen(p);
     }
 
-    ksprintf(p, 8192, "intr %lu ", total_irq_hits);
+    ksprintf(p, 8192, "intr %10lu ", total_irq_hits);
     p += strlen(p);
 
     for(j = 0; j < 256; j++)
     {
-        ksprintf(p, 8192, "%lu%c", irq_hits[j], (j == 255) ? '\n' : ' ');
+        ksprintf(p, 8192, "%10lu%c", irq_hits[j], (j == 255) ? '\n' : ' ');
         p += strlen(p);
     }
 
-    ksprintf(p, 8192, "swap %u %u\n"
-                      "ctxt %lu\n"
-                      "btime %ld\n"
-                      "processes %lu\n"
-                      "procs_running %u\n"
-                      "procs_blocked %u\n",
+    ksprintf(p, 8192, "swap %10u %10u\n"
+                      "ctxt %10lu\n"
+                      "btime %10ld\n"
+                      "processes %10lu\n"
+                      "procs_running %10u\n"
+                      "procs_blocked %10u\n",
                       0, 0,     // TODO: fix when we implement swapping
                       system_context_switches,
                       (long int)startup_time,
@@ -882,7 +926,7 @@ size_t get_sysstat(char **buf)
 /*
  * Read /proc/bus/pci/devices.
  */
-size_t get_pci_device_list(char **_buf)
+size_t get_pci_device_list(char **_buf, void *arg)
 {
     int i, j;
     size_t len, count = 0;
@@ -891,6 +935,8 @@ size_t get_pci_device_list(char **_buf)
     char *buses, *buf, *p;
     int bus_count;
     struct pci_dev_t *pci;
+
+    UNUSED(arg);
 
     *_buf = NULL;
 
@@ -982,13 +1028,15 @@ size_t get_pci_device_config_space(struct pci_dev_t *pci, char **_buf)
 /*
  * Read /proc/net/resolv.conf.
  */
-size_t get_dns_list(char **buf)
+size_t get_dns_list(char **buf, void *arg)
 {
     struct dhcp_binding_t *binding;
     size_t len, count = 0, bufsz = 1024;
     char tmp[64];
     char *p;
     int i;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, bufsz);
     p = *buf;
@@ -1039,7 +1087,7 @@ size_t get_dns_list(char **buf)
 /*
  * Read /proc/ksyms.
  */
-size_t get_ksyms(char **buf)
+size_t get_ksyms(char **buf, void *arg)
 {
     struct hashtab_item_t *hitem;
     struct kmodule_t *mod;
@@ -1047,6 +1095,8 @@ size_t get_ksyms(char **buf)
     char tmp[64];
     char *p;
     int i;
+
+    UNUSED(arg);
 
     if(!ksymtab)
     {

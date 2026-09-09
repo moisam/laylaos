@@ -805,13 +805,13 @@ long devpts_write_inode(struct fs_node_t *node)
 }
 
 
-STATIC_INLINE struct dirent *entry_to_dirent(int index, struct pty_t *pty)
+STATIC_INLINE struct dirent *entry_to_dirent(int index, struct pty_t *pty, struct dirent *__ent)
 {
     // should be enough for device names, which should be '0' to '64', or
     // whatever MAX_PTY_DEVICES is set to.
     int namelen = 4;
     unsigned int reclen = GET_DIRENT_LEN(namelen);
-    struct dirent *entry = kmalloc(reclen);
+    struct dirent *entry = __ent ? __ent : kmalloc(reclen);
 
     if(!entry)
     {
@@ -882,7 +882,7 @@ static inline int root_dirent(char *filename, struct dirent **entry)
     tmp.mode = ROOT_MODE;
 
     // use index 0 for '.', and 1 for '..'
-    *entry = entry_to_dirent((filename[1] == '.'), &tmp);
+    *entry = entry_to_dirent((filename[1] == '.'), &tmp, *entry);
     return 0;
 }
 
@@ -912,7 +912,9 @@ long devpts_finddir(struct fs_node_t *dir, char *filename,
     }
 
     // for safety
+    /*
     *entry = NULL;
+    */
 
     KDEBUG("devpts_finddir: name %s\n", filename);
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
@@ -943,7 +945,7 @@ long devpts_finddir(struct fs_node_t *dir, char *filename,
     
     if(pty_slaves[i])
     {
-        *entry = entry_to_dirent(i + 2, pty_slaves[i]);
+        *entry = entry_to_dirent(i + 2, pty_slaves[i], *entry);
         kernel_mutex_unlock(&pty_lock);
         return *entry ? 0 : -ENOMEM;
     }
@@ -1001,7 +1003,7 @@ long devpts_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
     
     if(pty_slaves[i])
     {
-        *entry = entry_to_dirent(i + 2, pty_slaves[i]);
+        *entry = entry_to_dirent(i + 2, pty_slaves[i], *entry);
         kernel_mutex_unlock(&pty_lock);
         return *entry ? 0 : -ENOMEM;
         //return 0;

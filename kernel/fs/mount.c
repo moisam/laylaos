@@ -516,8 +516,8 @@ long vfs_umount(dev_t dev, int flags)
 {
     struct mount_info_t *d;
     struct file_t *f, *lf;
-    int fd;
-    int force = (flags & MNT_FORCE /* MS_FORCE */);
+    //int fd;
+    //int force = (flags & MNT_FORCE /* MS_FORCE */);
 
     if(this_core->cur_task->euid != 0)
     {
@@ -531,12 +531,15 @@ long vfs_umount(dev_t dev, int flags)
     }
 
     // check for open files
-    for(f = ftab, lf = &ftab[NR_FILE]; f < lf; f++)
+    for(f = ftab, lf = &ftab[NR_FILETABLE]; f < lf; f++)
     {
         kernel_mutex_lock(&f->lock);
         
         if(f->node && f->node->dev == dev)
         {
+           	kernel_mutex_unlock(&f->lock);
+		    return -EBUSY;
+            /*
             if(!force)
             {
             	kernel_mutex_unlock(&f->lock);
@@ -561,6 +564,7 @@ long vfs_umount(dev_t dev, int flags)
             	{
             		if(*t && (*t)->ofiles->ofile[fd] == f)
 		            {
+		                // TODO: this is absolutely wrong -- it closes OUR fd!!!
 			            syscall_close(fd);
 	                }
 	            }
@@ -569,6 +573,7 @@ long vfs_umount(dev_t dev, int flags)
             }
 
             elevated_priority_unlock(&task_table_lock);
+            */
 	    }
 	    
 	    kernel_mutex_unlock(&f->lock);
@@ -596,12 +601,15 @@ long vfs_umount(dev_t dev, int flags)
         kernel_mutex_lock(&(*node)->lock);
         kernel_mutex_unlock(&(*node)->lock);
 
-        if((*node) &&
-           (*node)->refs &&        // if the node is being used ..
+        if((*node)->refs &&        // if the node is being used ..
            (*node)->inode != 0 &&  // and is a valid inode ..
            (*node)->dev == dev &&  // and is from the same device ..
            (*node) != d->root)     // and is not the root node, then release it
         {
+            kernel_mutex_unlock(&list_lock);
+			return -EBUSY;
+
+            /*
             kernel_mutex_unlock(&list_lock);
 
             if(!force)
@@ -611,11 +619,16 @@ long vfs_umount(dev_t dev, int flags)
 			
 			release_node(*node);
             kernel_mutex_lock(&list_lock);
+            */
 	    }
 	}
 
     kernel_mutex_unlock(&list_lock);
 
+    if(d->root->refs > 1)
+    {
+        return -EBUSY;
+    }
 
     invalidate_dev_dentries(dev);
 

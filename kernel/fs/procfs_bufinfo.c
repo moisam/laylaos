@@ -233,12 +233,14 @@ static void dentries_getinfo(int i)
 /*
  * Read /proc/buffers.
  */
-size_t get_buffer_info(char **buf)
+size_t get_buffer_info(char **buf, void *arg)
 {
     size_t len, count = 0, bufsz = 2048;
     char tmp[64];
     char *p;
     int i;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, bufsz);
     p = *buf;

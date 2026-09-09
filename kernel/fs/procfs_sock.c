@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: procfs_sock.c
  *    This file is part of LaylaOS.
@@ -114,8 +114,9 @@ static size_t get_non_unix(char **buf, int proto)
 /*
  * Read /proc/net/tcp.
  */
-size_t get_net_tcp(char **buf)
+size_t get_net_tcp(char **buf, void *arg)
 {
+    UNUSED(arg);
     return get_non_unix(buf, IPPROTO_TCP);
 }
 
@@ -123,8 +124,9 @@ size_t get_net_tcp(char **buf)
 /*
  * Read /proc/net/udp.
  */
-size_t get_net_udp(char **buf)
+size_t get_net_udp(char **buf, void *arg)
 {
+    UNUSED(arg);
     return get_non_unix(buf, IPPROTO_UDP);
 }
 
@@ -132,8 +134,9 @@ size_t get_net_udp(char **buf)
 /*
  * Read /proc/net/raw.
  */
-size_t get_net_raw(char **buf)
+size_t get_net_raw(char **buf, void *arg)
 {
+    UNUSED(arg);
     return get_non_unix(buf, IPPROTO_RAW);
 }
 
@@ -141,13 +144,15 @@ size_t get_net_raw(char **buf)
 /*
  * Read /proc/net/unix.
  */
-size_t get_net_unix(char **buf)
+size_t get_net_unix(char **buf, void *arg)
 {
     struct socket_t *so;
     size_t len, count = 0, bufsz = 1024;
     char tmp[128];
     char *p;
     int i = 0;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, bufsz);
     p = *buf;

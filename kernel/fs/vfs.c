@@ -45,10 +45,11 @@
 #include <fs/pipefs.h>
 #include <fs/sockfs.h>
 #include <fs/procfs.h>
+#include <fs/tmpfs.h>
 #include <fs/dummy.h>
 
 
-struct file_t ftab[NR_FILE];
+struct file_t ftab[NR_FILETABLE];
 
 
 /*
@@ -75,13 +76,14 @@ char *path_remove_trailing_slash(char *path, int kernel, long *trailing_slash)
      *       string).
      * TODO: fix this.
      */
-    
+    /*
     if(!kernel && 
        valid_addr(this_core->cur_task, (virtual_addr)path, (virtual_addr)path + 1) != 0)
     {
         add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, (void *)path);
         return NULL;
     }
+    */
 
     size_t pathlen = strlen(path);
     char *p2 = (char *)kmalloc(pathlen + 1);
@@ -144,7 +146,7 @@ char *path_remove_trailing_slash(char *path, int kernel, long *trailing_slash)
 long get_parent_dir(char *pathname, int dirfd, char **filename,
                     struct fs_node_t **dirnode, int follow_mpoints)
 {
-    char *fname, *tmp;
+    char *fname, *tmp, *tmp2;
     struct fs_node_t *node, *node2, *parent;
     long len, res;
     dev_t dev;
@@ -172,6 +174,14 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
         return -ENOMEM;
     }
 
+    if(!(tmp2 = kmalloc(TMPBUFSZ)))
+    {
+        kfree(tmp);
+        return -ENOMEM;
+    }
+
+    entry = (struct dirent *)tmp2;
+
     if(*pathname == '/')
     {
         if(!this_core->cur_task->fs || 
@@ -186,6 +196,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             {
                 printk("vfs: current task has no root directory!\n");
                 kfree(tmp);
+                kfree(tmp2);
                 return -EINVAL;
             }
 
@@ -205,12 +216,14 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
            (node = this_core->cur_task->ofiles->ofile[dirfd]->node) == NULL)
         {
             kfree(tmp);
+            kfree(tmp2);
             return -EBADF;
         }
 
         if(!S_ISDIR(node->mode) || has_access(node, EXECUTE, 0) != 0)
         {
             kfree(tmp);
+            kfree(tmp2);
             return -EPERM;
         }
     }
@@ -222,6 +235,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
         {
             printk("vfs: current task has no cwd!\n");
             kfree(tmp);
+            kfree(tmp2);
             return -EINVAL;
         }
 
@@ -233,6 +247,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
         printk("vfs: failed to get current task's cwd/root!\n");
         //__asm__ __volatile__("xchg %%bx, %%bx"::);
         kfree(tmp);
+        kfree(tmp2);
         return -EINVAL;
     }
 
@@ -252,6 +267,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
                 release_node(node);
                 release_node(parent);
                 kfree(tmp);
+                kfree(tmp2);
                 return -ELOOP;
             }
         
@@ -260,6 +276,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
                 release_node(node);
                 release_node(parent);
                 kfree(tmp);
+                kfree(tmp2);
                 return res;
             }
         
@@ -288,6 +305,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             release_node(node);
             release_node(parent);
             kfree(tmp);
+            kfree(tmp2);
             return -ENOENT;
         }
 
@@ -296,6 +314,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             release_node(node);
             release_node(parent);
             kfree(tmp);
+            kfree(tmp2);
             return -EPERM;
         }
         
@@ -313,6 +332,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             (*dirnode) = node;
             release_node(parent);
             kfree(tmp);
+            kfree(tmp2);
             return 0;
         }
         
@@ -321,6 +341,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             release_node(node);
             release_node(parent);
             kfree(tmp);
+            kfree(tmp2);
             return -ENAMETOOLONG;
         }
 
@@ -336,12 +357,13 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
             release_node(node);
             release_node(parent);
             kfree(tmp);
+            kfree(tmp2);
             return res;
         }
         
         dev = node->dev;
         n = entry->d_ino;
-        kfree(entry);
+        //kfree(entry);
         release_node(node);
 
         KDEBUG("filename @ 0x%x\n", filename);
@@ -351,6 +373,7 @@ long get_parent_dir(char *pathname, int dirfd, char **filename,
         {
             release_node(parent);
             kfree(tmp);
+            kfree(tmp2);
             return -ENOENT;
         }
     }
@@ -459,7 +482,7 @@ long vfs_open_internal(char *path, int dirfd,
     struct fs_node_t *node, *node2, *parent;
     dev_t dev;
     ino_t n;
-    struct dirent *entry;
+    struct dirent *entry = NULL;
     char *filename;
     char *p2 = path_remove_trailing_slash(path, kernel, &trailing_slash);
     
@@ -609,7 +632,7 @@ long vfs_open(char *path, int flags, mode_t mode, int dirfd,
     dev_t dev;
     ino_t n;
     struct fs_node_t *dnode, *fnode, *fnode2;
-    struct dirent *entry;
+    struct dirent *entry = NULL;
     int follow_mpoints, rootdir;
     int kernel = (open_flags & OPEN_KERNEL_CALLER);
 
@@ -721,36 +744,84 @@ long vfs_open(char *path, int flags, mode_t mode, int dirfd,
             }
         }
 
-        // request for exclusive opening fails if file exists
-        if((flags & O_CREAT) && (flags & O_EXCL))
+        // special handling for O_TMPFILE.
+        // with this flag, path is a directory, and a new unnamed inode is
+        // created in the directory's filesystem, and will be deleted when
+        // the last file descriptor is closed.
+        if((flags & O_TMPFILE) == O_TMPFILE)
         {
             release_node(dnode);
-            release_node(fnode);
-            kfree(p2);
-            return -EEXIST;
-        }
-        
-        // also fail if O_DIRECTORY is set but the file isn't a directory
-        if((flags & O_DIRECTORY) && !S_ISDIR(fnode->mode))
-        {
-            release_node(dnode);
-            release_node(fnode);
-            kfree(p2);
-            return -ENOTDIR;
-        }
 
-        if(!(flags & O_PATH))
-        {
-            // do we have access permission to the file?
-            int perm = (flags & O_RDWR) ? (WRITE | READ) :
-                       (flags & O_WRONLY) ? WRITE : READ;
+            // we currently only support this on tmpfs
+            if(fnode->ops != &tmpfs_ops)
+            {
+                release_node(fnode);
+                kfree(p2);
+                return -EOPNOTSUPP;
+            }
 
-            if(has_access(fnode, perm, 0) != 0)
+            // must specify write permission
+            if(!(flags & (O_WRONLY|O_RDWR)))
+            {
+                release_node(fnode);
+                kfree(p2);
+                return -EINVAL;
+            }
+
+            dnode = fnode;
+
+            // create a new file
+            if(!(fnode = new_node(dnode->dev)))
+            {
+                release_node(dnode);
+                kfree(p2);
+                return -ENOSPC;
+            }
+
+            // mark it dirty, so that we'll update the disk even if we fail
+            fnode->mode = mode;
+            fnode->links = 0;
+            fnode->flags |= FS_NODE_DIRTY;
+
+            // don't create a dentry as we have no path
+            open_flags &= ~OPEN_CREATE_DENTRY;
+
+            // make sure we don't call truncate on a new, empty file!
+            flags &= ~O_TRUNC;
+        }
+        else
+        {
+            // request for exclusive opening fails if file exists
+            if((flags & O_CREAT) && (flags & O_EXCL))
             {
                 release_node(dnode);
                 release_node(fnode);
                 kfree(p2);
-                return -EPERM;
+                return -EEXIST;
+            }
+        
+            // also fail if O_DIRECTORY is set but the file isn't a directory
+            if((flags & O_DIRECTORY) && !S_ISDIR(fnode->mode))
+            {
+                release_node(dnode);
+                release_node(fnode);
+                kfree(p2);
+                return -ENOTDIR;
+            }
+
+            if(!(flags & O_PATH))
+            {
+                // do we have access permission to the file?
+                int perm = (flags & O_RDWR) ? (WRITE | READ) :
+                           (flags & O_WRONLY) ? WRITE : READ;
+
+                if(has_access(fnode, perm, 0) != 0)
+                {
+                    release_node(dnode);
+                    release_node(fnode);
+                    kfree(p2);
+                    return -EPERM;
+                }
             }
         }
         
@@ -883,8 +954,8 @@ long vfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
     }
     
     // for safety
-    *entry = NULL;
-    
+    // *entry = NULL;
+
     // not a directory
     if(!S_ISDIR(dir->mode))
     {
@@ -928,8 +999,8 @@ long vfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
     }
 
     // for safety
-    *entry = NULL;
-    
+    // *entry = NULL;
+
     // not a directory
     if(!S_ISDIR(dir->mode))
     {
@@ -1014,6 +1085,16 @@ ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
         return 0;
     }
 
+    // check the given user address is valid
+    if(!kernel)
+    {
+        if(valid_addr(this_core->cur_task, (virtual_addr)buf, (virtual_addr)buf + count - 1) != 0)
+        {
+            add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, (void *)buf);
+            return -EFAULT;
+        }
+    }
+
     left = count;
 
     // if the node has a size of 0 and it is on /proc filesystem, let procfs
@@ -1042,14 +1123,7 @@ ssize_t vfs_read_node(struct fs_node_t *node, off_t *pos,
 
         p = (char *)(dbuf->virt + i);
 
-        if(kernel)
-        {
-            A_memcpy(buf, p, j);
-        }
-        else
-        {
-            copy_to_user(buf, p, j);
-        }
+        A_memcpy(buf, p, j);
 
         release_cached_page(dbuf);
         buf += j;
@@ -1090,6 +1164,16 @@ ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
         return -EFBIG;
     }
 
+    // check the given user address is valid
+    if(!kernel)
+    {
+        if(valid_addr(this_core->cur_task, (virtual_addr)buf, (virtual_addr)buf + count - 1) != 0)
+        {
+            add_task_segv_signal(this_core->cur_task, SEGV_MAPERR, (void *)buf);
+            return -EFAULT;
+        }
+    }
+
     while(done < count)
     {
         dbuf = NULL;
@@ -1118,15 +1202,8 @@ ssize_t vfs_write_node(struct fs_node_t *node, off_t *pos,
         }
         
         done += k;
-        
-        if(kernel)
-        {
-            A_memcpy(p, buf, k);
-        }
-        else
-        {
-            copy_from_user(p, buf, k);
-        }
+
+        A_memcpy(p, buf, k);
 
         __sync_or_and_fetch(&dbuf->flags, PCACHE_FLAG_DIRTY);
         release_cached_page(dbuf);
@@ -1700,7 +1777,13 @@ long vfs_fdatasync(struct fs_node_t *node)
     size_t i, j;
     long res = 0;
 
-    if(IS_PIPE(node) || IS_SOCKET(node))
+    if(S_ISBLK(node->mode))
+    {
+        flush_cached_pages(node->blocks[0]);
+        return 0;
+    }
+
+    if(IS_PIPE(node) || IS_SOCKET(node) || S_ISCHR(node->mode))
     {
         return -EINVAL;
     }

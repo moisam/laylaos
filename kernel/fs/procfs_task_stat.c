@@ -184,9 +184,18 @@ size_t get_task_stat(struct task_t *task, char **_buf)
                 task->minflt, task->children_minflt,
                 task->majflt, task->children_majflt);
 
-    BUF_SPRINTF("%lu %lu %lu %lu ",
-                task->user_time, task->sys_time,
-                task->children_user_time, task->children_sys_time);
+    // ensure idle kernel tasks return 0 for user and system times
+    if(task->properties & PROPERTY_IDLE)
+    {
+        BUF_SPRINTF("%lu %lu %lu %lu ", 0UL, 0UL, 0UL, 0UL);
+    }
+    else
+    {
+        BUF_SPRINTF("%lu %lu %lu %lu ",
+                    task->user_time,
+                    task->sys_time,
+                    task->children_user_time, task->children_sys_time);
+    }
 
     /*
      * First number is priority:
@@ -212,7 +221,14 @@ size_t get_task_stat(struct task_t *task, char **_buf)
     //BUF_SPRINTF("%llu %u ", task->start_time, KERNEL_MEM_END);
 #endif      /* !__x86_64__ */
 
-    BUF_SPRINTF("%lu %lu ", rss, task->task_rlimits[RLIMIT_RSS].rlim_cur);
+    if(task->common)
+    {
+        BUF_SPRINTF("%lu %lu ", rss, task->task_rlimits[RLIMIT_RSS].rlim_cur);
+    }
+    else
+    {
+        BUF_SPRINTF("%lu %lu ", rss, 0UL);
+    }
 
 #ifdef __x86_64__
     BUF_SPRINTF("%lu %lu %lu ",
@@ -299,11 +315,12 @@ size_t get_task_statm(struct task_t *task, char **buf)
     size_t text = memregion_text_pagecount(task);
     size_t data = memregion_data_pagecount(task) +
                   memregion_stack_pagecount(task);
+    size_t memsz = (task->mem) ? task->image_size : 0UL;
 
     PR_MALLOC(*buf, 256);
     
     ksprintf(*buf, 256, "%lu %lu %lu %lu %lu %lu %lu\n",
-            task->image_size, rss, shared, text, (size_t)0, data, (size_t)0);
+             memsz, rss, shared, text, (size_t)0, data, (size_t)0);
 
     return strlen(*buf);
 }
@@ -364,7 +381,15 @@ size_t get_task_status(struct task_t *task, char **_buf)
         }
     }
 
-    BUF_SPRINTF("\nVmSize:    %8ld kB\n", PAGE_TO_KB(task->image_size));
+    if(task->mem)
+    {
+        BUF_SPRINTF("\nVmSize:    %8ld kB\n", PAGE_TO_KB(task->image_size));
+    }
+    else
+    {
+        BUF_SPRINTF("\nVmSize:    %8ld kB\n", 0L);
+    }
+
     BUF_SPRINTF("VmRSS:     %8ld kB\n", PAGE_TO_KB(get_task_pagecount(task)));
     BUF_SPRINTF("RssAnon:   %8ld kB\n",
                     PAGE_TO_KB(memregion_anon_pagecount(task)));

@@ -35,6 +35,66 @@
 #include <kernel/net/socket.h>
 
 
+static volatile uint64_t ftab_map[NR_FILETABLE / 64] = { 0, };
+static volatile int filemap_lowest_available = 0;
+static volatile int filemap_item_count = NR_FILETABLE / 64;
+static volatile struct kernel_mutex_t ftab_map_mutex = { 0, };
+
+struct file_t *ftab_first_free(void)
+{
+    int i;
+    struct file_t *f;
+
+    kernel_mutex_lock(&ftab_map_mutex);
+
+    for(i = filemap_lowest_available; i < filemap_item_count; i++)
+    {
+        uint64_t qword = ftab_map[i];
+
+        if(qword != 0xFFFFFFFFFFFFFFFF)
+        {
+            uint64_t free_bits = ~qword;
+
+            // __builtin_ctz calculates the index of the first '1' bit
+            int j = __builtin_ctzll(free_bits);
+
+            filemap_lowest_available = i;
+            ftab_map[i] |= ((uint64_t)1 << j);
+            __asm__ __volatile__("":::"memory");
+            //printk("ftab_first_free: i %d, j %d, index %d\n", i, j, (i << 6) + j);
+
+            kernel_mutex_unlock(&ftab_map_mutex);
+
+            f = &ftab[(i << 6) + j];
+            __sync_fetch_and_add(&(f->refs), 1);
+
+            return f;
+        }
+    }
+
+    kernel_mutex_unlock(&ftab_map_mutex);
+
+	return NULL;
+}
+
+
+void ftab_mark_free(struct file_t *f)
+{
+    int bit = f - ftab;
+    volatile int i = bit / 64;
+    volatile uint64_t j = ((uint64_t)1 << (bit % 64));
+    ftab_map[i] &= ~j;
+
+    //printk("ftab_mark_free: i %d, j %lx, index %d\n", i, j, bit);
+    __asm__ __volatile__("":::"memory");
+
+    if(i < filemap_lowest_available)
+    {
+        filemap_lowest_available = i;
+    }
+}
+
+
 static long fdalloc(int *res)
 {
     int fd;
@@ -72,7 +132,7 @@ static long fdalloc(int *res)
  */
 long falloc(int *_fd, struct file_t **_f)
 {
-	struct file_t *f, *lf;
+	struct file_t *f /* , *lf */;
 	int fd;
 	volatile struct task_t *ct = this_core->cur_task;
 
@@ -90,20 +150,7 @@ long falloc(int *_fd, struct file_t **_f)
     }
     
 	// find an empty slot in the master file table
-	for(f = ftab, lf = &ftab[NR_FILE]; f < lf; f++)
-	{
-    	kernel_mutex_lock(&f->lock);
-		if(!f->refs)
-		{
-            __sync_fetch_and_add(&(f->refs), 1);
-        	kernel_mutex_unlock(&f->lock);
-		    break;
-		}
-    	kernel_mutex_unlock(&f->lock);
-    }
-    
-	// master file table is full
-	if(f >= lf)
+	if(!(f = ftab_first_free()))
 	{
 		return -EMFILE;
 	}
@@ -141,7 +188,7 @@ long closef(struct file_t *f)
 
 		return 0;
 	}
-	
+
 	if(f->node)
 	{
         struct fs_node_t *node = f->node;
@@ -193,6 +240,8 @@ long closef(struct file_t *f)
 
     	release_node(node);
 	}
+
+    ftab_mark_free(f);
 	
 	return 0;
 }

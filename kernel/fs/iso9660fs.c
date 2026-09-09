@@ -726,6 +726,7 @@ long iso9660fs_read_inode(struct fs_node_t *node)
 
         tmpnode.inode = PCACHE_NOINODE;
         tmpnode.dev = node->dev;
+        tmpnode.flags = FS_NODE_HEADER_ONLY;
 
         lba_parent = cent->lba_parent;
         block_size = d->block_size;
@@ -1081,9 +1082,12 @@ long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
 
     tmpnode.inode = PCACHE_NOINODE;
     tmpnode.dev = dir->dev;
+    tmpnode.flags = FS_NODE_HEADER_ONLY;
 
     // for safety
+    /*
     *entry = NULL;
+    */
 
     if(!dir || !filename)
     {
@@ -1159,7 +1163,7 @@ long iso9660fs_finddir(struct fs_node_t *dir, char *filename,
 
                 add_cacheent(dir, lba, blocksz);
 
-                *entry = iso9660_entry_to_dirent(NULL, lba, namebuf, namelen,
+                *entry = iso9660_entry_to_dirent(*entry, lba, namebuf, namelen,
                                   (offset * blocksz) + (blk - (unsigned char *)buf->virt),
                                   dent->flags);
 
@@ -1210,6 +1214,7 @@ long iso9660fs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
 
     tmpnode.inode = PCACHE_NOINODE;
     tmpnode.dev = dir->dev;
+    tmpnode.flags = FS_NODE_HEADER_ONLY;
 
     // for safety
     *entry = NULL;
@@ -1348,6 +1353,7 @@ long iso9660fs_dir_empty(struct fs_node_t *dir)
 
     tmpnode.inode = PCACHE_NOINODE;
     tmpnode.dev = dir->dev;
+    tmpnode.flags = FS_NODE_HEADER_ONLY;
 
     if((d = get_mount_info(dir->dev)) == NULL || !(d->super))
     {
@@ -1449,6 +1455,7 @@ long iso9660fs_getdents(struct fs_node_t *dir, off_t *pos,
 
     tmpnode.inode = PCACHE_NOINODE;
     tmpnode.dev = dir->dev;
+    tmpnode.flags = FS_NODE_HEADER_ONLY;
 
     if(!dir || !pos || !buf || !bufsz)
     {
@@ -1767,6 +1774,7 @@ long iso9660fs_read_symlink(struct fs_node_t *link,
 
         tmpnode.inode = PCACHE_NOINODE;
         tmpnode.dev = link->dev;
+        tmpnode.flags = FS_NODE_HEADER_ONLY;
 
         lba_parent = cent->lba_parent;
         block_size = d->block_size;

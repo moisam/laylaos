@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2024 (c)
+ *    Copyright 2024, 2025, 2026 (c)
  * 
  *    file: procfs_tty.c
  *    This file is part of LaylaOS.
@@ -35,9 +35,11 @@
 /*
  * Read /proc/tty/drivers.
  */
-size_t get_tty_driver_list(char **buf)
+size_t get_tty_driver_list(char **buf, void *arg)
 {
     char *p;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, 2048);
     p = *buf;

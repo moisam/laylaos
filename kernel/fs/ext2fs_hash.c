@@ -1341,7 +1341,7 @@ long linear_dir_lookup(struct fs_node_t *dir,
             }
             else
             {
-                *entry = ext2_entry_to_dirent(ent, NULL, n, len, 0, 0);
+                *entry = ext2_entry_to_dirent(ent, *entry /* NULL */, n, len, 0, 0);
             }
 
             release_cached_page(buf);
@@ -1702,10 +1702,12 @@ long ext2_finddir_hashed(struct fs_node_t *dir, char *filename,
     size_t fnamelen = strlen(filename);
 
     // for safety
+    /*
     if(entry)
     {
         *entry = NULL;
     }
+    */
 
     if(!fnamelen)
     {

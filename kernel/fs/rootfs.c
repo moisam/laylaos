@@ -189,7 +189,7 @@ struct fs_node_t *rootfs_init(void)
 
     dev_t initrd_dev;
     struct fs_node_t *initrd, *devroot = devfs_create();
-    struct dirent *entry;
+    struct dirent *entry = NULL;
     char *path;
     volatile int res;
     
@@ -253,6 +253,7 @@ struct fs_node_t *rootfs_init(void)
         struct fs_node_t *rootdisk;
 
         printk("Found root='%s'..\n", path);
+        entry = NULL;
 
         if(devfs_finddir(devroot, base, &entry) == 0)
         {
@@ -576,11 +577,11 @@ long rootfs_write_inode(struct fs_node_t *node)
 }
 
 
-STATIC_INLINE struct dirent *entry_to_dirent(int index, int off)
+STATIC_INLINE struct dirent *entry_to_dirent(int index, int off, struct dirent *__ent)
 {
     int namelen = strlen(root_tree[index].name);
     unsigned int reclen = GET_DIRENT_LEN(namelen);
-    struct dirent *entry = kmalloc(reclen);
+    struct dirent *entry = __ent ? __ent : kmalloc(reclen);
 
     if(!entry)
     {
@@ -627,7 +628,9 @@ long rootfs_finddir(struct fs_node_t *dir, char *filename,
     }
 
     // for safety
+    /*
     *entry = NULL;
+    */
     
     int i;
     
@@ -637,7 +640,7 @@ long rootfs_finddir(struct fs_node_t *dir, char *filename,
 
         if(strcmp(root_tree[i].name, filename) == 0)
         {
-            *entry = entry_to_dirent(i, i+3);
+            *entry = entry_to_dirent(i, i+3, *entry);
             return *entry ? 0 : -ENOMEM;
         }
     }

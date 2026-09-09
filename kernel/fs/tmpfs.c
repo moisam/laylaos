@@ -952,6 +952,7 @@ void tmpfs_free(dev_t dev, uint32_t block_no)
     // task runs next
     tmpnode.dev = dev;
     tmpnode.inode = PCACHE_NOINODE;
+    tmpnode.flags = FS_NODE_HEADER_ONLY;
 
     if((pcache = get_cached_page((struct fs_node_t *)&tmpnode, block_no, 
                                     PCACHE_PEEK_ONLY | PCACHE_IGNORE_STALE)))
@@ -1384,7 +1385,7 @@ static size_t tmpfs_get_frames(virtual_addr *__blocks, size_t count)
             break;
         }
 
-        addr = PHYS_TO_HIMEM(p);
+        addr = mmio_map((physical_addr)p, (physical_addr)p + PAGE_SIZE);
         blocks[i] = addr;
         A_memset((void *)addr, 0, PAGE_SIZE);
     }

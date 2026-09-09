@@ -70,6 +70,15 @@ void sync_nodes(dev_t dev)
             continue;
         }
 
+        /*
+        if((*node)->alocks && (*node)->alocks < KERNEL_MEM_START)
+        {
+            switch_tty(1);
+            dump_node(*node);
+            kpanic("sync_nodes: invalid lock ptr!!!!\n");
+        }
+        */
+
         //kernel_mutex_lock(&(*node)->lock);
 
         if(dev != NODEV && (*node)->dev != dev)
@@ -98,12 +107,41 @@ void sync_nodes(dev_t dev)
 }
 
 
+void dump_node(struct fs_node_t *node)
+{
+    printk("Node dump:\n");
+    printk("dev 0x%x, node 0x%x, minfo 0x%lx, flags 0x%x, refs %d\n", 
+            node->dev, node->inode, node->minfo, node->flags, node->refs);
+    printk("mode 0x%x, uid 0x%x, mtime 0x%x, atime 0x%x, ctime 0x%x\n", 
+            node->mode, node->uid, node->mtime, node->atime, node->ctime);
+    printk("size 0x%lx, links %d, gid 0x%x, disk_sectors %d\n", 
+            node->size, node->links, node->gid, node->disk_sectors);
+
+    printk("blocks: ");
+    for(int z = 0; z < 15; z++) printk("%d ", node->blocks[z]);
+    printk("\n");
+
+    printk("ops 0x%lx, ptr 0x%lx, next 0x%lx, data 0x%lx\n", 
+            node->ops, node->ptr, node->next, node->data);
+    printk("poll 0x%lx, select 0x%lx, read 0x%lx, write 0x%lx, alocks 0x%lx\n", 
+            node->poll, node->select, node->read, node->write, node->alocks);
+
+    printk("hexdump: ");
+    for(size_t z = 0; z < sizeof(struct fs_node_t); )
+    {
+        printk("%x ", ((char *)node)[z++]);
+        if(z % 16 == 0) printk("\n");
+    }
+    printk("\n");
+}
+
+
 long files_referencing_node(struct fs_node_t *node)
 {
     struct file_t *f, *lf;
     long refs = 0;
 
-    for(f = ftab, lf = &ftab[NR_FILE]; f < lf; f++)
+    for(f = ftab, lf = &ftab[NR_FILETABLE]; f < lf; f++)
     {
         if(f->node == node)
         {
@@ -267,7 +305,6 @@ void release_node(struct fs_node_t *node)
 
 
 #if 0
-
     struct memregion_t *tmp;
     volatile long expected_refs = 0, file_refs = 0, mem_refs = 0, pcache_refs = 0;
 
@@ -313,7 +350,6 @@ void release_node(struct fs_node_t *node)
         printk("\n\n*** expected_refs %d, file_refs %d, mem_refs %d, pcache_refs %d\n", expected_refs, file_refs, mem_refs, pcache_refs);
         kpanic("*** trying to free a referenced node\n");
     }
-
 #endif
 
     
@@ -524,8 +560,14 @@ struct fs_node_t *get_node(dev_t dev, ino_t n, int flags)
     }
 
     kernel_mutex_unlock(&list_lock);
-    
-    // node not found - get an empty node
+
+    // node not found
+    if(flags & GETNODE_PEEK_ONLY)
+    {
+        return NULL;
+    }
+
+    // get an empty node
     if(!(res = get_empty_node()))
     {
         kpanic("\nget_node - 1!!\n");

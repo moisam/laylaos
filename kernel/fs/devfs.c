@@ -446,13 +446,13 @@ STATIC_INLINE char devfs_to_dirent_type(mode_t mode)
 }
 
 
-STATIC_INLINE struct dirent *entry_to_dirent(int index,
+STATIC_INLINE struct dirent *entry_to_dirent(int index, struct dirent *__ent,
                                              volatile struct devnode_t *dnode)
 {
     int namelen = strlen((char *)dnode->name);
     unsigned int reclen = GET_DIRENT_LEN(namelen);
 
-    struct dirent *entry = kmalloc(reclen);
+    struct dirent *entry = __ent ? __ent : kmalloc(reclen);
 
     if(!entry)
     {
@@ -470,6 +470,7 @@ STATIC_INLINE struct dirent *entry_to_dirent(int index,
 
 
 STATIC_INLINE struct dirent *fs_node_to_dirent(int index, char *name,
+                                               struct dirent *__ent,
                                                struct fs_node_t *dnode)
 {
     struct devnode_t tmp;
@@ -480,7 +481,7 @@ STATIC_INLINE struct dirent *fs_node_to_dirent(int index, char *name,
     tmp.mode = dnode->mode;
     tmp.next = NULL;
     
-    return entry_to_dirent(index, &tmp);
+    return entry_to_dirent(index, __ent, &tmp);
 }
 
 
@@ -507,14 +508,16 @@ long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
     }
 
     // for safety
+    /*
     *entry = NULL;
+    */
     
     if(filename[0] == '.')
     {
         if(filename[1] =='\0' ||                            // '.'
            (filename[1] == '.' && filename[2] =='\0'))      // '..'
         {
-            *entry = fs_node_to_dirent(0, filename, devfs_root);
+            *entry = fs_node_to_dirent(0, filename, *entry, devfs_root);
             return *entry ? 0 : -ENOMEM;
         }
     }
@@ -524,11 +527,11 @@ long devfs_finddir(struct fs_node_t *dir, char *filename, struct dirent **entry)
     
     while(dnode)
     {
-        //printk("devfs_finddir: dnode->name '%s'\n", dnode->name);
+        //printk("devfs_finddir: filename '%s', dnode->name '%s'\n", filename, dnode->name);
 
         if(strcmp((char *)dnode->name, filename) == 0)
         {
-            *entry = entry_to_dirent(i, dnode);
+            *entry = entry_to_dirent(i, *entry, dnode);
             return *entry ? 0 : -ENOMEM;
         }
         
@@ -571,7 +574,7 @@ long devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
     // devfs root node
     if(node->inode == devfs_root->inode)
     {
-        *entry = fs_node_to_dirent(0, ".", devfs_root);
+        *entry = fs_node_to_dirent(0, ".", *entry, devfs_root);
         return *entry ? 0 : -ENOMEM;
     }
     
@@ -585,7 +588,7 @@ long devfs_finddir_by_inode(struct fs_node_t *dir, struct fs_node_t *node,
 
         if(dnode->inode == node->inode)
         {
-            *entry = entry_to_dirent(i, dnode);
+            *entry = entry_to_dirent(i, *entry, dnode);
             return *entry ? 0 : -ENOMEM;
         }
         
@@ -740,7 +743,7 @@ int devfs_find_deventry(dev_t dev, int blk, struct dirent **entry)
             if((blk && S_ISBLK(dnode->mode)) ||
                (!blk && !S_ISBLK(dnode->mode)))
             {
-                *entry = entry_to_dirent(i, dnode);
+                *entry = entry_to_dirent(i, NULL, dnode);
                 return *entry ? 0 : -ENOMEM;
             }
         }
