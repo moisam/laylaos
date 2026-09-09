@@ -1,0 +1,447 @@
+diff -rub ./mesa-25.2/include/drm-uapi/drm.h ./mesa-25.2/include/drm-uapi/drm.h
+--- ./mesa-25.2/include/drm-uapi/drm.h	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/include/drm-uapi/drm.h	2025-10-20 12:16:49.027966676 +0100
+@@ -44,7 +44,9 @@
+ #else /* One of the BSDs */
+ 
+ #include <stdint.h>
++#if !defined(__laylaos__)
+ #include <sys/ioccom.h>
++#endif
+ #include <sys/types.h>
+ typedef int8_t   __s8;
+ typedef uint8_t  __u8;
+diff -rub ./mesa-25.2/include/EGL/eglplatform.h ./mesa-25.2/include/EGL/eglplatform.h
+--- ./mesa-25.2/include/EGL/eglplatform.h	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/include/EGL/eglplatform.h	2025-10-21 11:00:18.765761374 +0100
+@@ -119,6 +119,13 @@
+ typedef Pixmap   EGLNativePixmapType;
+ typedef Window   EGLNativeWindowType;
+ 
++#elif defined(__laylaos__)
++/* this has to be before the __unix__ define below */
++
++typedef void            *EGLNativeDisplayType;
++typedef void            *EGLNativePixmapType;
++typedef struct window_t *EGLNativeWindowType;
++
+ #elif defined(__unix__)
+ 
+ typedef void             *EGLNativeDisplayType;
+diff -rub ./mesa-25.2/meson.build ./mesa-25.2/meson.build
+--- ./mesa-25.2/meson.build	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/meson.build	2026-03-25 20:56:49.772050951 +0000
+@@ -172,6 +172,8 @@
+     endif
+   elif ['windows'].contains(host_machine.system())
+     gallium_drivers = ['llvmpipe', 'softpipe', 'zink', 'd3d12']
++  elif ['laylaos'].contains(host_machine.system())
++    gallium_drivers = ['softpipe']
+   elif ['darwin', 'cygwin', 'haiku'].contains(host_machine.system())
+     gallium_drivers = ['llvmpipe', 'softpipe']
+   else
+@@ -250,7 +252,7 @@
+       error('Unknown architecture @0@. Please pass -Dvulkan-drivers to set driver options. Patches gladly accepted to fix this.'.format(
+             host_machine.cpu_family()))
+     endif
+-  elif ['darwin', 'windows', 'cygwin', 'haiku'].contains(host_machine.system())
++  elif ['darwin', 'windows', 'cygwin', 'haiku', 'laylaos'].contains(host_machine.system())
+     # No vulkan driver supports windows or macOS currently
+     _vulkan_drivers = []
+   else
+@@ -366,6 +368,9 @@
+   pre_args += '-DBUILDING_MESA'
+ elif ['windows', 'cygwin'].contains(host_machine.system())
+   with_dri_platform = 'windows'
++elif ['laylaos'].contains(host_machine.system())
++  with_dri_platform = 'laylaos'
++  with_dri = true
+ elif system_has_kms_drm
+   with_dri_platform = 'drm'
+ else
+@@ -406,6 +411,8 @@
+     _platforms = ['x11']
+   elif host_machine.system() == 'haiku'
+     _platforms = ['haiku']
++  elif host_machine.system() == 'laylaos'
++    _platforms = ['laylaos']
+   elif host_machine.system() == 'windows'
+     _platforms = ['windows']
+   elif host_machine.system() == 'darwin'
+@@ -421,6 +428,7 @@
+ with_platform_xcb = _platforms.contains('xcb')
+ with_platform_wayland = _platforms.contains('wayland')
+ with_platform_haiku = _platforms.contains('haiku')
++with_platform_laylaos = _platforms.contains('laylaos')
+ with_platform_windows = _platforms.contains('windows')
+ with_platform_macos = _platforms.contains('macos')
+ 
+@@ -430,6 +438,8 @@
+     with_glx = 'disabled'
+   elif with_platform_android
+     with_glx = 'disabled'
++  elif with_platform_laylaos
++    with_glx = 'disabled'
+   elif with_dri
+     with_glx = 'dri'
+   elif with_platform_haiku
+@@ -474,14 +484,15 @@
+   .allowed()
+ 
+ with_egl = get_option('egl') \
+-  .require(with_platform_windows or with_platform_haiku or with_dri or with_platform_android, error_message : 'EGL requires DRI, Haiku, Windows or Android') \
++  .require(with_platform_windows or with_platform_haiku or with_dri or with_platform_android or with_platform_laylaos, error_message : 'EGL requires DRI, Haiku, Windows, LaylaOS or Android') \
+   .require(with_glx != 'xlib', error_message :'EGL requires DRI, but GLX is being built with xlib support') \
+   .disable_auto_if(with_platform_haiku) \
++  .disable_auto_if(with_platform_laylaos) \
+   .allowed()
+ 
+ if with_egl
+   _platforms += 'surfaceless'
+-  if with_gbm and not with_platform_android
++  if with_gbm and not with_platform_android and not with_platform_laylaos
+     _platforms += 'drm'
+   endif
+ 
+@@ -585,7 +596,7 @@
+   with_vulkan_icd_dir = join_paths(get_option('datadir'), 'vulkan/icd.d')
+ endif
+ 
+-with_dri2 = (with_dri or with_any_vk) and (with_dri_platform == 'drm' or with_dri_platform == 'apple')
++with_dri2 = (with_dri or with_any_vk) and (with_dri_platform == 'drm' or with_dri_platform == 'apple' or with_dri_platform == 'laylaos')
+ 
+ if with_dri
+   if with_glx == 'disabled' and not with_egl and not with_gbm
+@@ -1015,7 +1026,7 @@
+ endif
+ 
+ # TODO: this is very incomplete
+-if ['linux', 'cygwin', 'gnu', 'freebsd', 'gnu/kfreebsd', 'haiku', 'android', 'managarm'].contains(host_machine.system())
++if ['linux', 'cygwin', 'gnu', 'freebsd', 'gnu/kfreebsd', 'haiku', 'android', 'managarm', 'laylaos'].contains(host_machine.system())
+   pre_args += '-D_GNU_SOURCE'
+ elif host_machine.system() == 'sunos'
+   pre_args += '-D__EXTENSIONS__'
+diff -rub ./mesa-25.2/meson.options ./mesa-25.2/meson.options
+--- ./mesa-25.2/meson.options	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/meson.options	2025-10-20 10:02:50.409047580 +0100
+@@ -12,7 +12,7 @@
+   type : 'array',
+   value : ['auto'],
+   choices : [
+-    'auto', 'x11', 'wayland', 'haiku', 'android', 'windows', 'macos',
++    'auto', 'x11', 'wayland', 'haiku', 'laylaos', 'android', 'windows', 'macos',
+   ],
+   description : 'window systems to support. If this is set to `auto`, all ' +
+                 'platforms applicable will be enabled.'
+@@ -23,7 +23,7 @@
+   type : 'combo',
+   value : 'auto',
+   choices : [
+-    'auto', 'x11', 'wayland', 'haiku', 'android', 'windows',
++    'auto', 'x11', 'wayland', 'haiku', 'laylaos', 'android', 'windows',
+     'surfaceless', 'drm',
+   ],
+   description : 'the window system EGL assumes for EGL_DEFAULT_DISPLAY',
+diff -rub ./mesa-25.2/src/egl/drivers/dri2/egl_dri2.c ./mesa-25.2/src/egl/drivers/dri2/egl_dri2.c
+--- ./mesa-25.2/src/egl/drivers/dri2/egl_dri2.c	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/egl/drivers/dri2/egl_dri2.c	2026-03-25 10:13:58.292723683 +0000
+@@ -881,6 +881,9 @@
+    case _EGL_PLATFORM_ANDROID:
+       ret = dri2_initialize_android(disp);
+       break;
++   case _EGL_PLATFORM_LAYLAOS:
++      ret = dri2_initialize_laylaos(disp);
++      break;
+    default:
+       unreachable("Callers ensure we cannot get here.");
+       return EGL_FALSE;
+@@ -970,6 +973,9 @@
+       u_gralloc_destroy(&dri2_dpy->gralloc);
+ #endif
+       break;
++   case _EGL_PLATFORM_LAYLAOS:
++      dri2_teardown_laylaos(dri2_dpy);
++      break;
+    case _EGL_PLATFORM_SURFACELESS:
+       break;
+    case _EGL_PLATFORM_DEVICE:
+diff -rub ./mesa-25.2/src/egl/drivers/dri2/egl_dri2.h ./mesa-25.2/src/egl/drivers/dri2/egl_dri2.h
+--- ./mesa-25.2/src/egl/drivers/dri2/egl_dri2.h	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/egl/drivers/dri2/egl_dri2.h	2026-03-25 10:15:59.154017358 +0000
+@@ -360,6 +360,10 @@
+    } color_buffers[4], *back, *current;
+ #endif
+ 
++#ifdef HAVE_LAYLAOS_PLATFORM
++   void *window;
++#endif
++
+ #ifdef HAVE_ANDROID_PLATFORM
+    struct ANativeWindow *window;
+    struct ANativeWindowBuffer *buffer;
+@@ -567,6 +571,23 @@
+ }
+ #endif
+ 
++#ifdef HAVE_LAYLAOS_PLATFORM
++EGLBoolean
++dri2_initialize_laylaos(_EGLDisplay *disp);
++void
++dri2_teardown_laylaos(struct dri2_egl_display *dri2_dpy);
++#else
++static inline EGLBoolean
++dri2_initialize_laylaos(_EGLDisplay *disp)
++{
++   return _eglError(EGL_NOT_INITIALIZED, "LaylaOS platform not built");
++}
++static inline void
++dri2_teardown_laylaos(struct dri2_egl_display *dri2_dpy)
++{
++}
++#endif
++
+ EGLBoolean
+ dri2_initialize_surfaceless(_EGLDisplay *disp);
+ 
+diff -rub ./mesa-25.2/src/egl/main/egldisplay.c ./mesa-25.2/src/egl/main/egldisplay.c
+--- ./mesa-25.2/src/egl/main/egldisplay.c	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/egl/main/egldisplay.c	2026-03-25 07:25:42.132251007 +0000
+@@ -80,6 +80,7 @@
+    {_EGL_PLATFORM_DRM, "drm"},
+    {_EGL_PLATFORM_ANDROID, "android"},
+    {_EGL_PLATFORM_HAIKU, "haiku"},
++   {_EGL_PLATFORM_LAYLAOS, "laylaos"},
+    {_EGL_PLATFORM_SURFACELESS, "surfaceless"},
+    {_EGL_PLATFORM_DEVICE, "device"},
+    {_EGL_PLATFORM_WINDOWS, "windows"},
+@@ -695,6 +696,21 @@
+ }
+ #endif /* HAVE_ANDROID_PLATFORM */
+ 
++#ifdef HAVE_LAYLAOS_PLATFORM
++_EGLDisplay *
++_eglGetLaylaOSDisplay(void *native_display, const EGLAttrib *attrib_list)
++{
++
++   /* This platform recognizes no display attributes. */
++   if (attrib_list != NULL && attrib_list[0] != EGL_NONE) {
++      _eglError(EGL_BAD_ATTRIBUTE, "eglGetPlatformDisplay");
++      return NULL;
++   }
++
++   return _eglFindDisplay(_EGL_PLATFORM_LAYLAOS, native_display, attrib_list);
++}
++#endif
++
+ _EGLDisplay *
+ _eglGetDeviceDisplay(void *native_display, const EGLAttrib *attrib_list)
+ {
+diff -rub ./mesa-25.2/src/egl/main/egldisplay.h ./mesa-25.2/src/egl/main/egldisplay.h
+--- ./mesa-25.2/src/egl/main/egldisplay.h	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/egl/main/egldisplay.h	2026-03-25 07:25:02.102898270 +0000
+@@ -55,6 +55,7 @@
+    _EGL_PLATFORM_SURFACELESS,
+    _EGL_PLATFORM_DEVICE,
+    _EGL_PLATFORM_WINDOWS,
++   _EGL_PLATFORM_LAYLAOS,
+ 
+    _EGL_NUM_PLATFORMS,
+    _EGL_INVALID_PLATFORM = -1
+@@ -351,6 +352,11 @@
+ _eglGetAndroidDisplay(void *native_display, const EGLAttrib *attrib_list);
+ #endif
+ 
++#ifdef HAVE_LAYLAOS_PLATFORM
++_EGLDisplay *
++_eglGetLaylaOSDisplay(void *native_display, const EGLAttrib *attrib_list);
++#endif
++
+ _EGLDisplay *
+ _eglGetDeviceDisplay(void *native_display, const EGLAttrib *attrib_list);
+ 
+diff -rub ./mesa-25.2/src/egl/meson.build ./mesa-25.2/src/egl/meson.build
+--- ./mesa-25.2/src/egl/meson.build	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/egl/meson.build	2026-03-25 07:08:41.548795574 +0000
+@@ -136,6 +136,10 @@
+     deps_for_egl += [dep_android, idep_u_gralloc]
+     files_egl += files('drivers/dri2/platform_android.c')
+   endif
++  if with_platform_laylaos
++    deps_for_egl += [cpp.find_library('gui')]
++    files_egl += files('drivers/dri2/platform_laylaos.c')
++  endif
+ elif with_platform_haiku
+   c_args_for_egl += [
+     '-D_EGL_BUILT_IN_DRIVER_HAIKU',
+diff -rub ./mesa-25.2/src/gallium/meson.build ./mesa-25.2/src/gallium/meson.build
+--- ./mesa-25.2/src/gallium/meson.build	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/gallium/meson.build	2026-03-26 00:48:08.063680754 +0000
+@@ -227,6 +227,9 @@
+ if with_platform_haiku
+   subdir('frontends/hgl')
+ endif
++if with_platform_laylaos
++  subdir('targets/laylaos')
++endif
+ if with_gallium_st_d3d10umd
+   subdir('frontends/d3d10umd')
+   subdir('targets/d3d10umd')
+diff -rub ./mesa-25.2/src/gtest/include/gtest/internal/gtest-port-arch.h ./mesa-25.2/src/gtest/include/gtest/internal/gtest-port-arch.h
+--- ./mesa-25.2/src/gtest/include/gtest/internal/gtest-port-arch.h	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/gtest/include/gtest/internal/gtest-port-arch.h	2025-10-20 10:30:02.398053667 +0100
+@@ -105,6 +105,8 @@
+ #define GTEST_OS_QNX 1
+ #elif defined(__HAIKU__)
+ #define GTEST_OS_HAIKU 1
++#elif defined(__laylaos__)
++#define GTEST_OS_LAYLAOS 1
+ #elif defined ESP8266
+ #define GTEST_OS_ESP8266 1
+ #elif defined ESP32
+diff -rub ./mesa-25.2/src/gtest/include/gtest/internal/gtest-port.h ./mesa-25.2/src/gtest/include/gtest/internal/gtest-port.h
+--- ./mesa-25.2/src/gtest/include/gtest/internal/gtest-port.h	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/gtest/include/gtest/internal/gtest-port.h	2025-10-20 10:29:32.349634279 +0100
+@@ -124,6 +124,7 @@
+ //   GTEST_OS_GNU_KFREEBSD - GNU/kFreeBSD
+ //   GTEST_OS_HAIKU    - Haiku
+ //   GTEST_OS_HPUX     - HP-UX
++//   GTEST_OS_LAYLAOS  - LaylaOS
+ //   GTEST_OS_LINUX    - Linux
+ //     GTEST_OS_LINUX_ANDROID - Google Android
+ //   GTEST_OS_MAC      - Mac OS X
+@@ -558,7 +559,7 @@
+   (GTEST_OS_LINUX || GTEST_OS_MAC || GTEST_OS_HPUX || GTEST_OS_QNX ||          \
+    GTEST_OS_FREEBSD || GTEST_OS_NACL || GTEST_OS_NETBSD || GTEST_OS_FUCHSIA || \
+    GTEST_OS_DRAGONFLY || GTEST_OS_GNU_KFREEBSD || GTEST_OS_OPENBSD ||          \
+-   GTEST_OS_HAIKU || GTEST_OS_GNU_HURD)
++   GTEST_OS_HAIKU || GTEST_OS_GNU_HURD || GTEST_OS_LAYLAOS)
+ #endif  // GTEST_HAS_PTHREAD
+ 
+ #if GTEST_HAS_PTHREAD
+@@ -620,7 +621,7 @@
+      GTEST_OS_AIX || GTEST_OS_HPUX || GTEST_OS_OPENBSD || GTEST_OS_QNX || \
+      GTEST_OS_FREEBSD || GTEST_OS_NETBSD || GTEST_OS_FUCHSIA ||           \
+      GTEST_OS_DRAGONFLY || GTEST_OS_GNU_KFREEBSD || GTEST_OS_HAIKU ||     \
+-     GTEST_OS_GNU_HURD)
++     GTEST_OS_GNU_HURD || GTEST_OS_LAYLAOS)
+ // Death tests require a file system to work properly.
+ #if GTEST_HAS_FILE_SYSTEM
+ #define GTEST_HAS_DEATH_TEST 1
+diff -rub ./mesa-25.2/src/util/compiler.h ./mesa-25.2/src/util/compiler.h
+--- ./mesa-25.2/src/util/compiler.h	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/util/compiler.h	2025-10-20 10:11:07.927202755 +0100
+@@ -53,7 +53,7 @@
+  * For now, only used by some DRI hardware drivers for color/texel packing.
+  */
+ #if UTIL_ARCH_BIG_ENDIAN
+-#if defined(__linux__)
++#if defined(__linux__) || defined(__laylaos__)
+ #include <byteswap.h>
+ #define CPU_TO_LE32( x ) bswap_32( x )
+ #elif defined(__APPLE__)
+diff -rub ./mesa-25.2/src/util/detect_os.h ./mesa-25.2/src/util/detect_os.h
+--- ./mesa-25.2/src/util/detect_os.h	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/util/detect_os.h	2025-10-20 10:14:57.619870812 +0100
+@@ -81,6 +81,11 @@
+ #define DETECT_OS_POSIX 1
+ #endif
+ 
++#if defined(__laylaos__)
++#define DETECT_OS_LAYLAOS 1
++#define DETECT_OS_POSIX 1
++#endif
++
+ #if defined(__CYGWIN__)
+ #define DETECT_OS_CYGWIN 1
+ #define DETECT_OS_POSIX 1
+@@ -116,6 +121,9 @@
+ #ifndef DETECT_OS_HAIKU
+ #define DETECT_OS_HAIKU 0
+ #endif
++#ifndef DETECT_OS_LAYLAOS
++#define DETECT_OS_LAYLAOS 0
++#endif
+ #ifndef DETECT_OS_FUCHSIA
+ #define DETECT_OS_FUCHSIA 0
+ #endif
+diff -rub ./mesa-25.2/src/util/os_misc.c ./mesa-25.2/src/util/os_misc.c
+--- ./mesa-25.2/src/util/os_misc.c	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/util/os_misc.c	2025-10-20 10:13:08.477747064 +0100
+@@ -57,7 +57,7 @@
+ #  include <unistd.h>
+ #  include <log/log.h>
+ #  include <cutils/properties.h>
+-#elif DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || DETECT_OS_HURD || DETECT_OS_MANAGARM
++#elif DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || DETECT_OS_HURD || DETECT_OS_MANAGARM || DETECT_OS_LAYLAOS
+ #  include <unistd.h>
+ #elif DETECT_OS_OPENBSD || DETECT_OS_FREEBSD
+ #  include <sys/resource.h>
+@@ -284,7 +284,7 @@
+ bool
+ os_get_total_physical_memory(uint64_t *size)
+ {
+-#if DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || DETECT_OS_HURD || DETECT_OS_MANAGARM
++#if DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || DETECT_OS_HURD || DETECT_OS_MANAGARM || DETECT_OS_LAYLAOS
+    const long phys_pages = sysconf(_SC_PHYS_PAGES);
+    const long page_size = sysconf(_SC_PAGE_SIZE);
+ 
+@@ -341,7 +341,7 @@
+ bool
+ os_get_available_system_memory(uint64_t *size)
+ {
+-#if DETECT_OS_LINUX
++#if DETECT_OS_LINUX || DETECT_OS_LAYLAOS
+    char *meminfo = os_read_file("/proc/meminfo", NULL);
+    if (!meminfo)
+       return false;
+diff -rub ./mesa-25.2/src/util/u_process.c ./mesa-25.2/src/util/u_process.c
+--- ./mesa-25.2/src/util/u_process.c	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/util/u_process.c	2025-10-20 10:20:58.358050865 +0100
+@@ -48,7 +48,7 @@
+ #include <sys/sysctl.h>
+ #endif
+ 
+-#if DETECT_OS_LINUX
++#if DETECT_OS_LINUX || DETECT_OS_LAYLAOS
+ #include <fcntl.h>
+ #endif
+ 
+@@ -56,7 +56,7 @@
+ 
+ #undef GET_PROGRAM_NAME_NOT_AVAILABLE
+ 
+-#if defined(__linux__) && defined(HAVE_PROGRAM_INVOCATION_NAME)
++#if (defined(__linux__) || defined(__laylaos__)) && defined(HAVE_PROGRAM_INVOCATION_NAME)
+ static char *
+ __getProgramName()
+ {
+@@ -271,7 +271,7 @@
+       cmdline[size - 1] = 0;
+       return true;
+    }
+-#elif DETECT_OS_LINUX
++#elif DETECT_OS_LINUX || DETECT_OS_LAYLAOS
+    int f = open("/proc/self/cmdline", O_RDONLY);
+    if (f != -1) {
+       const int n = read(f, cmdline, size - 1);
+diff -rub ./mesa-25.2/src/util/u_thread.c ./mesa-25.2/src/util/u_thread.c
+--- ./mesa-25.2/src/util/u_thread.c	2025-10-15 17:37:47.000000000 +0100
++++ ./mesa-25.2/src/util/u_thread.c	2025-10-20 15:08:50.211419995 +0100
+@@ -22,6 +22,8 @@
+ 
+ #if DETECT_OS_LINUX && !DETECT_OS_ANDROID
+ #include <sched.h>
++#elif DETECT_OS_LAYLAOS
++#include <sched.h>
+ #elif defined(_WIN32) && !defined(HAVE_PTHREAD)
+ #include <windows.h>
+ #endif
+@@ -75,7 +77,7 @@
+ void u_thread_setname( const char *name )
+ {
+ #if defined(HAVE_PTHREAD)
+-#if DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || defined(__GLIBC__) || DETECT_OS_MANAGARM || DETECT_OS_FUCHSIA
++#if DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || defined(__GLIBC__) || DETECT_OS_MANAGARM || DETECT_OS_FUCHSIA || DETECT_OS_LAYLAOS
+    int ret = pthread_setname_np(pthread_self(), name);
+    if (ret == ERANGE) {
+       char buf[16];

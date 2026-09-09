@@ -1,0 +1,213 @@
+diff -rub ./demos-mesa-demos-9.0.0/meson.build ./demos-mesa-demos-9.0.0/meson.build
+--- ./demos-mesa-demos-9.0.0/meson.build	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/meson.build	2026-03-26 05:43:12.516292526 +0000
+@@ -28,7 +28,12 @@
+ 
+ null_dep = dependency('', required : false)
+ 
+-demos_data_dir = '../data/'
++if ['laylaos'].contains(host_machine.system())
++  demos_data_dir = '/usr/share/mesa-demos/'
++else
++  demos_data_dir = '../data/'
++endif
++
+ if get_option('with-system-data-files')
+   demos_data_dir = get_option('prefix') / get_option('datadir') / 'mesa-demos/'
+ endif
+@@ -163,7 +168,7 @@
+   add_project_arguments('-DHAVE_SINCOS', language: 'c')
+ endif
+ 
+-if ['linux', 'cygwin', 'gnu', 'freebsd', 'gnu/kfreebsd', 'haiku', 'android'].contains(host_machine.system())
++if ['linux', 'cygwin', 'gnu', 'freebsd', 'gnu/kfreebsd', 'haiku', 'android', 'laylaos'].contains(host_machine.system())
+   add_project_arguments('-D_GNU_SOURCE', language: ['c', 'cpp'])
+ elif host_machine.system() == 'windows'
+   add_project_arguments(['-D_USE_MATH_DEFINES'], language: ['c', 'cpp'])
+diff -rub ./demos-mesa-demos-9.0.0/src/glad/src/glad.c ./demos-mesa-demos-9.0.0/src/glad/src/glad.c
+--- ./demos-mesa-demos-9.0.0/src/glad/src/glad.c	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/src/glad/src/glad.c	2026-03-26 04:25:39.542163854 +0000
+@@ -921,7 +921,7 @@
+ #include <dlfcn.h>
+ static void* libGL;
+ 
+-#if !defined(__APPLE__) && !defined(__HAIKU__)
++#if !defined(__APPLE__) && !defined(__HAIKU__) && !defined(__laylaos__)
+ typedef void* (APIENTRYP PFNGLXGETPROCADDRESSPROC_PRIVATE)(const char*);
+ static PFNGLXGETPROCADDRESSPROC_PRIVATE gladGetProcAddressPtr;
+ #endif
+@@ -944,7 +944,7 @@
+         libGL = dlopen(NAMES[index], RTLD_NOW | RTLD_GLOBAL);
+ 
+         if(libGL != NULL) {
+-#if defined(__APPLE__) || defined(__HAIKU__)
++#if defined(__APPLE__) || defined(__HAIKU__) || defined(__laylaos__)
+             return 1;
+ #else
+             gladGetProcAddressPtr = (PFNGLXGETPROCADDRESSPROC_PRIVATE)dlsym(libGL,
+@@ -971,7 +971,7 @@
+     void* result = NULL;
+     if(libGL == NULL) return NULL;
+ 
+-#if !defined(__APPLE__) && !defined(__HAIKU__)
++#if !defined(__APPLE__) && !defined(__HAIKU__) && !defined(__laylaos__)
+     if(gladGetProcAddressPtr != NULL) {
+         result = gladGetProcAddressPtr(namez);
+     }
+diff -rub ./demos-mesa-demos-9.0.0/src/glsl/blinking-teapot.c ./demos-mesa-demos-9.0.0/src/glsl/blinking-teapot.c
+--- ./demos-mesa-demos-9.0.0/src/glsl/blinking-teapot.c	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/src/glsl/blinking-teapot.c	2026-03-26 05:29:03.812399701 +0000
+@@ -63,8 +63,14 @@
+      exit(1);
+   }     
+ 
++#ifdef __laylaos__
++  vshad_id = CompileShaderFile (GL_VERTEX_SHADER, "/usr/bin/mesa-demos/blinking-teapot.vert");
++  fshad_id = CompileShaderFile (GL_FRAGMENT_SHADER, "/usr/bin/mesa-demos/blinking-teapot.frag");
++#else
+   vshad_id = CompileShaderFile (GL_VERTEX_SHADER, "blinking-teapot.vert");
+   fshad_id = CompileShaderFile (GL_FRAGMENT_SHADER, "blinking-teapot.frag");
++#endif
++
+   prog_id = LinkShaders (vshad_id, fshad_id);
+ 
+   glUseProgram (prog_id);
+diff -rub ./demos-mesa-demos-9.0.0/src/glsl/brick.c ./demos-mesa-demos-9.0.0/src/glsl/brick.c
+--- ./demos-mesa-demos-9.0.0/src/glsl/brick.c	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/src/glsl/brick.c	2026-03-26 05:30:06.152812981 +0000
+@@ -14,8 +14,13 @@
+ #include "shaderutil.h"
+ 
+ 
++#ifdef __laylaos__
++static char *FragProgFile = "/usr/bin/mesa-demos/CH06-brick.frag";
++static char *VertProgFile = "/usr/bin/mesa-demos/CH06-brick.vert";
++#else
+ static char *FragProgFile = "CH06-brick.frag";
+ static char *VertProgFile = "CH06-brick.vert";
++#endif
+ 
+ /* program/shader objects */
+ static GLuint fragShader;
+diff -rub ./demos-mesa-demos-9.0.0/src/glsl/convolutions.c ./demos-mesa-demos-9.0.0/src/glsl/convolutions.c
+--- ./demos-mesa-demos-9.0.0/src/glsl/convolutions.c	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/src/glsl/convolutions.c	2026-03-26 05:51:45.459488243 +0000
+@@ -340,7 +340,12 @@
+ 
+    menuInit();
+    readTexture(textureLocation);
++
++#ifdef __laylaos__
++   createProgram("/usr/bin/mesa-demos/convolution.vert", "/usr/bin/mesa-demos/convolution.frag");
++#else
+    createProgram("convolution.vert", "convolution.frag");
++#endif
+ 
+    glEnable(GL_TEXTURE_2D);
+    glClearColor(1.0, 1.0, 1.0, 1.0);
+diff -rub ./demos-mesa-demos-9.0.0/src/glsl/mandelbrot.c ./demos-mesa-demos-9.0.0/src/glsl/mandelbrot.c
+--- ./demos-mesa-demos-9.0.0/src/glsl/mandelbrot.c	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/src/glsl/mandelbrot.c	2026-03-26 06:34:37.383829526 +0000
+@@ -14,8 +14,13 @@
+ #include "shaderutil.h"
+ 
+ 
++#ifdef __laylaos__
++static char *FragProgFile = "/usr/bin/mesa-demos/CH18-mandel.frag";
++static char *VertProgFile = "/usr/bin/mesa-demos/CH18-mandel.vert";
++#else
+ static char *FragProgFile = "CH18-mandel.frag";
+ static char *VertProgFile = "CH18-mandel.vert";
++#endif
+ 
+ /* program/shader objects */
+ static GLuint fragShader;
+diff -rub ./demos-mesa-demos-9.0.0/src/glsl/multitex.c ./demos-mesa-demos-9.0.0/src/glsl/multitex.c
+--- ./demos-mesa-demos-9.0.0/src/glsl/multitex.c	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/src/glsl/multitex.c	2026-03-26 06:36:04.775811870 +0000
+@@ -35,8 +35,13 @@
+ 
+ static const char *Demo = "multitex";
+ 
++#ifdef __laylaos__
++static const char *VertFile = "/usr/bin/mesa-demos/multitex.vert";
++static const char *FragFile = "/usr/bin/mesa-demos/multitex.frag";
++#else
+ static const char *VertFile = "multitex.vert";
+ static const char *FragFile = "multitex.frag";
++#endif
+ 
+ static const char *TexFiles[2] = 
+    {
+diff -rub ./demos-mesa-demos-9.0.0/src/glsl/simplex-noise.c ./demos-mesa-demos-9.0.0/src/glsl/simplex-noise.c
+--- ./demos-mesa-demos-9.0.0/src/glsl/simplex-noise.c	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/src/glsl/simplex-noise.c	2026-03-26 08:02:53.937482485 +0000
+@@ -169,7 +169,11 @@
+ static void
+ Init(void)
+ {
++#ifdef __laylaos__
++   const char *filename = "/usr/bin/mesa-demos/simplex-noise.glsl";
++#else
+    const char *filename = "simplex-noise.glsl";
++#endif
+    char noiseText[10000];
+    FILE *f;
+    int len;
+diff -rub ./demos-mesa-demos-9.0.0/src/glsl/skinning.c ./demos-mesa-demos-9.0.0/src/glsl/skinning.c
+--- ./demos-mesa-demos-9.0.0/src/glsl/skinning.c	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/src/glsl/skinning.c	2026-03-26 07:30:12.457306407 +0000
+@@ -20,8 +20,13 @@
+ #define M_PI 3.1415926535
+ #endif
+ 
++#ifdef __laylaos__
++static char *FragProgFile = "/usr/bin/mesa-demos/skinning.frag";
++static char *VertProgFile = "/usr/bin/mesa-demos/skinning.vert";
++#else
+ static char *FragProgFile = "skinning.frag";
+ static char *VertProgFile = "skinning.vert";
++#endif
+ 
+ /* program/shader objects */
+ static GLuint fragShader;
+diff -rub ./demos-mesa-demos-9.0.0/src/glsl/texdemo1.c ./demos-mesa-demos-9.0.0/src/glsl/texdemo1.c
+--- ./demos-mesa-demos-9.0.0/src/glsl/texdemo1.c	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/src/glsl/texdemo1.c	2026-03-26 08:11:26.186876217 +0000
+@@ -35,11 +35,19 @@
+ 
+ static const char *Demo = "texdemo1";
+ 
++#ifdef __laylaos__
++static const char *ReflectVertFile = "/usr/bin/mesa-demos/reflect.vert";
++static const char *CubeFragFile = "/usr/bin/mesa-demos/cubemap.frag";
++
++static const char *SimpleVertFile = "/usr/bin/mesa-demos/simple.vert";
++static const char *SimpleTexFragFile = "/usr/bin/mesa-demos/shadowtex.frag";
++#else
+ static const char *ReflectVertFile = "reflect.vert";
+ static const char *CubeFragFile = "cubemap.frag";
+ 
+ static const char *SimpleVertFile = "simple.vert";
+ static const char *SimpleTexFragFile = "shadowtex.frag";
++#endif
+ 
+ static const char *GroundImage = DEMOS_DATA_DIR "tile.rgb";
+ 
+diff -rub ./demos-mesa-demos-9.0.0/src/glsl/toyball.c ./demos-mesa-demos-9.0.0/src/glsl/toyball.c
+--- ./demos-mesa-demos-9.0.0/src/glsl/toyball.c	2023-03-22 12:13:43.000000000 +0000
++++ ./demos-mesa-demos-9.0.0/src/glsl/toyball.c	2026-03-26 07:34:28.896985486 +0000
+@@ -14,8 +14,13 @@
+ #include "shaderutil.h"
+ 
+ 
++#ifdef __laylaos__
++static char *FragProgFile = "/usr/bin/mesa-demos/CH11-toyball.frag";
++static char *VertProgFile = "/usr/bin/mesa-demos/CH11-toyball.vert";
++#else
+ static char *FragProgFile = "CH11-toyball.frag";
+ static char *VertProgFile = "CH11-toyball.vert";
++#endif
+ 
+ /* program/shader objects */
+ static GLuint fragShader;

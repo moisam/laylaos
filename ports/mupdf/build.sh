@@ -39,14 +39,15 @@ rm -rf thirdparty/{curl,freetype,harfbuzz,libjpeg,openjpeg,jbig2dec,zlib}
 # build
 #cd ${DOWNLOAD_SRCDIR}
 
-make HAVE_X11=no HAVE_GLUT=no prefix=/usr brotli=no \
+make HAVE_X11=no HAVE_GLUT=no prefix=/usr \
     XCFLAGS="${CFLAGS} -mstackrealign -fPIC -I${CROSSCOMPILE_SYSROOT_PATH}/usr/include/openjpeg-2.5" \
     shared=yes build=release USE_SYSTEM_LIBS=yes USE_SYSTEM_GUMBO=no \
     || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"
 
-make HAVE_X11=no HAVE_GLUT=no prefix=/usr brotli=no \
+make HAVE_X11=no HAVE_GLUT=no prefix=/usr \
     XCFLAGS="$CFLAGS -mstackrealign -fPIC -I${CROSSCOMPILE_SYSROOT_PATH}/usr/include/openjpeg-2.5 -I${CROSSCOMPILE_SYSROOT_PATH}/usr/include/freetype2 -I${CROSSCOMPILE_SYSROOT_PATH}/usr/include/harfbuzz" \
-    DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install \
+    DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} \
+    install \
     shared=yes build=release USE_SYSTEM_LIBS=yes USE_SYSTEM_GUMBO=no \
     || exit_failure "$0: failed to install ${DOWNLOAD_NAME}"
 
