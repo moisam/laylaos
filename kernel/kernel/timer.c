@@ -97,10 +97,10 @@ INLINE void calc_load(void)
 
 
 #define FIX_MONOTONIC()                             \
-    while(monotonic_time.tv_nsec >= 1000000000)     \
+    while(monotonic_time.tv_nsec >= 1000000000ULL)  \
     {                                               \
         monotonic_time.tv_sec++;                    \
-        monotonic_time.tv_nsec -= 1000000000;       \
+        monotonic_time.tv_nsec -= 1000000000ULL;    \
     }
 
 #define FIX_VDSO_MONOTONIC()                        \

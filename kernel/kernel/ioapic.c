@@ -215,6 +215,12 @@ void ioapic_create_redirect(uint8_t irq_id, uint32_t irq_base,
     redir.low_byte = v & 0xFFFFFFFF;
     redir.high_byte = (v >> 32) & 0xFFFFFFFF;
 
+    if(redir.remote_irr)
+    {
+        printk("ioapic: old hanging IRQ %d\n", irq_id);
+        kpanic("*****\n");
+    }
+
     if(!!redir.mask == !enable)
     {
         return;
@@ -226,8 +232,8 @@ void ioapic_create_redirect(uint8_t irq_id, uint32_t irq_base,
     redir.delivery_status = 0;
     redir.remote_irr = 0;
     redir.resesrved = 0;
-    redir.pin_polarity = !!(flags & IOAPIC_ACTIVE_HIGH_LOW);
-    redir.trigger_mode = !!(flags & IOAPIC_TRIGGER_EDGE_LOW);
+    redir.pin_polarity = !!(flags & IOAPIC_ACTIVE_LOW);
+    redir.trigger_mode = !!(flags & IOAPIC_LEVEL_TRIGGER);
     redir.mask = !enable;
     redir.dest = processor_local_data[cpu].lapicid;           // XXX:
 
@@ -245,12 +251,12 @@ void ioapic_create_redirect(uint8_t irq_id, uint32_t irq_base,
 
     ent.interrupt = irq_id;
 
-    if(flags & IOAPIC_ACTIVE_HIGH_LOW)
+    if(flags & IOAPIC_ACTIVE_LOW)
     {
         ent.pin_polarity = 1;
     }
 
-    if(flags & IOAPIC_TRIGGER_EDGE_LOW)
+    if(flags & IOAPIC_LEVEL_TRIGGER)
     {
         ent.trigger_mode = 1;
     }
@@ -366,6 +372,11 @@ void ioapic_add(uint32_t int_base, uint32_t phys_base)
         redir.high_byte = (v >> 32) & 0xFFFFFFFF;
         redir.mask = 1;
         v = (uint64_t)redir.low_byte | ((uint64_t)redir.high_byte << 32);
+
+        if(redir.remote_irr)
+        {
+            printk("ioapic:    old hanging IRQ %d\n", i);
+        }
 
         ioapic_set_redirect_ent(ioapic_count, i, v);
     }

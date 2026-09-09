@@ -422,7 +422,7 @@ void apic_init(void)
     ioapic_enable_irq(IRQ_TIMER, 0);
     ioapic_enable_irq(IRQ_MOUSE, 0);
     ioapic_enable_irq(IRQ_KBD, 0);
-    ioapic_enable_irq(9, 0);
+    ioapic_enable_irq(9, IOAPIC_LEVEL_TRIGGER|IOAPIC_ACTIVE_LOW);
     ioapic_enable_irq(11, 0);
     ioapic_enable_irq(14, 0);
     ioapic_enable_irq(15, 0);

@@ -87,6 +87,14 @@ volatile struct kernel_mutex_t scheduler_lock;
 volatile struct task_t *task_table[NR_TASKS];
 int total_tasks = 0;
 
+// Global task hash bucket tracking tables
+volatile struct task_t *pid_hash_table[PID_HASH_BUCKETS];
+volatile struct task_t *tgid_hash_table[PID_HASH_BUCKETS];
+
+// Global fine-grained spinlocks to protect task mapping states safely
+volatile struct kernel_mutex_t pid_hash_lock;
+volatile struct kernel_mutex_t tgid_hash_lock;
+
 struct task_t placeholder_task;
 
 int user_has_ready_tasks = 0;
@@ -489,7 +497,12 @@ virtual_addr task_get_xxx_end(volatile struct task_t *task, int type)
 {
     virtual_addr res = 0;
     struct memregion_t *tmp;
-    
+
+    if(!task->mem)      // task is a zombie
+    {
+        return 0;
+    }
+
     for(tmp = task->mem->first_region; tmp != NULL; tmp = tmp->next)
     {
         if(tmp->type == type)
@@ -524,7 +537,12 @@ virtual_addr task_get_xxx_start(volatile struct task_t *task, int type)
 {
     virtual_addr res = -1;
     struct memregion_t *tmp;
-    
+
+    if(!task->mem)      // task is a zombie
+    {
+        return 0;
+    }
+
     for(tmp = task->mem->first_region; tmp != NULL; tmp = tmp->next)
     {
         if(tmp->type == type)
@@ -604,6 +622,7 @@ static struct task_t *task_alloc_internal(int alloc_vm_struct)
     new_task->last_timerid = 3;
     new_task->cpuid = -1;
     new_task->prev_cpuid = -1;
+    new_task->cpu_affinity = (uint64_t)-1;
 
 #ifdef __x86_64__
     uintptr_t __fpregs = (uintptr_t)&new_task->__fpregs;
@@ -704,6 +723,12 @@ retry:
 void task_free(volatile struct task_t *task)
 {
     volatile int i;
+
+    // do not free the struct if someone is accessing it via /proc
+    while(get_task_properties(task) & PROPERTY_STRUCT_BUSY)
+    {
+        scheduler();
+    }
 
     elevated_priority_lock(&task_table_lock);
 
@@ -996,12 +1021,14 @@ STATIC_INLINE int used_by_any(volatile struct task_t *task)
 STATIC_INLINE volatile struct task_t *next_queue_runnable(struct task_queue_t *queue)
 {
     volatile struct task_t *task, *cur = this_core->cur_task;
+    uint64_t cpu_mask = (1 << this_core->cpuid);
 
     for(task = queue->head.next; task != &queue->head; task = task->next)
     {
         int32_t cpuid = __atomic_load_n(&(task->cpuid), __ATOMIC_SEQ_CST);
 
-        if(task != cur && task->state == TASK_READY && /* task-> */cpuid == -1)
+        if(task != cur && task->state == TASK_READY && cpuid == -1 &&
+           (task->cpu_affinity & cpu_mask))
         {
             /*
             if(!used_by_any(task))
@@ -1244,15 +1271,15 @@ static void notify_parent(struct task_t *t)
 
 static void zombify(struct task_t *t)
 {
+    uintptr_t s = lock_scheduler();
+
     __sync_or_and_fetch(&t->properties, PROPERTY_FINISHING);
-
     set_task_state(t, TASK_ZOMBIE);
-
     t->time_left = 0;
 
-    uintptr_t s = lock_scheduler();
     remove_from_ready_queue(t);
     append_to_queue(t, &zombie_queue);
+
     unlock_scheduler(s);
 }
 
@@ -1283,6 +1310,7 @@ void terminate_task(int code)
     {
     	//printk("terminate_task: pid %d, code %d, comm %s\n", t->pid, code, t->command);
         //kpanic("kernel: init dead\n\n");
+        system_state = SYSTEM_STATE_SHUTDOWN;
         handle_init_exit(code);
     }
     
@@ -1340,6 +1368,8 @@ void terminate_task(int code)
         kfree(t->exe_path);
         t->exe_path = NULL;
     }
+
+    pid_hash_remove(t);
 
     /* 
      * if there are other threads and some of them are alive, just die.

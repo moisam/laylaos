@@ -167,6 +167,32 @@ static void load_processor_info(void)
         this_core->bits_phys = (int)(eax & 0xff);
         this_core->bits_virt = (int)((eax >> 8) & 0xff);
     }
+
+#define CMP_VENDORID(v, s)                                              \
+    (v[0] == s[0] && v[1] == s[1] && v[2] == s[2] && v[3] == s[3] &&    \
+     v[4] == s[4] && v[5] == s[5] && v[6] == s[6] && v[7] == s[7] &&    \
+     v[8] == s[8] && v[9] == s[9] && v[10] == s[10] && v[11] == s[11])
+
+    // read the microcode version
+    // See: https://sandpile.org/x86/msr.htm
+    if(CMP_VENDORID(this_core->vendorid, "GenuineIntel"))
+    {
+        // process = clear msr + cpuid + read upper 32bits of msr
+        wrmsr(IA32_BIOS_SIGN_ID_MSR, 0);
+    	cpuid(1, eax, ebx, ecx, edx);
+        uint64_t microcode = rdmsr(IA32_BIOS_SIGN_ID_MSR);
+        this_core->microcode = (microcode >> 32);
+    }
+    else if(CMP_VENDORID(this_core->vendorid, "AuthenticAMD"))
+    {
+        // process = don't clear msr + cpuid + read lower 32bits of msr
+    	cpuid(1, eax, ebx, ecx, edx);
+        uint64_t microcode = rdmsr(IA32_BIOS_SIGN_ID_MSR);
+        this_core->microcode = (microcode & 0xffffffff);
+    }
+
+#undef CMP_VENDORID
+
 }
 
 
@@ -360,8 +386,8 @@ void parse_mp_table(void)
 
                 u8 = *(uint8_t *)(ent + 2);
 
-                flags |= ((u8 & 0x03) == 0x03) ? IOAPIC_ACTIVE_HIGH_LOW : 0;
-                flags |= ((u8 & 0x0C) == 0x0C) ? IOAPIC_TRIGGER_EDGE_LOW : 0;
+                flags |= ((u8 & 0x03) == 0x03) ? IOAPIC_ACTIVE_LOW : 0;
+                flags |= ((u8 & 0x0C) == 0x0C) ? IOAPIC_LEVEL_TRIGGER : 0;
 
                 //printk("(%u, %u).. ", intin, ioapics[apicid].irq_base);
 
@@ -627,6 +653,20 @@ void wakeup_other_processors(void)
 */
 
 
+void handle_tlb_range_shootdown(void)
+{
+    unsigned long long oticks = ticks;
+    uint64_t cr3_val;
+
+    __asm__ __volatile__("mov %%cr3, %0\n"
+                         "mov %0, %%cr3"
+                         :"=r"(cr3_val)::"memory");
+
+    this_core->irq_count[122]++;
+    this_core->irq_ticks[122] += (ticks - oticks);
+}
+
+
 #include "task_funcs.c"
 
 static volatile int tlb_holding_cpu = -1;
@@ -745,6 +785,38 @@ try:
     }
 
     //printk("tlb_shootdown[%d]: vaddr 0x%lx - done\n", this_core->cpuid, vaddr);
+}
+
+
+void tlb_shootdown_range(/* uintptr_t vaddr, size_t sz */)
+{
+    volatile int old_flags;
+
+    old_flags = __set_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+
+    if(lapic_virt == 0 || online_processor_count <= 1)
+    {
+        if(!(old_flags & SMP_FLAG_SCHEDULER_BUSY))
+        {
+            __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+        }
+
+        return;
+    }
+
+    // trigger IPI
+    *((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) = (3 << 18) | 122;
+
+    // wait for delivery
+    do
+    {
+        __asm__ __volatile__("pause" ::: "memory");
+    } while(*((volatile uint32_t *)(lapic_virt + LAPIC_REG_ICRL)) & (1 << 12));
+
+    if(!(old_flags & SMP_FLAG_SCHEDULER_BUSY))
+    {
+        __clear_cpu_flag(SMP_FLAG_SCHEDULER_BUSY);
+    }
 }
 
 

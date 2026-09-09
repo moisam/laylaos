@@ -81,6 +81,10 @@ int cur_tty = 1;
 // total number of ttys (including dummy tty0)
 int total_ttys = NTTYS;
 
+// maximum supported w & h
+int max_ttyw = 80;
+int max_ttyh = 24;
+
 
 /*
  * Dummy tty write.
@@ -106,6 +110,25 @@ int tty_alloc_buffer(struct tty_t *tty, int buf_index)
         return 0;
     }
 
+    // allocate the maximum supported size so we can handle display size
+    // change without reallocating buffers
+    if(!(tty->buf[buf_index] = kmalloc(max_ttyw * max_ttyh * 2)))
+    {
+        return -ENOMEM;
+    }
+
+    A_memset(tty->buf[buf_index], 0, max_ttyw * max_ttyh * 2);
+
+    if(!(tty->cellattribs[buf_index] = kmalloc(max_ttyw * max_ttyh)))
+    {
+        kfree(tty->buf[buf_index]);
+        tty->buf[buf_index] = NULL;
+        return -ENOMEM;
+    }
+
+    A_memset(tty->cellattribs[buf_index], 0, max_ttyw * max_ttyh);
+
+    /*
     if(!(tty->buf[buf_index] = kmalloc(VGA_MEMORY_SIZE(tty))))
     {
         return -ENOMEM;
@@ -122,6 +145,7 @@ int tty_alloc_buffer(struct tty_t *tty, int buf_index)
     }
 
     A_memset(tty->cellattribs[buf_index], 0, tty->vga_width * tty->vga_height);
+    */
 
     return 0;
 }
@@ -635,6 +659,11 @@ ssize_t ttyx_write(struct file_t *f, off_t *pos,
             add_task_segv_signal(ct, SEGV_MAPERR, (void *)p);
             return -EFAULT;
         }
+    }
+
+    if(tty->flags & TTY_FLAG_NO_TEXT)
+    {
+        return (ssize_t)count;
     }
     
     q = ispty ? &tty->read_q : &tty->write_q;

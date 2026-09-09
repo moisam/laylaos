@@ -76,10 +76,17 @@
 // kernel size in bytes
 size_t kernel_size = 0;
 
+// global system state
+volatile int system_state = 0;
+
 // the physical address of the RSDP table if we have it from the bootloader
 uintptr_t rsdp_phys_addr = 0;
 
+// defined here so it can be checked without loading the ACPI module
+struct battery_info_t sys_batinfo;
+uint32_t gpe0_count, gpe1_count, gpe1_base;
 
+// forward declaration
 void do_init(void);
 
 // defined in dev/chr/rand.c
@@ -99,6 +106,8 @@ extern void parse_mp_table(void);
 
 void kernel_main(unsigned long magic, unsigned long addr)
 {
+    system_state = SYSTEM_STATE_BOOTING;
+
     // calc kernel size
     physical_addr e = (physical_addr)&kernel_end;
     physical_addr s = (physical_addr)&kernel_start;
@@ -290,6 +299,9 @@ void kernel_main(unsigned long magic, unsigned long addr)
     printk("kernel_end   0x%lx\n", e);
     printk("kernel_size  0x%lx\n", kernel_size);
 
+    sys_batinfo.count = 0;
+    sys_batinfo.bat[0].handle = 0;
+
     printk("Initializing kernel modules..\n");
     boot_module_init();
 
@@ -378,9 +390,20 @@ void do_init(void)
     init_seltab();
     init_pcache();
 
-    // fork the soft interrupts task
-    //(void)start_kernel_task("softint", softint_task_func, NULL,
-    //                        &softint_task, 0);
+    /*
+     * Force gcc to ignore the "void * to function pointer cast" warning
+     */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+
+    void (*acpifunc)();
+
+    if((acpifunc = ksym_value("acpi_start_tasks")))
+    {
+        acpifunc();
+    }
+
+#pragma GCC diagnostic pop
 
     // fork the keyboard interrupt task
     (void)start_kernel_task("kbd", kbd_task_func, NULL,
@@ -490,7 +513,11 @@ void do_init(void)
     screen_refresh(NULL);
     //__asm__ __volatile__("xchg %%bx, %%bx"::);
 
+    system_state = SYSTEM_STATE_RUNNING;
+
     res = syscall_execve(name, arg, env);
+
+    system_state = SYSTEM_STATE_SHUTDOWN;
 
     printk("cpu[%d]: Failed to exec init (%d)\n", this_core->cpuid, res);
     screen_refresh(NULL);

@@ -220,6 +220,8 @@ static struct task_t *dup_task(struct task_t *parent, int share_parent_structs)
     /* get rid of uninheritable properties */
     __sync_and_and_fetch(&new_task->properties, ~(PROPERTY_VFORK|PROPERTY_IDLE));
     task_add_child(new_task->parent, new_task);
+
+    pid_hash_insert(new_task);
     
     return new_task;
 }

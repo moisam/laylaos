@@ -34,6 +34,12 @@
 #include <mm/memregion.h>
 #include <gui/vbe.h>
 
+#include "nanoprintf.h"
+
+// defined in console.c
+extern void twritestr(const char *data);
+
+
 static char *get_func_name(uintptr_t wanted_addr)
 {
     int i;
@@ -67,11 +73,31 @@ static char *get_func_name(uintptr_t wanted_addr)
 }
 
 
+/*
+ * An internal printk that bypassess kmalloc in case the panic is raised
+ * by one of the kernel heap functions.
+ */
+static void kheap_printk(const char *fmt, ...)
+{
+	va_list args;
+	int i;
+
+	va_start(args, fmt);
+	i = npf_vsnprintf(global_printk_buf, 4096, fmt, args);
+	va_end(args);
+
+    if(i > 0)
+    {
+        twritestr(global_printk_buf);
+    }
+}
+
+
 void kernel_stack_trace(void)
 {
     uintptr_t rbp, retaddr;
 
-	printk("Stack trace:\n");
+	kheap_printk("Stack trace:\n");
 
 #ifdef __x86_64__
     __asm__ __volatile__("movq %%rbp, %%rax" : "=a"(rbp) :: );
@@ -79,16 +105,16 @@ void kernel_stack_trace(void)
     __asm__ __volatile__("movl %%ebp, %%eax" : "=a"(rbp) :: );
 #endif
 	
-	while(rbp != 0 && rbp >= KERNEL_MEM_START)
+	while(rbp != 0 && rbp != (uintptr_t)-1 && rbp >= KERNEL_MEM_START)
 	{
 	    if(!get_page_entry((rbp + sizeof(uintptr_t))))
 	    {
-    	    printk(_XPTR_ ": %s \n", rbp + sizeof(uintptr_t), "*** invalid kernel address");
+    	    kheap_printk(_XPTR_ ": %s \n", rbp + sizeof(uintptr_t), "*** invalid kernel address");
     	    break;
 	    }
 
 	    retaddr = *(uintptr_t *)(rbp + sizeof(uintptr_t));
-	    printk(_XPTR_ ": %s \n", retaddr, get_func_name(retaddr));
+	    kheap_printk(_XPTR_ ": %s \n", retaddr, get_func_name(retaddr));
 	    rbp = *(uintptr_t *)rbp;
 	}
 
@@ -108,12 +134,12 @@ void kpanic(const char *s)
     }
 
     /*
-    printk("\nblocks %lu (%lu, %lu, %lu)\n", get_cached_block_count(), get_busy_cached_block_count(), get_wanted_cached_block_count(), get_dirty_cached_block_count());
-    printk("cache %lu (%lu)\n", get_cached_page_count(), get_busy_cached_page_count());
-    printk("ptables %lu\n", used_pagetable_count());
-    printk("kstack %lu\n", get_kstack_count());
-    printk("shm %lu\n", get_shm_page_count());
-    printk("phys_free %lu\n", pmmngr_get_free_block_count());
+    kheap_printk("\nblocks %lu (%lu, %lu, %lu)\n", get_cached_block_count(), get_busy_cached_block_count(), get_wanted_cached_block_count(), get_dirty_cached_block_count());
+    kheap_printk("cache %lu (%lu)\n", get_cached_page_count(), get_busy_cached_page_count());
+    kheap_printk("ptables %lu\n", used_pagetable_count());
+    kheap_printk("kstack %lu\n", get_kstack_count());
+    kheap_printk("shm %lu\n", get_shm_page_count());
+    kheap_printk("phys_free %lu\n", pmmngr_get_free_block_count());
     kheap_print();
 
     size_t text = 0, data = 0;
@@ -154,13 +180,13 @@ void kpanic(const char *s)
         }
     }
 
-    printk("text %lu, data %lu, anon_priv %lu, anon_shared %lu\n", text, data, anonp, anons);
+    kheap_printk("text %lu, data %lu, anon_priv %lu, anon_shared %lu\n", text, data, anonp, anons);
     */
 
-	printk("Kernel panic: halting all cores\n");
+	kheap_printk("Kernel panic: halting all cores\n");
 	halt_other_processors();
 
-	printk("Kernel panic: %s\n", s);
+	kheap_printk("Kernel panic: %s\n", s);
 	kernel_stack_trace();
 
     // force screen update
@@ -173,7 +199,7 @@ loop:
     cli();
     hlt();
     goto loop;
-	
+
 	__builtin_unreachable();
 }
 

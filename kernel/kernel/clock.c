@@ -183,8 +183,20 @@ long do_clock_gettime(clockid_t clock_id, struct timespec *tp)
         tp->tv_sec  = monotonic_time.tv_sec;
         tp->tv_nsec = monotonic_time.tv_nsec;
     }
-    else if(clock_id == CLOCK_PROCESS_CPUTIME_ID ||
-            clock_id == CLOCK_THREAD_CPUTIME_ID)
+    else if(clock_id == CLOCK_PROCESS_CPUTIME_ID)
+    {
+        struct task_t *t;
+        time_t tm = 0;
+
+        for_each_thread(t, this_core->cur_task)
+        {
+            tm += (t->user_time + t->sys_time);
+        }
+
+        tp->tv_sec  = tm / PIT_FREQUENCY;
+        tp->tv_nsec = (tm % PIT_FREQUENCY) * 1000000000 /* 1e9 */;
+    }
+    else if(clock_id == CLOCK_THREAD_CPUTIME_ID)
     {
         time_t t = (this_core->cur_task->user_time + this_core->cur_task->sys_time);
 
@@ -524,7 +536,8 @@ long do_clock_nanosleep(int flags,
     /* NOTE: Linux supports CLOCK_PROCESS_CPUTIME_ID in this function */
     if(timer->clockid != CLOCK_REALTIME && timer->clockid != CLOCK_MONOTONIC)
     {
-        /* fail as per POSIX (POSIX says to fail for thread clock only, 
+        /*
+         * fail as per POSIX (POSIX says to fail for thread clock only, 
          * other clocks are not specified).
          */
         return -EINVAL;
@@ -624,7 +637,9 @@ long syscall_clock_nanosleep(clockid_t clock_id, int flags,
 
     if(__rqtp)
     {
-        COPY_FROM_USER(&rqtmp, __rqtp, sizeof(struct timespec));
+        //COPY_FROM_USER(&rqtmp, __rqtp, sizeof(struct timespec));
+        COPY_VAL_FROM_USER(&rqtmp.tv_sec, &__rqtp->tv_sec);
+        COPY_VAL_FROM_USER(&rqtmp.tv_nsec, &__rqtp->tv_nsec);
         rqptr = &rqtmp;
     }
 
@@ -638,7 +653,9 @@ long syscall_clock_nanosleep(clockid_t clock_id, int flags,
 
     if(res == -EINTR && __rmtp)
     {
-        COPY_TO_USER(__rmtp, &rmtmp, sizeof(struct timespec));
+        //COPY_TO_USER(__rmtp, &rmtmp, sizeof(struct timespec));
+        COPY_VAL_TO_USER(&__rmtp->tv_sec, &rmtmp.tv_sec);
+        COPY_VAL_TO_USER(&__rmtp->tv_nsec, &rmtmp.tv_nsec);
     }
     
     return res;

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: task_funcs.c
  *    This file is part of LaylaOS.
@@ -169,8 +169,7 @@ STATIC_INLINE void update_task_times(volatile struct task_t *t)
     {
         this_core->softirq_ticks += elapsed;
     }
-
-    if(t->user && !t->user_in_kernel_mode)
+    else if(t->user && !t->user_in_kernel_mode)
     {
         t->user_time += elapsed;
         this_core->user_time += elapsed;
@@ -183,27 +182,116 @@ STATIC_INLINE void update_task_times(volatile struct task_t *t)
 }
 
 
+STATIC_INLINE uint32_t calculate_pid_hash(pid_t pid)
+{
+    // 2654435761U is Knuth's golden ratio multiplier for 32-bit integers
+    uint32_t hash = (uint32_t)pid * 2654435761U;
+    return (hash >> (32 - 9)) & PID_HASH_MASK; // 2^9 = 512 buckets
+}
+
+
+STATIC_INLINE void pid_hash_insert(struct task_t *task)
+{
+    if(!task)
+    {
+        return;
+    }
+
+    // Insert into PID hash table
+    {
+        uint32_t pid_bucket = calculate_pid_hash(task->pid);
+        elevated_priority_lock(&pid_hash_lock);
+        task->pid_hash_next = pid_hash_table[pid_bucket];
+        pid_hash_table[pid_bucket] = task;
+        elevated_priority_unlock(&pid_hash_lock);
+    }
+
+    // Insert into TGID hash table
+    {
+        uint32_t tgid_bucket = calculate_pid_hash(tgid(task));
+        elevated_priority_lock(&tgid_hash_lock);
+        task->tgid_hash_next = tgid_hash_table[tgid_bucket];
+        tgid_hash_table[tgid_bucket] = task;
+        elevated_priority_unlock(&tgid_hash_lock);
+    }
+}
+
+
+STATIC_INLINE void pid_hash_remove(struct task_t *task)
+{
+    if(!task)
+    {
+        return;
+    }
+
+    // Remove from PID table
+    {
+        uint32_t pid_bucket = calculate_pid_hash(task->pid);
+        elevated_priority_lock(&pid_hash_lock);
+
+        volatile struct task_t **pprev = &pid_hash_table[pid_bucket];
+
+        while(*pprev)
+        {
+            if(*pprev == task)
+            {
+                *pprev = task->pid_hash_next;
+                break;
+            }
+
+            pprev = (volatile struct task_t **)&((*pprev)->pid_hash_next);
+        }
+
+        elevated_priority_unlock(&pid_hash_lock);
+    }
+
+    // Remove from TGID table
+    {
+        uint32_t tgid_bucket = calculate_pid_hash(tgid(task));
+        elevated_priority_lock(&tgid_hash_lock);
+
+        volatile struct task_t **pprev = &tgid_hash_table[tgid_bucket];
+
+        while(*pprev)
+        {
+            if(*pprev == task)
+            {
+                *pprev = task->tgid_hash_next;
+                break;
+            }
+
+            pprev = (volatile struct task_t **)&((*pprev)->tgid_hash_next);
+        }
+
+        elevated_priority_unlock(&tgid_hash_lock);
+    }
+}
+
+
 /*
  * Get a task by it's ID. 
  */
 STATIC_INLINE volatile struct task_t *get_task_by_id(pid_t pid)
 {
-    volatile struct task_t *res = NULL;
+    uint32_t bucket = calculate_pid_hash(pid);
 
-    elevated_priority_lock(&task_table_lock);
+    elevated_priority_lock(&pid_hash_lock);
 
-    for_each_taskptr(t)
+    volatile struct task_t *cur = pid_hash_table[bucket];
+
+    while(cur != NULL)
     {
-        if(*t && (*t)->pid == pid)
+        if(cur->pid == pid)
         {
-            res = *t;
-            break;
+            elevated_priority_unlock(&pid_hash_lock);
+            return cur;
         }
+
+        cur = cur->pid_hash_next;
     }
 
-    elevated_priority_unlock(&task_table_lock);
-
-    return res;
+    elevated_priority_unlock(&pid_hash_lock);
+    return NULL;
 }
 
 
@@ -212,22 +300,25 @@ STATIC_INLINE volatile struct task_t *get_task_by_id(pid_t pid)
  */
 STATIC_INLINE volatile struct task_t *get_task_by_tgid(pid_t tgid)
 {
-    volatile struct task_t *res = NULL;
+    uint32_t bucket = calculate_pid_hash(tgid);
 
-    elevated_priority_lock(&task_table_lock);
+    elevated_priority_lock(&tgid_hash_lock);
 
-    for_each_taskptr(t)
+    volatile struct task_t *cur = tgid_hash_table[bucket];
+
+    while(cur != NULL)
     {
-        if(*t && tgid(*t) == tgid)
+        if(tgid(cur) == tgid)
         {
-            res = *t;
-            break;
+            elevated_priority_unlock(&tgid_hash_lock);
+            return cur;
         }
-    }
-    
-    elevated_priority_unlock(&task_table_lock);
 
-    return res;
+        cur = cur->tgid_hash_next;
+    }
+
+    elevated_priority_unlock(&tgid_hash_lock);
+    return NULL;
 }
 
 
@@ -292,26 +383,4 @@ STATIC_INLINE int get_blocked_task_count(void)
 
     return blocked;
 }
-
-
-#if 0
-/*
- * Get the count of tasks currently on the system.
- */
-STATIC_INLINE int get_total_task_count(void)
-{
-    int total = 0;
-
-    // count the running/runnable tasks
-    for_each_taskptr(t)
-    {
-        if(*t)
-        {
-            total++;
-        }
-    }
-
-    return total;
-}
-#endif
 
