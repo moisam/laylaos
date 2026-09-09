@@ -148,13 +148,20 @@ done
 cp -R ${SYSROOT}/bin/* ${OUTDIR}/isodir/usr/bin/
 cp -R ${SYSROOT}/sbin/* ${OUTDIR}/isodir/usr/sbin/
 
-for f in init dispman getty login bash desktop widgets; do
+for f in init dispman getty login bash desktop gui-open; do
     mv ${OUTDIR}/isodir/usr/bin/${f} ${OUTDIR}/isodir/bin/
 done
 
 echo "=> Copying desktop resources"
 cp -r ${CWD}/../others/share_files/gui/ ${OUTDIR}/isodir/usr/share/
 cp -r ${CWD}/../others/share_files/fonts/ ${OUTDIR}/isodir/usr/share/
+
+# Symlink the default cursor directory
+if [ -d ${OUTDIR}/isodir/usr/share/icons/Mocu-White-Right ]; then
+    ln -s Mocu-White-Right ${OUTDIR}/isodir/usr/share/icons/default
+else
+    echo "------ could not create default cursor directory"
+fi
 
 echo "=> Copying /etc files"
 cp -r ${CWD}/../others/etc_files/* ${OUTDIR}/isodir/etc/

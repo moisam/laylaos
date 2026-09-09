@@ -87,6 +87,41 @@ ${SUDO} cp usr/Qt-5.12-hosttools/bin/* usr/Qt-5.12/bin/
 ${SUDO} rm -rf usr/Qt-5.12-hosttools
 
 echo
+echo "Copying Qt-6.11 resources"
+echo "-------------------------"
+${SUDO} mkdir usr/Qt-6.11/lib/fonts/
+${SUDO} cp -r ${CWD}/../others/share_files/fonts/Noto*.ttf usr/Qt-6.11/lib/fonts/
+
+cat >/tmp/tmpfile <<EOF
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+    <description>LaylaOS Minimal Hard Isolated Profile</description>
+
+    <!--
+    <include ignore_missing="yes" prefix="default">/etc/fonts/fonts.conf</include>
+    <include ignore_missing="yes" prefix="default">conf.d</include>
+    -->
+
+    <!-- Force Fontconfig to ONLY look inside this directory -->
+    <dir>/usr/Qt-6.11/lib/fonts</dir>
+
+    <!-- Completely disable system-wide fallback directory caching -->
+    <cachedir>/var/cache/fontconfig</cachedir>
+
+    <!-- Fallback map to avoid system tracking lookups -->
+    <match target="pattern">
+        <edit name="family" mode="assign" binding="same">
+            <string>sans-serif</string>
+        </edit>
+    </match>
+</fontconfig>
+EOF
+
+${SUDO} mv /tmp/tmpfile usr/Qt-6.11/lib/fonts/fonts.conf
+${SUDO} cp usr/share/xml/fontconfig/fonts.dtd usr/Qt-6.11/lib/fonts/
+
+echo
 echo "Copying other files in /etc"
 echo "---------------------------"
 ${SUDO} cp -r ${CWD}/../others/etc_files/* etc/
@@ -108,6 +143,13 @@ ${SUDO} mkdir -p usr/share/fonts
 ${SUDO} cp -r ${CWD}/../others/share_files/gui/ usr/share/
 ${SUDO} cp -r ${CWD}/../others/share_files/fonts/ usr/share/
 
+# Symlink the default cursor directory
+if [ -d usr/share/icons/Mocu-White-Right ]; then
+    ${SUDO} ln -s Mocu-White-Right usr/share/icons/default
+else
+    echo "------ could not create default cursor directory"
+fi
+
 echo
 echo "Creating /bin/sh"
 echo "----------------"
@@ -123,8 +165,8 @@ ${SUDO} chown root:root usr/sbin/*
 ${SUDO} chown 9:9 usr/bin/man usr/bin/mandb
 
 # ensure regular users can run the GUI environment
-${SUDO} chmod 0775 usr/bin/desktop/*
-${SUDO} chmod 0775 usr/bin/widgets/*
+${SUDO} chmod -R 0775 usr/bin/*
+${SUDO} chmod -R 0775 usr/share/*
 
 # ensure these have the setuid bit set
 ${SUDO} chmod u+s usr/bin/su

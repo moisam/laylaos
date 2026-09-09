@@ -14,12 +14,13 @@
 # names of ported packages
 ##############################################
 
-# libs with no dependencies -- a.k.a. easy wins
+# libs with no (or very minimal) dependencies -- a.k.a. easy wins
 NODEPS_LIBS="zlib xz libiconv libexpat libffi libucontext fribidi gzip hunspell jsoncpp"
-NODEPS_LIBS="${NODEPS_LIBS} openssl uchardet bzip2 ncurses popt unifont libusb"
+NODEPS_LIBS="${NODEPS_LIBS} openssl uchardet bzip2 ncurses popt unifont libusb brotli"
+NODEPS_LIBS="${NODEPS_LIBS} lz4 zstd libxml2 libarchive"
 
 # image, multimedia and font libs
-IMAGE_LIBS="libjpeg libpng16 libtiff libwebp"
+IMAGE_LIBS="libjpeg-turbo libpng16 libtiff libwebp"
 MULTIMEDIA_LIBS="aomedia dav1d libavif libdvdread faad2 twolame lame liba52 libogg"
 MULTIMEDIA_LIBS="${MULTIMEDIA_LIBS} flac vorbis libcaca opus opusfile libsndfile"
 
@@ -34,7 +35,7 @@ TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} mpg123 htop less libpipeline f
 TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} psutils groff readline gdbm gawk sed man-db"
 TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} hexedit tar grep diffutils patch"
 TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} file findutils cpio patchelf help2man which"
-TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} libuuid pcre2 shadow"
+TERMINAL_APPS_AND_LIBS="${TERMINAL_APPS_AND_LIBS} libuuid pcre2 shadow parted"
 GAMES_APPS="openttd sdl2-doom uMario DungeonRush"
 FILESYSTEM_APPS="gptfdisk e2fsprogs dosfstools libcddb libcdio libcdio-paranoia mtools xorriso"
 
@@ -49,13 +50,18 @@ COMPILER_APPS="${COMPILER_APPS} autoconf-2.71 getconf libtool cmake"
 COMPILER_APPS="${COMPILER_APPS} python meson nasm pkg-config ninja yasm lua"
 
 # Qt-based apps
-QT_APPS="FeatherPad"
+# XXX: not building FeatherPad anymore as it requires dbus which we do not have
+QT_APPS=""
+
+# Mesa and its kids
+OPENGL_APPS_AND_LIBS="mesa glew glu freeglut mesa-demos"
 
 # PDF
-PDF_APPS_AND_LIBS="DjVuLibre openjpeg jbig2dec mupdf SDLBook"
+# XXX: not building SDLBook anymore as we have our own PDF reader now
+PDF_APPS_AND_LIBS="DjVuLibre openjpeg jbig2dec mupdf"
 
 # Apps that need other stuff, e.g. SDL, Qt, glib
-NEEDY_APPS="mc freegemas grub dosbox-x lite bochs"
+NEEDY_APPS="mc freegemas grub dosbox-x lite bochs SDLPoP"
 
 ##############################################
 # prepare for the build
@@ -113,6 +119,16 @@ if [ -z "${HOST_PERL_FOR_CROSSCOMPILE}" ]; then
     echo "You must set \$HOST_PERL_FOR_CROSSCOMPILE to the path of your host"
     echo "perl program. This, unfortunately, has to be the same version we need"
     echo "to compile LaylaOS. See ports/perl/build.sh for the required perl version."
+    echo
+    exit 1
+fi
+
+# the same goes for Qt6, where we need to pass it the location of the host Qt
+if [ -z "${HOST_QT6_FOR_CROSSCOMPILE}" ]; then
+    echo
+    echo "You must set \$HOST_QT6_FOR_CROSSCOMPILE to the path of your host"
+    echo "Qt6 installation. This, unfortunately, has to be the same version we need"
+    echo "to compile LaylaOS. See ports/Qt6/build.sh for the required Qt6 version."
     echo
     exit 1
 fi
@@ -267,47 +283,6 @@ fi
 #KERNEL_BIN_OBJS=`find ${CWD}/../kernel/bin/ -name '*.o'`
 #rm ${KERNEL_BIN_OBJS}
 
-echo " ==> creating desktop dirs"
-mkdir -p ${SYSROOT}/usr/bin/desktop
-mkdir -p ${SYSROOT}/usr/bin/widgets
-mkdir -p ${SYSROOT}/usr/sbin
-
-cd ${CWD}/../kernel/bin/
-
-echo " ==> installing bins and gui apps"
-
-# the -executable option does not work properly on the ported 'find' utility on LaylaOS
-# TODO: investigate this
-myname=`uname -s`
-if [ "$myname" == "LaylaOS" ]; then
-    KERNEL_BINS=`find . -type f ! '(' -name '*.a' -o -name '*.so' -o -name '*.o' -o -name '*.h' -o -name '*.c' -o -name '*.syms' ')'`
-else
-    KERNEL_BINS=`find . -type f -executable ! '(' -name '*.a' -o -name '*.so' -o -name '*.o' ')'`
-fi
-
-#cp ${KERNEL_BINS} ${SYSROOT}/usr/bin/
-
-for f in ${KERNEL_BINS}; do
-    # desktop bins go under usr/bin/desktop/
-    if [[ "${f}" == *"desktop"* ]]; then
-        echo "     Copying ${f} to usr/bin/desktop/"
-        cp ${f} ${SYSROOT}/usr/bin/desktop/
-    else
-        echo "     Copying ${f} to usr/bin/"
-        cp ${f} ${SYSROOT}/usr/bin/
-    fi
-done
-
-# reboot needs to be under sbin/
-mv ${SYSROOT}/usr/bin/reboot ${SYSROOT}/usr/sbin/reboot
-mv ${SYSROOT}/usr/bin/daemon ${SYSROOT}/usr/sbin/daemon
-
-echo " ==> installing desktop widgets"
-cd desktop/widgets/
-
-for f in `ls *.so`; do
-    cp ${f} ${SYSROOT}/usr/bin/widgets/
-done
 
 echo " ==>"
 echo " ==> creating vdso"
@@ -372,7 +347,70 @@ build_list "${COMPILER_APPS}"
 build_list "${QT_APPS}"
 build_list "${PDF_APPS_AND_LIBS}"
 build_list "${NET_APPS_AND_LIBS}"
+build_list "${OPENGL_APPS_AND_LIBS}"
 build_list "${NEEDY_APPS}"
+build_list "cursors"
+
+##############################################
+# Qt6
+# we need to build this after mesa, libjpeg,
+# and the other dependencies are built
+##############################################
+
+build_list "Qt6"
+
+##############################################
+# Qt-based desktop apps
+##############################################
+
+echo " ==>"
+echo " ==> building Qt-based desktop apps"
+echo " ==>"
+
+cd ${CWD}/../kernel/bin/qtapps
+chmod +x ./build.sh     # ensure it is executable
+./build.sh || exit 1
+cd ${CWD}
+
+echo " ==>"
+echo " ==> creating desktop dirs"
+echo " ==>"
+mkdir -p ${SYSROOT}/usr/bin/desktop/widgets
+mkdir -p ${SYSROOT}/usr/sbin
+
+cd ${CWD}/../kernel/bin/
+
+echo " ==> installing bins and gui apps"
+
+# the -executable option does not work properly on the ported 'find' utility on LaylaOS
+# TODO: investigate this
+myname=`uname -s`
+if [ "$myname" == "LaylaOS" ]; then
+    KERNEL_BINS=`find . -type f ! '(' -name '*.a' -o -name '*.so' -o -name '*.o' -o -name '*.h' -o -name '*.c' -o -name '*.syms' -o -name 'a.out' -o -name 'CMake*' -o -name '*.sh' -o -name '*.c' ')'`
+else
+    KERNEL_BINS=`find . -type f -executable ! '(' -name '*.a' -o -name '*.so' -o -name '*.o' -o -name 'a.out' -o -name 'CMake*' -o -name '*.sh' -o -name '*.c' ')'`
+fi
+
+#cp ${KERNEL_BINS} ${SYSROOT}/usr/bin/
+
+for f in ${KERNEL_BINS}; do
+    # desktop bins go under usr/bin/desktop/
+    base=`basename ${f}`
+    if [[ "${base}" == *"desktop"* || "${base}" == *"app"* || "${base}" == "guiserver" ]]; then
+        echo "     Copying ${f} to usr/bin/desktop/${base}"
+        cp ${f} ${SYSROOT}/usr/bin/desktop/${base}
+    elif [[ "${base}" == *"widget"* ]]; then
+        echo "     Copying ${f} to usr/bin/desktop/widgets/${base}"
+        cp ${f} ${SYSROOT}/usr/bin/desktop/widgets/${base}
+    else
+        echo "     Copying ${f} to usr/bin/"
+        cp ${f} ${SYSROOT}/usr/bin/
+    fi
+done
+
+# reboot needs to be under sbin/
+mv ${SYSROOT}/usr/bin/reboot ${SYSROOT}/usr/sbin/reboot
+mv ${SYSROOT}/usr/bin/daemon ${SYSROOT}/usr/sbin/daemon
 
 
 ##############################################
