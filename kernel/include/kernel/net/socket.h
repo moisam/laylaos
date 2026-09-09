@@ -163,6 +163,8 @@ struct sockops_t
             /**< Handler for the sendmsg() call */
     long (*setsockopt)(struct socket_t *, int, int, void *, int);
             /**< Handler for the setsockopt() call */
+    long (*listen)(struct socket_t *);
+            /**< Handler for listen() call (used only by TCP) */
     struct socket_t *(*socket)(void);
             /**< Handler for the socket() call */
 };
