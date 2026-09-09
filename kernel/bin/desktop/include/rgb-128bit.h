@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: rgb-128bit.h
  *    This file is part of LaylaOS.
@@ -33,7 +33,7 @@
 static inline void blit_bitmap_32_128bit(struct gc_t *gc, uint8_t *dest,
                                          uint32_t *src, unsigned int srcw,
                                          int x, int maxx, int y, int maxy,
-                                         uint32_t hicolor)
+                                         uint32_t hicolor, int src_alpha_pos)
 {
     int curx;
     uint32_t hir = ((hicolor >> 24) & 0xff);
@@ -50,23 +50,38 @@ static inline void blit_bitmap_32_128bit(struct gc_t *gc, uint8_t *dest,
 
     for( ; y < maxy; y++)
     {
-        uint32_t *buf32, *src32;
+        uint32_t *buf32, *src32, tmp32[4];
 
         buf32 = (uint32_t *)dest;
         src32 = (uint32_t *)src;
 
         for(curx = x; curx < maxx - 3; curx += 4)
         {
+            if(src_alpha_pos == 0)      // RGBA
+            {
+                tmp32[0] = src32[0];
+                tmp32[1] = src32[1];
+                tmp32[2] = src32[2];
+                tmp32[3] = src32[3];
+            }
+            else                        // ARGB -- convert to RGBA
+            {
+                tmp32[0] = (src32[0] << 8) | (src32[0] >> 24);
+                tmp32[1] = (src32[1] << 8) | (src32[1] >> 24);
+                tmp32[2] = (src32[2] << 8) | (src32[2] >> 24);
+                tmp32[3] = (src32[3] << 8) | (src32[3] >> 24);
+            }
+
             if(hicolor)
             {
-                src128 = _mm_set_epi32(highlight(src32[3], hir, hig, hib),
-                                       highlight(src32[2], hir, hig, hib),
-                                       highlight(src32[1], hir, hig, hib),
-                                       highlight(src32[0], hir, hig, hib));
+                src128 = _mm_set_epi32(highlight(tmp32[3], hir, hig, hib),
+                                       highlight(tmp32[2], hir, hig, hib),
+                                       highlight(tmp32[1], hir, hig, hib),
+                                       highlight(tmp32[0], hir, hig, hib));
             }
             else
             {
-                src128 = _mm_loadu_si128((__m128i const *)src32);
+                src128 = _mm_loadu_si128((__m128i const *)tmp32);
             }
 
             alpha128 = _mm_and_si128(src128, ff_mask);
@@ -126,20 +141,16 @@ static inline void blit_bitmap_32_128bit(struct gc_t *gc, uint8_t *dest,
         {
             uint32_t compalpha, alpha, r, g, b, tmp;
 
-            if(hicolor)
-            {
-                tmp = highlight(*src32, hir, hig, hib);
-            }
-            else
-            {
-                tmp = *src32;
-            }
+            // src bitmap pixels can either be RGBA or ARGB
+            // convert to RGBA as the blending function expects this format
+            tmp = (src_alpha_pos == 0) ? *src32 : ((*src32 << 8) | (*src32 >> 24));
+            tmp = hicolor ? highlight(tmp, hir, hig, hib) : tmp;
 
 // our colors are in the RGBA format
 #define R(c)            ((c >> 24) & 0xff)
 #define G(c)            ((c >> 16) & 0xff)
 #define B(c)            ((c >> 8) & 0xff)
-#define A(c)            ((c) & 0xff)
+#define A(c)            ((src_alpha_pos == 0) ? ((c) & 0xff) : (((c >> 24) & 0xff)))
 
             alpha = A(*src32);
             compalpha = 0x100 - alpha;

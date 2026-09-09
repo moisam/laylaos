@@ -68,6 +68,7 @@ struct widget_t
 
     int (*periodic)(struct widget_t *);
     void (*button_click_callback)(struct widget_t *, int, int);
+    int (*key_press_callback)(struct widget_t *, char, char);
 };
 
 struct widget_color_t
@@ -88,7 +89,8 @@ struct widget_t *widget_create(void);
 int widgets_redraw(void);
 void widgets_periodic(void);
 void widget_menu_may_hide(winid_t);
-void widgets_show_apps(void);
+//void widgets_show_apps(void);
+void widget_pass_key(char key, char modifiers);
 
 /**********************************************
  * Public functions for widget perusal

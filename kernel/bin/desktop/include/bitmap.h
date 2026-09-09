@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: bitmap.h
  *    This file is part of LaylaOS.
@@ -79,7 +79,12 @@ struct bitmap32_t
 {
     uint32_t *data;
     unsigned int width, height;
-    unsigned int res1, res2;
+
+#define BITMAP_FORMAT_RGBA          0
+#define BITMAP_FORMAT_ARGB          1
+    unsigned int format;
+
+    unsigned int res1;
 };
 
 struct bitmap32_array_t

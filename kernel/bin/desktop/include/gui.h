@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: gui.h
  *    This file is part of LaylaOS.
@@ -54,6 +54,7 @@ void gui_exit(int exit_code);
 #define DEFAULT_EXE_ICON_PATH           DEFAULT_ICON_PATH "/executable.ico"
 #define DEFAULT_APP_CATEGORIES_PATH     DEFAULT_DESKTOP_PATH "/categories"
 #define DEFAULT_FONT_PATH               "/usr/share/fonts"
+#define DEFAULT_CUSOR_PATH              "/usr/share/icons"
 
 
 /*
@@ -74,6 +75,7 @@ struct app_entry_t
     char *command;
     char *iconpath;
     char *icon;
+    char *mimetypes;    // for applications, the mime types the app can open
 
     // desktop breaks down name into lines for quick access
     size_t name_line_start[2];  // start index of the two lines

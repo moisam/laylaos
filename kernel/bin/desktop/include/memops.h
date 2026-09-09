@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: memops.h
  *    This file is part of LaylaOS.
@@ -178,5 +178,54 @@ static inline void *memset16(void *dest, uint16_t val16, size_t n)
     }
 
     return dest;
+}
+
+
+static inline void fill_line_32(uint8_t *buf, uint32_t color, int cnt)
+{
+    uint32_t *buf32 = (uint32_t *)buf;
+
+    while((uintptr_t)buf32 & 0x0f)
+    {
+        if(cnt--)
+        {
+            *buf32++ = color;
+        }
+        else
+        {
+            return;
+        }
+    }
+
+    __m128i m0 = _mm_setr_epi32(color, color, color, color);
+
+    while(cnt >= 8)
+    {
+        _mm_storeu_si128((__m128i *)buf32, m0);
+        _mm_storeu_si128((__m128i *)(buf32 + 4), m0);
+
+        buf32 += 8;
+        cnt -= 8;
+    }
+    /*
+    if(cnt >= 4)
+    {
+        u32vect_t valvec = { color, color, color, color };
+        u32vect_t *destvec = (u32vect_t *)buf32;
+
+        while(cnt >= 4)
+        {
+            *destvec++ = valvec;
+            cnt -= 4;
+        }
+
+        buf32 = (uint32_t *)destvec;
+    }
+    */
+
+    while(cnt--)
+    {
+        *buf32++ = color;
+    }
 }
 

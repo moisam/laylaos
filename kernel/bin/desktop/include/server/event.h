@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: event.h
  *    This file is part of LaylaOS.
@@ -33,7 +33,7 @@
 
 #include "../event.h"
 #include "../directrw.h"
-
+#include "server.h"
 
 #define GLOB        __global_gui_data
 
@@ -110,6 +110,7 @@ static inline void send_key_event(struct server_window_t *window,
 
 static inline void __mouse_event(struct server_window_t *window,
                                  int mouse_x, int mouse_y,
+                                 int mods,
                                  mouse_buttons_t mouse_buttons,
                                  uint32_t evtype)
 {
@@ -122,6 +123,7 @@ static inline void __mouse_event(struct server_window_t *window,
     ev.mouse.x = mouse_x;
     ev.mouse.y = mouse_y;
     ev.mouse.buttons = mouse_buttons;
+    ev.mouse.modifiers = mods;
 
     if(direct_write(window->clientfd->fd, (void *)&ev, 
                                 sizeof(struct event_t)) < 0)
@@ -131,24 +133,24 @@ static inline void __mouse_event(struct server_window_t *window,
 }
 
 static inline void send_mouse_event(struct server_window_t *window,
-                      int mouse_x, int mouse_y,
+                      int mouse_x, int mouse_y, int mods,
                       mouse_buttons_t mouse_buttons)
 {
-    __mouse_event(window, mouse_x, mouse_y, mouse_buttons, EVENT_MOUSE);
+    __mouse_event(window, mouse_x, mouse_y, mods, mouse_buttons, EVENT_MOUSE);
 }
 
 static inline void send_mouse_exit_event(struct server_window_t *window,
                            int mouse_x, int mouse_y,
                            mouse_buttons_t mouse_buttons)
 {
-    __mouse_event(window, mouse_x, mouse_y, mouse_buttons, EVENT_MOUSE_EXIT);
+    __mouse_event(window, mouse_x, mouse_y, 0, mouse_buttons, EVENT_MOUSE_EXIT);
 }
 
 static inline void send_mouse_enter_event(struct server_window_t *window,
                             int mouse_x, int mouse_y,
                             mouse_buttons_t mouse_buttons)
 {
-    __mouse_event(window, mouse_x, mouse_y, mouse_buttons, EVENT_MOUSE_ENTER);
+    __mouse_event(window, mouse_x, mouse_y, 0, mouse_buttons, EVENT_MOUSE_ENTER);
 }
 
 static inline void send_resize_offer(struct server_window_t *window,
@@ -267,6 +269,24 @@ static inline void send_err_event(int fd, winid_t dest, uint32_t evtype,
 }
 
 
+static inline void send_focus_event(struct server_window_t *dest, winid_t src, uint32_t evtype)
+{
+    struct event_t ev;
+
+    ev.type = evtype;
+    ev.seqid = 0;
+    ev.src = src;
+    ev.dest = dest->winid;
+    ev.winst.state = dest->state;
+    ev.valid_reply = 1;
+
+    if(direct_write(dest->clientfd->fd, (void *)&ev, sizeof(struct event_t)) < 0)
+    {
+        CHECK_DEAD_CLIENT(dest);
+    }
+}
+
+
 static inline void notify_child(struct server_window_t *window,
                                 uint32_t evtype, uint32_t seqid)
 {
@@ -276,7 +296,7 @@ static inline void notify_child(struct server_window_t *window,
     ev.seqid = seqid;
     ev.src = TO_WINID(GLOB.mypid, 0);
     ev.dest = window->winid;
-    ev.winst.state = window->state;
+    ev.winst.state = (window->flags & WINDOW_HIDDEN) ? WINDOW_STATE_MINIMIZED : window->state;
     ev.valid_reply = 1;
 
     if(direct_write(window->clientfd->fd, (void *)&ev, 
@@ -286,56 +306,70 @@ static inline void notify_child(struct server_window_t *window,
     }
 }
 
-#define notify_parent(win, evtype)                                  \
-    if(!win->parent) return;                                        \
-    if(notify_simple_event(win->parent->clientfd->fd, evtype,       \
-                           win->parent->winid, win->winid, 0) == -1)\
+
+#define notify_parent(win, evtype)                                          \
+    if(!win->parent) return;                                                \
+    if(notify_simple_event(win->parent->clientfd->fd, evtype,               \
+                           win->parent->winid, win->winid, 0) == -1)        \
         server_window_dead(win->parent);
+
+#define notify_listener(win, evtype)                                        \
+    if(window_event_listener && !(win->flags & WINDOW_SKIPTASKBAR))         \
+        notify_simple_event(window_event_listener->clientfd->fd, evtype,    \
+                            window_event_listener->winid, win->winid, 0);   \
 
 
 static inline void notify_parent_win_created(struct server_window_t *window)
 {
+    notify_listener(window, EVENT_CHILD_WINDOW_CREATED);
     notify_parent(window, EVENT_CHILD_WINDOW_CREATED);
 }
 
 
 static inline void notify_parent_win_destroyed(struct server_window_t *window)
 {
+    notify_listener(window, EVENT_CHILD_WINDOW_DESTROYED);
     notify_parent(window, EVENT_CHILD_WINDOW_DESTROYED);
 }
 
 static inline void notify_win_shown(struct server_window_t *window)
 {
     notify_child(window, EVENT_WINDOW_SHOWN, 0);
+    notify_listener(window, EVENT_CHILD_WINDOW_SHOWN);
     notify_parent(window, EVENT_CHILD_WINDOW_SHOWN);
 }
 
 static inline void notify_win_hidden(struct server_window_t *window)
 {
     notify_child(window, EVENT_WINDOW_HIDDEN, 0);
+    notify_listener(window, EVENT_CHILD_WINDOW_HIDDEN);
     notify_parent(window, EVENT_CHILD_WINDOW_HIDDEN);
 }
 
 static inline void notify_win_raised(struct server_window_t *window)
 {
     notify_child(window, EVENT_WINDOW_RAISED, 0);
+    notify_listener(window, EVENT_CHILD_WINDOW_RAISED);
     notify_parent(window, EVENT_CHILD_WINDOW_RAISED);
 }
 
 static inline void notify_win_lowered(struct server_window_t *window)
 {
     notify_child(window, EVENT_WINDOW_LOWERED, 0);
+    notify_listener(window, EVENT_CHILD_WINDOW_LOWERED);
     notify_parent(window, EVENT_CHILD_WINDOW_LOWERED);
 }
 
-static inline void notify_win_lost_focus(struct server_window_t *window)
+static inline void notify_win_lost_focus(struct server_window_t *lost, struct server_window_t *gained)
 {
-    notify_child(window, EVENT_WINDOW_LOST_FOCUS, 0);
+    //notify_child(window, EVENT_WINDOW_LOST_FOCUS, 0);
+    send_focus_event(lost, gained ? gained->winid : 0, EVENT_WINDOW_LOST_FOCUS);
 }
 
-static inline void notify_win_gained_focus(struct server_window_t *window)
+static inline void notify_win_gained_focus(struct server_window_t *gained, struct server_window_t *lost)
 {
-    notify_child(window, EVENT_WINDOW_GAINED_FOCUS, 0);
+    //notify_child(window, EVENT_WINDOW_GAINED_FOCUS, 0);
+    send_focus_event(gained, lost ? lost->winid : 0, EVENT_WINDOW_GAINED_FOCUS);
 }
 
 static inline void notify_mouse_grab(struct server_window_t *window,

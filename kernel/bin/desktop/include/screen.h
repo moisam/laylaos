@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: screen.h
  *    This file is part of LaylaOS.
@@ -28,9 +28,28 @@
 #ifndef GUI_SCREEN_H
 #define GUI_SCREEN_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define SCREEN_COLOR_FORMAT_UNKNOWN      0
+#define SCREEN_COLOR_FORMAT_RGBA         1
+#define SCREEN_COLOR_FORMAT_BGRA         2
+#define SCREEN_COLOR_FORMAT_ARGB         3
+#define SCREEN_COLOR_FORMAT_ABGR         4
+#define SCREEN_COLOR_FORMAT_RGB          5
+#define SCREEN_COLOR_FORMAT_BGR          6
+
 #include "screen-struct.h"
+#include "rect-struct.h"
 
 int get_screen_info(struct screen_t *screen);
 int get_screen_palette(struct screen_t *screen);
+int get_screen_color_format(struct screen_t *screen);
+int get_desktop_bounds(Rect *r);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif      /* GUI_SCREEN_H */

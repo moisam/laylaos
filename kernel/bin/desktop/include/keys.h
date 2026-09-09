@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: keys.h
  *    This file is part of LaylaOS.
@@ -43,6 +43,7 @@ extern "C" {
 #define MODIFIER_MASK_CAPS              0x08
 #define MODIFIER_MASK_NUM               0x10
 #define MODIFIER_MASK_SCROLL            0x20
+#define MODIFIER_MASK_ALL               0x3F
 
 // Types of actions for key bindings. This tells the server what to do when
 // a key with given modifiers is pressed
@@ -87,18 +88,26 @@ static inline int is_printable_char(int key)
 
 extern char modifiers;
 
-/* int */ void server_process_key(struct gc_t *gc, char *key);
+void server_process_key(struct gc_t *gc, char *key);
 void server_key_bind(char key, char modifiers, int action, winid_t winid);
 void server_key_unbind(char key, char modifiers, winid_t winid);
 void key_state_bitmap(char *bitmap);
 
 #else       /* !GUI_SERVER */
 
+#include <stdint.h>
+
+// Window ID typedef
+#ifndef __WINID_TYPE_DEFINED__
+#define __WINID_TYPE_DEFINED__
+typedef uint64_t winid_t;
+#endif
+
 // Key names formatted as strings
 extern char *long_key_names[];
 
-void key_bind(char key, char modifiers, int action);
-void key_unbind(char key, char modifiers);
+void key_bind(winid_t receiver, char key, char modifiers, int action);
+void key_unbind(winid_t receiver, char key, char modifiers);
 int get_printable_char(char code, char modifiers);
 char *get_long_key_name(int key);
 

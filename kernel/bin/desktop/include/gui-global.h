@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: gui-global.h
  *    This file is part of LaylaOS.
@@ -74,7 +74,7 @@ struct __global_gui_data_t
     struct font_t sysfont, sysfont_bold;
 
     // system color theme - not all of it is used (see theme.h)
-    uint32_t themecolor[64];
+    uint32_t themecolor[128];
 };
 
 extern struct __global_gui_data_t __global_gui_data;

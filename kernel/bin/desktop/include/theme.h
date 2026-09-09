@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: theme.h
  *    This file is part of LaylaOS.
@@ -28,18 +28,54 @@
 #ifndef WINDOW_THEME_H
 #define WINDOW_THEME_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*********************************************
  * Global indices into the theme colors array
  *********************************************/
 enum
 {
     THEME_COLOR_WINDOW_BGCOLOR = 0,
-    THEME_COLOR_WINDOW_TITLECOLOR,
-    THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE,
+    THEME_COLOR_WINDOW_TITLECOLOR_TOP,
+    THEME_COLOR_WINDOW_TITLECOLOR_MID1,
+    THEME_COLOR_WINDOW_TITLECOLOR_MID2,
+    THEME_COLOR_WINDOW_TITLECOLOR_BOTTOM,
+    THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE_TOP,
+    THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE_MID1,
+    THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE_MID2,
+    THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE_BOTTOM,
     THEME_COLOR_WINDOW_TEXTCOLOR,
     THEME_COLOR_WINDOW_TEXTCOLOR_INACTIVE,
-    THEME_COLOR_WINDOW_BORDERCOLOR,
-    THEME_COLOR_WINDOW_BORDERCOLOR_INACTIVE,
+
+    THEME_COLOR_WINDOW_BORDERCOLOR_OUTER,
+    THEME_COLOR_WINDOW_BORDERCOLOR_MID,
+    THEME_COLOR_WINDOW_BORDERCOLOR_INNER,
+    THEME_COLOR_WINDOW_BORDERCOLOR_TOP_HI,
+    THEME_COLOR_WINDOW_BORDERCOLOR_INACTIVE_OUTER,
+    THEME_COLOR_WINDOW_BORDERCOLOR_INACTIVE_MID,
+    THEME_COLOR_WINDOW_BORDERCOLOR_INACTIVE_INNER,
+    THEME_COLOR_WINDOW_BORDERCOLOR_INACTIVE_TOP_HI,
+
+    THEME_COLOR_WINDOW_CONTROLBOX_BGCOLOR,
+    THEME_COLOR_WINDOW_CONTROLBOX_BGCOLOR_HOVER,
+    THEME_COLOR_WINDOW_CONTROLBOX_TEXT,
+    THEME_COLOR_WINDOW_CONTROLBOX_INACTIVE_BGCOLOR,
+    THEME_COLOR_WINDOW_CONTROLBOX_INACTIVE_BGCOLOR_HOVER,
+    THEME_COLOR_WINDOW_CONTROLBOX_INACTIVE_TEXT,
+
+    THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_BGCOLOR,
+    THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_TEXT,
+    THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_TEXT_SHADOW,
+    THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_INACTIVE_BGCOLOR,
+    THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_INACTIVE_TEXT,
+    THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_INACTIVE_TEXT_SHADOW,
+
+    THEME_COLOR_WINDOW_CONTROLBOX_BORDER_HI,
+    THEME_COLOR_WINDOW_CONTROLBOX_BORDER_LO,
+    THEME_COLOR_WINDOW_CONTROLBOX_BORDER_HI_HOVER,
+    THEME_COLOR_WINDOW_CONTROLBOX_BORDER_LO_HOVER,
 
     THEME_COLOR_BUTTON_BGCOLOR,
     THEME_COLOR_BUTTON_TEXTCOLOR,
@@ -89,16 +125,7 @@ enum
  * WINDOW theme colors
  ******************************************/
 
-#if 0
-#define WINDOW_BGCOLOR                      0xCDCFD4FF
-#define WINDOW_TITLECOLOR                   0x3B4047FF
-#define WINDOW_TITLECOLOR_INACTIVE          0x3B4047FF
-#define WINDOW_TEXTCOLOR                    0xCDCFD4FF
-#define WINDOW_TEXTCOLOR_INACTIVE           0x535E64FF
-#define WINDOW_BORDERCOLOR                  0x2E3238FF
-#endif
-
-#define WINDOW_BORDER_ALPHA                 0x000000AA
+//#define WINDOW_BORDER_ALPHA                 0x000000AA
 
 /* For widgets that want to look "3D" */
 
@@ -121,17 +148,10 @@ enum
 // normal state
 #define CLOSEBUTTON_BGCOLOR                 0x3B4047FF
 #define CLOSEBUTTON_TEXTCOLOR               0xCDCFD4FF
-//#define CLOSEBUTTON_BORDERCOLOR             0x3B4047FF
 
 // mouse-over state
 #define CLOSEBUTTON_MOUSEOVER_BGCOLOR       0xCDCFD4FF
 #define CLOSEBUTTON_MOUSEOVER_TEXTCOLOR     0x0D6C60FF
-//#define CLOSEBUTTON_MOUSEOVER_BORDERCOLOR   0xCDCFD4FF
-
-// depressed state
-//#define CLOSEBUTTON_DOWN_BGCOLOR            0xB4B4B8FF
-//#define CLOSEBUTTON_DOWN_TEXTCOLOR          0x0D6C60FF
-//#define CLOSEBUTTON_DOWN_BORDERCOLOR        0xB4B4B8FF
 
 /* Maximize button colors */
 
@@ -141,17 +161,10 @@ enum
 // normal state
 #define MAXIMIZEBUTTON_BGCOLOR              0x3B4047FF
 #define MAXIMIZEBUTTON_TEXTCOLOR            0xCDCFD4FF
-//#define MAXIMIZEBUTTON_BORDERCOLOR          0x3B4047FF
 
 // mouse-over state
 #define MAXIMIZEBUTTON_MOUSEOVER_BGCOLOR     0xCDCFD4FF
 #define MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR   0x0D6C60FF
-//#define MAXIMIZEBUTTON_MOUSEOVER_BORDERCOLOR 0xCDCFD4FF
-
-// depressed state
-//#define MAXIMIZEBUTTON_DOWN_BGCOLOR         0xB4B4B8FF
-//#define MAXIMIZEBUTTON_DOWN_TEXTCOLOR       0x0D6C60FF
-//#define MAXIMIZEBUTTON_DOWN_BORDERCOLOR     0xB4B4B8FF
 
 /* Minimize button colors */
 
@@ -161,48 +174,10 @@ enum
 // normal state
 #define MINIMIZEBUTTON_BGCOLOR              0x3B4047FF
 #define MINIMIZEBUTTON_TEXTCOLOR            0xCDCFD4FF
-//#define MINIMIZEBUTTON_BORDERCOLOR          0x3B4047FF
 
 // mouse-over state
 #define MINIMIZEBUTTON_MOUSEOVER_BGCOLOR     0xCDCFD4FF
 #define MINIMIZEBUTTON_MOUSEOVER_TEXTCOLOR   0x0D6C60FF
-//#define MINIMIZEBUTTON_MOUSEOVER_BORDERCOLOR 0xCDCFD4FF
-
-// depressed state
-//#define MINIMIZEBUTTON_DOWN_BGCOLOR         0xB4B4B8FF
-//#define MINIMIZEBUTTON_DOWN_TEXTCOLOR       0x0D6C60FF
-//#define MINIMIZEBUTTON_DOWN_BORDERCOLOR     0xB4B4B8FF
-
-/******************************************
- * BUTTON theme colors
- ******************************************/
-
-#if 0
-// normal state
-#define BUTTON_BGCOLOR                      0xCDCFD4FF
-#define BUTTON_TEXTCOLOR                    0x222226FF
-#define BUTTON_BORDERCOLOR                  0x222226FF
-
-// mouse-over state
-#define BUTTON_MOUSEOVER_BGCOLOR            0xB4B4B8FF
-#define BUTTON_MOUSEOVER_TEXTCOLOR          0x222226FF
-#define BUTTON_MOUSEOVER_BORDERCOLOR        0x222226FF
-
-// depressed state
-#define BUTTON_DOWN_BGCOLOR                 0x535E64FF
-#define BUTTON_DOWN_TEXTCOLOR               0xCDCFD4FF
-#define BUTTON_DOWN_BORDERCOLOR             0x222226FF
-
-// pushed state (for pushbuttons)
-#define BUTTON_PUSH_BGCOLOR                 0xE0DFE3FF
-#define BUTTON_PUSH_TEXTCOLOR               0x222226FF
-#define BUTTON_PUSH_BORDERCOLOR             0x222226FF
-
-// disabled state
-#define BUTTON_DISABLED_BGCOLOR             0xCDCFD4FF
-#define BUTTON_DISABLED_TEXTCOLOR           0xBABDC4FF
-#define BUTTON_DISABLED_BORDERCOLOR         0x222226FF
-#endif
 
 
 /******************************************
@@ -217,68 +192,11 @@ enum
 
 
 /******************************************
- * STATUSBAR theme colors
- ******************************************/
-
-#if 0
-#define STATUSBAR_BGCOLOR                   0xCDCFD4FF
-#define STATUSBAR_TEXTCOLOR                 0x222226FF
-#endif
-
-
-/******************************************
- * SCROLLBAR theme colors
- ******************************************/
-
-#if 0
-#define SCROLLBAR_BGCOLOR                   0xCDCFD4FF
-#define SCROLLBAR_TEXTCOLOR                 0x222226FF
-#endif
-
-
-/******************************************
  * GROUP-BORDER theme colors
  ******************************************/
 
 #define GROUP_BORDER_BGCOLOR                0xCDCFD4FF
 #define GROUP_BORDER_TEXTCOLOR              0x222226FF
-
-
-/******************************************
- * TEXTBOX theme colors
- ******************************************/
-
-#if 0
-#define TEXTBOX_BGCOLOR                     0xFFFFFFFF
-#define TEXTBOX_TEXTCOLOR                   0x000000FF
-#endif
-
-
-/******************************************
- * INPUTBOX theme colors
- *
- * These are also used by other "editable"
- * controls like the listview, spinner and
- * dropdown box.
- ******************************************/
-
-#if 0
-#define INPUTBOX_BGCOLOR                    0xFFFFFFFF
-#define INPUTBOX_TEXTCOLOR                  0x000000FF
-#define INPUTBOX_SELECT_BGCOLOR             0x16A085FF
-#define INPUTBOX_SELECT_TEXTCOLOR           0xFFFFFFFF
-#endif
-
-
-/******************************************
- * TOGGLE theme colors
- ******************************************/
-
-#if 0
-#define TOGGLE_BGCOLOR_ON                   0x16A085FF
-#define TOGGLE_BGCOLOR_OFF                  0x333333FF
-#define TOGGLE_BUTTON_COLOR                 0xDDDDDDFF
-#endif
 
 
 /******************************************
@@ -303,5 +221,10 @@ enum
 int get_color_theme(void);
 void send_color_theme_to_server(void);
 void set_color_theme(void *evbuf);
+void set_dark_color_theme(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif      /* WINDOW_THEME_H */

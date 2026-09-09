@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: gc.h
  *    This file is part of LaylaOS.
@@ -44,6 +44,11 @@ extern "C" {
 //     https://www.agner.org/optimize/#asmlib
 void * A_memcpy(void * dest, const void * src, size_t count);
 void * A_memset(void * dest, int c, size_t count);
+
+
+// flags for gc_copy_gc() and gc_copy_part_gc()
+#define GC_COPY_FLAG_ZERO_ALPHA_IS_OPAQUE       0x01
+#define GC_COPY_FLAG_HAS_TRANSPARENCY           0x02
 
 
 /**********************
@@ -112,6 +117,14 @@ void gc_draw_text_clipped_ttf(struct gc_t *gc, struct clipping_t *clipping,
                                                uint32_t color,
                                                char accelerator);
 
+void gc_vertical_gradient_clipped(struct gc_t *gc, struct clipping_t *clipping,
+                                  int x, int y,  
+                                  unsigned int width, 
+                                  unsigned int height,
+                                  uint32_t *colorarr);
+void gc_vertical_gradient_fill_colorarr(uint32_t *colorarr, int count, 
+                                        uint32_t color1, uint32_t color2);
+
 /**********************
  * Public functions
  **********************/
@@ -132,6 +145,10 @@ void gc_horizontal_line(struct gc_t *gc, int x, int y,
                                          unsigned int length, uint32_t color);
 void gc_vertical_line(struct gc_t *gc, int x, int y,
                                        unsigned int length, uint32_t color);
+
+void gc_vertical_gradient(struct gc_t *gc, int x, int y,  
+                          unsigned int width, unsigned int height,
+                          uint32_t color1, uint32_t color2);
 
 void gc_draw_text(struct gc_t *gc, char *string, int x, int y,
                                    uint32_t color, char accelerator);
@@ -182,6 +199,10 @@ void gc_set_font(struct gc_t *gc, struct font_t *font);
 void gc_set_fontsize(struct gc_t *gc, int sz);
 int gc_get_fontsize(struct gc_t *gc);
 
+int gc_copy_gc(struct gc_t *gcdest, struct gc_t *gcsrc, int flags);
+int gc_copy_part_gc(struct gc_t *gcdest, struct gc_t *gcsrc,
+                    int dx, int dy, int sx, int sy, int w, int h, int flags);
+
 
 #ifdef GUI_SERVER
 
@@ -202,21 +223,27 @@ void gc_copy_window(struct gc_t *gc, struct server_window_t *window);
  * Internal client-side functions
  **********************************/
 
+#if 0
 void gc_circle_clipped(struct gc_t *gc, struct clipping_t *__clipping,
                        int xc, int yc, int radius, int thickness, 
                        uint32_t color);
 void gc_circle_filled_clipped(struct gc_t *gc, struct clipping_t *__clipping,
                               int xc, int yc, int radius, uint32_t color);
+
 void gc_arc_clipped(struct gc_t *gc, struct clipping_t *__clipping,
                     int xc, int yc, int radius, int angle1, int angle2,
                     int thickness, uint32_t color);
+#endif
+
 void gc_line_clipped(struct gc_t *gc, struct clipping_t *__clipping,
                      int x1, int y1, int x2, int y2,
                      int __thickness, uint32_t color);
+
 void gc_draw_rect_thick_clipped(struct gc_t *gc, struct clipping_t *clipping,
                                 int x, int y, 
                                 unsigned int width, unsigned int height,
                                 int thickness, uint32_t color);
+
 void gc_polygon_clipped(struct gc_t *gc, struct clipping_t *__clipping,
                         int *vertices, int nvertex,
                         int thickness, uint32_t color);
@@ -237,14 +264,29 @@ void gc_circle(struct gc_t *gc, int xc, int yc,
 void gc_circle_filled(struct gc_t *gc, int xc, int yc,
                                        int radius, uint32_t color);
 
+void gc_oval(struct gc_t *gc, int xc, int yc,
+                              int xr, int yr, int thickness, uint32_t color);
+void gc_oval_filled(struct gc_t *gc, int xc, int yc,
+                                     int xr, int yr, uint32_t color);
+
+#if 0
 void gc_arc(struct gc_t *gc, int xc, int yc,
                              int radius, int angle1, int angle2,
                              int thickness, uint32_t color);
+#endif
 
+void gc_arc(struct gc_t *gc, int xc, int yc,
+                             int xr, int yr, int angle1, int angle2,
+                             int thickness, uint32_t color);
+void gc_arc_filled(struct gc_t *gc, int xc, int yc,
+                             int xr, int yr, int angle1, int angle2,
+                             uint32_t color);
+
+void gc_polyline(struct gc_t *gc, int *vertices, int nvertex,
+                                 int thickness, uint32_t color);
 void gc_polygon(struct gc_t *gc, int *vertices, int nvertex,
                                  int thickness, uint32_t color);
-void gc_polygon_fill(struct gc_t *gc, int *vertices, int nvertex,
-                                      uint32_t color);
+void gc_polygon_filled(struct gc_t *gc, int *vertices, int nvertex, uint32_t color);
 
 void gc_line(struct gc_t *gc, int x1, int y1, int x2, int y2,
                               int __thickness, uint32_t color);
@@ -252,6 +294,11 @@ void gc_draw_rect_thick(struct gc_t *gc, int x, int y,
                                          unsigned int width,
                                          unsigned int height,
                                          int thickness, uint32_t color);
+
+void gc_roundrect_filled(struct gc_t *gc, int x, int y, int w, int h, 
+                                          int arcW, int arcH, uint32_t color);
+void gc_roundrect(struct gc_t *gc, int x, int y, int w, int h, 
+                                   int arcW, int arcH, int thickness, uint32_t color);
 
 #endif      /* GUI_SERVER */
 

@@ -74,6 +74,7 @@ struct server_window_t *server_window_by_winid(winid_t winid);
 void draw_mouse_cursor(int invalidate);
 void may_draw_mouse_cursor(struct server_window_t *win);
 void server_window_may_hide(struct server_window_t *win);
+struct server_window_t *get_window_under_mouse(void);
 
 // server-window.c
 void server_window_draw_border(struct gc_t *gc, 
@@ -129,6 +130,8 @@ void server_window_set_title(struct gc_t *gc, struct server_window_t *window,
 void server_window_create_canvas(struct gc_t *gc, 
                                 struct server_window_t *window);
 
+void server_window_place_on_top(struct server_window_t *window);
+
 
 // server-window-controlbox.c
 void prep_window_controlbox(void);
@@ -137,12 +140,14 @@ void server_window_draw_controlbox(struct gc_t *gc,
                                     struct server_window_t *window,
                                     int wscreen_x, int wscreen_y, int flags);
 
-void server_window_toggle_minimize(struct gc_t *gc, 
-                                    struct server_window_t *window);
-void server_window_toggle_maximize(struct gc_t *gc, 
-                                    struct server_window_t *window, uint32_t seqid);
-void server_window_toggle_fullscreen(struct gc_t *gc, 
-                                    struct server_window_t *window, uint32_t seqid);
+void server_window_maximize(struct gc_t *gc,
+                            struct server_window_t *window,
+                            uint32_t seqid);
+void server_window_fullscreen(struct gc_t *gc,
+                              struct server_window_t *window,
+                              uint32_t seqid);
+void server_window_minimize(struct gc_t *gc, struct server_window_t *window);
+void server_window_restore(struct gc_t *gc, struct server_window_t *window, uint32_t seqid);
 
 void server_window_close(struct gc_t *gc, struct server_window_t *window);
 
@@ -152,5 +157,8 @@ void server_window_process_mouse(struct gc_t *gc,
                                     struct mouse_state_t *mstate);
 void server_window_mouseover(struct gc_t *gc, struct server_window_t *window,
                                     struct mouse_state_t *mstate);
+void server_update_mouse_cursor(struct server_window_t *window);
+struct server_window_t *find_mouse_child(struct server_window_t *window,
+                                         struct mouse_state_t *mstate);
 
 #endif      /* WINDOW_SERVER_H */

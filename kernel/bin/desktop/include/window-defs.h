@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: window-defs.h
  *    This file is part of LaylaOS.
@@ -42,19 +42,28 @@
 #define WINDOW_STATE_FULLSCREEN     4
 
 // Some flags to define our window behavior
-#define WINDOW_NODECORATION         0x01
-#define WINDOW_NOCONTROLBOX         0x02
-#define WINDOW_NOICON               0x04
-#define WINDOW_NORAISE              0x08
-#define WINDOW_HIDDEN               0x10
-#define WINDOW_NOFOCUS              0x20
-#define WINDOW_NORESIZE             0x40
-#define WINDOW_NOMINIMIZE           0x80
-#define WINDOW_ALWAYSONTOP          0x100
-#define WINDOW_SKIPTASKBAR          0x200
+#define WINDOW_NODECORATION         0x01     // do not draw a window frame
+#define WINDOW_NOCONTROLBOX         0x02     // do not draw a controlbox
+#define WINDOW_NOICON               0x04     // window has no icon
+#define WINDOW_NORAISE              0x08     // window cannot be raised
+#define WINDOW_HIDDEN               0x10     // window is not visible
+#define WINDOW_NOFOCUS              0x20     // window cannot accept focus
+#define WINDOW_NORESIZE             0x40     // cannot be resized (i.e. fixed size)
+#define WINDOW_NOMINIMIZE           0x80     // do no draw the minimize button
+#define WINDOW_ALWAYSONTOP          0x100    // always stays on top
+#define WINDOW_SKIPTASKBAR          0x200    // do not show in the taskbar
 #define WINDOW_ABSOLUTE_COORDS      0x4000   // for dialogs & frames, 
                                              // coordinates are not relative
                                              // to parent window
+#define WINDOW_IGNORE_ALT_F4        0x8000   // ALT-F4 will no trigger window close
+#define WINDOW_IS_FOCUSED           0x10000  // used by kits (e.g. Qt) to 
+                                             // remember if the window has
+                                             // keyboard focus
+#define WINDOW_TRANSPARENT          0x20000  // window has transparent background
+#define WINDOW_NOINPUT              0x40000  // do not process mouse events for this
+                                             // window (used in drag & drop)
+#define WINDOW_SUBWINDOW            0x80000  // this is an MDI subwindow (moves with
+                                             // parent and confined to its borders)
 
 // Flags for use by client applications
 #ifndef GUI_SERVER
@@ -102,7 +111,7 @@
 #define TEXT_ALIGN_CENTERH          0x20
 
 // Control buttons width/height
-#define CONTROL_BUTTON_LENGTH       (WINDOW_TITLEHEIGHT - (2 * WINDOW_BORDERWIDTH))
+#define CONTROL_BUTTON_LENGTH       (22)
 #define CONTROL_BUTTON_LENGTH2      (CONTROL_BUTTON_LENGTH + CONTROL_BUTTON_LENGTH)
 #define CONTROL_BUTTON_LENGTH3      (CONTROL_BUTTON_LENGTH * 3)
 
@@ -148,7 +157,10 @@
                                      (widget)->type != WINDOW_TYPE_GROUP_BORDER)
 
 // Window ID typedef
+#ifndef __WINID_TYPE_DEFINED__
+#define __WINID_TYPE_DEFINED__
 typedef uint64_t winid_t;
+#endif
 
 // Helper macros to work with Window IDs
 #define TO_WINID(p, i)          ((uint64_t)(p) | ((uint64_t)(i) << 32))

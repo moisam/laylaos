@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: window.h
  *    This file is part of LaylaOS.
@@ -114,6 +114,7 @@ static inline void window_invalidate(struct window_t *window)
 struct window_t *__window_create(struct window_attribs_t *attribs, 
                                  int8_t type, winid_t owner);
 struct window_t *window_create(struct window_attribs_t *attribs);
+int window_add_to_global_list(struct window_t *window, int assignid);
 void window_destroy(struct window_t *window);
 void window_destroy_children(struct window_t *window);
 void window_destroy_all(void);
@@ -133,15 +134,20 @@ void window_load_icon(struct window_t *window, unsigned int w, unsigned int h,
 void window_repaint(struct window_t *window);
 void window_insert_child(struct window_t *window, struct window_t *child);
 void window_set_min_size(struct window_t *window, uint16_t w, uint16_t h);
+void window_set_max_size(struct window_t *window, uint16_t w, uint16_t h);
 void window_resize(struct window_t *window, int16_t x, int16_t y,
                                             uint16_t w, uint16_t h);
 void window_set_pos(struct window_t *window, int x, int y);
 void window_set_size(struct window_t *window, int x, int y, 
                      uint16_t w, uint16_t h);
+void window_set_attrib_xxx(struct window_t *window, int which, int unset);
 void window_set_bordered(struct window_t *window, int bordered);
 void window_set_resizable(struct window_t *window, int resizable);
 void window_set_ontop(struct window_t *window, int ontop);
+void window_set_focusable(struct window_t *window, int focusable);
+void window_set_transparent(struct window_t *window, int transparent);
 void window_set_focus_child(struct window_t *window, struct window_t *child);
+void window_set_transparent_to_mouse(struct window_t *window, int yes);
 void window_enter_fullscreen(struct window_t *window);
 void window_exit_fullscreen(struct window_t *window);
 int window_grab_keyboard(struct window_t *window);
@@ -149,6 +155,11 @@ int window_ungrab_keyboard(struct window_t *window);
 void window_destroy_canvas(struct window_t *window);
 int window_new_canvas(struct window_t *window);
 void window_resize_layout(struct window_t *window);
+
+int get_win_attribs(winid_t winid, struct window_attribs_t *attribs);
+int get_win_state(winid_t winid);
+
+void register_window_event_listener(winid_t winid);
 
 // client-window-mouse.c
 void window_mouseover(struct window_t *window, int x, int y, 

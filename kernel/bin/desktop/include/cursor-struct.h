@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: cursor-struct.h
  *    This file is part of LaylaOS.
@@ -28,6 +28,8 @@
 #ifndef CURSOR_STRUCT_H
 #define CURSOR_STRUCT_H
 
+#include <kernel/mouse.h>       // typedef mouse_buttons_t
+
 // Typedef for cursor ids
 typedef uint32_t curid_t;
 
@@ -41,6 +43,25 @@ struct cursor_info_t
 #define CURSOR_HIDDEN       0
 #define CURSOR_SHOWN        1
     uint32_t flags;
+};
+
+// Struct to hold mouse cursor bitmap(s)
+struct cursor_bitmap_t
+{
+    uint32_t *data;
+    int w, h;
+    int hotx, hoty;
+    int delay;      /* delay in millisecs before next frame */
+
+#define CURSOR_FLAG_MALLOCED    0x01
+    uint32_t flags;
+};
+
+struct cursor_t
+{
+    int count;
+    int curframe;
+    struct cursor_bitmap_t bitmaps[1];
 };
 
 #endif      /* CURSOR_STRUCT_H */

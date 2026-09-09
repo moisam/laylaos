@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: cursor.h
  *    This file is part of LaylaOS.
@@ -36,42 +36,66 @@
 #error cursor.h should not be included in client applications
 #endif
 
+#include <sys/time.h>
 #include "../cursor.h"
 
-#define CURSOR_COUNT        64
-#define SYS_CURSOR_COUNT    11
+#define CURSOR_COUNT        4096
+#define SYS_CURSOR_COUNT    35
 
-//Information for drawing a pretty mouse
 #define MOUSE_WIDTH         16
 #define MOUSE_HEIGHT        24
 #define MOUSE_BUFSZ         (MOUSE_WIDTH * MOUSE_HEIGHT)
 
-struct cursor_t
-{
-    uint32_t *data;
-    int w, h;
-    int hotx, hoty;
 
-#define CURSOR_FLAG_MALLOCED    0x01
-    uint32_t flags;
-};
-
-extern struct cursor_t cursor[/* CURSOR_COUNT */];
-extern uint32_t transparent_color;
+extern struct cursor_t *cursor[/* CURSOR_COUNT */];
 extern volatile curid_t old_cursor;
 extern volatile curid_t cur_cursor;
+extern volatile int cur_timer_set;
 
 
 static inline void change_cursor(curid_t new_cursor)
 {
     old_cursor = cur_cursor;
     cur_cursor = new_cursor;
+
+    if(cursor[cur_cursor])
+    {
+        cursor[cur_cursor]->curframe = 0;
+
+        if(cursor[cur_cursor]->count > 1)
+        {
+            struct itimerval timer;
+            timer.it_interval.tv_sec = 0;
+            timer.it_interval.tv_usec = cursor[cur_cursor]->bitmaps[0].delay * 1000;
+            timer.it_value.tv_sec = 0;
+            timer.it_value.tv_usec = cursor[cur_cursor]->bitmaps[0].delay * 1000;
+
+            setitimer(ITIMER_REAL, &timer, NULL);
+            cur_timer_set = 1;
+        }
+        else if(cur_timer_set)
+        {
+            struct itimerval timer;
+            timer.it_interval.tv_sec = 0;
+            timer.it_interval.tv_usec = 0;
+            timer.it_value.tv_sec = 0;
+            timer.it_value.tv_usec = 0;
+
+            setitimer(ITIMER_REAL, &timer, NULL);
+            cur_timer_set = 0;
+        }
+    }
 }
 
 
+// defined in cursor.c
 void prep_mouse_cursor(struct gc_t *gc);
 curid_t server_cursor_load(struct gc_t *gc, int w, int h, 
                             int hotx, int hoty, uint32_t *data);
 void server_cursor_free(curid_t curid);
+
+// defined in cursor-x11.c
+int prep_mouse_cursor_x11(int pixelsz);
+void server_cursor_change_syscursor(struct event_res_t *evres);
 
 #endif      /* CURSOR_H */

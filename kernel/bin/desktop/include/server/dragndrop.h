@@ -1,8 +1,8 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2026 (c)
  * 
- *    file: mouse.h
+ *    file: dragndrop.h
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,41 +20,29 @@
  */    
 
 /**
- *  \file mouse.h
+ *  \file dragndrop.h
  *
- *  Declarations and struct definitions for working with the mouse on
- *  the client side.
+ *  Declarations and struct definitions for handling drag and drop operations
+ *  the server side.
+ *
+ *  The functions declared in this file are NOT intended for client
+ *  application use.
  */
 
-#ifndef CLIENT_MOUSE_H
-#define CLIENT_MOUSE_H
-
-#define WHEEL_DELTA                 120
-#define DOUBLE_CLICK_THRESHOLD      800 /* 500 */     /* millisecs */
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#ifndef SERVER_DRAGNDROP_H
+#define SERVER_DRAGNDROP_H
 
 #ifndef GUI_SERVER
-
-#include <stdint.h>
-#include <kernel/mouse.h>
-
-#include "list-struct.h"
-#include "window-defs.h"
-#include "mouse-state-struct.h"
-#include "event.h"
-#include "client/window-struct.h"
-
-int mouse_grab(struct window_t *window, int confine);
-void mouse_ungrab(void);
-winid_t window_get_under_mouse(void);
-
-#endif      /* !GUI_SERVER */
-
-#ifdef __cplusplus
-}
+#error dragndrop.h should not be included in client applications
 #endif
 
-#endif      /* CLIENT_MOUSE_H */
+extern struct server_window_t *dnd_current_target;
+extern struct server_window_t *dnd_current_source;
+
+void server_drag_start(struct event_t *ev);
+void server_drag_move(struct event_t *ev);
+void server_drag_cancel(void);
+void server_drag_drop(struct event_t *ev);
+void server_drag_response(struct event_t *ev);
+
+#endif      /* SERVER_DRAGNDROP_H */

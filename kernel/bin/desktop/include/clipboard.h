@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: clipboard.h
  *    This file is part of LaylaOS.
@@ -29,7 +29,12 @@
 #define GUI_CLIPBOARD_H
 
 #define CLIPBOARD_FORMAT_TEXT           0x01
-#define CLIPBOARD_FORMAT_COUNT          1
+#define CLIPBOARD_FORMAT_FILENAME       0x02
+#define CLIPBOARD_FORMAT_RICHTEXT       0x03
+#define CLIPBOARD_FORMAT_HTML           0x04
+#define CLIPBOARD_FORMAT_URL            0x05
+#define CLIPBOARD_FORMAT_IMAGE          0x06
+#define CLIPBOARD_FORMAT_COUNT          6
 
 #include <stddef.h>
 

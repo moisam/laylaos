@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: event.h
  *    This file is part of LaylaOS.
@@ -189,7 +189,7 @@ enum
     REQUEST_WINDOW_MINIMIZE,
     REQUEST_WINDOW_RESTORE,
     REQUEST_WINDOW_RAISE,
-    REQUEST_WINDOW_TOGGLE_STATE,
+    REQUEST_WINDOW_TOGGLE_STATE,                // 10
     REQUEST_WINDOW_SET_MIN_SIZE,
     REQUEST_WINDOW_RESIZE,
     REQUEST_WINDOW_RESIZE_ACCEPT,
@@ -199,7 +199,7 @@ enum
     REQUEST_WINDOW_SET_ICON,
     REQUEST_WINDOW_LOAD_ICON,
     REQUEST_WINDOW_SET_ATTRIBS,
-    REQUEST_WINDOW_INVALIDATE,
+    REQUEST_WINDOW_INVALIDATE,                  // 20
     REQUEST_WINDOW_GET_ICON,
     REQUEST_WINDOW_GET_ATTRIBS,
     REQUEST_WINDOW_GET_STATE,
@@ -209,7 +209,7 @@ enum
     REQUEST_WINDOW_NEW_CANVAS,
     REQUEST_GRAB_MOUSE,
     REQUEST_GRAB_AND_CONFINE_MOUSE,
-    REQUEST_UNGRAB_MOUSE,
+    REQUEST_UNGRAB_MOUSE,                       // 30
     REQUEST_CURSOR_LOAD,
     REQUEST_CURSOR_FREE,
     REQUEST_CURSOR_SHOW,
@@ -219,7 +219,7 @@ enum
     REQUEST_GRAB_KEYBOARD,
     REQUEST_UNGRAB_KEYBOARD,
     REQUEST_GET_INPUT_FOCUS,
-    REQUEST_GET_MODIFIER_KEYS,
+    REQUEST_GET_MODIFIER_KEYS,                  // 40
     REQUEST_GET_KEYS_STATE,
     REQUEST_BIND_KEY,
     REQUEST_UNBIND_KEY,
@@ -229,7 +229,7 @@ enum
     REQUEST_MENU_FRAME_HIDE,
     REQUEST_MENU_ADD,
     REQUEST_DIALOG_CREATE,
-    REQUEST_DIALOG_SHOW,
+    REQUEST_DIALOG_SHOW,                        // 50
     REQUEST_DIALOG_HIDE,
     REQUEST_RESOURCE_LOAD,
     REQUEST_RESOURCE_GET,
@@ -239,12 +239,36 @@ enum
     REQUEST_CLIPBOARD_QUERY,
     REQUEST_COLOR_PALETTE,
     REQUEST_COLOR_THEME_GET,
-    REQUEST_COLOR_THEME_SET,
+    REQUEST_COLOR_THEME_SET,                    // 60
     REQUEST_GET_ROOT_WINID,
-    REQUEST_LAST,       // currently 62
-    REQUEST_APPLICATION_PRIVATE = 65536,    // apps can define whatever 
-                                            // requests they want starting
-                                            // from here
+    REQUEST_WINDOW_SET_MAX_SIZE,
+    REQUEST_WINDOW_UNDER_MOUSE,
+    REQUEST_GET_SCREENSHOT,
+    REQUEST_GET_DESKTOP_BOUNDS,
+    REQUEST_EMULATE_MOUSE_EVENT,                // emulation events used by e.g.
+    REQUEST_EMULATE_KEY_PRESS_EVENT,            // java robot class
+    REQUEST_EMULATE_KEY_RELEASE_EVENT,
+    REQUEST_DRAG_START,
+    REQUEST_DRAG_MOVE,                          // 70
+    REQUEST_DRAG_DROP,
+    REQUEST_DRAG_CANCEL,
+    REQUEST_DRAG_RESPONSE,
+    REQUEST_REGISTER_WINDOW_LISTENER,
+    REQUEST_REGISTER_SYSTRAY_MANAGER,
+    REQUEST_SYSTRAY_MANAGER_WINID,
+    REQUEST_SYSTRAY_ADD,
+    REQUEST_SYSTRAY_REMOVE,
+    REQUEST_SYSTRAY_SHOW,
+    REQUEST_SYSTRAY_HIDE,                       // 80
+    REQUEST_SYSTRAY_SET_ICON,
+    REQUEST_SYSTRAY_SET_TOOLTIP,
+    REQUEST_SYSTRAY_GET_BOUNDS,
+    REQUEST_SYSTRAY_SHOW_MESSAGE,
+    REQUEST_CURSOR_CHANGE_SYSCURSOR,
+    REQUEST_LAST,                               // currently 86
+    REQUEST_APPLICATION_PRIVATE = 65536,        // apps can define whatever 
+                                                // requests they want starting
+                                                // from here
 };
 
 /*
@@ -257,7 +281,7 @@ enum
 {
     EVENT_SCREEN_INFO = 128,
     EVENT_WINDOW_CREATED,
-    EVENT_WINDOW_SHOWN,
+    EVENT_WINDOW_SHOWN,                     // 130
     EVENT_WINDOW_HIDDEN,
     EVENT_WINDOW_RAISED,
     EVENT_WINDOW_LOWERED,
@@ -267,7 +291,7 @@ enum
     EVENT_WINDOW_LOST_FOCUS,
     EVENT_WINDOW_GAINED_FOCUS,
     EVENT_WINDOW_CLOSING,
-    EVENT_WINDOW_ATTRIBS,
+    EVENT_WINDOW_ATTRIBS,                   // 140
     EVENT_WINDOW_STATE,
     EVENT_WINDOW_NEW_CANVAS,
     EVENT_CHILD_WINDOW_CREATED,
@@ -277,21 +301,17 @@ enum
     EVENT_CHILD_WINDOW_HIDDEN,
     EVENT_CHILD_WINDOW_RAISED,
     EVENT_CHILD_WINDOW_LOWERED,
-    EVENT_CHILD_WINDOW_DESTROYED,
+    EVENT_CHILD_WINDOW_DESTROYED,           // 150
     EVENT_MOUSE_GRABBED,
-    //EVENT_MOUSE_UNGRABBED,
     EVENT_CURSOR_LOADED,
     EVENT_CURSOR_INFO,
     EVENT_KEYBOARD_GRABBED,
-    //EVENT_KEYBOARD_UNGRABBED,
     EVENT_MODIFIER_KEYS,
     EVENT_KEYS_STATE,
     EVENT_MENU_FRAME_CREATED,
     EVENT_MENU_FRAME_HIDDEN,
-    //EVENT_MENU_ADDED,
     EVENT_MENU_SELECTED,
-    EVENT_DIALOG_CREATED,
-    //EVENT_DIALOG_HIDDEN,
+    EVENT_DIALOG_CREATED,                   // 160
     EVENT_MOUSE,
     EVENT_MOUSE_ENTER,
     EVENT_MOUSE_EXIT,
@@ -301,13 +321,23 @@ enum
     EVENT_CLIPBOARD_SET,
     EVENT_CLIPBOARD_DATA,
     EVENT_CLIPBOARD_HAS_DATA,
-    //EVENT_FONT_RESOURCE,
-    //EVENT_ICON_LOADED,
-    EVENT_COLOR_PALETTE_DATA,
+    EVENT_COLOR_PALETTE_DATA,               // 170
     EVENT_ERROR,
     EVENT_COLOR_THEME_DATA,
     EVENT_ROOT_WINID,
-    EVENT_LAST,             // currently 174
+    EVENT_SCREEN_RES_CHANGED,
+    EVENT_SCREENSHOT_DATA,
+    EVENT_DESKTOP_BOUNDS,
+    EVENT_DRAG_ENTER,
+    EVENT_DRAG_MOVE,
+    EVENT_DRAG_LEAVE,
+    EVENT_DRAG_DROP,                        // 180
+    EVENT_DRAG_RESPONSE,
+    EVENT_SYSTRAY_MANAGER_WINID,
+    EVENT_SYSTRAY_BOUNDS,
+    EVENT_SYSTRAY_CLICK,
+    EVENT_SYSTRAY_DOUBLE_CLICK,
+    EVENT_LAST,                             // currently 186
     EVENT_APPLICATION_PRIVATE = 16777216,   // apps can define whatever 
                                             // events they want starting
                                             // from here
@@ -390,6 +420,7 @@ struct event_t
         {
             int x, y;
             mouse_buttons_t buttons;
+            char modifiers;
         } mouse;
         
         // key events (press & release, including modifier kets like ALT, 
@@ -430,6 +461,16 @@ struct event_t
             int fmt;
             size_t sz;
         } clipboard;
+
+        // request pixel data from the screen (i.e. screenshot)
+        struct
+        {
+            int x, y;
+            int w, h;
+            size_t chunksz;     // data is sent in chunks of this size, this
+                                // includes only the size of the payload
+            winid_t winid;
+        } screenshot;
 
         // events returning an error result
         struct
@@ -480,6 +521,27 @@ struct event_cur_t
     uint32_t data[];
 };
 
+/*
+ * Event struct used to send systray message data to the systray manager.
+ */
+struct event_traymsg_t
+{
+    // the first 4 fields should be the same in all event struct types
+    uint32_t type;
+    uint32_t seqid;
+
+    // window id of event's source and destination
+    winid_t src, dest;
+
+    // non-zero if this is a valid server reply, 0 if server error happened
+    int valid_reply;
+
+    size_t titlelen, msglen;
+    int msgtype, msgduration;
+    size_t datasz;
+    char data[];
+};
+
 #include "resource-type.h"
 
 /*
@@ -525,6 +587,19 @@ struct event_res_t
         {
             uint8_t color_count;
         } palette;
+
+        struct
+        {
+            int mousex, mousey;
+            mouse_buttons_t buttons;
+            char modifiers;
+        } dnd;
+
+        struct
+        {
+            curid_t curid;
+            int pixelsz;
+        } syscur;
     };
 
     // When requesting a resource to be loaded, data contains the resource's
@@ -599,7 +674,6 @@ void notify_win_title_event(int fd, char *title, winid_t dest, winid_t src);
 #include "client/window-struct.h"
 
 void set_desktop_bounds(int top, int left, int bottom, int right);
-int get_win_attribs(winid_t winid, struct window_attribs_t *attribs);
 struct event_t *next_event_for_seqid(struct window_t *window, 
                                      uint32_t seqid, int wait);
 struct event_t *get_server_reply(uint32_t seqid);
@@ -607,6 +681,7 @@ int pending_events_timeout(time_t secs);
 int pending_events_utimeout(suseconds_t usecs);
 int pending_events(void);
 int event_dispatch(struct event_t *ev);
+int expand_internal_buffer(size_t newsz);
 
 #endif      /* !GUI_SERVER */
 

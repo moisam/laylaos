@@ -40,7 +40,7 @@ struct server_window_t
     int8_t state;
     int16_t x, y, xw1, yh1, client_xw1, client_yh1;
     int16_t client_x, client_y;
-    uint16_t w, h, minw, minh;
+    uint16_t w, h, minw, minh, maxw, maxh;
     uint16_t client_w, client_h;
 
     uint32_t flags;

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: rgb.h
  *    This file is part of LaylaOS.
@@ -344,5 +344,31 @@ static inline uint8_t alpha_blend8(struct gc_t *gc, uint32_t c1, uint8_t c2)
     tmp2 = (gdst + (((gsrc - gdst) * alpha + 0x80) >> 8)) & 0xff;
 
     return to_rgb8(gc, (tmp << 8) | (tmp2 << 16) | 0xff);
+}
+
+
+/*
+ * General functions go here.
+ */
+static inline uint32_t color_for_pixelwidth(struct gc_t *gc, uint32_t color)
+{
+    if(gc->pixel_width == 1)
+    {
+        color = to_rgb8(gc, color);
+    }
+    else if(gc->pixel_width == 2)
+    {
+        color = to_rgb16(gc, color);
+    }
+    else if(gc->pixel_width == 3)
+    {
+        color = to_rgb24(gc, color);
+    }
+    else
+    {
+        color = to_rgb32(gc, color);
+    }
+
+    return color;
 }
 

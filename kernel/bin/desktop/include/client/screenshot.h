@@ -1,8 +1,8 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2026 (c)
  * 
- *    file: mouse.h
+ *    file: screenshot.h
  *    This file is part of LaylaOS.
  *
  *    LaylaOS is free software: you can redistribute it and/or modify
@@ -20,41 +20,23 @@
  */    
 
 /**
- *  \file mouse.h
+ *  \file screenshot.h
  *
- *  Declarations and struct definitions for working with the mouse on
- *  the client side.
+ *  Functions to work with screenshots on the client side.
  */
 
-#ifndef CLIENT_MOUSE_H
-#define CLIENT_MOUSE_H
-
-#define WHEEL_DELTA                 120
-#define DOUBLE_CLICK_THRESHOLD      800 /* 500 */     /* millisecs */
+#ifndef GUI_SCREENSHOT_H
+#define GUI_SCREENSHOT_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#ifndef GUI_SERVER
-
-#include <stdint.h>
-#include <kernel/mouse.h>
-
-#include "list-struct.h"
-#include "window-defs.h"
-#include "mouse-state-struct.h"
-#include "event.h"
-#include "client/window-struct.h"
-
-int mouse_grab(struct window_t *window, int confine);
-void mouse_ungrab(void);
-winid_t window_get_under_mouse(void);
-
-#endif      /* !GUI_SERVER */
+uint32_t *screenshot_get(winid_t winid, int x, int y, int w, int h);
+void screenshot_free(uint32_t *screenshot);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif      /* CLIENT_MOUSE_H */
+#endif      /* GUI_SCREENSHOT_H */

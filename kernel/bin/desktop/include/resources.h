@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: resources.h
  *    This file is part of LaylaOS.
@@ -28,6 +28,10 @@
 
 #ifndef RESOURCES_H
 #define RESOURCES_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 // error type used in function calls
 #define INVALID_RESID               0x00
@@ -104,5 +108,9 @@ char *file_extension(char *filename);
 void stringify_file_size(char *buf, off_t file_size);
 
 #endif      /* GUI_SERVER */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif      /* RESOURCES_H */
