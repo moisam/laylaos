@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: procfs.h
  *    This file is part of LaylaOS.
@@ -57,7 +57,7 @@
  * macro to extract the dir bits from a procfs inode number (see procfs.c
  * for the structure of a procfs inode number)
  */
-#define INODE_DIR_BITS(i)           ((i) & 0xff)
+#define INODE_DIR_BITS(i)           (((i) >> 24) & 0xff)
 
 /**
  * \def INODE_SUBDIR_BITS
@@ -65,7 +65,7 @@
  * macro to extract the subdir bits from a procfs inode number (see procfs.c
  * for the structure of a procfs inode number)
  */
-#define INODE_SUBDIR_BITS(i)        (((i) >> 8) & 0xff)
+#define INODE_SUBDIR_BITS(i)        (((i) >> 16) & 0xff)
 
 /**
  * \def INODE_FILE_BITS
@@ -73,7 +73,7 @@
  * macro to extract the file bits from a procfs inode number (see procfs.c
  * for the structure of a procfs inode number)
  */
-#define INODE_FILE_BITS(i)          (((i) >> 16) & 0xffff)
+#define INODE_FILE_BITS(i)          ((i) & 0xffff)
 
 /**
  * \def MAKE_PROCFS_INODE
@@ -82,7 +82,7 @@
  * \a file number (see procfs.c for the structure of a procfs inode number)
  */
 #define MAKE_PROCFS_INODE(dir, subdir, file)   \
-            (((file) << 16) | ((subdir) << 8) | (dir))
+            ((file) | ((subdir) << 16) | ((dir) << 24))
 
 /**
  * \enum dir_proc_enum
@@ -92,13 +92,13 @@
  */
 enum dir_proc_enum
 {
-    DIR_PROC             = 1,   /**< dir is /proc */
-    DIR_BUS                 ,   /**< dir is /proc/bus */
-    DIR_BUS_PCI             ,   /**< dir is /proc/bus/pci */
-    DIR_SYS                 ,   /**< dir is /proc/sys */
-    DIR_TTY                 ,   /**< dir is /proc/tty */
-    DIR_NET                 ,   /**< dir is /proc/net */
-    DIR_PID                 ,   /**< dir is /proc/[pid] */
+    //DIR_PROC             = 1,   /**< dir is /proc */
+    //DIR_BUS                 ,   /**< dir is /proc/bus */
+    //DIR_BUS_PCI             ,   /**< dir is /proc/bus/pci */
+    //DIR_SYS                 ,   /**< dir is /proc/sys */
+    //DIR_TTY                 ,   /**< dir is /proc/tty */
+    //DIR_NET                 ,   /**< dir is /proc/net */
+    DIR_PID              = 1,   /**< dir is /proc/[pid] */
     DIR_PID_FD              ,   /**< dir is /proc/[pid]/fd */
     DIR_PID_TASK            ,   /**< dir is /proc/[pid]/task */
 };
@@ -149,6 +149,19 @@ enum dir_proc_enum
     b = tmp;                                    \
 }
 
+#define PR_REALLOC_OR_UNLOCK2(b, w, s, c, m)    \
+{                                               \
+    char *tmp;                                  \
+    volatile size_t ns = s;                     \
+    while(w > ns) ns *= 2;                      \
+    if(!(tmp = (char *)krealloc(b, ns))) {      \
+        kernel_mutex_unlock(m);                 \
+        return c;                               \
+    }                                           \
+    s = ns;                                     \
+    b = tmp;                                    \
+}
+
 
 /**
  * @var procfs_ops
@@ -157,14 +170,6 @@ enum dir_proc_enum
  * The procfs filesystem operations structure.
  */
 extern struct fs_ops_t procfs_ops;
-
-/**
- * @var procfs_root
- * @brief procfs root node.
- *
- * This variable points to the root node of the procfs filesystem.
- */
-extern struct fs_node_t *procfs_root;
 
 /**
  * @brief Initialize the procfs virtual filesystem.
@@ -445,57 +450,72 @@ size_t get_task_status(struct task_t *task, char **buf);
 /**************************************
  * Functions defined in procfs_file.c
  **************************************/
-size_t get_device_list(char **_buf);
-size_t get_fs_list(char **_buf);
-size_t get_uptime(char **buf);
-size_t get_version(char **buf);
-size_t get_vmstat(char **buf);
-size_t get_loadavg(char **buf);
-size_t get_meminfo(char **buf);
-size_t get_modules(char **buf);
-size_t get_cmdline(char **buf);
-size_t get_self(char **buf);
-size_t get_thread_self(char **buf);
+size_t get_device_list(char **_buf, void *arg);
+size_t get_fs_list(char **_buf, void *arg);
+size_t get_uptime(char **buf, void *arg);
+size_t get_version(char **buf, void *arg);
+size_t get_vmstat(char **buf, void *arg);
+size_t get_loadavg(char **buf, void *arg);
+size_t get_meminfo(char **buf, void *arg);
+size_t get_modules(char **buf, void *arg);
+size_t get_cmdline(char **buf, void *arg);
+size_t get_self(char **buf, void *arg);
+size_t get_thread_self(char **buf, void *arg);
 
-size_t get_mounts(char **buf);
-size_t get_mountstats(char **buf);
-size_t get_mountinfo(char **buf);
+size_t get_mounts(char **buf, void *arg);
+size_t get_mountstats(char **buf, void *arg);
+size_t get_mountinfo(char **buf, void *arg);
 
-size_t get_sysstat(char **buf);
-size_t get_pci_device_list(char **_buf);
+size_t get_sysstat(char **buf, void *arg);
+size_t get_pci_device_list(char **_buf, void *arg);
 size_t get_pci_device_config_space(struct pci_dev_t *pci, char **_buf);
-size_t get_interrupt_info(char **_buf);
-size_t get_ksyms(char **buf);
+size_t get_interrupt_info(char **_buf, void *arg);
+size_t get_ksyms(char **buf, void *arg);
 
-size_t get_partitions(char **buf);      // drivers/ata2.c
+size_t get_partitions(char **buf, void *arg);      // drivers/ata2.c
 
-size_t get_buffer_info(char **buf);     // fs/procfs_bufinfo.c
+size_t get_buffer_info(char **buf, void *arg);     // fs/procfs_bufinfo.c
 
-size_t get_syscalls(char **buf);        // syscall/syscall.c
+size_t get_syscalls(char **buf, void *arg);        // syscall/syscall.c
 
-size_t get_dns_list(char **buf);
-size_t get_arp_list(char **buf);        // net/arp.c
-size_t get_net_dev_stats(char **buf);   // net/netif.c
+size_t get_dns_list(char **buf, void *arg);
+size_t get_arp_list(char **buf, void *arg);        // net/arp.c
+size_t get_net_dev_stats(char **buf, void *arg);   // net/netif.c
 
 /**************************************
  * Functions defined in procfs_sock.c
  **************************************/
-size_t get_net_tcp(char **buf);
-size_t get_net_udp(char **buf);
-size_t get_net_unix(char **buf);
-size_t get_net_raw(char **buf);
+size_t get_net_tcp(char **buf, void *arg);
+size_t get_net_udp(char **buf, void *arg);
+size_t get_net_unix(char **buf, void *arg);
+size_t get_net_raw(char **buf, void *arg);
 
 /**************************************
  * Functions defined in procfs_tty.c
  **************************************/
-size_t get_tty_driver_list(char **buf);
+size_t get_tty_driver_list(char **buf, void *arg);
 
 /**************************************
  * Functions defined in procfs_tty.c
  **************************************/
-size_t detect_cpu(char **buf);
+size_t detect_cpu(char **buf, void *arg);
 
-/* this is defined in cpudet-clean.c */
-//extern void detect_cpu(char **buf);
+/**************************************
+ * Functions defined in procfs_acpi.c
+ **************************************/
+size_t get_bat_charge_full(char **buf, void *arg);
+size_t get_bat_charge_full_design(char **buf, void *arg);
+size_t get_bat_charge_now(char **buf, void *arg);
+size_t get_bat_capacity(char **buf, void *arg);
+size_t get_bat_model_name(char **buf, void *arg);
+size_t get_bat_serial_number(char **buf, void *arg);
+size_t get_bat_manufacturer(char **buf, void *arg);
+size_t get_bat_technology(char **buf, void *arg);
+size_t get_bat_type(char **buf, void *arg);
+size_t get_bat_status(char **buf, void *arg);
+size_t get_bat_cycle_count(char **buf, void *arg);
+size_t get_bat_info(char **buf, void *arg);
+size_t get_bat_present(char **buf, void *arg);
+size_t get_gpe(char **buf, void *arg);
 
 #endif      /* __PROC_FSYS_H__ */
