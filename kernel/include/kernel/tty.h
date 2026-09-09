@@ -234,6 +234,9 @@ extern int cur_tty;
 extern int total_ttys;
 extern struct tty_t ttytab[];
 
+extern int max_ttyw;
+extern int max_ttyh;
+
 
 /**************************************
  * Functions defined in tty.c

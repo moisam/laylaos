@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: vfs.h
  *    This file is part of LaylaOS.
@@ -42,7 +42,7 @@
  *******************************/
 
 #ifndef OPEN_MAX
-#define OPEN_MAX                32      /**< max open files per task */
+#define OPEN_MAX                64      /**< max open files per task */
 #endif
 
 #ifndef LINK_MAX
@@ -51,7 +51,7 @@
 
 #define NR_INODE                4096    /**< max inodes cached in memory */
 
-#define NR_FILE                 512     /**< max files open on the system */
+#define NR_FILETABLE            4096    /**< max files open on the system */
 
 #define NR_OPEN                 OPEN_MAX    /**< max files open per task 
                                                  (currently 32) */
@@ -106,6 +106,7 @@
  */
 #define GETNODE_FOLLOW_MPOINTS  0x01
 #define GETNODE_IGNORE_STALE    0x02
+#define GETNODE_PEEK_ONLY       0x04
 
 /*
  * MIX and MAX macros
@@ -318,6 +319,24 @@ long falloc(int *_fd, struct file_t **_f);
  * @return  zero on success, -(errno) on failure.
  */
 long closef(struct file_t *f);
+
+/**
+ * @brief First free file.
+ *
+ * Find the first free file in the master file table.
+ *
+ * @return  file struct on success, NULL on failure.
+ */
+struct file_t *ftab_first_free(void);
+
+/**
+ * @brief Mark file free.
+ *
+ * Marks the file as free in the master file table.
+ *
+ * @return  nothing.
+ */
+void ftab_mark_free(struct file_t *f);
 
 
 /**********************************

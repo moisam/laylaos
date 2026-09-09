@@ -237,6 +237,47 @@ struct FADT
 } __attribute__ ((packed));
 
 
+#define MAX_BATTERIES                       4
+
+struct one_battery_info_t
+{
+    void *handle;
+
+#define ACPI_BATTERY_STATE_DISCHARGING      0x01
+#define ACPI_BATTERY_STATE_CHARGING         0x02
+#define ACPI_BATTERY_STATE_CRITICAL         0x04
+    uint64_t state;
+
+    uint64_t rate;
+    uint64_t capacity;
+    uint64_t full_capacity;
+    uint64_t design_capacity;
+    uint64_t design_capacity_warn;
+    uint64_t design_capacity_low;
+    uint64_t capacity_gran[2];
+    uint64_t voltage;
+    uint64_t design_voltage;
+    uint64_t cycle_count;
+    char model[64];
+    char serial[64];
+    char oem_info[64];
+    char technology[8];
+    uint8_t is_rechargeable;    // 1 = yes; 0 = no
+    uint8_t is_present;         // 1 = yes; 0 = no
+    uint8_t power_unit;         // 1 = mAh; 0 = mWh
+};
+
+struct battery_info_t
+{
+    struct one_battery_info_t bat[MAX_BATTERIES];
+    int count;
+};
+
+// defined in kernel.c so it can be checked without loading the ACPI module
+extern struct battery_info_t sys_batinfo;
+extern uint32_t gpe0_count, gpe1_count, gpe1_base;
+
+
 /************************************
  * Function declarations
  ************************************/

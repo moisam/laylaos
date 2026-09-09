@@ -40,6 +40,7 @@
  */
 struct kernel_mutex_t
 {
+    char sig1[2];
     volatile uint32_t lock;       /**< mutex lock */
     volatile int recursive_count; /**< non-zero if mutex is recuresively locked */
     volatile struct task_t *holder;    /**< pointer to task holding the mutex */

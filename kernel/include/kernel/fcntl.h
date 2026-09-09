@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: fcntl.h
  *    This file is part of LaylaOS.
@@ -51,8 +51,8 @@
 struct alock_t
 {
     struct flock internal_lock;     /**< the actual lock */
-    struct alock_t *next,           /**< pointer to next lock in list */
-                   *prev;           /**< pointer to previous lock in list */
+    volatile struct alock_t *next,  /**< pointer to next lock in list */
+                            *prev;  /**< pointer to previous lock in list */
 };
 
 
@@ -88,7 +88,7 @@ long fcntl_setlock(struct file_t *fp, int cmd, struct flock *lock);
  *
  * @return  lock's start offset in \a fp.
  */
-off_t get_start(struct file_t *fp, struct flock *lock);
+off_t get_start(struct file_t *fp, volatile struct flock *lock);
 
 /**
  * @brief Calculate lock's start and end offsets.
@@ -109,7 +109,7 @@ off_t get_start(struct file_t *fp, struct flock *lock);
  *
  * @return  nothing.
  */
-void get_start_end(struct file_t *fp, struct flock *lock,
+void get_start_end(struct file_t *fp, volatile struct flock *lock,
                    off_t *__start, off_t *__end);
 
 /**

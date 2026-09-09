@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ahci.h
  *    This file is part of LaylaOS.
@@ -151,7 +151,7 @@ typedef volatile struct
  * Structure (FIS) packet. It is used by the host to send a command
  * to the device.
  */
-typedef struct
+typedef volatile struct
 {
     // DWORD 0
     uint8_t  fis_type;      /**< FIS_TYPE_REG_H2D */
@@ -194,7 +194,7 @@ typedef struct
  * Structure (FIS) packet. It is used by the device to notify the host
  * of a change in one or more registers.
  */
-typedef struct
+typedef volatile struct
 {
     // DWORD 0
     uint8_t  fis_type;      /**< FIS_TYPE_REG_D2H */
@@ -236,7 +236,7 @@ typedef struct
  * A structure to represent a Data Frame Information Structure (FIS) packet.
  * It is used by device or host to send a data payload to the other side.
  */
-typedef struct
+typedef volatile struct
 {
     // DWORD 0
     uint8_t  fis_type;      /**< FIS_TYPE_DATA */
@@ -259,7 +259,7 @@ typedef struct
  * packet. It is used by device to tell the host it is ready to send/receive
  * PIO data.
  */
-typedef struct
+typedef volatile struct
 {
     // DWORD 0
     uint8_t  fis_type;      /**< FIS_TYPE_PIO_SETUP */
@@ -305,7 +305,7 @@ typedef struct
  * packet. It is used by device to tell the host it is ready to send/receive
  * DMA data.
  */
-typedef struct
+typedef volatile struct
 {
     // DWORD 0
     uint8_t  fis_type;      /**< FIS_TYPE_DMA_SETUP */
@@ -381,7 +381,7 @@ typedef volatile struct
  * A structure to represent a Command Header, which is used in the Command
  * Lists the host uses to let the device know the commands it needs to do.
  */
-typedef struct
+typedef volatile struct
 {
     // DW0
     uint8_t  cfl:5;         /**< Command FIS length in DWORDS, 2 ~ 16 */
@@ -421,7 +421,7 @@ typedef struct
  * It is used by the host to inform the device of the requested data payload
  * address and size.
  */
-typedef struct
+typedef volatile struct
 {
     uint32_t dba;           /**< Data base address */
     uint32_t dbau;          /**< Data base address upper 32 bits */
@@ -442,7 +442,7 @@ typedef struct
  * It is used by the host to inform the device of the requested commands. It
  * is used with one or more PRDT entries (see \ref HBA_PRDT_ENTRY).
  */
-typedef struct
+typedef volatile struct
 {
     // 0x00
     uint8_t  cfis[64];      /**< Command FIS */
@@ -527,6 +527,10 @@ void ahci_init(struct pci_dev_t *pci);
 /*********************************************
  * Internal functions
  *********************************************/
+
+int ahci_sata_identify(struct ahci_dev_t *, int, uintptr_t, int);
+
+long achi_satapi_read_packet(struct ata_dev_s *, uintptr_t, size_t, size_t, int, unsigned char *, int);
 
 long achi_satapi_read_packet_virt(struct ata_dev_s *dev,
                                   uintptr_t virt_buf, size_t bufsz,

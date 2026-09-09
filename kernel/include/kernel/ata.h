@@ -40,6 +40,7 @@
 #define IDE_PATAPI                  0x01
 #define IDE_SATA                    0x02
 #define IDE_SATAPI                  0x03
+#define IDE_ERROR                   0xEF
 #define IDE_UNKNOWN                 0xFF
 
 /* I/O base registers */
@@ -196,6 +197,15 @@
                             ((uint32_t)((buf)[i + 2])<<16) | \
                             ((uint32_t)((buf)[i + 3])<<24))
 
+#define U64(buf, i)         ((uint64_t)((buf)[i]) |          \
+                            ((uint64_t)((buf)[i + 1])<<8) |  \
+                            ((uint64_t)((buf)[i + 2])<<16) | \
+                            ((uint64_t)((buf)[i + 3])<<24) | \
+                            ((uint64_t)((buf)[i + 4])<<32) | \
+                            ((uint64_t)((buf)[i + 5])<<40) | \
+                            ((uint64_t)((buf)[i + 6])<<48) | \
+                            ((uint64_t)((buf)[i + 7])<<56))
+
 #define get_dword(buf)	((uint32_t)((buf)[0]) | ((uint32_t)((buf)[1])<<8) | \
                         ((uint32_t)((buf)[2])<<16) | ((uint32_t)((buf)[3])<<24))
 
@@ -253,23 +263,21 @@ struct ata_dev_s
 {
     //unsigned char status;
     unsigned char type;      /**< ATA device type */
+    unsigned char heads;     /**< total heads */
     unsigned int cylinders,  /**< total cylinders */
                  sectors;    /**< total sectors */
-    unsigned char heads;     /**< total heads */
-    //size_t total_sectors;
     size_t size;             /**< size in bytes */
+
     char serial[21];         /**< device serial number */
     char firmware[9];        /**< device firmware string */
     char model[41];          /**< device model string */
+
     uint16_t ctrl,           /**< CTRL register of the device */
              base;           /**< BASE register of the device */
     uint16_t bmide;          /**< Base of 8 I/O ports for Bus Master IDE */
+    uint16_t physlog;        /**< physical/logical sector size (word 106 of IDENTIFY data) */
     unsigned char nien;      /**< nIEN (No Interrupt) */
     unsigned char uses_dma;  /**< non-zero if device uses DMA */
-    //uint32_t abar;
-    int irq;                 /**< IRQ number */
-    size_t bytes_per_sector; /**< bytes per sector */
-    //systime_t last_access_time;
 
 #define PRIMARY_MASTER		0
 #define PRIMARY_SLAVE		1
@@ -279,17 +287,20 @@ struct ata_dev_s
                                   1: primary slave,
                                   2: secondary master,
                                   3: secondary slave */
+    int irq;                 /**< IRQ number */
 
-    //struct ata_dev_s *next;
     unsigned short sign;         /**< device signature */
     unsigned short capabilities; /**< device capabilities */
     unsigned int commandsets;    /**< device commandsets */
+
+    size_t bytes_per_sector;     /**< bytes per sector */
     
     physical_addr dma_buf_phys, PRDT_phys;  /**< physical address of DMA
                                                  buffer and PRDT */
     virtual_addr dma_buf_virt, PRDT_virt;   /**< virtual address of DMA
                                                  buffer and PRDT */
     size_t dma_buf_size;         /**< DMA buffer size */
+    char *identify;              /**< cached identify data */
     
     // these fields are used by AHCI disks
     volatile union
@@ -428,7 +439,7 @@ long ata_wait(struct ata_dev_s *dev, unsigned char mask, unsigned int timeout);
  *
  * @return  zero on success, -(errno) on failure.
  */
-long ata_read_sectors(struct ata_dev_s *dev, unsigned char numsects,
+long ata_read_sectors(struct ata_dev_s *dev, int numsects,
                       size_t lba, virtual_addr buf);
 
 /**
@@ -444,7 +455,7 @@ long ata_read_sectors(struct ata_dev_s *dev, unsigned char numsects,
  *
  * @return  zero on success, -(errno) on failure.
  */
-long ata_write_sectors(struct ata_dev_s *dev, unsigned char numsects,
+long ata_write_sectors(struct ata_dev_s *dev, int numsects,
                        size_t lba, virtual_addr buf);
 
 
@@ -483,7 +494,7 @@ extern volatile struct task_t *disk_task;
  * @see     disk_task
  */
 long ata_add_req(struct ata_dev_s *dev,
-                 size_t lba, unsigned char numsects,
+                 size_t lba, int numsects,
                  virtual_addr buf, int write,
                  long (*func)(struct ata_dev_s *, virtual_addr));
 
@@ -546,5 +557,7 @@ long common_ata_ioctl(dev_t devid, struct ata_dev_s *dev,
 int read_disk_mbr(char *module, void *dev, size_t bytes_per_sector,
                   int (*read_sector)(void *, uintptr_t, uintptr_t, uint32_t),
                   void (*register_dev)(void *, struct parttab_s *, int));
+
+void ata_parse_identify_data(struct ata_dev_s *dev, unsigned char *buf);
 
 #endif      /* __ATA_H__ */

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: smp.h
  *    This file is part of LaylaOS.
@@ -59,6 +59,7 @@ struct processor_local_t
     volatile uint64_t irq_count[256];
     volatile uint64_t irq_ticks[256];
     volatile uint64_t softirq_ticks;
+    volatile unsigned long long iowait;
 
     volatile uint32_t irq_map[8];
 
@@ -69,6 +70,7 @@ struct processor_local_t
 	int bits_phys, bits_virt;
 	//unsigned long long cpuspeed;
 	unsigned long edx_features, ecx_features;
+	unsigned long microcode;
 };
 
 extern struct processor_local_t processor_local_data[];
@@ -105,6 +107,7 @@ static inline void __clear_cpu_flag(int flag)
 void smp_init(void);
 void wakeup_other_processors(void);
 void tlb_shootdown(uintptr_t vaddr);
+void tlb_shootdown_range(/* uintptr_t vaddr, size_t sz */);
 void halt_other_processors(void);
 
 #endif      /* KERNEL_SMP_H */

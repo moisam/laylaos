@@ -31,8 +31,8 @@
 
 #define MAX_IOAPIC                      32
 
-#define IOAPIC_ACTIVE_HIGH_LOW          (1 << 1)
-#define IOAPIC_TRIGGER_EDGE_LOW         (1 << 3)
+#define IOAPIC_ACTIVE_LOW               (1 << 1)
+#define IOAPIC_LEVEL_TRIGGER            (1 << 3)
 
 struct ioapic_t
 {

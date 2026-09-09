@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2025 (c)
+ *    Copyright 2025, 2026 (c)
  * 
  *    file: usb.h
  *    This file is part of LaylaOS.
@@ -27,6 +27,8 @@
 
 #ifndef KERNEL_USB_H
 #define KERNEL_USB_H
+
+#include <kernel/ata.h>
 
 /*
  * We construct USB device numbers as follows:
@@ -305,6 +307,7 @@ struct usb_dev_t
     void *priv;
     struct usb_endpoint_t *endpoints;
     struct usb_interface_t *interfaces;
+    struct usb_hid_descriptor_t *hid_desc;  /**< for HID devices */
     struct kernel_mutex_t lock;
 
     uint16_t spec;
@@ -401,6 +404,7 @@ long usb_msd_strategy(struct disk_req_t *req);
 long usb_msd_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel);
 void usb_msd_remove(struct usb_interface_t *iface);
 int usb_msd_read_sector_direct(void *__dev, uintptr_t phys_buf, uintptr_t virt_buf, uint32_t lba);
+long scsi_usb_passthrough(struct ata_dev_s *dev, char *arg);
 
 /****************************************
  * Functions defined in usb_ioctl.c

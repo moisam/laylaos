@@ -30,8 +30,14 @@
 
 #include <stdint.h>
 
+#define MAX_VGA_WIDTH           5120
+#define MAX_VGA_HEIGHT          2880
+
+#define MAX_FRAMEBUFFER_MEMSZ   0x4000000
+
 #define STANDARD_VGA_WIDTH	    80      /**< standard VGA screen width */
 #define STANDARD_VGA_HEIGHT	    25      /**< standard VGA screen height */
+
 #define VGA_MEMORY_PHYSICAL     0xB8000 /**< VGA physical buffer address */
 
 #ifdef __x86_64__

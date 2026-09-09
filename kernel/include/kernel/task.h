@@ -46,6 +46,8 @@
 #include "bits/task-defs.h"
 #include "rlimit.h"
 
+#define PID_HASH_BUCKETS        512
+#define PID_HASH_MASK           (PID_HASH_BUCKETS - 1)
 
 /**
  * @struct task_queue_t
@@ -148,6 +150,13 @@ extern volatile struct kernel_mutex_t scheduler_lock;    /**< master scheduler l
 extern int total_tasks;                     /**< total tasks on the system */
 extern pid_t next_pid;              /**< next pid for creating new tasks */
 
+// Global task hash bucket tracking tables
+extern volatile struct task_t *pid_hash_table[PID_HASH_BUCKETS];
+extern volatile struct task_t *tgid_hash_table[PID_HASH_BUCKETS];
+
+// Global fine-grained spinlocks to protect task mapping states safely
+extern volatile struct kernel_mutex_t pid_hash_lock;
+extern volatile struct kernel_mutex_t tgid_hash_lock;
 
 /**************************************
  * Functions defined in task.c

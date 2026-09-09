@@ -52,13 +52,6 @@
  */
 STATIC_INLINE long user_add_task_signal(volatile struct task_t *t, int signum, int force)
 {
-    /*
-    siginfo_t siginfo = {
-        .si_code = SI_USER,
-        .si_pid = this_core->cur_task->pid,
-        .si_uid = this_core->cur_task->uid,
-    };
-    */
     siginfo_nopad_t siginfo = {
         .sinp_code = SI_USER,
         .sinp_pid = this_core->cur_task->pid,
@@ -79,25 +72,43 @@ STATIC_INLINE long user_add_task_signal(volatile struct task_t *t, int signum, i
  *
  * @param   t           task to receive the signal
  * @param   code        code number to add to siginfo
- * @param   addr        the offending address causing this segment
- *                        violation signal
+ * @param   addr        the offending address causing this signal
  *
  * @return  zero on success, -(errno) on failure.
  */
 STATIC_INLINE long add_task_segv_signal(volatile struct task_t *t, int code, void *addr)
 {
-    /*
-    siginfo_t siginfo = {
-        .si_code = code,
-        .si_addr = addr,
-    };
-    */
     siginfo_nopad_t siginfo = {
         .sinp_code = code,
         .sinp_addr = addr,
     };
 
     return add_task_signal((struct task_t *)t, SIGSEGV, &siginfo, 1);
+}
+
+
+/**
+ * @brief Add a SIGILL signal to a task.
+ *
+ * Signal number SIGILL is added to the task's pending signals, and the 
+ * task is awakened if it is sleeping. This is a shorthand to calling
+ * add_task_signal() to deliver SIGILL, but it also fills the appropriate
+ * values for siginfo.
+ *
+ * @param   t           task to receive the signal
+ * @param   code        code number to add to siginfo
+ * @param   addr        the offending address causing this signal
+ *
+ * @return  zero on success, -(errno) on failure.
+ */
+STATIC_INLINE long add_task_ill_signal(volatile struct task_t *t, int code, void *addr)
+{
+    siginfo_nopad_t siginfo = {
+        .sinp_code = code,
+        .sinp_addr = addr,
+    };
+
+    return add_task_signal((struct task_t *)t, SIGILL, &siginfo, 1);
 }
 
 
@@ -111,25 +122,43 @@ STATIC_INLINE long add_task_segv_signal(volatile struct task_t *t, int code, voi
  *
  * @param   t           task to receive the signal
  * @param   code        code number to add to siginfo
- * @param   addr        the offending address causing this segment
- *                        violation signal
+ * @param   addr        the offending address causing this signal
  *
  * @return  zero on success, -(errno) on failure.
  */
 STATIC_INLINE long add_task_fpe_signal(volatile struct task_t *t, int code, void *addr)
 {
-    /*
-    siginfo_t siginfo = {
-        .si_code = code,
-        .si_addr = addr,
-    };
-    */
     siginfo_nopad_t siginfo = {
         .sinp_code = code,
         .sinp_addr = addr,
     };
 
     return add_task_signal((struct task_t *)t, SIGFPE, &siginfo, 1);
+}
+
+
+/**
+ * @brief Add a SIGTRAP signal to a task.
+ *
+ * Signal number SIGTRAP is added to the task's pending signals, and the 
+ * task is awakened if it is sleeping. This is a shorthand to calling
+ * add_task_signal() to deliver SIGTRAP, but it also fills the appropriate
+ * values for siginfo.
+ *
+ * @param   t           task to receive the signal
+ * @param   code        code number to add to siginfo
+ * @param   addr        the offending address causing this signal
+ *
+ * @return  zero on success, -(errno) on failure.
+ */
+STATIC_INLINE long add_task_trap_signal(volatile struct task_t *t, int code, void *addr)
+{
+    siginfo_nopad_t siginfo = {
+        .sinp_code = code,
+        .sinp_addr = addr,
+    };
+
+    return add_task_signal((struct task_t *)t, SIGTRAP, &siginfo, 1);
 }
 
 
@@ -148,15 +177,8 @@ STATIC_INLINE long add_task_fpe_signal(volatile struct task_t *t, int code, void
  */
 STATIC_INLINE long add_task_timer_signal(volatile struct task_t *t, int signum, ktimer_t timerid)
 {
-    /*
-    siginfo_t siginfo = {
-        .si_code = SI_TIMER,
-        .si_value.sival_int = timerid,
-        //.si_value.sival_ptr = ptr,
-    };
-
     //COPY_TO_USER(ptr, &timerid, sizeof(ktimer_t));
-    */
+
     siginfo_nopad_t siginfo = {
         .sinp_code = SI_TIMER,
         .sinp_value.sival_int = timerid,
@@ -207,16 +229,6 @@ STATIC_INLINE long add_task_child_signal(volatile struct task_t *t, int code, in
 
         if((act->sa_handler != SIG_IGN) && !(act->sa_flags & SA_NOCLDSTOP))
         {
-            /*
-            siginfo_t siginfo = {
-                .si_code = code,
-                .si_pid = t->pid,
-                .si_uid = t->uid,
-                .si_status = status,
-                .si_utime = t->user_time,
-                .si_stime = t->sys_time,
-            };
-            */
             siginfo_nopad_t siginfo = {
                 .sinp_code = code,
                 .sinp_pid = t->pid,

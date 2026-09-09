@@ -98,8 +98,8 @@ extern unsigned long avenrun[3];
  */
 #define PIT_FREQUENCY       100
 
-#define NSECS_PER_TICK      (1000000000 / PIT_FREQUENCY)
-#define USECS_PER_TICK      (1000000 / PIT_FREQUENCY)
+#define NSECS_PER_TICK      (1000000000ULL / PIT_FREQUENCY)
+#define USECS_PER_TICK      (1000000ULL / PIT_FREQUENCY)
 #define MSECS_PER_TICK      (1000 / PIT_FREQUENCY)
 #define NSEC_PER_USEC       1000
 #define USEC_PER_SEC        1000000
@@ -109,29 +109,15 @@ extern unsigned long avenrun[3];
 
 static inline void ticks_to_timespec(unsigned long long n, struct timespec *t)
 {
-    //t->tv_nsec = n * ntick;
-    t->tv_nsec = n * NSECS_PER_TICK;
     t->tv_sec = n / PIT_FREQUENCY;
-    
-    while(t->tv_nsec > 1000000000)
-    {
-        t->tv_nsec -= 1000000000;
-        t->tv_sec++;
-    }
+    t->tv_nsec = (long)((n % PIT_FREQUENCY) * NSECS_PER_TICK);
 }
 
 
 static inline void ticks_to_timeval(unsigned long long n, struct timeval *tv)
 {
-    //tv->tv_usec = n * tick;
-    tv->tv_usec = n * USECS_PER_TICK;
     tv->tv_sec = n / PIT_FREQUENCY;
-    
-    while(tv->tv_usec > 1000000)
-    {
-        tv->tv_usec -= 1000000;
-        tv->tv_sec++;
-    }
+    tv->tv_usec = (long)((n % PIT_FREQUENCY) * USECS_PER_TICK);
 }
 
 
@@ -139,14 +125,14 @@ static inline unsigned long long timeval_to_ticks(struct timeval *tv)
 {
     unsigned long long ticks;
 
-    ticks = tv->tv_sec * PIT_FREQUENCY;
-    ticks += (tv->tv_usec * PIT_FREQUENCY) / USEC_PER_SEC;
-
-    if(tv->tv_usec && tv->tv_usec % USECS_PER_TICK)
+    if(tv->tv_sec < 0 || tv->tv_usec < 0)
     {
-        ticks++;
+        return 0;
     }
-    
+
+    ticks = (unsigned long long)tv->tv_sec * PIT_FREQUENCY;
+    ticks += ((unsigned long long)tv->tv_usec * PIT_FREQUENCY + 999999ULL) / 1000000ULL;
+
     return ticks;
 }
 
@@ -155,14 +141,14 @@ static inline unsigned long long timespec_to_ticks(struct timespec *ts)
 {
     unsigned long long ticks;
 
-    ticks = ts->tv_sec * PIT_FREQUENCY;
-    ticks += (ts->tv_nsec * PIT_FREQUENCY) / NSEC_PER_SEC;
-
-    if(ts->tv_nsec && ts->tv_nsec % NSECS_PER_TICK)
+    if(ts->tv_sec < 0 || ts->tv_nsec < 0)
     {
-        ticks++;
+        return 0;
     }
-    
+
+    ticks = (unsigned long long)ts->tv_sec * PIT_FREQUENCY;
+    ticks += ((unsigned long long)ts->tv_nsec * PIT_FREQUENCY + 999999999ULL) / 1000000000ULL;
+
     return ticks;
 }
 

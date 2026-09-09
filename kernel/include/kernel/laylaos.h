@@ -38,6 +38,11 @@
 // define some system-wide upper limits
 #define MAX_NR_TASKS            4096
 
+// system states
+#define SYSTEM_STATE_BOOTING    1
+#define SYSTEM_STATE_RUNNING    2
+#define SYSTEM_STATE_SHUTDOWN   3
+
 // for debugging
 #ifdef __DEBUG
 #define KDEBUG(...)             printk(__VA_ARGS__)
@@ -65,9 +70,10 @@ extern unsigned int kernel_end;
 extern unsigned int kernel_start;
 
 /*
- * Symbol defined in kernel/kernel.c.
+ * Symbols defined in kernel/kernel.c.
  */
 extern size_t kernel_size;
+extern volatile int system_state;
 
 /*
  * Symbols defined in kernel/symbols.c.
@@ -203,9 +209,9 @@ extern unsigned long simple_strtoul(const char *__restrict nptr,
 #define USER_MEM_START          0x0000000000000000  /**< user memory start */
 #define USER_MEM_END            0x00007FFFFFFFFFFF  /**< user memory end   */
 
-#define USER_SHM_START          0x00007D8000000000  /**< shared memory start */
-#define USER_SHM_END            0x00007E8000000000  /**< shared memory end   */
-#define LIB_ADDR_START          0x00007E8000000000  /**< shared libs start */
+#define USER_SHM_START          0x0000708000000000  /**< shared memory start */
+#define USER_SHM_END            0x00007A8000000000  /**< shared memory end   */
+#define LIB_ADDR_START          0x00007A8000000000  /**< shared libs start */
 #define LIB_ADDR_END            0x00007F0000000000  /**< shared libs end   */
 #define STACK_START             0x00007F8000000000  /**< user stack start */
 //#define USER_ADDR_END           0x00007FFFFFFFFFFF
@@ -260,32 +266,23 @@ static inline void dump_regs(struct regs *r)
     uint32_t gs1, gs2;
     uint32_t kgs1, kgs2;
 
-    printk("cs 0x%02x\n"
-           "rax 0x%016lx    rbx 0x%016lx\n"
-           "rcx 0x%016lx    rdx 0x%016lx\n"
-           "r8  0x%016lx    r9  0x%016lx\n"
-           "r10 0x%016lx    r11 0x%016lx\n"
-           "r12 0x%016lx    r13 0x%016lx\n"
-           "r14 0x%016lx    r15 0x%016lx\n"
-           "rdi 0x%016lx    rsi 0x%016lx\n"
-           "rbp 0x%016lx    rsp 0x%016lx\n"
-           "userrsp 0x%016lx  ss 0x%02x\n"
-           "rip 0x%016lx    rflags 0x%016lx\n"
-           "int_no 0x%02x       err_code 0x%02x\n",
-           (r->cs & 0xff),
+    printk("cs 0x%02x  ss 0x%02x  int_no 0x%02x  err_code 0x%02x\n"
+           "rax 0x%016lx  rbx 0x%016lx  rcx 0x%016lx  rdx 0x%016lx\n"
+           "r8  0x%016lx  r9  0x%016lx  r10 0x%016lx  r11 0x%016lx\n"
+           "r12 0x%016lx  r13 0x%016lx  r14 0x%016lx  r15 0x%016lx\n"
+           "rdi 0x%016lx  rsi 0x%016lx  rbp 0x%016lx  rsp 0x%016lx\n"
+           "rip 0x%016lx  rflags 0x%016lx  userrsp 0x%016lx\n",
+           (r->cs & 0xff), (r->ss & 0xff), r->int_no, r->err_code,
            r->rax, r->rbx, r->rcx, r->rdx,
            r->r8, r->r9, r->r10, r->r11,
            r->r12, r->r13, r->r14, r->r15,
-           r->rdi, r->rsi,
-           r->rbp, r->rsp,
-           r->userrsp, (r->ss & 0xff),
-           r->rip, r->rflags,
-           r->int_no, r->err_code);
+           r->rdi, r->rsi, r->rbp, r->rsp,
+           r->rip, r->rflags, r->userrsp);
 
     __asm__ __volatile__("rdmsr" : "=a"(gs1), "=d"(gs2) : "c"(0xc0000101));
     __asm__ __volatile__("rdmsr" : "=a"(kgs1), "=d"(kgs2) : "c"(0xc0000102));
 
-    printk("gs 0x%08x%08x    kerngs 0x%08x%08x\n", gs2, gs1, kgs2, kgs1);
+    printk("gs 0x%08x%08x  kerngs 0x%08x%08x\n", gs2, gs1, kgs2, kgs1);
 }
 
 #else       /* !__x86_64__ */

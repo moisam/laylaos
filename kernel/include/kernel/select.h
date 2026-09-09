@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: select.h
  *    This file is part of LaylaOS.
@@ -30,6 +30,20 @@
 
 #include <sys/types.h>
 #include "bits/syscall-defs.h"
+#include "mutex.h"
+
+struct wait_queue_entry_t
+{
+    struct task_t *task;             // The waiting task context
+    struct wait_queue_entry_t *next; // Intrusive linked list nodes
+    struct wait_queue_entry_t *prev;
+};
+
+struct wait_queue_head_t
+{
+    struct kernel_mutex_t lock;
+    struct wait_queue_entry_t *head; // Head of the wait list
+};
 
 /**
  * @struct selinfo
@@ -40,7 +54,8 @@
  */
 struct selinfo
 {
-	int channel;    /**< select wait channel */
+	//int channel;    /**< select wait channel */
+    struct wait_queue_head_t wait_queue;
 };
 
 

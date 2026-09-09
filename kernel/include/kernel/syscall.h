@@ -1401,6 +1401,32 @@ long syscall_sched_get_priority_min(int policy);
  */
 long syscall_sched_yield(void);
 
+/**
+ * @brief Handler for syscall sched_getaffinity().
+ *
+ * Get the cpu affinity for the given task.
+ *
+ * @param   pid         task pid
+ * @param   cpusetsize  size of \a mask
+ * @param   mask        buffer to store the affinity mask
+ *
+ * @return  zero or positive number on success, -(errno) on failure.
+ */
+long syscall_sched_getaffinity(pid_t pid, size_t cpusetsize, unsigned long *mask);
+
+/**
+ * @brief Handler for syscall sched_setaffinity().
+ *
+ * Set the cpu affinity for the given task.
+ *
+ * @param   pid         task pid
+ * @param   cpusetsize  size of \a mask
+ * @param   mask        buffer containing the affinity mask
+ *
+ * @return  zero or positive number on success, -(errno) on failure.
+ */
+long syscall_sched_setaffinity(pid_t pid, size_t cpusetsize, unsigned long *mask);
+
 
 /**************************************
  * Functions defined in stat.c
