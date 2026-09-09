@@ -173,6 +173,7 @@
 #define __NR_getcwd                     183
 
 #define __NR_signalstack                186
+#define __NR_sendfile                   187
 
 #define __NR_vfork                      190
 
@@ -195,9 +196,12 @@
 #define __NR_setgid32                   214
 
 #define __NR_mincore                    218
+#define __NR_madvise                    219
 
 #define __NR_gettid                     224
 
+#define __NR_sched_setaffinity          241
+#define __NR_sched_getaffinity          242
 #define __NR_set_thread_area            243
 #define __NR_get_thread_area            244
 
@@ -266,6 +270,7 @@
 #define __NR_shutdown                   373
 
 #define __NR_mlock2                     376
+#define __NR_copy_file_range            377
 
 // END of Linux x86 syscall list (last entry is #384)
 // The following are LaylaOS-specific syscalls (they exist on non-x86 Linux)

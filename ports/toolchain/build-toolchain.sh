@@ -71,7 +71,7 @@ echo " ==>"
 mkdir -p ${GCC_SRCDIR}/build
 cd ${GCC_SRCDIR}/build || exit_failure "$0: failed to chdir to build directory"
 
-${GCC_SRCDIR}/configure --target=${TARGET} --prefix="${PREFIX}" --disable-nls --enable-languages=c,c++ --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --enable-shared --enable-threads=yes --enable-libssp --disable-tls
+${GCC_SRCDIR}/configure --target=${TARGET} --prefix="${PREFIX}" --disable-nls --enable-languages=c,c++ --with-sysroot=${CROSSCOMPILE_SYSROOT_PATH} --enable-shared --enable-threads=yes --enable-libssp
 
 make all-gcc || "$0: failed to build gcc (second pass)"
 make install-gcc || exit_failure "$0: failed to install gcc (second pass)"
@@ -96,8 +96,8 @@ ${MUSL_SRCDIR}/configure --prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \
     --syslibdir=${CROSSCOMPILE_SYSROOT_PATH}/usr/lib \
     --host=${BUILD_TARGET} --target=${BUILD_TARGET} \
     --enable-shared --enable-static \
-    CFLAGS="-I${CROSSCOMPILE_SYSROOT_PATH}/usr/include -D__laylaos__ -D__${BUILD_ARCH}__ -D_POSIX_SOURCE" \
-    CPPFLAGS="--sysroot=${CROSSCOMPILE_SYSROOT_PATH} -isystem=/usr/include" \
+    CFLAGS="-I${CROSSCOMPILE_SYSROOT_PATH}/usr/include -D__laylaos__ -D__${BUILD_ARCH}__ -D_POSIX_SOURCE -msse2" \
+    CPPFLAGS="--sysroot=${CROSSCOMPILE_SYSROOT_PATH} -isystem=/usr/include -isystem ${CROSSCOMPILE_TOOLS_PATH}/lib/gcc/${TARGET}/${CROSS_GCC_VERSION}/include" \
     CC=${CROSSTOOLS_PREFIX}-gcc CXX=${CROSSTOOLS_PREFIX}-g++ \
     AS=${CROSSTOOLS_PREFIX}-as AR=${CROSSTOOLS_PREFIX}-ar \
     RANLIB=${CROSSTOOLS_PREFIX}-ranlib LD=${CROSSTOOLS_PREFIX}-ld \

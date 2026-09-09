@@ -1,0 +1,33 @@
+diff -rub ./musl-1.2.4/src/conf/sysconf.c ./musl-1.2.4/src/conf/sysconf.c
+--- ./musl-1.2.4/src/conf/sysconf.c	2023-08-25 19:42:44.684414000 +0100
++++ ./musl-1.2.4/src/conf/sysconf.c	2026-04-11 23:46:06.869572338 +0100
+@@ -203,11 +203,7 @@
+ 	case JT_NPROCESSORS_ONLN & 255: ;
+ 		unsigned char set[128] = {1};
+ 		int i, cnt;
+-#ifndef __laylaos__
+ 		__syscall(SYS_sched_getaffinity, 0, sizeof set, set);
+-#else
+-#pragma message "sched_getaffinity is not supported on LaylaOS."
+-#endif
+ 		for (i=cnt=0; i<sizeof set; i++)
+ 			for (; set[i]; set[i]&=set[i]-1, cnt++);
+ 		return cnt;
+diff -rub ./musl-1.2.4/src/sched/affinity.c ./musl-1.2.4/src/sched/affinity.c
+--- ./musl-1.2.4/src/sched/affinity.c	2023-08-26 19:30:23.932322000 +0100
++++ ./musl-1.2.4/src/sched/affinity.c	2026-04-11 23:46:21.145674161 +0100
+@@ -4,8 +4,6 @@
+ #include "pthread_impl.h"
+ #include "syscall.h"
+ 
+-#ifndef __laylaos__
+-
+ int sched_setaffinity(pid_t tid, size_t size, const cpu_set_t *set)
+ {
+ 	return syscall(SYS_sched_setaffinity, tid, size, set);
+@@ -34,5 +32,3 @@
+ 	return -do_getaffinity(td->tid, size, set);
+ }
+ 
+-#endif
+-

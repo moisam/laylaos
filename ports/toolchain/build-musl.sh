@@ -45,7 +45,7 @@ echo " ==> Downloaded source is in ${DOWNLOAD_PORTS_PATH}"
 cd ${DOWNLOAD_PORTS_PATH}
 patch -i ${CWD}/${PATCH_FILE} -p0
 
-for n in 2 3 4 5 6; do
+for n in 2 3 4 5 6 7 8; do
     patch -i ${CWD}/musl${n}.diff -p0
 done
 
@@ -90,8 +90,8 @@ ${DOWNLOAD_SRCDIR}/configure --prefix=${CROSSCOMPILE_SYSROOT_PATH}/usr \
     --syslibdir=${CROSSCOMPILE_SYSROOT_PATH}/usr/lib \
     --host=${BUILD_TARGET} --target=${BUILD_TARGET} \
     --enable-shared --enable-static \
-    CFLAGS="-I${CROSSCOMPILE_SYSROOT_PATH}/usr/include -D__laylaos__ -D__${BUILD_ARCH}__ -D_POSIX_SOURCE" \
-    CPPFLAGS="--sysroot=${CROSSCOMPILE_SYSROOT_PATH} -isystem=/usr/include" \
+    CFLAGS="-I${CROSSCOMPILE_SYSROOT_PATH}/usr/include -D__laylaos__ -D__${BUILD_ARCH}__ -D_POSIX_SOURCE -msse2" \
+    CPPFLAGS="--sysroot=${CROSSCOMPILE_SYSROOT_PATH} -isystem=/usr/include -isystem ${CROSSCOMPILE_TOOLS_PATH}/lib/gcc/${BUILD_ARCH}-laylabootstrap/${CROSS_GCC_VERSION}/include" \
     CC=${CROSSTOOLS_PREFIX}-gcc CXX=${CROSSTOOLS_PREFIX}-g++ \
     AS=${CROSSTOOLS_PREFIX}-as AR=${CROSSTOOLS_PREFIX}-ar \
     RANLIB=${CROSSTOOLS_PREFIX}-ranlib LD=${CROSSTOOLS_PREFIX}-ld \

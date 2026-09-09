@@ -1,0 +1,444 @@
+diff -rub ./musl-1.2.4/src/dirent/__dirent.h ./musl-1.2.4/src/dirent/__dirent.h
+--- ./musl-1.2.4/src/dirent/__dirent.h	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/dirent/__dirent.h	2026-07-03 06:50:50.803235966 +0100
+@@ -7,5 +7,9 @@
+ 	volatile int lock[1];
+ 	/* Any changes to this struct must preserve the property:
+ 	 * offsetof(struct __dirent, buf) % sizeof(off_t) == 0 */
++#ifdef __laylaos__
++	char buf[4096];
++#else
+ 	char buf[2048];
++#endif
+ };
+diff -rub ./musl-1.2.4/src/mman/madvise.c ./musl-1.2.4/src/mman/madvise.c
+--- ./musl-1.2.4/src/mman/madvise.c	2023-09-19 21:00:09.877332000 +0100
++++ ./musl-1.2.4/src/mman/madvise.c	2026-06-18 22:41:52.472843502 +0100
+@@ -3,12 +3,7 @@
+ 
+ int __madvise(void *addr, size_t len, int advice)
+ {
+-#ifdef __laylaos__
+-	errno = ENOSYS;
+-	return -1;
+-#else
+ 	return syscall(SYS_madvise, addr, len, advice);
+-#endif
+ }
+ 
+ weak_alias(__madvise, madvise);
+diff -rub ./musl-1.2.4/src/mman/posix_madvise.c ./musl-1.2.4/src/mman/posix_madvise.c
+--- ./musl-1.2.4/src/mman/posix_madvise.c	2023-08-26 19:26:23.247577000 +0100
++++ ./musl-1.2.4/src/mman/posix_madvise.c	2026-06-18 22:41:57.636915033 +0100
+@@ -2,14 +2,9 @@
+ #include <sys/mman.h>
+ #include "syscall.h"
+ 
+-#ifndef __laylaos__
+-
+ int posix_madvise(void *addr, size_t len, int advice)
+ {
+ 	if (advice == MADV_DONTNEED) return 0;
+ 
+ 	return -__syscall(SYS_madvise, addr, len, advice);
+ }
+-
+-#endif
+-
+diff -rub ./musl-1.2.4/src/string/wcscmp.c ./musl-1.2.4/src/string/wcscmp.c
+--- ./musl-1.2.4/src/string/wcscmp.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/string/wcscmp.c	2026-07-04 07:42:06.324150743 +0100
+@@ -1,7 +1,41 @@
+ #include <wchar.h>
+ 
++#ifdef __laylaos__
++
++#include <emmintrin.h>
++
++int wcscmp(const wchar_t *l, const wchar_t *r)
++{
++    __m128i zero_vec = _mm_setzero_si128();
++
++    while (1) {
++        __m128i vec_l = _mm_loadu_si128((const __m128i *)l);
++        __m128i vec_r = _mm_loadu_si128((const __m128i *)r);
++
++        __m128i cmp_diff = _mm_cmpeq_epi32(vec_l, vec_r);
++        int diff_mask = ~_mm_movemask_epi8(cmp_diff) & 0xFFFF;
++
++        __m128i cmp_zero = _mm_cmpeq_epi32(vec_l, zero_vec);
++        int zero_mask = _mm_movemask_epi8(cmp_zero) & 0xFFFF;
++
++        if (diff_mask != 0 || zero_mask != 0) {
++            break;
++        }
++
++        l += 4;
++        r += 4;
++    }
++
++    for (; *l == *r && *l; l++, r++);
++    return *l < *r ? -1 : (*l > *r);
++}
++
++#else       // __laylaos__
++
+ int wcscmp(const wchar_t *l, const wchar_t *r)
+ {
+ 	for (; *l==*r && *l && *r; l++, r++);
+ 	return *l < *r ? -1 : *l > *r;
+ }
++
++#endif      // __laylaos__
+diff -rub ./musl-1.2.4/src/string/wcscpy.c ./musl-1.2.4/src/string/wcscpy.c
+--- ./musl-1.2.4/src/string/wcscpy.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/string/wcscpy.c	2026-07-04 07:43:38.067108815 +0100
+@@ -1,8 +1,40 @@
+ #include <wchar.h>
+ 
++#ifdef __laylaos__
++
++#include <emmintrin.h>
++
++wchar_t *wcscpy(wchar_t *restrict d, const wchar_t *restrict s)
++{
++    wchar_t *ret = d;
++    __m128i zero_vec = _mm_setzero_si128();
++
++    while (1) {
++        __m128i chunk = _mm_loadu_si128((const __m128i *)s);
++        
++        __m128i cmp_zero = _mm_cmpeq_epi32(chunk, zero_vec);
++        int zero_mask = _mm_movemask_epi8(cmp_zero) & 0xFFFF;
++
++        if (zero_mask != 0) {
++            break; // A null terminator exists in this block
++        }
++
++        _mm_storeu_si128((__m128i *)d, chunk);
++        s += 4;
++        d += 4;
++    }
++
++    while ((*d++ = *s++));
++    return ret;
++}
++
++#else       // __laylaos__
++
+ wchar_t *wcscpy(wchar_t *restrict d, const wchar_t *restrict s)
+ {
+ 	wchar_t *a = d;
+ 	while ((*d++ = *s++));
+ 	return a;
+ }
++
++#endif      // __laylaos__
+diff -rub ./musl-1.2.4/src/string/wcslen.c ./musl-1.2.4/src/string/wcslen.c
+--- ./musl-1.2.4/src/string/wcslen.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/string/wcslen.c	2026-07-04 07:37:15.899810604 +0100
+@@ -1,8 +1,37 @@
+ #include <wchar.h>
+ 
++#ifdef __laylaos__
++
++#include <emmintrin.h>
++
++size_t wcslen(const wchar_t *s)
++{
++    const wchar_t *start = s;
++    __m128i zero_vec = _mm_setzero_si128();
++
++    while (1) {
++        __m128i data_vec = _mm_loadu_si128((const __m128i *)s);
++        __m128i cmp = _mm_cmpeq_epi32(data_vec, zero_vec);
++
++        int mask = _mm_movemask_epi8(cmp);
++        if (mask != 0) {
++            int byte_index = __builtin_ctz(mask);
++            s += (byte_index / 4);
++            break;
++        }
++        s += 4;
++    }
++
++    return s - start;
++}
++
++#else       // __laylaos__
++
+ size_t wcslen(const wchar_t *s)
+ {
+ 	const wchar_t *a;
+ 	for (a=s; *s; s++);
+ 	return s-a;
+ }
++
++#endif      // __laylaos__
+diff -rub ./musl-1.2.4/src/string/wcsncmp.c ./musl-1.2.4/src/string/wcsncmp.c
+--- ./musl-1.2.4/src/string/wcsncmp.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/string/wcsncmp.c	2026-07-04 07:42:12.264081931 +0100
+@@ -1,7 +1,39 @@
+ #include <wchar.h>
+ 
++#ifdef __laylaos__
++
++#include <emmintrin.h>
++
++int wcsncmp(const wchar_t *l, const wchar_t *r, size_t n)
++{
++    __m128i zero_vec = _mm_setzero_si128();
++
++    while (n >= 4) {
++        __m128i vec_l = _mm_loadu_si128((const __m128i *)l);
++        __m128i vec_r = _mm_loadu_si128((const __m128i *)r);
++
++        int diff_mask = ~_mm_movemask_epi8(_mm_cmpeq_epi32(vec_l, vec_r)) & 0xFFFF;
++        int zero_mask = _mm_movemask_epi8(_mm_cmpeq_epi32(vec_l, zero_vec)) & 0xFFFF;
++
++        if (diff_mask != 0 || zero_mask != 0) {
++            break;
++        }
++
++        l += 4;
++        r += 4;
++        n -= 4;
++    }
++
++    for (; n && *l == *r && *l; n--, l++, r++);
++    return n ? (*l < *r ? -1 : (*l > *r)) : 0;
++}
++
++#else       // __laylaos__
++
+ int wcsncmp(const wchar_t *l, const wchar_t *r, size_t n)
+ {
+ 	for (; n && *l==*r && *l && *r; n--, l++, r++);
+ 	return n ? (*l < *r ? -1 : *l > *r) : 0;
+ }
++
++#endif      // __laylaos__
+diff -rub ./musl-1.2.4/src/string/wcsncpy.c ./musl-1.2.4/src/string/wcsncpy.c
+--- ./musl-1.2.4/src/string/wcsncpy.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/string/wcsncpy.c	2026-07-04 07:45:26.341929879 +0100
+@@ -1,5 +1,40 @@
+ #include <wchar.h>
+ 
++#ifdef __laylaos__
++
++#include <emmintrin.h>
++
++wchar_t *wcsncpy(wchar_t *restrict d, const wchar_t *restrict s, size_t n)
++{
++    wchar_t *ret = d;
++    __m128i zero_vec = _mm_setzero_si128();
++
++    while (n >= 4) {
++        __m128i chunk = _mm_loadu_si128((const __m128i *)s);
++        int zero_mask = _mm_movemask_epi8(_mm_cmpeq_epi32(chunk, zero_vec)) & 0xFFFF;
++
++        if (zero_mask != 0) {
++            break; // Null terminator found
++        }
++
++        _mm_storeu_si128((__m128i *)d, chunk);
++        s += 4;
++        d += 4;
++        n -= 4;
++    }
++
++    while (n && *s) {
++        n--;
++        *d++ = *s++;
++    }
++
++    if (n > 0) wmemset(d, 0, n);
++
++    return ret;
++}
++
++#else       // __laylaos__
++
+ wchar_t *wcsncpy(wchar_t *restrict d, const wchar_t *restrict s, size_t n)
+ {
+ 	wchar_t *a = d;
+@@ -7,3 +42,5 @@
+ 	wmemset(d, 0, n);
+ 	return a;
+ }
++
++#endif      // __laylaos__
+diff -rub ./musl-1.2.4/src/string/wmemchr.c ./musl-1.2.4/src/string/wmemchr.c
+--- ./musl-1.2.4/src/string/wmemchr.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/string/wmemchr.c	2026-07-04 07:36:09.300753446 +0100
+@@ -1,7 +1,44 @@
+ #include <wchar.h>
+ 
++#ifdef __laylaos__
++
++#include <emmintrin.h>
++
++wchar_t *wmemchr(const wchar_t *s, wchar_t c, size_t n)
++{
++    if (n >= 4) {
++        __m128i target_vec = _mm_set1_epi32(c);
++
++        while (n >= 4) {
++            __m128i data_vec = _mm_loadu_si128((const __m128i *)s);
++            __m128i cmp = _mm_cmpeq_epi32(data_vec, target_vec);
++            
++            int mask = _mm_movemask_epi8(cmp);
++            if (mask != 0) {
++                int byte_index = __builtin_ctz(mask);
++                return (wchar_t *)s + (byte_index / 4);
++            }
++
++            s += 4;
++            n -= 4;
++        }
++    }
++
++    for (; n; n--, s++) {
++        if (*s == c) {
++            return (wchar_t *)s;
++        }
++    }
++
++    return NULL;
++}
++
++#else       // __laylaos__
++
+ wchar_t *wmemchr(const wchar_t *s, wchar_t c, size_t n)
+ {
+ 	for (; n && *s != c; n--, s++);
+ 	return n ? (wchar_t *)s : 0;
+ }
++
++#endif      // __laylaos__
+diff -rub ./musl-1.2.4/src/string/wmemcmp.c ./musl-1.2.4/src/string/wmemcmp.c
+--- ./musl-1.2.4/src/string/wmemcmp.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/string/wmemcmp.c	2026-07-04 07:34:14.334503643 +0100
+@@ -1,7 +1,46 @@
+ #include <wchar.h>
+ 
++#ifdef __laylaos__
++
++#include <emmintrin.h>
++
++int wmemcmp(const wchar_t *l, const wchar_t *r, size_t n)
++{
++    while (n >= 4) {
++        __m128i vec_l = _mm_loadu_si128((const __m128i *)l);
++        __m128i vec_r = _mm_loadu_si128((const __m128i *)r);
++
++        // Compare elements for equality (produces 0xFFFFFFFF if matching, 0x0 if not)
++        __m128i cmp = _mm_cmpeq_epi32(vec_l, vec_r);
++
++        int mask = _mm_movemask_epi8(cmp);
++
++        // If the mask is not 0xFFFF, it means at least one of the 4 elements differs
++        if (mask != 0xFFFF) {
++            break; 
++        }
++
++        l += 4;
++        r += 4;
++        n -= 4;
++    }
++
++    // Scalar evaluation pass to process remaining elements or isolate the mismatching index
++    for (; n; n--, l++, r++) {
++        if (*l != *r) {
++            return *l < *r ? -1 : 1;
++        }
++    }
++
++    return 0;
++}
++
++#else       // __laylaos__
++
+ int wmemcmp(const wchar_t *l, const wchar_t *r, size_t n)
+ {
+ 	for (; n && *l==*r; n--, l++, r++);
+ 	return n ? (*l < *r ? -1 : *l > *r) : 0;
+ }
++
++#endif      // __laylaos__
+diff -rub ./musl-1.2.4/src/string/wmemcpy.c ./musl-1.2.4/src/string/wmemcpy.c
+--- ./musl-1.2.4/src/string/wmemcpy.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/string/wmemcpy.c	2026-07-04 08:00:19.395431624 +0100
+@@ -1,8 +1,33 @@
+ #include <wchar.h>
+ 
++#ifdef __laylaos__
++
++#include <emmintrin.h>
++
++wchar_t *wmemcpy(wchar_t *restrict d, const wchar_t *restrict s, size_t n)
++{
++    wchar_t *a = d;
++
++    while (n >= 4) {
++        __m128i chunk = _mm_loadu_si128((const __m128i *)s);
++        _mm_storeu_si128((__m128i *)d, chunk);
++        s += 4;
++        d += 4;
++        n -= 4;
++    }
++
++    while (n--) *d++ = *s++;
++
++    return a;
++}
++
++#else       // __laylaos__
++
+ wchar_t *wmemcpy(wchar_t *restrict d, const wchar_t *restrict s, size_t n)
+ {
+ 	wchar_t *a = d;
+ 	while (n--) *d++ = *s++;
+ 	return a;
+ }
++
++#endif      // __laylaos__
+diff -rub ./musl-1.2.4/src/string/wmemset.c ./musl-1.2.4/src/string/wmemset.c
+--- ./musl-1.2.4/src/string/wmemset.c	2023-05-02 16:45:28.000000000 +0100
++++ ./musl-1.2.4/src/string/wmemset.c	2026-07-04 07:29:03.880313109 +0100
+@@ -1,8 +1,35 @@
+ #include <wchar.h>
+ 
++#ifdef __laylaos__
++
++#include <emmintrin.h>
++
+ wchar_t *wmemset(wchar_t *d, wchar_t c, size_t n)
+ {
+ 	wchar_t *ret = d;
++
++    if (n >= 4) {
++        __m128i val_vec = _mm_set1_epi32(c);
++
++        while (n >= 4) {
++            _mm_storeu_si128((__m128i *)d, val_vec);
++            d += 4;
++            n -= 4;
++        }
++    }
++
+ 	while (n--) *d++ = c;
++
+ 	return ret;
+ }
++
++#else       // __laylaos__
++
++wchar_t *wmemset(wchar_t *d, wchar_t c, size_t n)
++{
++	wchar_t *ret = d;
++	while (n--) *d++ = c;
++	return ret;
++}
++
++#endif      // __laylaos__

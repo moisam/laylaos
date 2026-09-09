@@ -62,7 +62,8 @@ PERL=${HOST_PERL_FOR_CROSSCOMPILE} PERL_EXT_CC=$CC \
     --host=${BUILD_TARGET} --build=x86_64-pc-linux-gnu \
     --prefix=/usr \
     --with-included-regex --enable-cross-guesses=risky texinfo_cv_sys_iconv_converts_euc_cn=yes \
-    --enable-perl-xs --enable-perl-api-texi-build --disable-tp-tests --disable-pod-simple-texinfo-tests \
+    --enable-perl-api-texi-build --disable-tp-tests --disable-pod-simple-texinfo-tests \
+    --disable-perl-xs \
     || exit_failure "$0: failed to configure ${DOWNLOAD_NAME}"
 
 make || exit_failure "$0: failed to build ${DOWNLOAD_NAME}"

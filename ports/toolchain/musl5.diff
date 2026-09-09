@@ -7,7 +7,7 @@ diff -rub ./musl-1.2.4/src/thread/pthread_cond_destroy.c ./musl-1.2.4/src/thread
              pthread_cond_broadcast(c);
 -            sched_yield();
 +            //sched_yield();
-+    		struct timespec tv = { .tv_sec = 0, .tv_nsec = 500000000 };
++    		struct timespec tv = { .tv_sec = 0, .tv_nsec = 20000000 };
 +    		__syscall_cp(SYS_nanosleep, &tv, &tv);
          }
      }
@@ -21,7 +21,7 @@ diff -rub ./musl-1.2.4/src/thread/pthread_cond_timedwait.c ./musl-1.2.4/src/thre
  		pthread_mutex_unlock(m);
 -		sched_yield();
 +		//sched_yield();
-+		struct timespec tv = { .tv_sec = 0, .tv_nsec = 500000000 };
++		struct timespec tv = { .tv_sec = 0, .tv_nsec = 20000000 };
 +		__syscall_cp(SYS_nanosleep, &tv, &tv);
  		pthread_mutex_lock(m);
      }
@@ -35,7 +35,7 @@ diff -rub ./musl-1.2.4/src/thread/sem_timedwait.c ./musl-1.2.4/src/thread/sem_ti
  
 -        sched_yield();
 +        //sched_yield();
-+		struct timespec tv = { .tv_sec = 0, .tv_nsec = 500000000 };
++		struct timespec tv = { .tv_sec = 0, .tv_nsec = 20000000 };
 +		__syscall_cp(SYS_nanosleep, &tv, &tv);
      }
  
@@ -49,7 +49,7 @@ diff -rub ./musl-1.2.4/src/thread/sem_wait.c ./musl-1.2.4/src/thread/sem_wait.c
  
 -        sched_yield();
 +        //sched_yield();
-+		struct timespec tv = { .tv_sec = 0, .tv_nsec = 500000000 };
++		struct timespec tv = { .tv_sec = 0, .tv_nsec = 20000000 };
 +		__syscall_cp(SYS_nanosleep, &tv, &tv);
      }
  

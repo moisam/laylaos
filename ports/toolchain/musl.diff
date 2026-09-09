@@ -2555,7 +2555,7 @@ diff -rub ./musl-1.2.4/src/process/posix_spawn.c ./musl-1.2.4/src/process/posix_
 +#ifdef __laylaos__
 +	//pid = __clone(child, stack+sizeof stack,
 +	//	CLONE_VM|CLONE_VFORK|SIGCHLD, &args, 0, 0, 0);
-+	pid = fork();
++	pid = vfork();
 +	
 +	if(pid == 0)
 +	{
