@@ -105,7 +105,7 @@ ISR_NOERRCODE 31
  * - Define handlers for ISRs 40 to 46
  * - ISR 47 (i.e. IRQ 15) has a special handler for spurious IRQs below
  * - Define handlers for ISRs 48 to 122
- * - ISRs 123 to 126 have special handlers below
+ * - ISRs 122 to 126 have special handlers below
  * - Define handlers for ISRs 127 to 254
  * - Finally, ISR 255 has a special handler for spurious APIC IRQs
  */
@@ -122,7 +122,7 @@ ISR_NOERRCODE 31
 .endr
 
 .set i, 48
-.rept 123 - 48
+.rept 122 - 48
     ISR_NOERRCODE %i
     .set i, i + 1
 .endr
@@ -243,6 +243,25 @@ isr47:
     outb %al, $0x20
     
     popq %rax
+    iretq
+
+/*
+ * TLB range shootdown
+ */
+.global isr122
+isr122:
+    cli
+    pushq $0     // dummy error code
+    pushq $122
+    _SWAPGS
+    PUSHAQ
+    call handle_tlb_range_shootdown
+    movabsq $lapic_virt, %rax
+    movq (%rax), %rax
+    movl $0x0, 0xb0(%rax)
+    POPAQ
+    _SWAPGS
+    add $16, %rsp     // Clean up the pushed error code and pushed ISR number
     iretq
 
 

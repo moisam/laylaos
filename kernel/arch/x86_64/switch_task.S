@@ -51,6 +51,7 @@
  *  0(%esp) - return address
  */
 save_context:
+    mfence
     movq %rax, TASK_RAX_FIELD(%rdi)
     leaq 8(%rsp), %rax
     movq %rax, TASK_RSP_FIELD(%rdi)
@@ -170,6 +171,8 @@ restore_context:
     popq %rcx
     
     movq $1, %rax
+
+    mfence
 
     //retq                        // Load next task's RIP from its kernel stack
     jmpq *TASK_RIP_FIELD(%rdi)

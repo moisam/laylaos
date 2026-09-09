@@ -170,6 +170,13 @@ physical_addr get_phys_addr(virtual_addr virt)
         return 0;
     }
 
+    // pages in the HIMEM region are identity mapped
+    // get those out of the way first
+    if((virt & HIMEM_START) == HIMEM_START)
+    {
+        return (virt & ~HIMEM_START);
+    }
+
     if(!PDE_PRESENT(pml4->m_entries_phys[pml4i]))
     {
         return 0;
@@ -342,6 +349,8 @@ void vmmngr_initialize(unsigned long addr)
     size_t frames = pmmngr_get_block_count();
     frame_shares = (uint8_t *)kmalloc(frames);
     A_memset((void *)frame_shares, 0, frames);
+
+    //pmmngr_save_memmap(addr);
 
     if(!using_ega())
     {
@@ -610,6 +619,164 @@ void free_user_pages(virtual_addr src_addr)
         __free_user_page(src_pml4v, i);
         __atomic_store_n(&(src_pml4v->m_entries_phys[i]), 0, __ATOMIC_SEQ_CST);
         __asm__ __volatile__("":::"memory");
+    }
+}
+
+
+extern volatile struct kernel_mutex_t physmem_lock;
+
+/*
+ * Free pages in physical memory.
+ */
+void vmmngr_free_pages(virtual_addr addr, size_t sz)
+{
+    virtual_addr laddr = addr + sz;
+    virtual_addr i = addr;
+    size_t pml4i, pdpi, pdi;
+    pdirectory *pdp, *pd;
+    ptable *pt;
+    pt_entry *e;
+    void *p;
+    int full_flush = (sz >= MAX_TLB_INVLPG_SIZE);
+
+    pdirectory *pml4 = this_core->cur_task ? 
+                        (pdirectory *)this_core->cur_task->pd_virt : 
+                                      vmmngr_get_directory_virt();
+
+    if(!pml4)
+    {
+        return;
+    }
+
+    if(full_flush)
+    {
+        vmmngr_flush_tlb_range(/* i, sz */);
+    }
+
+    elevated_priority_lock(&physmem_lock);
+    
+    while(i < laddr)
+    {
+        pml4i = PML4_INDEX(i);
+        pdpi = PDP_INDEX(i);
+        pdi = PD_INDEX(i);
+
+        if(!PDE_PRESENT(pml4->m_entries_phys[pml4i]))
+        {
+            i += PAGE_SIZE;
+            continue;
+        }
+
+        pdp = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(pml4->m_entries_phys[pml4i]));
+
+        if(!PDE_PRESENT(pdp->m_entries_phys[pdpi]))
+        {
+            i += PAGE_SIZE;
+            continue;
+        }
+
+        pd = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(pdp->m_entries_phys[pdpi]));
+
+        if(!PDE_PRESENT(pd->m_entries_phys[pdi]))
+        {
+            i += PAGE_SIZE;
+            continue;
+        }
+
+        pt = (ptable *)PHYS_TO_HIMEM(PDE_FRAME(pd->m_entries_phys[pdi]));
+        e = &pt->m_entries[PT_INDEX(i)];
+
+        if((p = (void *)PTE_FRAME(*e)))
+        {
+            if(!full_flush)
+            {
+                vmmngr_flush_tlb_entry(i);
+            }
+
+            pmmngr_free_block_unlocked(p);
+        }
+
+        __atomic_store_n(e, 0, __ATOMIC_SEQ_CST);
+        __asm__ __volatile__("":::"memory");
+
+        i += PAGE_SIZE;
+    }
+
+    elevated_priority_unlock(&physmem_lock);
+}
+
+
+/*
+ * Change page flags.
+ */
+void vmmngr_change_page_flags(virtual_addr addr, size_t sz, int flags)
+{
+    virtual_addr laddr = addr + sz;
+    virtual_addr i = addr;
+    size_t pml4i, pdpi, pdi;
+    pdirectory *pdp, *pd;
+    ptable *pt;
+    pt_entry *e;
+    int full_flush = (sz >= MAX_TLB_INVLPG_SIZE);
+
+    pdirectory *pml4 = this_core->cur_task ? 
+                        (pdirectory *)this_core->cur_task->pd_virt : 
+                                      vmmngr_get_directory_virt();
+
+    if(!pml4)
+    {
+        return;
+    }
+
+    if(full_flush)
+    {
+        vmmngr_flush_tlb_range(/* i, sz */);
+    }
+    
+    while(i < laddr)
+    {
+        pml4i = PML4_INDEX(i);
+        pdpi = PDP_INDEX(i);
+        pdi = PD_INDEX(i);
+
+        if(!PDE_PRESENT(pml4->m_entries_phys[pml4i]))
+        {
+            i += PAGE_SIZE;
+            continue;
+        }
+
+        pdp = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(pml4->m_entries_phys[pml4i]));
+
+        if(!PDE_PRESENT(pdp->m_entries_phys[pdpi]))
+        {
+            i += PAGE_SIZE;
+            continue;
+        }
+
+        pd = (pdirectory *)PHYS_TO_HIMEM(PDE_FRAME(pdp->m_entries_phys[pdpi]));
+
+        if(!PDE_PRESENT(pd->m_entries_phys[pdi]))
+        {
+            i += PAGE_SIZE;
+            continue;
+        }
+
+        pt = (ptable *)PHYS_TO_HIMEM(PDE_FRAME(pd->m_entries_phys[pdi]));
+        e = &pt->m_entries[PT_INDEX(i)];
+  
+        if(e && PTE_PRESENT(*e))
+        {
+            if(!full_flush)
+            {
+                vmmngr_flush_tlb_entry(i);
+            }
+
+            PTE_CLEAR_ATTRIBS(e);
+            PTE_ADD_ATTRIB(e, flags);
+            __asm__ __volatile__("":::"memory");
+        }
+
+        i += PAGE_SIZE;
     }
 }
 

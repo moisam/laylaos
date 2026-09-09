@@ -180,10 +180,14 @@ int page_fault(struct regs *r, int arg)
 
 	if(!ct || !ct->mem)
 	{
+        system_state = SYSTEM_STATE_SHUTDOWN;
         switch_tty(1);
         printk("page_fault: faulting_address " _XPTR_ "\n", faulting_address);
-	    printk("pagefault handler cannot find current task or its mem ptr (task = " _XPTR_ ", mem " _XPTR_ ")\n", ct, ct->mem);
-	    print_err(r, NULL, faulting_address);
+	    printk("pagefault handler cannot find current task or its mem ptr "
+	           "(task = " _XPTR_ ", mem " _XPTR_ ")\n", 
+	           ct, ct ? ct->mem : NULL);
+	    print_err(r, ct, faulting_address);
+	    kernel_stack_trace();
 	    screen_refresh(NULL);
 	    __asm__ __volatile__("xchg %%bx, %%bx"::);
         hang();
@@ -199,7 +203,7 @@ int page_fault(struct regs *r, int arg)
     volatile physical_addr tmp_phys = 0;
     //volatile virtual_addr  tmp_virt = 0;
     int recursive_pagefault = (ct->properties & PROPERTY_HANDLING_PAGEFAULT);
-    uint64_t *fpregs, /* __fpregs[64 + 1] */ *__fpregs = kmalloc(sizeof(uint64_t) * 66);
+    uint64_t *fpregs, __fpregs[64 + 1] /* *__fpregs = kmalloc(sizeof(uint64_t) * 66) */;
     
     /*
      * There is a good chance we will need to either load the page from disk,
@@ -242,6 +246,11 @@ int page_fault(struct regs *r, int arg)
     uintptr_t private_flag = 0;
     volatile pt_entry *e1 = get_page_entry_pd(pd, faulting_address);
 
+    if(!e1)
+    {
+        goto unresolved;
+    }
+
     if(!(memregion = memregion_containing(ct, faulting_address)))
     {
         if(!(memregion = memregion_containing(ct, ct->end_stack)))
@@ -260,14 +269,11 @@ int page_fault(struct regs *r, int arg)
        		goto unresolved;
         }
 
-        if(e1)
-        {
-            __atomic_store_n(e1, tmp_phys | PTE_FLAGS_PWU | private_flag, __ATOMIC_SEQ_CST);
-        }
+        __atomic_store_n(e1, tmp_phys | PTE_FLAGS_PWU | private_flag, __ATOMIC_SEQ_CST);
 
         vmmngr_flush_tlb_entry(faulting_address);
         __pagefault_cleanup(ct, fpregs, recursive_pagefault);
-        kfree(__fpregs);
+        //kfree(__fpregs);
         return 1;
     }
 
@@ -282,7 +288,7 @@ int page_fault(struct regs *r, int arg)
     {
         goto unresolved;
     }
-    
+
     // if page is not present in memory, we need to load it from file then
     // modify its access rights according to the mapping.
     if(!present)
@@ -295,18 +301,15 @@ int page_fault(struct regs *r, int arg)
            		goto unresolved;
             }
 
-            if(e1)
-            {
-                __atomic_store_n(e1, tmp_phys | PTE_FLAGS_PWU | private_flag, __ATOMIC_SEQ_CST);
-            }
+            __atomic_store_n(e1, tmp_phys | PTE_FLAGS_PWU | private_flag, __ATOMIC_SEQ_CST);
 
             vmmngr_flush_tlb_entry(faulting_address);
             __pagefault_cleanup(ct, fpregs, recursive_pagefault);
-            kfree(__fpregs);
+            //kfree(__fpregs);
             return 1;
         }
 
-        if(memregion_load_page((struct memregion_t *)memregion, pd,
+        if(memregion_load_page((struct memregion_t *)memregion, pd, e1,
                                 faulting_address) != 0)
         {
             goto unresolved;
@@ -314,14 +317,14 @@ int page_fault(struct regs *r, int arg)
         
         ct->majflt++;
         __pagefault_cleanup(ct, fpregs, recursive_pagefault);
-        kfree(__fpregs);
+        //kfree(__fpregs);
 
         return 1;
     }
 
     // if page is present and not marked as CoW, or the fault is read access,
     // this is an access violation.
-    if(!e1 || !*e1 || !rw)
+    if(!*e1 || !rw)
     {
         goto unresolved;
     }
@@ -356,15 +359,12 @@ int page_fault(struct regs *r, int arg)
         private_flag = (memregion->flags & MEMREGION_FLAG_PRIVATE) ?
                                         I86_PTE_PRIVATE : 0;
 
-        if(e1)
-        {
-            __atomic_store_n(e1, tmp_phys | PTE_FLAGS_PWU | private_flag, __ATOMIC_SEQ_CST);
-        }
+        __atomic_store_n(e1, tmp_phys | PTE_FLAGS_PWU | private_flag, __ATOMIC_SEQ_CST);
     }
 
     vmmngr_flush_tlb_entry(faulting_address);
     __pagefault_cleanup(ct, fpregs, recursive_pagefault);
-    kfree(__fpregs);
+    //kfree(__fpregs);
 
     return 1;
 
@@ -373,31 +373,36 @@ unresolved:
 
     // unresolved page fault in a kernel task
     // output an error message
-    //if(!ct->user)
+    if(!ct->user)
     {
+        system_state = SYSTEM_STATE_SHUTDOWN;
         switch_tty(1);
         printk("cpu %d (cur %d, prev %d):\n", this_core->cpuid, ct->cpuid, ct->prev_cpuid);
-
 
         volatile int i;
 
         for(i = 0; i < processor_count; i++)
         {
-            if(processor_local_data[i].cur_task == ct && processor_local_data[i].cpuid != this_core->cpuid)
+            if(processor_local_data[i].cur_task == ct && 
+               processor_local_data[i].cpuid != this_core->cpuid)
             {
                 printk("task also running on cpu %d!\n", processor_local_data[i].cpuid);
             }
         }
 
-
         print_err(r, ct, faulting_address);
 
-        printk("bytes: ");
-        for(int z = 0; z < 8; z++) printk("%02x ", ((char *)r->rip)[z]);
-        printk("\n");
+        if(ct->user && r->rip)
+        {
+            printk("bytes: ");
+            for(int z = 0; z < 8; z++) printk("%02x ", ((char *)r->rip)[z]);
+            printk("\n");
+        }
 
         //kernel_stack_trace();
-        printk("pid %d, prop 0x%x, threads %d, children %d, tlead %d\n", ct->pid, ct->properties, ct->threads->thread_count, ct->children, ct->threads->thread_group_leader->pid);
+        printk("pid %d, prop 0x%x, threads %d, children %d, tlead %d\n", 
+                ct->pid, ct->properties, ct->threads->thread_count, 
+                ct->children, ct->threads->thread_group_leader->pid);
 
     	if(faulting_address > KERNEL_MEM_START)
     	{
@@ -449,7 +454,7 @@ unresolved:
     }
 
     __pagefault_cleanup(ct, fpregs, recursive_pagefault);
-    kfree(__fpregs);
+    //kfree(__fpregs);
 
     // user task
     // kill the task and force signal dispatch

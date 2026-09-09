@@ -60,7 +60,30 @@ void pic_init(int offset0, int offset1)
     PIC_WAIT();
     outb(PIC2_DATA, PIC_ICW4_8086);
     PIC_WAIT();
+
+    /* unmask both PICs */
+    outb(PIC1_DATA, 0);
+    outb(PIC2_DATA, 0);
 }
+
+
+/*
+#define PIC_READ_IRR    0x0A
+
+uint16_t get_pending_irqs(void)
+{
+    // Send command to read IRR
+    outb(PIC1_COMMAND, PIC_READ_IRR);
+    outb(PIC2_COMMAND, PIC_READ_IRR);
+
+    // Read IRR from both PICs
+    uint8_t master_irr = inb(PIC1_COMMAND);
+    uint8_t slave_irr = inb(PIC2_COMMAND);
+
+    // Combine into a single 16-bit value
+    return ((uint16_t)slave_irr << 8) | master_irr;
+}
+*/
 
 
 void pic_disable(void)
@@ -76,7 +99,7 @@ void pic_disable(void)
  */
 void enable_irq(unsigned char irq_line, uint16_t apic_flags)
 {
-    uint16_t port;
+    uint16_t port, elcr_port;
     uint8_t val;
 
     if(apic_running)
@@ -89,15 +112,26 @@ void enable_irq(unsigned char irq_line, uint16_t apic_flags)
     if(irq_line < 8)
     {
         port = PIC1_DATA;
+        elcr_port = 0x4D0;
     }
     else
     {
         port = PIC2_DATA;
+        elcr_port = 0x4D1;
         irq_line -= 8;
     }
-    
+
     val = inb(port) & ~(1 << irq_line);
     outb(port, val);
+
+    // if the IRQ is level triggered (e.g. PCI on IRQ 9), handle this by
+    // setting the ELCR (Edge/Level Control Register)
+    // See: https://davmac.org/osdev/pchwpe/i8259.html
+    if(apic_flags & IOAPIC_LEVEL_TRIGGER)
+    {
+        val = inb(elcr_port) | (1 << irq_line);
+        outb(elcr_port, val);
+    }
 }
 
 

@@ -99,7 +99,7 @@ INT_HANDLER(page_fault)
 INT_HANDLER(singlestep)
 INT_HANDLER(gpf)
 INT_HANDLER(division_by_zero)
-//INT_HANDLER(ill_opcode)
+INT_HANDLER(ill_opcode)
 
 
 /*
@@ -110,24 +110,44 @@ void isr_handler(struct regs *r)
     char *s;
     unsigned long long oticks = ticks;
     uint8_t int_no = (r->int_no & 0xFF);
-    struct handler_t *h;
+    volatile int handled = 0;
+    volatile struct handler_t *h;
 
     for(h = interrupt_handlers[int_no]; h; h = h->next)
     {
-        if(h->handler(r, h->handler_arg))
-        {
-            cli();
-            this_core->irq_count[int_no]++;
-            this_core->irq_ticks[int_no] += (ticks - oticks);
+        handled |= h->handler(r, h->handler_arg);
+    }
 
-            return;
+    //printk("irq %d, handled %d\n", int_no, handled);
+    //screen_refresh(NULL);
+
+    if(int_no > 32 && int_no != 123)
+    {
+        pic_send_eoi(int_no - 32);
+    }
+
+    if(handled)
+    {
+        cli();
+        this_core->irq_count[int_no]++;
+
+        // timer irqs are not measured correctly because the task that wakes
+        // up may not be the one that went to sleep, so the old ticks we
+        // stored on the stack will likely be different and give a wrong result
+        if(int_no == 32 || int_no == 123)
+        {
+            //this_core->irq_ticks[int_no]++;
         }
+        else
+        {
+            this_core->irq_ticks[int_no] += (ticks - oticks);
+        }
+        return;
     }
 
     if(int_no >= 32)
     {
         printk("Unhandled IRQ %d\n", int_no - 32);
-        pic_send_eoi(int_no - 32);
         return;
     }
 
@@ -165,100 +185,8 @@ void isr_handler(struct regs *r)
 }
 
 
-/*
- * Divison by zero interrupt handler
- */
-int division_by_zero(struct regs *r, void *arg)
+static void print_more_details(struct regs *r)
 {
-    UNUSED(arg);
-    
-    if(!this_core->cur_task || !this_core->cur_task->user)
-    {
-        kpanic("Divison by zero in kernel space!");
-    }
-    
-    // user task
-    // kill the task and force signal dispatch
-    __asm__ __volatile__("xchg %%bx, %%bx"::);
-
-#ifdef __x86_64__
-    add_task_fpe_signal(this_core->cur_task, FPE_INTDIV, (void *)r->rip);
-#else
-    add_task_fpe_signal(this_core->cur_task, FPE_INTDIV, (void *)r->eip);
-#endif      /* __x86_64__ */
-
-    check_pending_signals(r);
-    return 1;
-}
-
-
-/*
- * Single-step debug interrupt handler
- */
-int singlestep(struct regs *r, void *arg)
-{
-    UNUSED(arg);
-
-#ifdef __x86_64__
-    r->rflags |= 0x100;
-#else
-    r->eflags |= 0x100;
-#endif      /* __x86_64__ */
-
-    __asm__ __volatile__("xchg %%bx, %%bx"::);
-
-    if(this_core->cur_task->properties & PROPERTY_TRACE_SIGNALS)
-    {
-        ptrace_signal(SIGTRAP, PTRACE_EVENT_STOP /* PTRACE_EVENT_SINGLESTEP */);
-    }
-    
-    return 1;
-}
-
-
-/*
- * General Protection Fault interrupt handler
- */
-int gpf(struct regs *r, void *arg)
-{
-    UNUSED(arg);
-    
-    if(!this_core->cur_task || !this_core->cur_task->user)
-    {
-        switch_tty(1);
-
-        if(this_core->cur_task)
-        {
-            printk("Current task (%d - %s)\n", this_core->cur_task->pid, this_core->cur_task->command);
-        }
-
-        dump_regs(r);
-        screen_refresh(NULL);
-        kpanic("General protection fault in kernel space!");
-    }
-    
-    // user task
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
-
-    // if the GPF happened in the pagefault handler, the task would die
-    // holding its own memory lock, so we need to unlock it here otherwise
-    // terminate_task() will panic
-    if(this_core->cur_task->mem->mutex.holder &&
-       this_core->cur_task->mem->mutex.holder == this_core->cur_task)
-    {
-        kernel_mutex_unlock(&(this_core->cur_task->mem->mutex));
-    }
-
-    // kill the task and force signal dispatch
-
-#ifdef __x86_64__
-    add_task_segv_signal(this_core->cur_task, SEGV_ACCERR, (void *)r->rip);
-#else
-    add_task_segv_signal(this_core->cur_task, SEGV_ACCERR, (void *)r->eip);
-#endif      /* __x86_64__ */
-
-
-
     switch_tty(1);
     printk("\nGPF: int %d  err 0x%x\n", r->int_no, r->err_code);
 
@@ -308,8 +236,168 @@ int gpf(struct regs *r, void *arg)
     kpanic("_______-----------\n");
 
     empty_loop();
+}
 
 
+static void die_if_kernel_err(struct regs *r, char *msg)
+{
+    if(!this_core->cur_task || !this_core->cur_task->user)
+    {
+        switch_tty(1);
+
+        if(this_core->cur_task)
+        {
+            printk("Current task (%d - %s)\n", this_core->cur_task->pid, this_core->cur_task->command);
+        }
+
+        dump_regs(r);
+        print_more_details(r);
+        screen_refresh(NULL);
+        kpanic(msg);
+    }
+}
+
+
+/*
+ * Divison by zero interrupt handler
+ */
+int division_by_zero(struct regs *r, void *arg)
+{
+    UNUSED(arg);
+
+    die_if_kernel_err(r, "Divison by zero in kernel space!");
+    
+    // user task
+    // kill the task and force signal dispatch
+    __asm__ __volatile__("xchg %%bx, %%bx"::);
+
+#ifdef __x86_64__
+    add_task_fpe_signal(this_core->cur_task, FPE_INTDIV, (void *)r->rip);
+#else
+    add_task_fpe_signal(this_core->cur_task, FPE_INTDIV, (void *)r->eip);
+#endif      /* __x86_64__ */
+
+    check_pending_signals(r);
+    return 1;
+}
+
+
+/*
+ * Single-step debug interrupt handler
+ */
+int singlestep(struct regs *r, void *arg)
+{
+    UNUSED(arg);
+
+    volatile struct task_t *ct = this_core->cur_task;
+
+#ifdef __x86_64__
+    r->rflags |= 0x100;
+#else
+    r->eflags |= 0x100;
+#endif      /* __x86_64__ */
+
+    __asm__ __volatile__("xchg %%bx, %%bx"::);
+
+    if(ct->tracer_pid && ct->properties & PROPERTY_TRACE_SIGNALS)
+    {
+        ptrace_signal(SIGTRAP, PTRACE_EVENT_STOP /* PTRACE_EVENT_SINGLESTEP */);
+    }
+    else
+    {
+#ifdef __x86_64__
+        add_task_trap_signal(this_core->cur_task, SI_KERNEL, (void *)r->rip);
+#else
+        add_task_trap_signal(this_core->cur_task, SI_KERNEL, (void *)r->eip);
+#endif      /* __x86_64__ */
+
+        check_pending_signals(r);
+    }
+    
+    return 1;
+}
+
+
+static void release_task_mutex(void)
+{
+    // if the GPF happened in the pagefault handler, the task would die
+    // holding its own memory lock, so we need to unlock it here otherwise
+    // terminate_task() will panic
+    if(this_core->cur_task->mem->mutex.holder &&
+       this_core->cur_task->mem->mutex.holder == this_core->cur_task)
+    {
+        kernel_mutex_unlock(&(this_core->cur_task->mem->mutex));
+    }
+}
+
+
+/*
+ * Illegal Instruction interrupt handler
+ */
+int ill_opcode(struct regs *r, void *arg)
+{
+    UNUSED(arg);
+
+    die_if_kernel_err(r, "Illegal Instruction in kernel space!");
+
+    // user task
+    release_task_mutex();
+
+    // kill the task and force signal dispatch
+
+#ifdef __x86_64__
+    add_task_ill_signal(this_core->cur_task, ILL_ILLOPC, (void *)r->rip);
+#else
+    add_task_ill_signal(this_core->cur_task, ILL_ILLOPC, (void *)r->eip);
+#endif      /* __x86_64__ */
+
+    //print_more_details(r);
+
+    check_pending_signals(r);
+    __asm__ __volatile__("xchg %%bx, %%bx"::);
+    return 1;
+}
+
+
+/*
+ * General Protection Fault interrupt handler
+ */
+int gpf(struct regs *r, void *arg)
+{
+    UNUSED(arg);
+
+    volatile struct task_t *ct = this_core->cur_task;
+
+    if(ct && ct->user)
+    {
+        unsigned char opcode;
+
+#ifdef __x86_64__
+        opcode = *(unsigned char *)r->rip;
+#else
+        opcode = *(unsigned char *)r->eip;
+#endif      /* __x86_64__ */
+
+        if(opcode == 0xCC)      // check for INT3 in user code
+        {
+            return singlestep(r, arg);
+        }
+    }
+
+    die_if_kernel_err(r, "General protection fault in kernel space!");
+
+    // user task
+    release_task_mutex();
+
+    // kill the task and force signal dispatch
+
+#ifdef __x86_64__
+    add_task_segv_signal(ct, SEGV_ACCERR, (void *)r->rip);
+#else
+    add_task_segv_signal(ct, SEGV_ACCERR, (void *)r->eip);
+#endif      /* __x86_64__ */
+
+    //print_more_details(r);
 
     check_pending_signals(r);
     __asm__ __volatile__("xchg %%bx, %%bx"::);
@@ -513,7 +601,6 @@ void idt_init(void)
     install_isr(119, 0x8E, 0x08, isr119);
     install_isr(120, 0x8E, 0x08, isr120);
     install_isr(121, 0x8E, 0x08, isr121);
-    install_isr(122, 0x8E, 0x08, isr122);
 
     install_isr(127, 0x8E, 0x08, isr127);
     install_isr(128, 0x8E, 0x08, isr128);
@@ -647,7 +734,10 @@ void idt_init(void)
     // clock IRQ for other processors (not the boot processor)
     install_isr(123, 0x8E, 0x08, isr123);
 
-    // bad TLB shootdown
+    // TLB range shootdown
+    install_isr(122, 0x8E, 0x08, isr122);
+
+    // TLB shootdown
     install_isr(124, 0x8E, 0x08, isr124);
 
     // halt everybody
@@ -666,6 +756,10 @@ void idt_init(void)
 
     register_interrupt_handler(0, &division_by_zero_handler);
     register_interrupt_handler(1, &singlestep_handler);
+    register_interrupt_handler(6, &ill_opcode_handler);
+
+    // TODO: should be a separate breakpoint handler
+    register_interrupt_handler(3, &singlestep_handler);
 
 #ifndef __x86_64__
     register_interrupt_handler(7, &fpu_handler);

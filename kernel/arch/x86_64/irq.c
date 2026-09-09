@@ -52,7 +52,9 @@ struct irq_redir_t irq_redir[16] =
 void register_interrupt_handler(int n, struct handler_t *handler)
 {
     struct handler_t *h;
-    
+
+    handler->next = NULL;
+
     if(interrupt_handlers[n] == NULL)
     {
         interrupt_handlers[n] = handler;
@@ -68,8 +70,6 @@ void register_interrupt_handler(int n, struct handler_t *handler)
         
         h->next = handler;
     }
-    
-    handler->next = NULL;
 }
 
 
