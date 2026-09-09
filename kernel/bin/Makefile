@@ -19,7 +19,8 @@ CPPFLAGS?=
 
 PROGS=dispman getty chvt \
       cal more reboot ps umount free \
-      daemon init losetup getopt
+      daemon init losetup getopt \
+      gui-open
 
 # these should be installed from coreutils:
 # echo cat ls
@@ -38,7 +39,9 @@ GUICOMMON_DIR:=$(GUI_DIR)/common
 GUIWIDGET_DIR:=$(GUI_DIR)/widgets
 
 GUISERVER_SRCS:=$(GUISERVER_DIR)/cursor.c \
+                $(GUISERVER_DIR)/cursor-x11.c \
                 $(GUISERVER_DIR)/clipboard.c \
+                $(GUISERVER_DIR)/dragndrop.c \
                 $(GUISERVER_DIR)/gc.c \
                 $(GUISERVER_DIR)/gc-bitmap.c \
                 $(GUISERVER_DIR)/gc-bitmap-stretch.c \
@@ -50,7 +53,10 @@ GUISERVER_SRCS:=$(GUISERVER_DIR)/cursor.c \
                 $(GUISERVER_DIR)/server-window.c \
                 $(GUISERVER_DIR)/server-window-controlbox.c \
                 $(GUISERVER_DIR)/server-window-mouse.c \
+                $(GUISERVER_DIR)/screenshot.c \
                 $(GUISERVER_DIR)/theme.c \
+                $(GUICOMMON_DIR)/gc-grad-vert.c \
+                $(GUICOMMON_DIR)/gc-gc.c \
                 $(GUICOMMON_DIR)/event.c \
                 $(GUICOMMON_DIR)/font.c \
                 $(GUICOMMON_DIR)/global.c \
@@ -60,7 +66,8 @@ GUISERVER_SRCS:=$(GUISERVER_DIR)/cursor.c \
                 $(GUI_DIR)/imglib/ico.c \
                 $(GUI_DIR)/imglib/png.c \
                 $(GUI_DIR)/imglib/png_crc.c \
-                $(GUI_DIR)/hash.c $(GUI_DIR)/fnv1a.c \
+                $(GUI_DIR)/curlib/x11cur.c \
+                $(GUI_DIR)/hash.c $(GUI_DIR)/ptrhash.c $(GUI_DIR)/fnv1a.c \
                 $(GUISERVER_DIR)/main.c
 GUISERVER_OBJS:=$(patsubst %.c, %.o, $(GUISERVER_SRCS))
 
@@ -74,13 +81,17 @@ LIBGUI_SRCS:=$(GUICOMMON_DIR)/event.c $(GUICOMMON_DIR)/next-event.c \
              $(GUICOMMON_DIR)/gc-circle.c \
              $(GUICOMMON_DIR)/gc-line.c \
              $(GUICOMMON_DIR)/gc-poly.c \
+             $(GUICOMMON_DIR)/gc-round-rect.c \
              $(GUICOMMON_DIR)/gc-ttf.c \
+             $(GUICOMMON_DIR)/gc-gc.c \
+             $(GUICOMMON_DIR)/gc-grad-vert.c \
              $(GUICOMMON_DIR)/global.c \
              $(GUICOMMON_DIR)/init.c \
              $(GUICOMMON_DIR)/list.c $(GUICOMMON_DIR)/listnode.c \
              $(GUICOMMON_DIR)/rect.c \
              $(GUICOMMON_DIR)/deflate.c \
              $(GUICLIENT_DIR)/button.c \
+             $(GUICLIENT_DIR)/dragndrop.c \
              $(GUICLIENT_DIR)/imgbutton.c \
              $(GUICLIENT_DIR)/push-imgbutton.c \
              $(GUICLIENT_DIR)/listview.c \
@@ -112,56 +123,22 @@ LIBGUI_SRCS:=$(GUICOMMON_DIR)/event.c $(GUICOMMON_DIR)/next-event.c \
              $(GUICLIENT_DIR)/resources.c \
              $(GUICLIENT_DIR)/request.c \
              $(GUICLIENT_DIR)/screen.c \
+             $(GUICLIENT_DIR)/screenshot.c \
+             $(GUICLIENT_DIR)/systray.c \
              $(GUICLIENT_DIR)/theme.c \
              $(GUICLIENT_DIR)/widget.c \
              $(GUI_DIR)/imglib/ico.c \
              $(GUI_DIR)/imglib/png.c \
              $(GUI_DIR)/imglib/png_crc.c \
-             $(GUI_DIR)/imglib/jpeg.c
+             $(GUI_DIR)/imglib/jpeg.c \
+             $(GUI_DIR)/curlib/x11cur.c
 LIBGUI_OBJS:=$(patsubst %.c, %.o, $(LIBGUI_SRCS))
-
-DESKTOP_SRCS:=$(GUI_DIR)/hash.c $(GUI_DIR)/ptrhash.c \
-              $(GUI_DIR)/desktop/desktop_alt_tab.c \
-              $(GUI_DIR)/desktop/desktop_entries.c \
-              $(GUI_DIR)/desktop/desktop_background.c \
-              $(GUI_DIR)/desktop/desktop.c
-DESKTOP_OBJS:=$(patsubst %.c, %.o, $(DESKTOP_SRCS))
-
-DESKTOP_BOTTOMPANEL_SRCS:=$(GUI_DIR)/panels/bottom-panel.c
-DESKTOP_BOTTOMPANEL_OBJS:=$(patsubst %.c, %.o, $(DESKTOP_BOTTOMPANEL_SRCS))
-
-DESKTOP_TOPPANEL_SRCS:=$(GUI_DIR)/list.c \
-                       $(GUI_DIR)/panels/top-panel.c \
-                       $(GUI_DIR)/panels/top-panel-widgets.c \
-                       $(GUI_DIR)/panels/top-panel-widgets-menu.c
-DESKTOP_TOPPANEL_OBJS:=$(patsubst %.c, %.o, $(DESKTOP_TOPPANEL_SRCS))
-
-GUIWIDGET_SRCS:=$(shell find $(GUIWIDGET_DIR) -name '*.c')
-GUIWIDGET_OBJS:=$(patsubst %.c, %, $(GUIWIDGET_SRCS))
 
 TERMAPP_SRCS:=$(GUI_DIR)/app_lterm/term_input.c \
               $(GUI_DIR)/app_lterm/term.c \
               $(GUI_DIR)/app_lterm/main.c \
               $(GUI_DIR)/memsetw.c
 TERMAPP_OBJS:=$(patsubst %.c, %.o, $(TERMAPP_SRCS))
-
-CALCAPP_SRCS:=$(GUI_DIR)/app_calc/main.c \
-              $(GUI_DIR)/app_calc/help.c
-CALCAPP_OBJS:=$(patsubst %.c, %.o, $(CALCAPP_SRCS))
-
-KBDAPP_SRCS:=$(GUI_DIR)/app_keyboard/main.c
-KBDAPP_OBJS:=$(patsubst %.c, %.o, $(KBDAPP_SRCS))
-
-FILESAPP_SRCS:=$(GUI_DIR)/app_files/main.c \
-               $(GUI_DIR)/app_files/help.c \
-               $(GUI_DIR)/app_files/history.c \
-               $(GUI_DIR)/app_files/properties.c
-FILESAPP_OBJS:=$(patsubst %.c, %.o, $(FILESAPP_SRCS))
-
-IMGVIEWAPP_SRCS:=$(GUI_DIR)/app_imgviewer/main.c \
-                 $(GUI_DIR)/app_imgviewer/help.c \
-                 $(GUI_DIR)/app_imgviewer/properties.c
-IMGVIEWAPP_OBJS:=$(patsubst %.c, %.o, $(IMGVIEWAPP_SRCS))
 
 SYSICONVIEWAPP_SRCS:=$(GUI_DIR)/app_sysicon_viewer/main.c
 SYSICONVIEWAPP_OBJS:=$(patsubst %.c, %.o, $(SYSICONVIEWAPP_SRCS))
@@ -175,43 +152,19 @@ MINESWEEPERAPP_SRCS:=$(GUI_DIR)/app_minesweeper/main.c \
                 $(GUI_DIR)/app_minesweeper/options.c
 MINESWEEPERAPP_OBJS:=$(patsubst %.c, %.o, $(MINESWEEPERAPP_SRCS))
 
-CLOCKAPP_SRCS:=$(GUI_DIR)/app_clock/main.c
-CLOCKAPP_OBJS:=$(patsubst %.c, %.o, $(CLOCKAPP_SRCS))
-
-SETTINGSAPP_SRCS:=$(GUI_DIR)/app_settings/main.c \
-                  $(GUI_DIR)/app_settings/show_background.c \
-                  $(GUI_DIR)/app_settings/show_theme.c \
-                  $(GUI_DIR)/app_settings/show_sysinfo.c \
-                  $(GUI_DIR)/app_settings/show_display.c
-SETTINGSAPP_OBJS:=$(patsubst %.c, %.o, $(SETTINGSAPP_SRCS))
-
-PNGTEST_SRCS:= \
-             $(GUI_DIR)/imglib/png_test.c
-PNGTEST_OBJS:=$(patsubst %.c, %.o, $(PNGTEST_SRCS))
-
 LIBGUI:=$(GUI_DIR)/libgui.a
 LIBGUISO:=$(GUI_DIR)/libgui.so
 GUIFLAGS=$(LIBGUI) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
 
 GUI_PROGS:=$(GUI_DIR)/server/guiserver \
-           $(GUI_DIR)/desktop/desktop \
-           $(GUI_DIR)/panels/desktop-bottom-panel \
-           $(GUI_DIR)/panels/desktop-top-panel \
            $(GUI_DIR)/ltermapp \
-           $(GUI_DIR)/calcapp \
-           $(GUI_DIR)/clockapp \
-           $(GUI_DIR)/filesapp \
-           $(GUI_DIR)/kbdapp \
-           $(GUI_DIR)/imgviewapp \
            $(GUI_DIR)/sysiconviewapp \
            $(GUI_DIR)/tetrisapp \
            $(GUI_DIR)/minesweeperapp \
-           $(GUI_DIR)/settingsapp \
-           $(GUI_DIR)/gui_test \
-           $(GUI_DIR)/png_test
+           $(GUI_DIR)/gui_test
 
 
-all: check-config $(PROGS) lspci lsusb strace mount $(LIBGUI) $(LIBGUISO) $(GUI_PROGS) widgets epilogue install
+all: check-config $(PROGS) lspci lsusb strace mount $(LIBGUI) $(LIBGUISO) $(GUI_PROGS) epilogue install
 
 check-config:
 	if [ "$(HOST)" != "x86_64" ]; then  \
@@ -270,20 +223,9 @@ $(LIBGUISO): $(LIBGUI_OBJS)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -shared -fPIC -DPIC -o $@ $(LIBGUI_OBJS) -ljpeg -lfreetype
 	patchelf --set-soname libgui.so $@
 
-widgets:
-	for i in $(GUIWIDGET_OBJS) ; do \
-	    echo "    Compiling " $$i ; \
-	    $(CC) $(CFLAGS) $(CPPFLAGS) -static-libgcc -shared -fPIC -DPIC -o $$i.so $$i.c ; \
-	done
-
-
 $(GUI_DIR)/server/guiserver: $(GUISERVER_OBJS)
 	echo "    Linking   " $@
 	$(CC) -o $@ $(GUISERVER_OBJS) $(LIBAELF) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS_GUI)
-
-#$(GUI_DIR)/deflate.o: ../kernel/gunzip/deflate.c
-#	echo "    Compiling " $<
-#	$(CC) -c $< -o $@ $(CFLAGS) $(CPPFLAGS)
 
 $(GUI_DIR)/hash.o: ../../misc/hash.c
 	echo "    Compiling " $<
@@ -301,18 +243,6 @@ $(GUI_DIR)/list.o: ../../misc/list.c
 	echo "    Compiling " $<
 	$(CC) -c $< -o $@ $(CFLAGS) $(CPPFLAGS)
 
-$(GUI_DIR)/desktop/desktop: $(DESKTOP_OBJS)
-	echo "    Linking   " $@
-	$(CC) -o $@ $(DESKTOP_OBJS) $(GUIFLAGS) -ljpeg
-
-$(GUI_DIR)/panels/desktop-bottom-panel: $(DESKTOP_BOTTOMPANEL_OBJS)
-	echo "    Linking   " $@
-	$(CC) -o $@ $(DESKTOP_BOTTOMPANEL_OBJS) $(GUIFLAGS)
-
-$(GUI_DIR)/panels/desktop-top-panel: $(DESKTOP_TOPPANEL_OBJS)
-	echo "    Linking   " $@
-	$(CC) -o $@ $(DESKTOP_TOPPANEL_OBJS) -Wl,-dynamic-list,$(GUI_DIR)/panels/top-panel-dynsym.syms -ldl $(GUIFLAGS)
-
 $(GUI_DIR)/ltermapp: $(TERMAPP_OBJS)
 	echo "    Linking   " $@
 	$(CC) -o $@ $(TERMAPP_OBJS) $(GUIFLAGS)
@@ -320,22 +250,6 @@ $(GUI_DIR)/ltermapp: $(TERMAPP_OBJS)
 $(GUI_DIR)/memsetw.o: ../../libk/string/memsetw.c
 	echo "    Compiling " $<
 	$(CC) -c $< -o $@ $(CFLAGS) $(CPPFLAGS)
-
-$(GUI_DIR)/calcapp: $(CALCAPP_OBJS)
-	echo "    Linking   " $@
-	$(CC) -o $@ $(CALCAPP_OBJS) $(GUIFLAGS)
-
-$(GUI_DIR)/filesapp: $(FILESAPP_OBJS)
-	echo "    Linking   " $@
-	$(CC) -o $@ $(FILESAPP_OBJS) $(GUIFLAGS)
-
-$(GUI_DIR)/kbdapp: $(KBDAPP_OBJS)
-	echo "    Linking   " $@
-	$(CC) -o $@ $(KBDAPP_OBJS) $(GUIFLAGS)
-
-$(GUI_DIR)/imgviewapp: $(IMGVIEWAPP_OBJS)
-	echo "    Linking   " $@
-	$(CC) -o $@ $(IMGVIEWAPP_OBJS) $(GUIFLAGS) -ljpeg
 
 $(GUI_DIR)/sysiconviewapp: $(SYSICONVIEWAPP_OBJS)
 	echo "    Linking   " $@
@@ -349,21 +263,13 @@ $(GUI_DIR)/minesweeperapp: $(MINESWEEPERAPP_OBJS)
 	echo "    Linking   " $@
 	$(CC) -o $@ $(MINESWEEPERAPP_OBJS) $(GUIFLAGS)
 
-$(GUI_DIR)/clockapp: $(CLOCKAPP_OBJS)
-	echo "    Linking   " $@
-	$(CC) -o $@ $(CLOCKAPP_OBJS) $(GUIFLAGS)
-
-$(GUI_DIR)/settingsapp: $(SETTINGSAPP_OBJS)
-	echo "    Linking   " $@
-	$(CC) -o $@ $(SETTINGSAPP_OBJS) $(GUIFLAGS)
-
 $(GUI_DIR)/gui_test: $(GUI_DIR)/gui_test.o
 	echo "    Linking   " $@
 	$(CC) -o $@ $< $(GUIFLAGS)
 
-$(GUI_DIR)/png_test: $(PNGTEST_OBJS)
-	echo "    Linking   " $@
-	$(CC) -o $@ $(PNGTEST_OBJS) $(GUIFLAGS)
+$(GUICOMMON_DIR)/gc-gc.o: $(GUICOMMON_DIR)/gc-gc.c
+	echo "    Compiling " $<
+	$(CC) -c $< -o $@ -mssse3 $(CFLAGS) $(CPPFLAGS)
 
 %.o: %.c
 	echo "    Compiling " $<

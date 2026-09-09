@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: strace-syscall.h
  *    This file is part of LaylaOS.
@@ -208,6 +208,7 @@ const char *syscall_names[] =
     [__NR_getcwd            ] = "getcwd",                   // 183
 
     [__NR_signalstack       ] = "signalstack",              // 186
+    [__NR_sendfile          ] = "sendfile",                 // 187
 
     [__NR_vfork             ] = "vfork",                    // 190
 
@@ -230,9 +231,12 @@ const char *syscall_names[] =
     [__NR_setgid32          ] = "setgid32",                 // 214
 
     [__NR_mincore           ] = "mincore",                  // 218
+    [__NR_madvise           ] = "madvise",                  // 219
 
     [__NR_gettid            ] = "gettid",                   // 224
 
+    [__NR_sched_setaffinity ] = "sched_setaffinity",        // 241
+    [__NR_sched_getaffinity ] = "sched_getaffinity",        // 242
     [__NR_set_thread_area   ] = "set_thread_area",          // 243
     [__NR_get_thread_area   ] = "get_thread_area",          // 244
 
@@ -301,6 +305,7 @@ const char *syscall_names[] =
     [__NR_shutdown          ] = "shutdown",                 // 373
 
     [__NR_mlock2            ] = "mlock2",                   // 376
+    [__NR_copy_file_range   ] = "copy_file_range",          // 377
 
 // END of Linux x86 syscall list (last entry is #384)
 // The following are LaylaOS-specific syscalls (they exist on non-x86 Linux)
@@ -512,6 +517,7 @@ char syscall_mask[] =
     [__NR_getcwd            ] = 1,                      // 183
 
     [__NR_signalstack       ] = 1,                      // 186
+    [__NR_sendfile          ] = 1,                      // 187
 
     [__NR_vfork             ] = 1,                      // 190
 
@@ -534,9 +540,12 @@ char syscall_mask[] =
     [__NR_setgid32          ] = 1,                      // 214
 
     [__NR_mincore           ] = 1,                      // 218
+    [__NR_madvise           ] = 1,                      // 219
 
     [__NR_gettid            ] = 1,                      // 224
 
+    [__NR_sched_setaffinity ] = 1,                      // 241
+    [__NR_sched_getaffinity ] = 1,                      // 242
     [__NR_set_thread_area   ] = 1,                      // 243
     [__NR_get_thread_area   ] = 1,                      // 244
 
@@ -603,6 +612,7 @@ char syscall_mask[] =
     [__NR_shutdown          ] = 1,                      // 373
 
     [__NR_mlock2            ] = 1,                      // 376
+    [__NR_copy_file_range   ] = 1,                      // 377
 
 // END of Linux x86 syscall list (last entry is #384)
 // The following are LaylaOS-specific syscalls (they exist on non-x86 Linux)

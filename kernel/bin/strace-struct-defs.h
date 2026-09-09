@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: strace-struct-defs.h
  *    This file is part of LaylaOS.
@@ -29,6 +29,7 @@
 #define _POSIX_THREAD_CPUTIME
 #define _POSIX_MONOTONIC_CLOCK
 #define _POSIX_CLOCK_SELECTION
+#define _GNU_SOURCE
 
 #define __POSIX_VISIBLE             200809
 #undef __GNU_VISIBLE
@@ -113,9 +114,33 @@ struct flag_t open_flags[] =
 #ifdef O_PATH
     FEQSTR(O_PATH),
 #endif
+    FEQSTR(O_ASYNC),
+    FEQSTR(O_LARGEFILE),
 };
 
 #define OPEN_FLAGS_COUNT        (sizeof(open_flags) / sizeof(open_flags[0]))
+
+
+struct flag_t fcntl_flags[] =
+{
+    FEQSTR(F_DUPFD),
+    FEQSTR(F_GETFD),
+    FEQSTR(F_SETFD),
+    FEQSTR(F_GETFL),
+    FEQSTR(F_SETFL),
+    FEQSTR(F_SETOWN),
+    FEQSTR(F_GETOWN),
+    FEQSTR(F_SETSIG),
+    FEQSTR(F_GETSIG),
+    FEQSTR(F_GETLK),
+    FEQSTR(F_SETLK),
+    FEQSTR(F_SETLKW),
+    FEQSTR(F_SETOWN_EX),
+    FEQSTR(F_GETOWN_EX),
+    FEQSTR(F_GETOWNER_UIDS),
+};
+
+#define FCNTL_FLAGS_COUNT       (sizeof(fcntl_flags) / sizeof(fcntl_flags[0]))
 
 
 struct flag_t at_flags[] =
@@ -153,12 +178,71 @@ struct flag_t prot_flags[] =
     FEQSTR(PROT_READ),
     FEQSTR(PROT_WRITE),
     FEQSTR(PROT_EXEC),
-    FEQSTR(PROT_NONE),
     FEQSTR(PROT_GROWSDOWN),
     FEQSTR(PROT_GROWSUP),
 };
 
 #define PROT_FLAGS_COUNT        (sizeof(prot_flags) / sizeof(prot_flags[0]))
+
+
+struct flag_t mmap_flags[] =
+{
+    FEQSTR(MAP_SHARED_VALIDATE),    // this has to come before MAP_SHARED and MAP_PRIVATE
+    FEQSTR(MAP_SHARED),
+    FEQSTR(MAP_PRIVATE),
+    FEQSTR(MAP_FIXED),
+    FEQSTR(MAP_ANON),
+    FEQSTR(MAP_NORESERVE),
+    FEQSTR(MAP_GROWSDOWN),
+    FEQSTR(MAP_DENYWRITE),
+    FEQSTR(MAP_EXECUTABLE),
+    FEQSTR(MAP_LOCKED),
+    FEQSTR(MAP_POPULATE),
+    FEQSTR(MAP_NONBLOCK),
+    FEQSTR(MAP_STACK),
+    FEQSTR(MAP_HUGETLB),
+    FEQSTR(MAP_SYNC),
+    FEQSTR(MAP_FIXED_NOREPLACE),
+};
+
+#define MMAP_FLAGS_COUNT        (sizeof(mmap_flags) / sizeof(mmap_flags[0]))
+
+
+struct flag_t mremap_flags[] =
+{
+    FEQSTR(MREMAP_MAYMOVE),
+    FEQSTR(MREMAP_FIXED),
+    FEQSTR(MREMAP_DONTUNMAP),
+};
+
+#define MREMAP_FLAGS_COUNT      (sizeof(mremap_flags) / sizeof(mremap_flags[0]))
+
+
+struct flag_t madvise_flags[] =
+{
+    FEQSTR(MADV_RANDOM),
+    FEQSTR(MADV_SEQUENTIAL),
+    FEQSTR(MADV_WILLNEED),
+    FEQSTR(MADV_DONTNEED),
+    FEQSTR(MADV_FREE),
+    FEQSTR(MADV_REMOVE),
+    FEQSTR(MADV_DONTFORK),
+    FEQSTR(MADV_DOFORK),
+    FEQSTR(MADV_MERGEABLE),
+    FEQSTR(MADV_UNMERGEABLE),
+    FEQSTR(MADV_HUGEPAGE),
+    FEQSTR(MADV_NOHUGEPAGE),
+    FEQSTR(MADV_DONTDUMP),
+    FEQSTR(MADV_DODUMP),
+    FEQSTR(MADV_WIPEONFORK),
+    FEQSTR(MADV_KEEPONFORK),
+    FEQSTR(MADV_COLD),
+    FEQSTR(MADV_PAGEOUT),
+    FEQSTR(MADV_HWPOISON),
+    FEQSTR(MADV_SOFT_OFFLINE),
+};
+
+#define MADVISE_FLAGS_COUNT     (sizeof(madvise_flags) / sizeof(madvise_flags[0]))
 
 
 #include <sys/mount.h>
@@ -299,7 +383,6 @@ struct flag_t itimer_ids[] =
 #define TIMER_IDS_COUNT         (sizeof(itimer_ids) / sizeof(itimer_ids[0]))
 
 
-//#include <sys/sched.h>
 #include <sched.h>
 
 struct flag_t sched_policies[] =
@@ -336,6 +419,7 @@ struct flag_t sa_flags[] =
 };
 
 #define SA_FLAGS_COUNT          (sizeof(sa_flags) / sizeof(sa_flags[0]))
+
 
 #undef FEQSTR
 

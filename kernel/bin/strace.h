@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: strace.h
  *    This file is part of LaylaOS.
@@ -37,6 +37,14 @@ struct stracee_t
     pid_t pid;
     int prev_syscall;
     FILE *log;
+};
+
+struct syscall_stat_t
+{
+    struct timespec tstart;
+    double total;
+    double min, max, avg;
+    size_t count, errs;
 };
 
 #define ERR_EXIT(fmt, ...)                  \
@@ -139,8 +147,10 @@ void print_clock_flags(struct stracee_t *tracee, size_t flags);
 void print_itimer_id(struct stracee_t *tracee, size_t id);
 void print_sched_policy(struct stracee_t *tracee, size_t id);
 void print_arg_prio(struct stracee_t *tracee, int which);
-void print_mmap_args(struct stracee_t *tracee, uintptr_t ptr);
-void print_mremap_args(struct stracee_t *tracee, uintptr_t ptr);
+uintptr_t print_mmap_args(struct stracee_t *tracee, uintptr_t ptr);
+uintptr_t print_mremap_args(struct stracee_t *tracee, uintptr_t ptr);
+void print_madvise_flags(struct stracee_t *tracee, int flags);
+void print_fcntl_flags(struct stracee_t *tracee, int flags);
 void print_sysctl_args(struct stracee_t *tracee, uintptr_t ptr);
 void print_pselect_args(struct stracee_t *tracee, uintptr_t ptr);
 void print_sendto_args(struct stracee_t *tracee, uintptr_t ptr);

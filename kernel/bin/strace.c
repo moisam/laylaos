@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: strace.c
  *    This file is part of LaylaOS.
@@ -58,6 +58,7 @@ int stracee_count = 0;
 int output_separately = 0;
 int output_append = 0;
 int summary_only = 0;
+int summary = 0;
 int follow_forks = 0;
 int string_limit = 32;
 int arr_limit = 10;
@@ -75,6 +76,8 @@ int interruptible = 0;
 // new environ
 char **newenv = NULL;
 size_t newenv_size = 8, newenv_index = 0;
+
+struct syscall_stat_t sysstat[1000] = { 0, };
 
 
 #define ASSERT_OPTION_EXISTS(o)     \
@@ -177,7 +180,13 @@ void syscall_handle(struct stracee_t *tracee, struct user_regs_struct *regs)
     {
         return;
     }
-    
+
+    if(syscall_mask[sys])
+    {
+        sysstat[sys].count++;
+        clock_gettime(CLOCK_MONOTONIC, &sysstat[sys].tstart);
+    }
+
     if(!syscall_inject_mask || !syscall_inject_mask[sys].inject)
     {
         return;
@@ -203,7 +212,7 @@ void syscall_handle(struct stracee_t *tracee, struct user_regs_struct *regs)
 
 
 #define MAYBE_PRINT_ARG(tracee, regs, func, arg)    \
-    if(GET_SYSCALL_RESULT(regs) == 0)               \
+    if(GET_SYSCALL_RESULT(regs) == 0 && arg != 0)   \
         func(tracee, arg);                          \
     else                                            \
         print_arg_ptr(tracee, arg);
@@ -213,15 +222,40 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
 {
     //int sys = GET_SYSCALL_NUMBER(regs);
     long sysres;
+    uintptr_t resaddr = 0;
+    double elapsed;
+    struct timespec tend;
 
     if(sys < 0 || sys >= syscall_mask_count)
     {
         return;
     }
-    
+
     if(!syscall_mask[sys])
     {
         return;
+    }
+
+    // TODO: we should calculate this in us, not ms
+    clock_gettime(CLOCK_MONOTONIC, &tend);
+    elapsed = (tend.tv_sec - sysstat[sys].tstart.tv_sec) * 1000.0 + 
+              (tend.tv_nsec - sysstat[sys].tstart.tv_nsec) / 1000000.0;
+    //fprintf(stderr, "[%d] elapsed %f .. ", sys, elapsed);
+    sysstat[sys].total += elapsed;
+
+    if(elapsed < sysstat[sys].min)
+    {
+        sysstat[sys].min = elapsed;
+    }
+
+    if(elapsed > sysstat[sys].max)
+    {
+        sysstat[sys].max = elapsed;
+    }
+
+    if(sysres < 0)
+    {
+        sysstat[sys].errs++;
     }
 
     if(syscall_inject_mask && syscall_inject_mask[sys].inject)
@@ -251,7 +285,12 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
     {
         return;
     }
-    
+
+    if(summary_only)
+    {
+        return;
+    }
+
     fprintf(tracee->log, "%s(", syscall_names[sys]);
     
     switch(sys)
@@ -262,6 +301,10 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
          */
         case __NR_ioperm:
         case __NR_syslog:
+        case __NR_sendfile:
+        case __NR_sched_setaffinity:
+        case __NR_sched_getaffinity:
+        case __NR_copy_file_range:
             break;
 
         /*
@@ -313,8 +356,9 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             
             if(sysres == 0)
             {
-                print_arg_buf(tracee, GET_SYSCALL_ARG2(regs),
-                              tracee_get_ptr(tracee, GET_SYSCALL_ARG4(regs)));
+                size_t count = tracee_get_ptr(tracee, GET_SYSCALL_ARG4(regs));
+                print_arg_buf(tracee, GET_SYSCALL_ARG2(regs), count);
+                SET_SYSCALL_RESULT(regs, count);
             }
             else
             {
@@ -323,8 +367,6 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
 
             fprintf(tracee->log, ", ");
             print_arg_ui(tracee, GET_SYSCALL_ARG3(regs));
-            fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG4(regs));
             break;
 
         // int syscall_write(int _fd, unsigned char *buf, size_t count, ssize_t *copied);
@@ -334,8 +376,12 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             print_arg_buf(tracee, GET_SYSCALL_ARG2(regs), GET_SYSCALL_ARG3(regs));
             fprintf(tracee->log, ", ");
             print_arg_ui(tracee, GET_SYSCALL_ARG3(regs));
-            fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG4(regs));
+
+            if(sysres == 0)
+            {
+                size_t count = tracee_get_ptr(tracee, GET_SYSCALL_ARG4(regs));
+                SET_SYSCALL_RESULT(regs, count);
+            }
             break;
 
         // int syscall_open(char *filename, int flags, mode_t mode);
@@ -650,6 +696,11 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
         case __NR_brk:
             print_arg_ui(tracee, GET_SYSCALL_ARG1(regs));
             //fprintf(tracee->log, ") = %#0lx\n", GET_SYSCALL_RESULT(regs));
+
+            if(GET_SYSCALL_RESULT(regs) == 0)
+            {
+                resaddr = tracee_get_ptr(tracee, GET_SYSCALL_ARG2(regs));
+            }
             break;
 
         // int syscall_signal(int signum, void *handler, void *sa_restorer);
@@ -676,7 +727,7 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
         case __NR_fcntl:
             print_arg_fd(tracee, GET_SYSCALL_ARG1(regs));
             fprintf(tracee->log, ", ");
-            print_arg_i(tracee, GET_SYSCALL_ARG2(regs));
+            print_fcntl_flags(tracee, GET_SYSCALL_ARG2(regs));
             fprintf(tracee->log, ", ");
             print_arg_ptr(tracee, GET_SYSCALL_ARG3(regs));
             break;
@@ -847,8 +898,9 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
 
             if(GET_SYSCALL_RESULT(regs) == 0)
             {
-                print_arg_buf(tracee, GET_SYSCALL_ARG2(regs),
-                              tracee_get_ptr(tracee, GET_SYSCALL_ARG4(regs)));
+                size_t count = tracee_get_ptr(tracee, GET_SYSCALL_ARG4(regs));
+                print_arg_buf(tracee, GET_SYSCALL_ARG2(regs), count);
+                SET_SYSCALL_RESULT(regs, count);
             }
             else
             {
@@ -857,8 +909,6 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
 
             fprintf(tracee->log, ", ");
             print_arg_ui(tracee, GET_SYSCALL_ARG3(regs));
-            fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG4(regs));
             break;
 
         // int syscall_swapon(char *path, int swapflags);
@@ -875,12 +925,12 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
 
         // int syscall_mmap(struct syscall_args *__args);
         case __NR_mmap:
-            print_mmap_args(tracee, GET_SYSCALL_ARG1(regs));
+            resaddr = print_mmap_args(tracee, GET_SYSCALL_ARG1(regs));
             break;
 
         // int syscall_mremap(struct syscall_args *__args);
         case __NR_mremap:
-            print_mremap_args(tracee, GET_SYSCALL_ARG1(regs));
+            resaddr = print_mremap_args(tracee, GET_SYSCALL_ARG1(regs));
             break;
 
         // int syscall_mlock(void *addr, size_t len);
@@ -1054,6 +1104,15 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             print_prot_flags(tracee, GET_SYSCALL_ARG3(regs));
             break;
 
+        // long syscall_madvise(void *addr, size_t length, int advice);
+        case __NR_madvise:
+            print_arg_ptr(tracee, GET_SYSCALL_ARG1(regs));
+            fprintf(tracee->log, ", ");
+            print_arg_ui(tracee, GET_SYSCALL_ARG2(regs));
+            fprintf(tracee->log, ", ");
+            print_madvise_flags(tracee, GET_SYSCALL_ARG3(regs));
+            break;
+
         // int syscall_sigprocmask(int how, sigset_t *userset, sigset_t *oldset);
         case __NR_sigprocmask:
             SWITCH3(GET_SYSCALL_ARG1(regs), SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK);
@@ -1130,8 +1189,12 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             print_arg_ptr(tracee, GET_SYSCALL_ARG2(regs));
             fprintf(tracee->log, ", ");
             print_arg_i(tracee, GET_SYSCALL_ARG3(regs));
-            fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG4(regs));
+
+            if(GET_SYSCALL_RESULT(regs) == 0)
+            {
+                size_t count = tracee_get_ptr(tracee, GET_SYSCALL_ARG4(regs));
+                SET_SYSCALL_RESULT(regs, count);
+            }
             break;
 
         // int syscall_sysctl(struct __sysctl_args *__args);
@@ -1183,13 +1246,9 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
 
         // int syscall_nanosleep(struct timespec *__rqtp, struct timespec *__rmtp);
         case __NR_nanosleep:
-            /*
-             * TODO: dereference and output the contents of timespec's after
-             *       the syscall returns successfully.
-             */
-            print_arg_ptr(tracee, GET_SYSCALL_ARG1(regs));
+            print_arg_timespec(tracee, GET_SYSCALL_ARG1(regs));
             fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG2(regs));
+            MAYBE_PRINT_ARG(tracee, regs, print_arg_timespec, GET_SYSCALL_ARG2(regs));
             break;
 
         // int syscall_setresuid(uid_t newruid, uid_t neweuid, uid_t newsuid);
@@ -1255,8 +1314,9 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             
             if(GET_SYSCALL_RESULT(regs) == 0)
             {
-                print_arg_buf(tracee, GET_SYSCALL_ARG2(regs),
-                              tracee_get_ptr(tracee, GET_SYSCALL_ARG5(regs)));
+                size_t count = tracee_get_ptr(tracee, GET_SYSCALL_ARG5(regs));
+                print_arg_buf(tracee, GET_SYSCALL_ARG2(regs), count);
+                SET_SYSCALL_RESULT(regs, count);
             }
             else
             {
@@ -1267,8 +1327,6 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             print_arg_ui(tracee, GET_SYSCALL_ARG3(regs));
             fprintf(tracee->log, ", ");
             print_arg_i(tracee, GET_SYSCALL_ARG4(regs));
-            fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG5(regs));
             break;
 
         // int syscall_pwrite(int fd, void *buf, size_t count,
@@ -1281,8 +1339,12 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             print_arg_ui(tracee, GET_SYSCALL_ARG3(regs));
             fprintf(tracee->log, ", ");
             print_arg_ui(tracee, GET_SYSCALL_ARG4(regs));
-            fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG5(regs));
+
+            if(GET_SYSCALL_RESULT(regs) == 0)
+            {
+                size_t count = tracee_get_ptr(tracee, GET_SYSCALL_ARG5(regs));
+                SET_SYSCALL_RESULT(regs, count);
+            }
             break;
 
         // int syscall_getcwd(char *buf, size_t sz);
@@ -1403,17 +1465,13 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
         //                             struct timespec *__rqtp,
         //                             struct timespec *__rmtp);
         case __NR_clock_nanosleep:
-            /*
-             * TODO: dereference and output the contents of timespec's after
-             *       the syscall returns successfully.
-             */
             print_clock_id(tracee, GET_SYSCALL_ARG1(regs));
             fprintf(tracee->log, ", ");
             print_clock_flags(tracee, GET_SYSCALL_ARG2(regs));
             fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG3(regs));
+            print_arg_timespec(tracee, GET_SYSCALL_ARG3(regs));
             fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG4(regs));
+            MAYBE_PRINT_ARG(tracee, regs, print_arg_timespec, GET_SYSCALL_ARG4(regs));
             break;
 
         // int syscall_tgkill(pid_t tgid, pid_t tid, int sig);
@@ -1576,8 +1634,9 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
 
             if(GET_SYSCALL_RESULT(regs) == 0)
             {
-                print_arg_buf(tracee, GET_SYSCALL_ARG3(regs),
-                              tracee_get_ptr(tracee, GET_SYSCALL_ARG5(regs)));
+                size_t count = tracee_get_ptr(tracee, GET_SYSCALL_ARG5(regs));
+                print_arg_buf(tracee, GET_SYSCALL_ARG3(regs), count);
+                SET_SYSCALL_RESULT(regs, count);
             }
             else
             {
@@ -1586,8 +1645,6 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
 
             fprintf(tracee->log, ", ");
             print_arg_ui(tracee, GET_SYSCALL_ARG4(regs));
-            fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG5(regs));
             break;
 
         // int syscall_fchmodat(int dirfd, char *pathname, mode_t mode, int flags);
@@ -1666,8 +1723,12 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             print_arg_i(tracee, GET_SYSCALL_ARG3(regs));
             fprintf(tracee->log, ", ");
             print_arg_i(tracee, GET_SYSCALL_ARG4(regs));
-            fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG5(regs));
+
+            if(GET_SYSCALL_RESULT(regs) == 0)
+            {
+                size_t count = tracee_get_ptr(tracee, GET_SYSCALL_ARG5(regs));
+                SET_SYSCALL_RESULT(regs, count);
+            }
             break;
 
         // int syscall_prlimit(pid_t pid, int resource, struct rlimit *new_limit,
@@ -1691,8 +1752,12 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             print_arg_ui(tracee, GET_SYSCALL_ARG2(regs));
             fprintf(tracee->log, ", ");
             print_arg_ui(tracee, GET_SYSCALL_ARG3(regs));
-            fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG4(regs));
+
+            if(GET_SYSCALL_RESULT(regs) == 0)
+            {
+                size_t count = tracee_get_ptr(tracee, GET_SYSCALL_ARG4(regs));
+                SET_SYSCALL_RESULT(regs, count);
+            }
             break;
 
         // int syscall_execveat(int dirfd, char *path, char **argv,
@@ -1918,8 +1983,11 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
             print_arg_ptr(tracee, GET_SYSCALL_ARG2(regs));
             fprintf(tracee->log, ", ");
             print_arg_i(tracee, GET_SYSCALL_ARG3(regs));
-            fprintf(tracee->log, ", ");
-            print_arg_ptr(tracee, GET_SYSCALL_ARG4(regs));
+
+            if(GET_SYSCALL_RESULT(regs) == 0)
+            {
+                resaddr = tracee_get_ptr(tracee, GET_SYSCALL_ARG4(regs));
+            }
             break;
 
         // int syscall_shmctl(int shmid, int cmd, struct shmid_ds *buf);
@@ -1979,9 +2047,10 @@ void syscall_finish(struct stracee_t *tracee, int sys, struct user_regs_struct *
     {
         fprintf(tracee->log, ") = ?\n");
     }
-    else if(sys == __NR_brk)
+    else if(sysres == 0 &&
+            (sys == __NR_shmat || sys == __NR_mmap || sys == __NR_mremap || sys == __NR_brk))
     {
-        fprintf(tracee->log, ") = %#0lx\n", sysres);
+        fprintf(tracee->log, ") = %#0lx\n", resaddr);
     }
     else
     {
@@ -2061,6 +2130,7 @@ int main(int argc, char **argv)
         {"string-limit",       required_argument, 0, 's'},
         {"successful-only",    no_argument      , 0, 'z'},
         {"summary-only",       no_argument      , 0, 'c'},
+        {"summary",            no_argument      , 0, 'C'},
         {"trace",              required_argument, 0,  0 },
         {"user",               required_argument, 0, 'u'},
         {"version",            no_argument      , 0, 'v'},
@@ -2068,8 +2138,13 @@ int main(int argc, char **argv)
     };
     
     memset(stracee, 0, sizeof(stracee));
-    
-    while((c = getopt_long(argc, argv, "+b:cde:fho:p:s:u:vzAE:I:Z",
+
+    for(c = 0; c < syscall_name_count; c++)
+    {
+        sysstat[c].min = INT_MAX;
+    }
+
+    while((c = getopt_long(argc, argv, "+b:cde:fho:p:s:u:vzACE:I:Z",
                                 long_options, &option_index)) != -1)
     {
         switch(c)
@@ -2140,6 +2215,14 @@ int main(int argc, char **argv)
                 DEBUG_PRINT("%s: got option: -%c\n", argv[0], c);
 
                 summary_only = 1;
+                quiet_mask[QUIET_ATTACH] = 1;
+                quiet_mask[QUIET_EXIT] = 1;
+                break;
+
+            case 'C':
+                DEBUG_PRINT("%s: got option: -%c\n", argv[0], c);
+
+                summary = 1;
                 break;
 
             case 'd':
@@ -2608,7 +2691,10 @@ int main(int argc, char **argv)
                         break;
 
                     default:
-                        fprintf(tracee->log, "Unknown event: %d\n", event);
+                        if(!summary_only)
+                        {
+                            fprintf(tracee->log, "Unknown event: %d\n", event);
+                        }
                         break;
                 }
                 
@@ -2623,7 +2709,12 @@ int main(int argc, char **argv)
                 */
 
                 int res = WSTOPSIG(status);
-                fprintf(tracee->log, "--- %s ---\n", sig_names[res]);
+
+                if(!summary_only)
+                {
+                    fprintf(tracee->log, "--- %s ---\n", sig_names[res]);
+                }
+
                 ptrace(PTRACE_CONT, pid, NULL, &res);
             }
         }
@@ -2640,8 +2731,22 @@ int main(int argc, char **argv)
             // mimic the last syscall (likely exit or group_exit)
             if(tracee->prev_syscall != -1)
             {
-                fprintf(tracee->log, "%s(%d) = ?\n",
-                        syscall_names[tracee->prev_syscall], WEXITSTATUS(status));
+                if(!summary_only)
+                {
+                    fprintf(tracee->log, "%s(%d) = ?\n",
+                            syscall_names[tracee->prev_syscall], WEXITSTATUS(status));
+                }
+
+                if(sysstat[__NR_exit].min == INT_MAX)
+                {
+                    sysstat[__NR_exit].min = 0;
+                }
+
+                if(sysstat[__NR_exit_group].min == INT_MAX)
+                {
+                    sysstat[__NR_exit_group].min = 0;
+                }
+
                 //syscall_finish(tracee, tracee->prev_syscall, NULL);
                 tracee->prev_syscall = -1;
             }
@@ -2655,6 +2760,70 @@ int main(int argc, char **argv)
     }
     
     DEBUG_PRINT("%s: done!\n", argv[0]);
+
+    // print summary if requested
+    // TODO: allow user to specify the columns they want in the output
+    if(summary || summary_only)
+    {
+        double total = 0.0, avg = 0.0;
+        int i = 0;
+        size_t count = 0, errs = 0;
+
+        // those two will only have valid counts if they fail
+        if(sysstat[__NR_execve].min == INT_MAX)
+        {
+            sysstat[__NR_execve].min = 0;
+        }
+
+        if(sysstat[__NR_execveat].min == INT_MAX)
+        {
+            sysstat[__NR_execveat].min = 0;
+        }
+
+        // now do the count
+        for(c = 0; c < syscall_name_count; c++)
+        {
+            sysstat[c].avg = (sysstat[c].min + sysstat[c].max) / 2;
+            total += sysstat[c].total;
+        }
+
+        fprintf(stderr, "%% time     seconds  msecs/call     calls    errors syscall\n");
+        fprintf(stderr,  "------ ----------- ----------- --------- --------- -----------------\n");
+
+        for(c = 0; c < syscall_name_count; c++)
+        {
+            if(!sysstat[c].count)
+            {
+                continue;
+            }
+
+            avg += sysstat[c].avg;
+            count += sysstat[c].count;
+            errs += sysstat[c].errs;
+            i++;
+            //fprintf(stderr, "[%d] %f, %f, %f, %f\n", c, sysstat[c].min, sysstat[c].max, sysstat[c].avg, sysstat[c].total);
+
+            fprintf(stderr, "%6.2f %11.6f %11ld %9ld %9ld %s\n",
+                            (sysstat[c].total / total) * 100,
+                            sysstat[c].total,
+                            (long)sysstat[c].avg,
+                            sysstat[c].count,
+                            sysstat[c].errs,
+                            syscall_names[c]);
+        }
+
+        avg /= (double)i;
+
+        fprintf(stderr,  "------ ----------- ----------- --------- --------- -----------------\n");
+        fprintf(stderr, "%6.2f %11.6f %11ld %9ld %9ld %s\n",
+                        100.0,
+                        total,
+                        (long)avg,
+                        count,
+                        errs,
+                        "total");
+    }
+
     exit(EXIT_SUCCESS);
 }
 

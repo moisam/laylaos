@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: chvt.c
  *    This file is part of LaylaOS.
@@ -97,6 +97,8 @@ void parse_line_args(int argc, char **argv)
 int main(int argc, char **argv)
 {
     int fd, res;
+    long ttyno;
+    char *endptr;
     char ttypath[32];
 
     parse_line_args(argc, argv);
@@ -108,7 +110,18 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    sprintf(ttypath, "/dev/tty%s", *extra_argv++);
+    // get the requested tty number
+    errno = 0;
+    ttyno = strtol(*extra_argv, &endptr, 10);
+
+    if(errno != 0 || endptr == *extra_argv || *endptr != '\0' || ttyno == 0)
+    {
+        fprintf(stderr, "%s: invalid tty number: %s\n", argv[0], *extra_argv);
+        fprintf(stderr, "Type `%s --help` for usage\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    sprintf(ttypath, "/dev/tty");
 
     if((fd = open(ttypath, O_RDONLY|O_NOCTTY|O_NONBLOCK)) < 0)
     {
@@ -119,7 +132,7 @@ int main(int argc, char **argv)
 
     // if 0 is passed as arg, use the tty device referenced by
     // the given file descriptor
-    res = ioctl(fd, VT_SWITCH_TTY, 0);
+    res = ioctl(fd, VT_SWITCH_TTY, ttyno);
 
     close(fd);
 

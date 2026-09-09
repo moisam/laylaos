@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: strace-arg-print.c
  *    This file is part of LaylaOS.
@@ -759,11 +759,11 @@ void print_arg_buf(struct stracee_t *tracee, uintptr_t buf, size_t count)
             {
                 break;
             }
-            
+
             // don't overread
-            k = (i <= count - sizeof(void *)) ?
-                    sizeof(void *) : (count - i);
-            
+            k = (count < sizeof(void *)) ? count :
+                    ((i <= count - sizeof(void *)) ? sizeof(void *) : (count - i));
+
             for(j = 0; j < k; j++)
             {
                 char c = word & 0xff;
@@ -1000,15 +1000,17 @@ void print_flags_generic(struct stracee_t *tracee,
 
     for(i = 0; i < farr_size; i++)
     {
-        if(flags & farr[i].val)
+        if((flags & farr[i].val) == farr[i].val)
         {
             fprintf(tracee->log, farr[i].name);
             flags &= ~farr[i].val;
             
-            if(flags)
+            if(!flags)
             {
-                fprintf(tracee->log, "|");
+                return;
             }
+
+            fprintf(tracee->log, "|");
         }
     }
     
@@ -1054,7 +1056,55 @@ void print_sa_flags(struct stracee_t *tracee, int flags)
 
 void print_prot_flags(struct stracee_t *tracee, int flags)
 {
-    print_flags_generic(tracee, flags, "0", prot_flags, PROT_FLAGS_COUNT);
+    print_flags_generic(tracee, flags, "PROT_NONE", prot_flags, PROT_FLAGS_COUNT);
+}
+
+void print_mmap_flags(struct stracee_t *tracee, int flags)
+{
+    print_flags_generic(tracee, flags, "0", mmap_flags, MMAP_FLAGS_COUNT);
+}
+
+void print_mremap_flags(struct stracee_t *tracee, int flags)
+{
+    print_flags_generic(tracee, flags, "0", mremap_flags, MREMAP_FLAGS_COUNT);
+}
+
+void print_madvise_flags(struct stracee_t *tracee, int flags)
+{
+    int i;
+
+    if(!flags)
+    {
+        fprintf(tracee->log, "MADV_NORMAL");
+        return;
+    }
+
+    for(i = 0; i < MADVISE_FLAGS_COUNT; i++)
+    {
+        if(flags == madvise_flags[i].val)
+        {
+            fprintf(tracee->log, madvise_flags[i].name);
+            return;
+        }
+    }
+
+    fprintf(tracee->log, "%#x", flags);
+}
+
+void print_fcntl_flags(struct stracee_t *tracee, int flags)
+{
+    int i;
+
+    for(i = 0; i < FCNTL_FLAGS_COUNT; i++)
+    {
+        if(flags == fcntl_flags[i].val)
+        {
+            fprintf(tracee->log, fcntl_flags[i].name);
+            return;
+        }
+    }
+
+    fprintf(tracee->log, "%d", flags);
 }
 
 void print_id_generic(struct stracee_t *tracee, size_t id,
@@ -1128,7 +1178,7 @@ void print_arg_prio(struct stracee_t *tracee, int which)
 }
 
 
-void print_mmap_args(struct stracee_t *tracee, uintptr_t ptr)
+uintptr_t print_mmap_args(struct stracee_t *tracee, uintptr_t ptr)
 {
     size_t bufsz = ALIGNED_STRUCT_SZ(struct syscall_args);
     char buf[bufsz];
@@ -1137,27 +1187,29 @@ void print_mmap_args(struct stracee_t *tracee, uintptr_t ptr)
     if(!ptr)
     {
         fprintf(tracee->log, "NULL");
-        return;
+        return 0;
     }
 
     if(tracee_get_bytes(tracee, ptr, buf, bufsz) != 0)
     {
         print_arg_ptr(tracee, ptr);
+        return 0;
     }
     else
     {
         fprintf(tracee->log, "%p, ", (void *)a->args[0]);
         fprintf(tracee->log, "%lu, ", (size_t)a->args[1]);
-        //fprintf(tracee->log, "%d, ", (int)a->args[2]);
         print_prot_flags(tracee, (int)a->args[2]);
-        fprintf(tracee->log, ", %d, ", (int)a->args[3]);
-        fprintf(tracee->log, "%d, ", (int)a->args[4]);
-        fprintf(tracee->log, "%ld, ", (off_t)a->args[5]);
-        fprintf(tracee->log, "%p", (void **)a->args[6]);
+        fprintf(tracee->log, ", ");
+        print_mmap_flags(tracee, (int)a->args[3]);
+        fprintf(tracee->log, ", %d, ", (int)a->args[4]);
+        fprintf(tracee->log, "%ld", (off_t)a->args[5]);
+        //fprintf(tracee->log, "%p", (void **)a->args[6]);
+        return tracee_get_ptr(tracee, a->args[6]);
     }
 }
 
-void print_mremap_args(struct stracee_t *tracee, uintptr_t ptr)
+uintptr_t print_mremap_args(struct stracee_t *tracee, uintptr_t ptr)
 {
     size_t bufsz = ALIGNED_STRUCT_SZ(struct syscall_args);
     char buf[bufsz];
@@ -1166,21 +1218,23 @@ void print_mremap_args(struct stracee_t *tracee, uintptr_t ptr)
     if(!ptr)
     {
         fprintf(tracee->log, "NULL");
-        return;
+        return 0;
     }
 
     if(tracee_get_bytes(tracee, ptr, buf, bufsz) != 0)
     {
         print_arg_ptr(tracee, ptr);
+        return 0;
     }
     else
     {
         fprintf(tracee->log, "%p, ", (void *)a->args[0]);
         fprintf(tracee->log, "%lu, ", (size_t)a->args[1]);
         fprintf(tracee->log, "%lu, ", (size_t)a->args[2]);
-        fprintf(tracee->log, "%d, ", (int)a->args[3]);
-        fprintf(tracee->log, "%p, ", (void *)a->args[4]);
-        fprintf(tracee->log, "%p", (void **)a->args[5]);
+        print_mremap_flags(tracee, (int)a->args[3]);
+        fprintf(tracee->log, ", %p", (void *)a->args[4]);
+        //fprintf(tracee->log, "%p", (void **)a->args[5]);
+        return tracee_get_ptr(tracee, a->args[5]);
     }
 }
 

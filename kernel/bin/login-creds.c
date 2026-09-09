@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: login-creds.c
  *    This file is part of LaylaOS.
@@ -80,7 +80,7 @@ static inline void set_locale(void)
 }
 
 
-void set_creds(struct passwd *pwd)
+void set_creds(struct passwd *pwd, int setpath)
 {
     char *home = pwd->pw_dir[0] ? pwd->pw_dir : "/";
     char *exe = pwd->pw_shell[0] ? pwd->pw_shell : DEFAULT_SHELL;
@@ -91,8 +91,12 @@ void set_creds(struct passwd *pwd)
        setenv("SHELL", exe, 1) < 0 ||
        setenv("TERMINFO_DIRS", "/usr/local/share/terminfo:/usr/share/terminfo", 1) < 0 ||
        setenv("TERMINFO", "/usr/share/terminfo", 1) < 0 ||
-       setenv("PATH", DEFAULT_PATH, 1) < 0 ||
        setenv("PAGER", "less", 1) < 0 || setenv("MANPAGER", "less", 1) < 0)
+    {
+        fprintf(stderr, "Failed to setenv: %s", strerror(errno));
+    }
+
+    if(setpath && setenv("PATH", DEFAULT_PATH, 1) < 0)
     {
         fprintf(stderr, "Failed to setenv: %s", strerror(errno));
     }
