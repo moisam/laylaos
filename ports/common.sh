@@ -68,7 +68,7 @@ download_only()
     # Download
     # Some downloads, like musl, pass an extra flag to wget
     echo "   ==> Downloading ${DOWNLOAD_URL}/${DOWNLOAD_FILE} to ${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}"
-    wget -O "${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}" "${DOWNLOAD_URL}/${DOWNLOAD_FILE}" $1
+    wget -t=500 -O "${DOWNLOAD_PORTS_PATH}/${DOWNLOAD_FILE}" "${DOWNLOAD_URL}/${DOWNLOAD_FILE}" $1
 
     [ $? -ne 0 ] && exit_failure "$0: failed to download ${DOWNLOAD_URL}/${DOWNLOAD_FILE}"
 }
