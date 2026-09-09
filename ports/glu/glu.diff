@@ -1,0 +1,10 @@
+diff -rub ./glu-glu-9.0.3/meson.build ./glu-glu-9.0.3/meson.build
+--- ./glu-glu-9.0.3/meson.build	2023-07-21 19:24:19.000000000 +0100
++++ ./glu-glu-9.0.3/meson.build	2025-10-20 21:06:56.848853951 +0100
+@@ -34,5 +34,5 @@
+   libglu,
+   name : 'glu',
+   description : 'Mesa OpenGL Utility Library',
+-  requires: dep_gl
++  libraries: dep_gl
+ )

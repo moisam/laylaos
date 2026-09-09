@@ -1,0 +1,107 @@
+diff -rub ./freeglut-3.6.0/CMakeLists.txt ./freeglut-3.6.0/CMakeLists.txt
+--- ./freeglut-3.6.0/CMakeLists.txt	2024-06-09 18:44:13.000000000 +0100
++++ ./freeglut-3.6.0/CMakeLists.txt	2026-03-26 00:01:08.644216669 +0000
+@@ -224,6 +224,36 @@
+     # Only used in fg_window.c, to declare support for double buffering
+     ADD_DEFINITIONS(-DEGL_VERSION_1_0)
+ 
++ELSEIF(LAYLAOS)
++
++    LIST(APPEND FREEGLUT_SRCS
++        src/egl/fg_internal_egl.h
++        src/egl/fg_display_egl.c
++        src/egl/fg_ext_egl.c
++        src/egl/fg_init_egl.c
++        src/egl/fg_init_egl.h
++        src/egl/fg_state_egl.c
++        src/egl/fg_state_egl.h
++        src/egl/fg_structure_egl.c
++        src/egl/fg_structure_egl.h
++        src/egl/fg_window_egl.c
++        src/egl/fg_window_egl.h
++        src/laylaos/fg_structure.c
++        src/laylaos/fg_state_laylaos.c
++        src/laylaos/fg_cursor_laylaos.c
++        src/laylaos/fg_cmap_laylaos.c
++        src/laylaos/fg_window_laylaos.c
++        src/laylaos/fg_main_laylaos.c
++        src/laylaos/fg_joystick_laylaos.c
++        src/laylaos/fg_init_laylaos.c
++        src/laylaos/fg_gamemode_laylaos.c
++        src/laylaos/fg_spaceball_laylaos.c
++        src/laylaos/fg_input_devices_laylaos.c
++        src/laylaos/freeglut_glutfont_definitions_laylaos.c
++        src/laylaos/fg_ext_laylaos.c
++        src/laylaos/fg_menu_laylaos.c
++    )
++
+ ELSE()
+     # UNIX (Wayland)
+     IF(FREEGLUT_WAYLAND)
+@@ -294,7 +324,7 @@
+ ENDIF()
+ 
+ INCLUDE(CheckIncludeFiles)
+-IF(UNIX AND NOT(ANDROID OR BLACKBERRY OR FREEGLUT_WAYLAND OR OGC))
++IF(UNIX AND NOT(ANDROID OR BLACKBERRY OR FREEGLUT_WAYLAND OR OGC OR LAYLAOS))
+     FIND_PACKAGE(X11 REQUIRED)
+     INCLUDE_DIRECTORIES(${X11_X11_INCLUDE_PATH})
+     LIST(APPEND LIBS ${X11_X11_LIB})
+@@ -361,7 +391,13 @@
+       find_library(OPENGL_glu_LIBRARY NAME GLU HINTS ${X11_LIB_PATH})
+     endif()
+ 
+-    if(NOT CMAKE_VERSION VERSION_LESS "3.10")
++    if(LAYLAOS)
++      LIST(APPEND LIBS ${OPENGL_gl_LIBRARY})
++      LIST(APPEND LIBS ${EGL_LIBRARY})
++      LIST(APPEND LIBS ${FREETYPE_LIBRARY})
++      LIST(APPEND LIBS "-lgui")
++      INCLUDE_DIRECTORIES(${OPENGL_INCLUDE_DIR})
++    elseif(NOT CMAKE_VERSION VERSION_LESS "3.10")
+       FIND_PACKAGE(OpenGL REQUIRED COMPONENTS OpenGL)
+       LIST(APPEND LIBS OpenGL::GL)
+     else()
+@@ -725,6 +761,8 @@
+     SET(PC_LIBS_PRIVATE "-lwayland-client -lwayland-cursor -lwayland-egl -lGL -lxkbcommon -lm")
+   ELSEIF(OGC)
+     SET(PC_LIBS_PRIVATE "-lm")
++  ELSEIF(LAYLAOS)
++    SET(PC_LIBS_PRIVATE "-lGL -lEGL -lm -lgui")
+   ELSE()
+     SET(PC_LIBS_PRIVATE "-lX11 -lXxf86vm -lXrandr -lGL -lm")
+   ENDIF()
+diff -rub ./freeglut-3.6.0/src/fg_internal.h ./freeglut-3.6.0/src/fg_internal.h
+--- ./freeglut-3.6.0/src/fg_internal.h	2024-06-09 18:44:13.000000000 +0100
++++ ./freeglut-3.6.0/src/fg_internal.h	2025-10-20 21:37:58.509474909 +0100
+@@ -52,6 +52,9 @@
+ #elif defined (__QNXNTO__) || defined (__PLAYBOOK__)
+ #   define  TARGET_HOST_BLACKBERRY  1
+ 
++#elif defined(__laylaos__)
++#   define  TARGET_HOST_LAYLAOS  1
++
+ #elif defined(__posix__) || defined(unix) || defined(__unix__) || defined(__linux__) || defined(__sun)
+ #   if defined(FREEGLUT_WAYLAND)
+ #      define  TARGET_HOST_POSIX_WAYLAND  1
+@@ -110,6 +113,10 @@
+ #   define  TARGET_HOST_OGC            0
+ #endif
+ 
++#ifndef  TARGET_HOST_LAYLAOS
++#   define  TARGET_HOST_LAYLAOS        0
++#endif
++
+ /* -- FIXED CONFIGURATION LIMITS ------------------------------------------- */
+ 
+ #define  FREEGLUT_MAX_MENUS            3
+@@ -220,6 +227,9 @@
+ #if TARGET_HOST_OGC
+ #include "ogc/fg_internal_ogc.h"
+ #endif
++#if TARGET_HOST_LAYLAOS
++#include "laylaos/fg_internal_laylaos.h"
++#endif
+ 
+ 
+ /* -- GLOBAL TYPE DEFINITIONS ---------------------------------------------- */

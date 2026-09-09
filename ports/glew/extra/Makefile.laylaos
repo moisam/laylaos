@@ -1,0 +1,18 @@
+NAME = $(GLEW_NAME)
+#CC = cc
+#LD = ld
+#LDFLAGS.GL = -L$(CROSS_BUILD_LIBS) -lGL -lEGL -lgui -lfreetype
+LDFLAGS.GL = -L$(CROSS_BUILD_LIBS) -lEGL -lgui -lfreetype
+LDFLAGS.STATIC = -Wl,-Bstatic
+LDFLAGS.DYNAMIC = -Wl,-Bdynamic
+CFLAGS.EXTRA += -fPIC -pedantic
+CFLAGS.EXTRA += -DGLEW_EGL
+NAME = GLEW
+WARN = -Wall -W -Wshadow -pedantic
+POPT = -O2
+BIN.SUFFIX =
+LIB.SONAME    = lib$(NAME).so.$(SO_MAJOR)
+LIB.DEVLNK    = lib$(NAME).so
+LIB.SHARED    = lib$(NAME).so.$(SO_VERSION)
+LIB.STATIC    = lib$(NAME).a
+LDFLAGS.SO    = -shared -Wl,-soname=$(LIB.SONAME)

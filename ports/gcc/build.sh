@@ -102,7 +102,7 @@ ${DOWNLOAD_SRCDIR}/configure --host=${BUILD_TARGET} \
     --enable-languages=c,c++ \
     --with-build-sysroot=${CROSSCOMPILE_SYSROOT_PATH} \
     --enable-shared --enable-host-shared \
-    --enable-threads=yes --enable-libssp --disable-multilib --disable-tls \
+    --enable-threads=yes --enable-libssp --disable-multilib \
     CPPFLAGS="-D__laylaos__ -D__${BUILD_ARCH}__" \
     CXXFLAGS="-I${CXX_INCLUDE_PATH} -I${CXX_INCLUDE_PATH}/${BUILD_ARCH}-laylaos" \
     ${CONFIG_BUILD_ARG} \

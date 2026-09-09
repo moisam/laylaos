@@ -6,7 +6,7 @@
 
 DOWNLOAD_NAME="freetype"
 DOWNLOAD_VERSION="2.13.1"
-DOWNLOAD_URL="https://download.savannah.gnu.org/releases/freetype/"
+DOWNLOAD_URL="https://sourceforge.net/projects/freetype/files/freetype2/${DOWNLOAD_VERSION}/"
 DOWNLOAD_PREFIX="freetype-"
 DOWNLOAD_SUFFIX=".tar.xz"
 DOWNLOAD_FILE="${DOWNLOAD_PREFIX}${DOWNLOAD_VERSION}${DOWNLOAD_SUFFIX}"
