@@ -140,6 +140,23 @@ long snddev_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
                     hda->flags &= ~HDA_FLAG_ERROR;
                 }
 
+                if(info.output_muted)
+                {
+                    if(!(hda->flags & HDA_FLAG_MUTED))
+                    {
+                        hda_set_volume(hda, 0, 1);
+                    }
+                }
+                else if(info.play.gain != 0)
+                {
+                    if(info.play.gain > 255)
+                    {
+                        info.play.gain = 255;
+                    }
+
+                    hda_set_volume(hda, info.play.gain, 1);
+                }
+
                 //hda_config_out_widgets(hda);
 
                 /*
