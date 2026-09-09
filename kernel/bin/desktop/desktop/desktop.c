@@ -50,8 +50,10 @@
 
 #include "../client/inlines.c"
 
-#define GLOB                    __global_gui_data
-#define INIT_HASHSZ             256
+#define GLOB                        __global_gui_data
+#define INIT_HASHSZ                 256
+#define FCCACHE_PATH                "/usr/bin/fc-cache"
+#define QTPRELOAD_PATH              "/bin/qtpreloader"
 
 pid_t bottom_panel_pid = 0;
 pid_t top_panel_pid = 0;
@@ -436,7 +438,7 @@ int main(int argc, char **argv)
     {
         background_image_path = strdup(BACKGROUNDS_DIR_PATH "/desktop-background9.jpeg");
         background_is_image = 1;
-        background_image_aspect = DESKTOP_BACKGROUND_CENTERED;
+        background_image_aspect = DESKTOP_BACKGROUND_STRETCHED;
         load_desktop_background();
     }
 
@@ -493,6 +495,22 @@ int main(int argc, char **argv)
                        desktop_bounds.bottom, desktop_bounds.right);
 
     desktop_init_alttab();
+
+    // pre-populate fontconfig's cache
+    if(!fork())
+    {
+        char *argv[] = { FCCACHE_PATH, NULL };
+        execvp(FCCACHE_PATH, argv);
+        exit(EXIT_FAILURE);
+    }
+
+    // start the Qt pre-load app
+    if(!fork())
+    {
+        char *argv[] = { QTPRELOAD_PATH, NULL };
+        execvp(QTPRELOAD_PATH, argv);
+        exit(EXIT_FAILURE);
+    }
     
     while(1)
     {
@@ -625,9 +643,13 @@ int main(int argc, char **argv)
                 }
                 // if the Apps or Calculator key was pressed, pass it to the
                 // top panel so it can show the Applications menu and the
-                // Calculator app, respectively
-                else if((ev->key.code == KEYCODE_APPS || 
-                         ev->key.code == KEYCODE_CALC) &&
+                // Calculator app, respectively. Also pass Volume control key
+                // presses so the Volume widget can adjust system volume
+                else if((ev->key.code == KEYCODE_LGUI /* KEYCODE_APPS */ || 
+                         ev->key.code == KEYCODE_CALC ||
+                         ev->key.code == KEYCODE_VOLUP ||
+                         ev->key.code == KEYCODE_VOLDN ||
+                         ev->key.code == KEYCODE_AUD_MUTE) &&
                             top_panel_winid > 0)
                 {
                     struct event_t ev2;
@@ -651,6 +673,43 @@ int main(int argc, char **argv)
                 {
                     desktop_finish_alttab();
                 }
+                break;
+
+            case EVENT_SCREEN_RES_CHANGED:
+                // screen resolution has changed
+                // get the updated screen info
+                if(!get_screen_info(&GLOB.screen))
+                {
+                    break;
+                }
+
+                // update desktop bounds
+                desktop_bounds.top = 0;
+                desktop_bounds.left = 0;
+                desktop_bounds.bottom = GLOB.screen.h - 1;
+                desktop_bounds.right = GLOB.screen.w - 1;
+
+                if(bottom_panel_pid > 0)
+                {
+                    desktop_bounds.bottom -= BOTTOMPANEL_HEIGHT;
+                }
+
+                if(top_panel_pid > 0)
+                {
+                    desktop_bounds.top = TOPPANEL_HEIGHT;
+                }
+
+                set_desktop_bounds(desktop_bounds.top, desktop_bounds.left,
+                                   desktop_bounds.bottom, desktop_bounds.right);
+
+                // repaint desktop
+                window_resize(desktop_window, 
+                              desktop_window->x, desktop_window->y,
+                              GLOB.screen.w, GLOB.screen.h);
+                load_desktop_background();
+                draw_desktop_background();
+                repaint_desktop_entries();
+                window_invalidate(desktop_window);
                 break;
 
             case REQUEST_GET_DESKTOP_BACKGROUND:

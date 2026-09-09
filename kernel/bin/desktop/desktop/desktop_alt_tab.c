@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: desktop_alt_tab.c
  *    This file is part of LaylaOS.
@@ -67,8 +67,12 @@ void desktop_init_alttab(void)
     key_bind(KEYCODE_LALT, 0, KEYBINDING_NOTIFY);
     key_bind(KEYCODE_RALT, 0, KEYBINDING_NOTIFY);
 
-    key_bind(KEYCODE_APPS, 0, KEYBINDING_NOTIFY_ONCE);
+    //key_bind(KEYCODE_APPS, 0, KEYBINDING_NOTIFY_ONCE);
+    key_bind(KEYCODE_LGUI, 0, KEYBINDING_NOTIFY_ONCE);
     key_bind(KEYCODE_CALC, 0, KEYBINDING_NOTIFY_ONCE);
+    key_bind(KEYCODE_VOLUP, 0, KEYBINDING_NOTIFY_ONCE);
+    key_bind(KEYCODE_VOLDN, 0, KEYBINDING_NOTIFY_ONCE);
+    key_bind(KEYCODE_AUD_MUTE, 0, KEYBINDING_NOTIFY_ONCE);
 
     default_icon_bitmap.width = ICONWIDTH;
     default_icon_bitmap.height = ICONWIDTH;

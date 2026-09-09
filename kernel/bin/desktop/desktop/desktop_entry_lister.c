@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: desktop_entry_lister.c
  *    This file is part of LaylaOS.
@@ -167,7 +167,7 @@ struct app_entry_t *do_entry(char *filename, char *buf, size_t bufsz)
     volatile char *b;
     volatile int inited, ob, kw;
     char *val;
-    char *name = NULL, *command = NULL, *iconpath = NULL, *icon = NULL;
+    char *name = NULL, *command = NULL, *iconpath = NULL, *icon = NULL, *mimetypes = NULL;
     int flags, category;
     struct app_entry_t *res;
     
@@ -252,6 +252,13 @@ struct app_entry_t *do_entry(char *filename, char *buf, size_t bufsz)
                     if((val = getval(b + 7)))
                     {
                         command = strdup(val);
+                    }
+                }
+                else if(strncasecmp((char *)b, "mimetype", 8) == 0)
+                {
+                    if((val = getval(b + 8)))
+                    {
+                        mimetypes = strdup(val);
                     }
                 }
                 else if(strncasecmp((char *)b, "iconpath", 8) == 0)
@@ -346,6 +353,7 @@ struct app_entry_t *do_entry(char *filename, char *buf, size_t bufsz)
     res->icon = icon;
     res->flags = flags;
     res->category = category;
+    res->mimetypes = mimetypes;
     
     return res;
 }

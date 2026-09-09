@@ -28,6 +28,10 @@
 #ifndef GUI_DESKTOP_H
 #define GUI_DESKTOP_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 #include "../include/window-defs.h"
 #include "../include/rect.h"
@@ -43,11 +47,14 @@
 #define EVENT_DESKTOP_BACKGROUND_INFO       (EVENT_APPLICATION_PRIVATE + 0)
 
 // background image aspect values
-#define DESKTOP_BACKGROUND_CENTERED         0
-#define DESKTOP_BACKGROUND_TILES            1
-#define DESKTOP_BACKGROUND_SCALED           2
-#define DESKTOP_BACKGROUND_STRETCHED        3
-#define DESKTOP_BACKGROUND_ZOOMED           4
+#define DESKTOP_BACKGROUND_CENTERED         0   // Centered at original resolution
+#define DESKTOP_BACKGROUND_TILES            1   // Tiled across screen
+#define DESKTOP_BACKGROUND_SCALED           2   // Aspect ratio preserved, 
+                                                // fits within screen boundaries
+#define DESKTOP_BACKGROUND_STRETCHED        3   // Stretches to fill entire 
+                                                // screen, distorts aspect ratio
+#define DESKTOP_BACKGROUND_ZOOMED           4   // Aspect ratio preserved, 
+                                                // crops image to fill screen
 
 #define DESKTOP_BACKGROUND_FIRST_ASPECT     0
 #define DESKTOP_BACKGROUND_LAST_ASPECT      4
@@ -116,5 +123,9 @@ void desktop_prep_alttab(void);
 void desktop_cancel_alttab(void);
 void desktop_draw_alttab(void);
 void desktop_finish_alttab(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif      /* GUI_DESKTOP_H */
