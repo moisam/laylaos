@@ -549,7 +549,7 @@ void draw_menuitem_to_canvas(struct gc_t *gc, struct menu_item_t *mi,
         gc_fill_rect(gc, 1, y + 1, w - 2, MENU_HEIGHT - 2, MENU_BGCOLOR);
         gc_horizontal_line(gc, 4, y + (MENU_HEIGHT / 2),
                                w - 8, 
-                               GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR]);
+                               GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR_MID]);
     }
     else
     {
@@ -619,7 +619,7 @@ void draw_menu_to_canvas(struct window_t *frame, int unused)
     
     gc_fill_rect(frame->gc, 0, 0, frame->w, frame->h, MENU_BGCOLOR);
     gc_draw_rect(frame->gc, 0, 0, frame->w, frame->h, 
-                    GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR]);
+                    GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR_MID]);
 
     if(!frame->menu_item)
     {
@@ -833,11 +833,11 @@ void menuframe_mouseover(struct window_t *frame, int mouse_x, int mouse_y,
 
         // draw temporary left border
         gc_vertical_line(&tmp_gc, 0, 0, MENU_HEIGHT, 
-                            GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR]);
+                            GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR_MID]);
 
         // draw temporary right border
         gc_vertical_line(&tmp_gc, frame->w - 1, 0, MENU_HEIGHT, 
-                            GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR]);
+                            GLOB.themecolor[THEME_COLOR_WINDOW_BORDERCOLOR_MID]);
     }
 
 

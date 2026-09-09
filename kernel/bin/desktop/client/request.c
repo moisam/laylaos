@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: request.c
  *    This file is part of LaylaOS.
@@ -50,46 +50,5 @@ void set_desktop_bounds(int top, int left, int bottom, int right)
     ev.dest = GLOB.server_winid;
     //write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
     direct_write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
-}
-
-
-int get_win_attribs(winid_t winid, struct window_attribs_t *attribs)
-{
-    struct event_t ev, *ev2;
-    uint32_t seqid = __next_seqid();
-
-    if(!attribs)
-    {
-        return 0;
-    }
-
-    ev.type = REQUEST_WINDOW_GET_ATTRIBS;
-    ev.seqid = seqid;
-    ev.winattr.winid = winid;
-    ev.src = TO_WINID(GLOB.mypid, 0);
-    ev.dest = GLOB.server_winid;
-    //write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
-    direct_write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
-
-    if(!(ev2 = get_server_reply(seqid)))
-    {
-        return 0;
-    }
-
-    if(ev2->type == EVENT_ERROR)
-    {
-        free(ev2);
-        return 0;
-    }
-
-    attribs->gravity = 0;
-    attribs->x = ev2->winattr.x;
-    attribs->y = ev2->winattr.y;
-    attribs->w = ev2->winattr.w;
-    attribs->h = ev2->winattr.h;
-    attribs->flags = ev2->winattr.flags;
-    free(ev2);
-    
-    return 1;
 }
 

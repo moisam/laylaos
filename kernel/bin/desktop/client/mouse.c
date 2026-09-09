@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: mouse.c
  *    This file is part of LaylaOS.
@@ -64,5 +64,25 @@ void mouse_ungrab(void)
 {
     simple_request(REQUEST_UNGRAB_MOUSE, 
                         GLOB.server_winid, TO_WINID(GLOB.mypid, 0));
+}
+
+
+winid_t window_get_under_mouse(void)
+{
+    struct event_t *ev;
+    uint32_t seqid;
+    winid_t res;
+
+    seqid = simple_request(REQUEST_WINDOW_UNDER_MOUSE, GLOB.server_winid, TO_WINID(GLOB.mypid, 0));
+
+    if(!(ev = get_server_reply(seqid)))
+    {
+        return 0;
+    }
+
+    res = ev->winattr.winid;
+    free(ev);
+
+    return res;
 }
 

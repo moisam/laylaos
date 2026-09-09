@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: cursor.c
  *    This file is part of LaylaOS.
@@ -87,6 +87,29 @@ curid_t cursor_load(int w, int h, int hotx, int hoty, uint32_t *data)
 }
 
 
+void cursor_change_syscursor(curid_t curid, int pixelsz, const char *path)
+{
+    if(!path || !*path)
+    {
+        return;
+    }
+
+    size_t pathlen = strlen(path) + 1;
+    size_t bufsz = sizeof(struct event_res_t) + pathlen;
+    char tmp[bufsz];
+    struct event_res_t *evbuf = (struct event_res_t *)tmp;
+
+    memcpy((void *)evbuf->data, path, pathlen);
+    evbuf->type = REQUEST_CURSOR_CHANGE_SYSCURSOR;
+    evbuf->syscur.curid = curid;
+    evbuf->syscur.pixelsz = pixelsz;
+    evbuf->datasz = pathlen;
+    evbuf->src = TO_WINID(GLOB.mypid, 0);
+    evbuf->dest = GLOB.server_winid;
+    direct_write(GLOB.serverfd, (void *)evbuf, bufsz);
+}
+
+
 void cursor_free(curid_t curid)
 {
     struct event_t ev;
@@ -104,6 +127,11 @@ void cursor_show(struct window_t *win, curid_t curid)
 {
     struct event_t ev;
 
+    if(!win)
+    {
+        return;
+    }
+
     ev.type = REQUEST_CURSOR_SHOW;
     ev.seqid = __next_seqid();
     ev.cur.curid = curid;
@@ -117,6 +145,11 @@ void cursor_show(struct window_t *win, curid_t curid)
 
 void cursor_hide(struct window_t *win)
 {
+    if(!win)
+    {
+        return;
+    }
+
     simple_request(REQUEST_CURSOR_HIDE, GLOB.server_winid, win->winid);
 
     GLOB.curid = 0;

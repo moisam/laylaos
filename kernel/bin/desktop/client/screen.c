@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: screen.c
  *    This file is part of LaylaOS.
@@ -31,6 +31,7 @@
 #include "../include/event.h"
 #include "../include/screen.h"
 #include "../include/directrw.h"
+#include "../include/rect.h"
 
 
 #define GLOB        __global_gui_data
@@ -124,6 +125,45 @@ int get_screen_palette(struct screen_t *screen)
 
     free(ev2);
 
+    return 1;
+}
+
+
+int get_desktop_bounds(Rect *r)
+{
+    struct event_t ev, *ev2;
+    uint32_t seqid = __next_seqid();
+
+    if(!r)
+    {
+        return 0;
+    }
+
+    ev.type = REQUEST_GET_DESKTOP_BOUNDS;
+    ev.seqid = seqid;
+    ev.src = TO_WINID(GLOB.mypid, 0);
+    ev.dest = GLOB.server_winid;
+
+    direct_write(GLOB.serverfd, &ev, sizeof(struct event_t));
+
+    if(!(ev2 = get_server_reply(seqid)))
+    {
+        return 0;
+    }
+
+    if(ev2->type == EVENT_ERROR)
+    {
+        free(ev2);
+        return 0;
+    }
+
+    r->top = ev2->rect.top;
+    r->left = ev2->rect.left;
+    r->bottom = ev2->rect.bottom;
+    r->right = ev2->rect.right;
+
+    free(ev2);
+    
     return 1;
 }
 

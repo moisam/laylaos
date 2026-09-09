@@ -68,11 +68,56 @@ void window_repaint_default_bg(struct window_t *window, int is_active_child)
 }
 
 
+int window_add_to_global_list(struct window_t *window, int assignid)
+{
+    volatile struct window_t **tmplist;
+
+    mutex_lock(&__winlist_lock);
+
+    // ensure we have space in the window array
+    if(wincount < winlistsz)
+    {
+        winlist[wincount] = window;
+        wincount++;
+    }
+    else
+    {
+        int i;
+
+        if(!(tmplist = realloc(winlist, (wincount + 10) * sizeof(struct window_t *))))
+        {
+            mutex_unlock(&__winlist_lock);
+            return 0;
+        }
+
+        for(i = wincount; i < wincount + 10; i++)
+        {
+            tmplist[i] = NULL;
+        }
+
+        winlist = tmplist;
+        winlist[wincount] = window;
+        wincount++;
+        //winlistsz++;
+        winlistsz += 10;
+    }
+
+    if(assignid)
+    {
+        window->winid = TO_WINID(GLOB.mypid, next_winid);
+        next_winid++;
+    }
+
+    mutex_unlock(&__winlist_lock);
+
+    return 1;
+}
+
+
 struct window_t *__window_create(struct window_attribs_t *attribs, 
                                  int8_t type, winid_t owner)
 {
     struct window_t *window;
-    volatile struct window_t **tmplist;
     struct event_t ev, *ev2;
     uint32_t reqtype;
     
@@ -105,48 +150,19 @@ struct window_t *__window_create(struct window_attribs_t *attribs,
 
     if(!(window->children = List_new()))
     {
-        __set_errno(ENOMEM);
         free(window);
+        __set_errno(ENOMEM);
         return NULL;
     }
 
-    mutex_lock(&__winlist_lock);
-
-    // ensure we have space in the window array
-    if(wincount < winlistsz)
+    if(!(window_add_to_global_list(window, 1)))
     {
-        winlist[wincount] = window;
-        wincount++;
-    }
-    else
-    {
-        int i;
-
-        if(!(tmplist = realloc(winlist, (wincount + 10) * sizeof(struct window_t *))))
-        {
-            mutex_unlock(&__winlist_lock);
-            free(window);
-            __set_errno(ENOMEM);
-            return NULL;
-        }
-
-        for(i = wincount; i < wincount + 10; i++)
-        {
-            tmplist[i] = NULL;
-        }
-
-        winlist = tmplist;
-        winlist[wincount] = window;
-        wincount++;
-        //winlistsz++;
-        winlistsz += 10;
+        free(window);
+        __set_errno(ENOMEM);
+        return NULL;
     }
 
-    // now let's get down to business
-    window->winid = TO_WINID(GLOB.mypid, next_winid);
-    next_winid++;
-
-    mutex_unlock(&__winlist_lock);    
+    // Now let's get down to business
 
     // Account for the menu height (if we want one).
     // We don't pass the HASMENU flag to the server.
@@ -192,7 +208,8 @@ struct window_t *__window_create(struct window_attribs_t *attribs,
         free(ev2);
         return NULL;
     }
-    
+
+    window->owner_winid = owner;
     window->type = type;
     window->x = ev2->win.x;
     window->y = ev2->win.y;
@@ -414,6 +431,77 @@ struct window_t *win_for_winid(winid_t winid)
 }
 
 
+int get_win_attribs(winid_t winid, struct window_attribs_t *attribs)
+{
+    struct event_t ev, *ev2;
+    uint32_t seqid = __next_seqid();
+
+    if(!attribs)
+    {
+        return 0;
+    }
+
+    ev.type = REQUEST_WINDOW_GET_ATTRIBS;
+    ev.seqid = seqid;
+    ev.winattr.winid = winid;
+    ev.src = TO_WINID(GLOB.mypid, 0);
+    ev.dest = GLOB.server_winid;
+    //write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
+    direct_write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
+
+    if(!(ev2 = get_server_reply(seqid)))
+    {
+        return 0;
+    }
+
+    if(ev2->type == EVENT_ERROR)
+    {
+        free(ev2);
+        return 0;
+    }
+
+    attribs->gravity = 0;
+    attribs->x = ev2->winattr.x;
+    attribs->y = ev2->winattr.y;
+    attribs->w = ev2->winattr.w;
+    attribs->h = ev2->winattr.h;
+    attribs->flags = ev2->winattr.flags;
+    free(ev2);
+    
+    return 1;
+}
+
+
+int get_win_state(winid_t winid)
+{
+    struct event_t ev, *ev2;
+    uint32_t seqid = __next_seqid();
+    int res;
+
+    ev.type = EVENT_WINDOW_STATE;
+    ev.seqid = seqid;
+    ev.src = winid;
+    ev.dest = GLOB.server_winid;
+    direct_write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
+
+    if(!(ev2 = get_server_reply(seqid)))
+    {
+        return 0;
+    }
+
+    if(ev2->type == EVENT_ERROR)
+    {
+        free(ev2);
+        return 0;
+    }
+
+    res = ev2->winst.state;
+    free(ev2);
+
+    return res;
+}
+
+
 #define window_request(w, req)      \
     if(w) simple_request(req, GLOB.server_winid, w->winid); \
     else return;
@@ -518,7 +606,7 @@ void window_maximize(struct window_t *window)
     }
 
     seqid = simple_request(REQUEST_WINDOW_MAXIMIZE, GLOB.server_winid, window->winid);
-    window->flags &= ~WINDOW_HIDDEN;
+    //window->flags &= ~WINDOW_HIDDEN;
 
     handle_window_size_change(window, seqid);
 }
@@ -538,13 +626,17 @@ void window_minimize(struct window_t *window)
 
 void window_restore(struct window_t *window)
 {
+    uint32_t seqid;
+
     if(!window)
     {
         return;
     }
 
-    window_request(window, REQUEST_WINDOW_RESTORE);
-    window->flags &= ~WINDOW_HIDDEN;
+    seqid = simple_request(REQUEST_WINDOW_RESTORE, GLOB.server_winid, window->winid);
+    //window->flags &= ~WINDOW_HIDDEN;
+
+    handle_window_size_change(window, seqid);
 }
 
 
@@ -558,7 +650,7 @@ void window_enter_fullscreen(struct window_t *window)
     }
 
     seqid = simple_request(REQUEST_WINDOW_ENTER_FULLSCREEN, GLOB.server_winid, window->winid);
-    window->flags &= ~WINDOW_HIDDEN;
+    //window->flags &= ~WINDOW_HIDDEN;
 
     handle_window_size_change(window, seqid);
 }
@@ -574,7 +666,7 @@ void window_exit_fullscreen(struct window_t *window)
     }
 
     seqid = simple_request(REQUEST_WINDOW_EXIT_FULLSCREEN, GLOB.server_winid, window->winid);
-    window->flags &= ~WINDOW_HIDDEN;
+    //window->flags &= ~WINDOW_HIDDEN;
 
     handle_window_size_change(window, seqid);
 }
@@ -934,6 +1026,12 @@ void window_set_pos(struct window_t *window, int x, int y)
         return;
     }
 
+    // Don't bother if no change in position
+    if(window->x == x && window->y == y)
+    {
+        return;
+    }
+
     ev.type = REQUEST_WINDOW_SET_POS;
     ev.seqid = __next_seqid();
     ev.win.x = x;
@@ -957,6 +1055,13 @@ void window_set_size(struct window_t *window, int x, int y,
 
     if(!window)
     {
+        return;
+    }
+
+    // convert to REQUEST_WINDOW_SET_POS if no change in size
+    if(w == window->w && h == window->h)
+    {
+        window_set_pos(window, x, y);
         return;
     }
 
@@ -996,9 +1101,31 @@ void window_set_min_size(struct window_t *window, uint16_t w, uint16_t h)
 }
 
 
+void window_set_max_size(struct window_t *window, uint16_t w, uint16_t h)
+{
+    struct event_t ev;
+    uint32_t seqid = __next_seqid();
+
+    if(!window)
+    {
+        return;
+    }
+
+    ev.type = REQUEST_WINDOW_SET_MAX_SIZE;
+    ev.seqid = seqid;
+    ev.win.x = 0;
+    ev.win.y = 0;
+    ev.win.w = w;
+    ev.win.h = h;
+    ev.src = window->winid;
+    ev.dest = GLOB.server_winid;
+    direct_write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
+}
+
+
 void window_set_attrib_xxx(struct window_t *window, int which, int unset)
 {
-    struct window_attribs_t attribs;
+    uint32_t flags;
     /* volatile */ struct event_t ev;
 
     if(!window)
@@ -1006,27 +1133,27 @@ void window_set_attrib_xxx(struct window_t *window, int which, int unset)
         return;
     }
     
-    A_memset(&attribs, 0, sizeof(struct window_attribs_t));
-    attribs.flags = window->flags;
-    
+    flags = window->flags;
+
     if(unset)
     {
-        attribs.flags &= ~which;
+        flags &= ~which;
     }
     else
     {
-        attribs.flags |= which;
+        flags |= which;
     }
 
     ev.type = REQUEST_WINDOW_SET_ATTRIBS;
     ev.seqid = __next_seqid();
     ev.winattr.winid = window->winid;
+    ev.winattr.flags = flags;
     ev.src = TO_WINID(GLOB.mypid, 0);
     ev.dest = GLOB.server_winid;
     //write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
     direct_write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
 
-    window->flags = attribs.flags;
+    window->flags = flags;
 }
 
 
@@ -1046,9 +1173,25 @@ void window_set_resizable(struct window_t *window, int resizable)
 
 void window_set_ontop(struct window_t *window, int ontop)
 {
-    window_set_attrib_xxx(window, WINDOW_ALWAYSONTOP, ontop);
+    window_set_attrib_xxx(window, WINDOW_ALWAYSONTOP, !ontop);
 }
 
+
+void window_set_focusable(struct window_t *window, int focusable)
+{
+    window_set_attrib_xxx(window, WINDOW_NOFOCUS, focusable);
+}
+
+
+void window_set_transparent(struct window_t *window, int transparent)
+{
+    window_set_attrib_xxx(window, WINDOW_TRANSPARENT, !transparent);
+}
+
+void window_set_transparent_to_mouse(struct window_t *window, int yes)
+{
+    window_set_attrib_xxx(window, WINDOW_NOINPUT, !yes);
+}
 
 void window_destroy_canvas(struct window_t *window)
 {
@@ -1106,6 +1249,12 @@ int window_new_canvas(struct window_t *window)
                         window->canvas_size, window->canvas_pitch,
                         &GLOB.screen);
     return 1;
+}
+
+
+void register_window_event_listener(winid_t winid)
+{
+    simple_request(REQUEST_REGISTER_WINDOW_LISTENER, GLOB.server_winid, winid);
 }
 
 

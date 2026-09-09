@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2024 (c)
+ *    Copyright 2024, 2025, 2026 (c)
  * 
  *    file: theme.c
  *    This file is part of LaylaOS.
@@ -112,5 +112,20 @@ void send_color_theme_to_server(void)
     evbuf->palette.color_count = THEME_COLOR_LAST;
 
     direct_write(GLOB.serverfd, (void *)evbuf, bufsz);
+}
+
+
+/*
+ * TODO: This should set system dark color theme. Currently it only sets
+ *       dark window backgrounds.
+ */
+void set_dark_color_theme(void)
+{
+    GLOB.themecolor[THEME_COLOR_WINDOW_BGCOLOR] = 0x1F1F1FFF;
+    GLOB.themecolor[THEME_COLOR_BUTTON_BGCOLOR] = 0x161616FF;
+    GLOB.themecolor[THEME_COLOR_BUTTON_MOUSEOVER_BGCOLOR] = 0x1F1F1FFF;
+    GLOB.themecolor[THEME_COLOR_BUTTON_DOWN_BGCOLOR] = 0x1F1F1FFF;
+    GLOB.themecolor[THEME_COLOR_BUTTON_PUSH_BGCOLOR] = 0x1F1F1FFF;
+    GLOB.themecolor[THEME_COLOR_BUTTON_DISABLED_BGCOLOR] = 0x1F1F1FFF;
 }
 

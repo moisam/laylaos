@@ -120,23 +120,7 @@ static int ensure_buffer_big_enough(uint32_t seqid)
                                 sizeof(struct event_res_t);
     free(ev2);
 
-    if(expected > GLOB.evbufsz)
-    {
-        mutex_lock(&__global_evlock);
-
-        if(!(ev2 = realloc(GLOB.evbuf_internal, expected)))
-        {
-            mutex_unlock(&__global_evlock);
-            return 0;
-        }
-
-        GLOB.evbuf_internal = ev2;
-        GLOB.evbufsz = expected;
-
-        mutex_unlock(&__global_evlock);
-    }
-
-    return 1;
+    return expand_internal_buffer(expected);
 }
 
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: keys.c
  *    This file is part of LaylaOS.
@@ -35,7 +35,7 @@
 #define GLOB        __global_gui_data
 
 
-void key_bind(char key, char modifiers, int action)
+void key_bind(winid_t receiver, char key, char modifiers, int action)
 {
     struct event_t ev;
 
@@ -44,14 +44,13 @@ void key_bind(char key, char modifiers, int action)
     ev.keybind.key = key;
     ev.keybind.modifiers = modifiers;
     ev.keybind.action = action;
-    ev.src = TO_WINID(GLOB.mypid, 0);
+    ev.src = receiver;
     ev.dest = GLOB.server_winid;
     direct_write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
-    //write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
 }
 
 
-void key_unbind(char key, char modifiers)
+void key_unbind(winid_t receiver, char key, char modifiers)
 {
     struct event_t ev;
 
@@ -59,10 +58,9 @@ void key_unbind(char key, char modifiers)
     ev.seqid = __next_seqid();
     ev.keybind.key = key;
     ev.keybind.modifiers = modifiers;
-    ev.src = TO_WINID(GLOB.mypid, 0);
+    ev.src = receiver;
     ev.dest = GLOB.server_winid;
     direct_write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
-    //write(GLOB.serverfd, (void *)&ev, sizeof(struct event_t));
 }
 
 
