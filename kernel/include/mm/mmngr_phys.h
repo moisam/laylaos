@@ -178,6 +178,18 @@ void *pmmngr_alloc_block(void);
 void pmmngr_free_block(void *p);
 
 /**
+ * @brief Free physical memory page.
+ *
+ * Similar to pmmngr_free_block() except the caller must hold the physical page
+ * table lock.
+ *
+ * @param   p       physical page address
+ *
+ * @return  nothing.
+ */
+void pmmngr_free_block_unlocked(void *p);
+
+/**
  * @brief Allocate physical memory pages.
  *
  * Allocate \a size number of pages and return the physical address of the

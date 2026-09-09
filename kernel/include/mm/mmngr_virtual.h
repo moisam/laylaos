@@ -43,6 +43,8 @@
 
 #define PHYS_TO_HIMEM(p)        (((uintptr_t)p) | HIMEM_START)
 
+#define MAX_TLB_INVLPG_SIZE     (32 * PAGE_SIZE)
+
 
 #ifdef __x86_64__
 
@@ -140,6 +142,17 @@ static inline void vmmngr_flush_tlb_entry(virtual_addr addr)
     __asm__ __volatile__("invlpg (%0)"
                          ::"r"(addr):"memory");
     tlb_shootdown(addr);
+}
+
+
+static inline void vmmngr_flush_tlb_range(/* virtual_addr addr, size_t sz */)
+{
+    uint64_t cr3_val;
+
+    __asm__ __volatile__("mov %%cr3, %0\n"
+                         "mov %0, %%cr3"
+                         :"=r"(cr3_val)::"memory");
+    tlb_shootdown_range(/* addr, sz */);
 }
 
 

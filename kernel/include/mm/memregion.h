@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: memregion.h
  *    This file is part of LaylaOS.
@@ -65,10 +65,29 @@
 #define MEMREGION_TYPE_LOWEST       MEMREGION_TYPE_TEXT
 #define MEMREGION_TYPE_HIGHEST      MEMREGION_TYPE_KERNEL
 
+#define REGION_END(m)               ((m)->addr + ((m)->size * PAGE_SIZE))
+
 
 /**********************************
  * Structure definitions
  **********************************/
+
+typedef enum { RB_RED, RB_BLACK } rb_color_t;
+
+/**
+ * @struct vmso_t
+ * @brief The vmso_t structure.
+ *
+ * A structure to track physical pages of shared anonymous mappings.
+ */
+struct vmso_t
+{
+    size_t pagecount;                       /**< count of memory pages */
+    volatile int refs;                      /**< struct references */
+    volatile struct kernel_mutex_t mutex;   /**< struct lock */
+    volatile physical_addr phys[];          /**< physical addresses of allocated pages */
+};
+
 
 /**
  * @struct memregion_t
@@ -92,6 +111,16 @@ struct memregion_t
     struct memregion_t *next_free;  /**< next region in the free list */
     struct memregion_t *next;       /**< next region in task mappings */
     struct memregion_t *prev;       /**< previous region in task mappings */
+    struct vmso_t *so;          /**< used for tracking physical memory 
+                                     allocation of shared anonymous mappings */
+
+    volatile struct memregion_t *rb_left;
+    volatile struct memregion_t *rb_right;
+    volatile struct memregion_t *rb_parent;
+    rb_color_t rb_color;
+
+    // the highest virtual end address inside this node's entire left and right subtrees
+    virtual_addr subtree_max_high;
 };
 
 
@@ -105,6 +134,8 @@ struct task_vm_t
 {
     struct memregion_t *first_region;   /**< pointer to first memory region */
     struct memregion_t *last_region;    /**< pointer to last memory region */
+    volatile struct memregion_t *rb_root;        /**< Root node of your self-balancing lookup tree */
+    //volatile struct memregion_t *last_found_region;
     volatile struct kernel_mutex_t mutex;        /**< struct lock */
 
     uintptr_t vdso_code_start;          /**< start of vdso code */
@@ -127,6 +158,9 @@ struct task_vm_t
 /**********************************
  * Function prototypes
  **********************************/
+
+void rb_insert(struct task_vm_t *mm, volatile struct memregion_t *new_region);
+void rb_remove(struct task_vm_t *mm, volatile struct memregion_t *z);
 
 /**
  * @brief Find the memory region that contains the given address.
@@ -352,7 +386,7 @@ struct task_vm_t *task_mem_dup(struct task_vm_t *mem);
  *
  * @return  nothing.
  */
-void task_mem_free(struct task_vm_t *mem);
+//void task_mem_free(struct task_vm_t *mem);
 
 /**
  * @brief Load page into memory region.
@@ -377,12 +411,13 @@ void task_mem_free(struct task_vm_t *mem);
  *
  * @param   memregion           memory region
  * @param   pd                  task page directory
+ * @param   e                   page entry
  * @param   __addr              address to load
  *
  * @return  zero on success, -(errno) on failure.
  */
 long memregion_load_page(struct memregion_t *memregion, pdirectory *pd, 
-                         volatile virtual_addr __addr);
+                         volatile pt_entry *e, volatile virtual_addr __addr);
 
 /**
  * @brief Consolidate memory regions.
@@ -396,6 +431,19 @@ long memregion_load_page(struct memregion_t *memregion, pdirectory *pd,
  * @return  nothing.
  */
 void memregion_consolidate(struct task_t *task);
+
+/**
+ * @brief Consolidate memory regions.
+ *
+ * For the given task, check the given memory region and piece together adjacent
+ * regions that seem to be continuous. This function is called by mmap().
+ *
+ * @param   task        pointer to task
+ * @param   memregion   memory region
+ *
+ * @return  nothing.
+ */
+void memregion_consolidate_one(struct task_t *task, struct memregion_t *memregion);
 
 /**
  * @brief Get shared page count.

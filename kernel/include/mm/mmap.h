@@ -168,6 +168,19 @@ long syscall_mremap(struct syscall_args *__args);
  */
 long syscall_mincore(void *addr, size_t length, unsigned char *vec);
 
+/**
+ * @brief Handler for syscall madvise().
+ *
+ * Give kernel advise about patterns of memory usage.
+ *
+ * @param   addr        virtual address of range
+ * @param   length      range length
+ * @param   advice      possible values are listed in sys/mman.h
+ *
+ * @return  zero on success, -(errno) on failure.
+ */
+long syscall_madvise(void *addr, size_t length, int advice);
+
 
 /**********************************
  * Functions defined in mlock.c
