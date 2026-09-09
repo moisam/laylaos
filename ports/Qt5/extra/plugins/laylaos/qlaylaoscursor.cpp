@@ -48,24 +48,27 @@
 QLaylaOSCursor::QLaylaOSCursor()
 {
     m_curids.insert(Qt::ArrowCursor, CURSOR_NORMAL);
-    m_curids.insert(Qt::UpArrowCursor, CURSOR_NS);
-    m_curids.insert(Qt::CrossCursor, CURSOR_CROSSHAIR);
+    m_curids.insert(Qt::UpArrowCursor, CURSOR_UP);
+    m_curids.insert(Qt::CrossCursor, CURSOR_FLEUR);
     m_curids.insert(Qt::WaitCursor, CURSOR_WAITING);
     m_curids.insert(Qt::IBeamCursor, CURSOR_IBEAM);
     m_curids.insert(Qt::SizeVerCursor, CURSOR_NS);
     m_curids.insert(Qt::SizeHorCursor, CURSOR_WE);
     m_curids.insert(Qt::SizeBDiagCursor, CURSOR_NESW);
     m_curids.insert(Qt::SizeFDiagCursor, CURSOR_NWSE);
-    m_curids.insert(Qt::SizeAllCursor, CURSOR_CROSS);
+    m_curids.insert(Qt::SizeAllCursor, CURSOR_FLEUR);
     m_curids.insert(Qt::BlankCursor, CURSOR_NONE);
-    m_curids.insert(Qt::SplitVCursor, CURSOR_NS);
-    m_curids.insert(Qt::SplitHCursor, CURSOR_WE);
-    m_curids.insert(Qt::PointingHandCursor, CURSOR_HAND);
-    m_curids.insert(Qt::ForbiddenCursor, CURSOR_X);
-    m_curids.insert(Qt::OpenHandCursor, CURSOR_HAND);
-    m_curids.insert(Qt::ClosedHandCursor, CURSOR_HAND);
-    m_curids.insert(Qt::WhatsThisCursor, CURSOR_NORMAL);
-    m_curids.insert(Qt::BusyCursor, CURSOR_WAITING);
+    m_curids.insert(Qt::SplitVCursor, CURSOR_ROWRESIZE);
+    m_curids.insert(Qt::SplitHCursor, CURSOR_COLRESIZE);
+    m_curids.insert(Qt::PointingHandCursor, CURSOR_POINTING_HAND);
+    m_curids.insert(Qt::ForbiddenCursor, CURSOR_FORBIDDEN);
+    m_curids.insert(Qt::OpenHandCursor, CURSOR_OPEN_HAND);
+    m_curids.insert(Qt::ClosedHandCursor, CURSOR_CLOSED_HAND);
+    m_curids.insert(Qt::WhatsThisCursor, CURSOR_HELP);
+    m_curids.insert(Qt::BusyCursor, CURSOR_ARROW_WAITING);
+    m_curids.insert(Qt::DragMoveCursor, CURSOR_DND_MOVE);
+    m_curids.insert(Qt::DragLinkCursor, CURSOR_DND_LINK);
+    m_curids.insert(Qt::DragCopyCursor, CURSOR_DND_COPY);
 }
 
 #ifndef QT_NO_CURSOR

@@ -73,6 +73,8 @@ public:
     void updateWindowState(struct event_t *ev);
     void handleKeyEvent(struct event_t *ev, QEvent::Type type);
 
+    QSocketNotifier *getSocketNotifier() { return m_read_notifier; }
+
 Q_SIGNALS:
     void gonow();
 

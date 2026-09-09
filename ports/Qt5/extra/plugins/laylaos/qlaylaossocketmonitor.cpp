@@ -83,11 +83,14 @@ void QLaylaOSSocketMonitor::startMonitoring()
     //qDebug() << "QLaylaOSSocketMonitor::startMonitoring: monitoring fd " << __global_gui_data.serverfd;
 
     /*
-    m_timer = new QTimer(this);
-    m_timer->setInterval(1000);
-    QObject::connect(m_timer, SIGNAL(timeout()), this, SLOT(readyRead()));
-    m_timer->start();
-    m_monitoring = true;
+    QMetaObject::invokeMethod(qApp, [=]() {
+        // This runs in the main thread
+        auto *m_read_notifier = new QSocketNotifier(__global_gui_data.serverfd, QSocketNotifier::Read, qApp);
+        m_read_notifier->setEnabled(true);
+        QObject::connect(m_read_notifier, SIGNAL(activated(int)), this, SLOT(readyRead()));
+        QObject::connect(this, SIGNAL(gonow()), this, SLOT(readyRead()));
+        m_monitoring = true;
+    });
     */
 }
 
@@ -368,7 +371,8 @@ void QLaylaOSSocketMonitor::readyRead()
 
                 const ButtonState buttonState = getMouseButtons(ev);
                 const Qt::KeyboardModifiers keyboardModifiers = 
-                                        getModifiers(get_modifier_keys());
+                                        //getModifiers(get_modifier_keys());
+                                        getModifiers(ev->mouse.modifiers);
                 const Qt::MouseEventSource source = Qt::MouseEventNotSynthesized;
 
                 const QPoint globalPosition = QPoint(ev->mouse.x + win->x(),
@@ -458,7 +462,7 @@ void QLaylaOSSocketMonitor::handleKeyEvent(struct event_t *ev, QEvent::Type type
 
     if(win != nullptr) {
         int code;
-        char modkeys = get_modifier_keys();
+        char modkeys = ev->key.modifiers; // get_modifier_keys();
         const Qt::KeyboardModifiers keyboardModifiers = getModifiers(modkeys);
 
         /*
@@ -475,6 +479,8 @@ void QLaylaOSSocketMonitor::handleKeyEvent(struct event_t *ev, QEvent::Type type
 
         code = QLaylaOSKeyMapper::translateKeyCode(ev->key.code, 
                                             (modkeys & MODIFIER_MASK_NUM));
+
+        qDebug() << "QLaylaOSSocketMonitor::handleKeyEvent: code " << code << ", mods " << keyboardModifiers;
 
         QWindowSystemInterface::handleKeyEvent(win, type, code, keyboardModifiers, text);
     }
