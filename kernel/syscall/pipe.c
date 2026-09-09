@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: pipe.c
  *    This file is part of LaylaOS.
@@ -53,29 +53,16 @@ long syscall_pipe2(int *fildes, int flags)
     }
 
     // try to find 2 fds in the master file table
-    for(i = 0; j < 2 && i < NR_FILE; i++)
-    {
-    	kernel_mutex_lock(&ftab[i].lock);
-        if(ftab[i].refs == 0)
-        {
-            f[j++] = &ftab[i];
-            //ftab[i].refs++;
-            __sync_fetch_and_add(&(ftab[i].refs), 1);
-        }
-    	kernel_mutex_unlock(&ftab[i].lock);
-    }
-    
-    // found only 1 - cancel it
-    if(j == 1)
-    {
-        f[0]->refs = 0;
-    }
-    
-    // bail out
-    if(j < 2)
-    {
-        return -ENFILE;
-    }
+	if(!(f[0] = ftab_first_free()))
+	{
+		return -EMFILE;
+	}
+
+	if(!(f[1] = ftab_first_free()))
+	{
+	    ftab_mark_free(f[0]);
+		return -EMFILE;
+	}
     
     // try to find 2 fds in the task's file table
     for(i = 0, j = 0; j < 2 && i < NR_OPEN; i++)
@@ -98,6 +85,8 @@ long syscall_pipe2(int *fildes, int flags)
     {
         f[0]->refs = 0;
         f[1]->refs = 0;
+	    ftab_mark_free(f[0]);
+	    ftab_mark_free(f[1]);
         return -EMFILE;
     }
     
@@ -107,6 +96,8 @@ long syscall_pipe2(int *fildes, int flags)
         this_core->cur_task->ofiles->ofile[fd[1]] = NULL;
         f[0]->refs = 0;
         f[1]->refs = 0;
+	    ftab_mark_free(f[0]);
+	    ftab_mark_free(f[1]);
         return -ENFILE;
     }
     
@@ -122,10 +113,10 @@ long syscall_pipe2(int *fildes, int flags)
     f[0]->pos = 0;
     f[1]->pos = 0;
     f[0]->mode = 1;        /* reading end */
-    f[0]->flags = O_RDONLY;
+    f[0]->flags = O_RDONLY | O_NOATIME;
     f[1]->mode = 2;        /* writing end */
-    f[1]->flags = O_WRONLY;
-    
+    f[1]->flags = O_WRONLY | O_NOATIME;
+
     if(flags & O_NONBLOCK)
     {
         f[0]->flags |= O_NONBLOCK;

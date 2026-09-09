@@ -293,3 +293,92 @@ long syscall_sched_yield(void)
     return 0;
 }
 
+
+/*
+ * Handler for syscall sched_getaffinity().
+ */
+long syscall_sched_getaffinity(pid_t pid, size_t cpusetsize, unsigned long *mask)
+{
+    volatile struct task_t *t = NULL;
+    volatile int i;
+    uint64_t tmp = 0;
+    size_t copysz;
+
+    if(pid < 0 || cpusetsize < sizeof(uint64_t))
+    {
+        return -EINVAL;
+    }
+
+    if(!mask)
+    {
+        return -EFAULT;
+    }
+
+    if(!(t = get_task_by_id((pid == 0) ? this_core->cur_task->pid : pid)))
+    {
+        return -ESRCH;
+    }
+
+    for(i = 0; i < processor_count; i++)
+    {
+        if(t->cpu_affinity & (1 << i))
+        {
+            tmp |= (1 << i);
+        }
+    }
+
+    copysz = cpusetsize < sizeof(uint64_t) ? cpusetsize : sizeof(uint64_t);
+    COPY_TO_USER(mask, &tmp, copysz);
+
+    return copysz;
+}
+
+/*
+ * Handler for syscall sched_setaffinity().
+ */
+long syscall_sched_setaffinity(pid_t pid, size_t cpusetsize, unsigned long *mask)
+{
+    volatile struct task_t *t = NULL;
+    volatile int i;
+    uint64_t tmp = 0;
+
+    if(pid < 0 || !cpusetsize)
+    {
+        return -EINVAL;
+    }
+
+    if(!mask)
+    {
+        return -EFAULT;
+    }
+
+    if(!(t = get_task_by_id((pid == 0) ? this_core->cur_task->pid : pid)))
+    {
+        return -ESRCH;
+    }
+
+    if(!suser(this_core->cur_task) &&
+       this_core->cur_task->uid != t->uid &&
+       this_core->cur_task->euid != t->uid)
+    {
+        return -EPERM;
+    }
+
+    COPY_FROM_USER(&tmp, mask, cpusetsize < sizeof(uint64_t) ? 
+                                    cpusetsize : sizeof(uint64_t));
+
+    for(i = 0; i < processor_count; i++)
+    {
+        if(tmp & (1 << i))
+        {
+            t->cpu_affinity |= (1 << i);
+        }
+        else
+        {
+            t->cpu_affinity &= ~(1 << i);
+        }
+    }
+
+    return 0;
+}
+

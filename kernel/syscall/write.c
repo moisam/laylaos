@@ -46,13 +46,13 @@ static inline void write_sync(int fd, struct file_t *f, struct fs_node_t *node)
 {
     struct mount_info_t *dinfo;
 
-	if((f->flags & O_SYNC))
+	if((f->flags & O_SYNC) == O_SYNC)
 	{
 	    syscall_fsync(fd);
 	    return;
 	}
 
-	if((f->flags & O_DSYNC))
+	if((f->flags & O_DSYNC) == O_DSYNC)
 	{
 	    syscall_fdatasync(fd);
 	    return;
@@ -136,28 +136,36 @@ long syscall_write(int fd, unsigned char *buf, size_t count, ssize_t *copied)
         return -EINVAL;
     }
 
-	// seek to EOF if the file was opened with O_APPEND
-	if((f->flags & O_APPEND) == O_APPEND && (node->dev != PROCFS_DEVID))
-	{
-	    f->pos = node->size;
-	}
+    if(IS_PIPE(node) || IS_SOCKET(node))
+    {
+        res = write_internal(f, buf, count, &(f->pos), copied);
+    }
+    else
+    {
+    	// seek to EOF if the file was opened with O_APPEND
+    	if((f->flags & O_APPEND) == O_APPEND && (node->dev != PROCFS_DEVID))
+    	{
+    	    f->pos = node->size;
+    	}
 
-    // this filesystem flag forces append mode
-    if(node->flags & FS_NODE_APPEND_ONLY)
-	{
-	    f->pos = node->size;
-	}
+        // this filesystem flag forces append mode
+        if(node->flags & FS_NODE_APPEND_ONLY)
+    	{
+    	    f->pos = node->size;
+    	}
 
-    res = write_internal(f, buf, count, &(f->pos), copied);
+        res = write_internal(f, buf, count, &(f->pos), copied);
 
-    update_file_node(f);
-    sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
+        update_file_node(f);
+        sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
+
+        if(sync)
+    	{
+            write_sync(fd, f, node);
+    	}
+    }
+
     this_core->cur_task->write_calls++;
-
-    if(sync)
-	{
-        write_sync(fd, f, node);
-	}
 
     return res;
 }

@@ -35,9 +35,10 @@
 int pollwait;
 
 
-static int pollscan(struct pollfd *fds, nfds_t nfds)
+static long pollscan(struct pollfd *fds, nfds_t nfds)
 {
-    int count = 0, fd;
+    long count = 0;
+    int fd;
     nfds_t i;
     struct file_t *f;
     
@@ -73,10 +74,10 @@ static int pollscan(struct pollfd *fds, nfds_t nfds)
 }
 
 
-static int poll_internal(struct pollfd *fds, nfds_t nfds,
-                         struct timespec *tmo_p)
+static long poll_internal(struct pollfd *fds, nfds_t nfds,
+                          struct timespec *tmo_p)
 {
-    int error = 0;
+    long error = 0;
     unsigned long timo;
     unsigned long long oticks;
     nfds_t i;
@@ -195,7 +196,7 @@ done:
 /*
  * Handler for syscall poll().
  */
-int syscall_poll(struct pollfd *fds, nfds_t nfds, int timeout)
+long syscall_poll(struct pollfd *fds, nfds_t nfds, int timeout)
 {
     struct timespec tmp, *ts = NULL;
     
@@ -204,16 +205,25 @@ int syscall_poll(struct pollfd *fds, nfds_t nfds, int timeout)
      * Specifying a timeout of zero causes poll() to return immediately,
      * even if no file descriptors are ready.
      */
+    if(timeout > 0x7FFFFFFF)
+    {
+        timeout = 0x7FFFFFFF;
+    }
+
     if(timeout >= 0)
     {
+        tmp.tv_sec = timeout / 1000;
+        tmp.tv_nsec = (long)(timeout % 1000) * 1000000;
+        /*
         tmp.tv_sec = 0;
-        tmp.tv_nsec = timeout * NSEC_PER_MSEC;
+        tmp.tv_nsec = (long)timeout * NSEC_PER_MSEC;
 
         while(tmp.tv_nsec > NSEC_PER_SEC)
         {
             tmp.tv_nsec -= NSEC_PER_SEC;
             tmp.tv_sec++;
         }
+        */
 
         ts = &tmp;
     }
@@ -225,13 +235,13 @@ int syscall_poll(struct pollfd *fds, nfds_t nfds, int timeout)
 /*
  * Handler for syscall ppoll().
  */
-int syscall_ppoll(struct pollfd *fds, nfds_t nfds,
-                  struct timespec *tmo_p, sigset_t *sigmask)
+long syscall_ppoll(struct pollfd *fds, nfds_t nfds,
+                   struct timespec *tmo_p, sigset_t *sigmask)
 {
     sigset_t newsigmask, origmask;
     struct timespec tmp, *ts = NULL;
-    int res;
-    
+    long res;
+
     if(tmo_p)
     {
         COPY_FROM_USER(&tmp, tmo_p, sizeof(struct timespec));

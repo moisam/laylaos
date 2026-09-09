@@ -102,15 +102,23 @@ long syscall_read(int fd, unsigned char *buf, size_t count, ssize_t *copied)
         return -EINVAL;
     }
 
-    res = read_internal(f, buf, count, &(f->pos), copied);
-
-    sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
-    this_core->cur_task->read_calls++;
-
-    if(sync)
+    if(IS_PIPE(node) || IS_SOCKET(node))
     {
-        UPDATE_ATIME(f, node);
+        res = read_internal(f, buf, count, &(f->pos), copied);
     }
+    else
+    {
+        res = read_internal(f, buf, count, &(f->pos), copied);
+
+        sync = !!(S_ISBLK(node->mode) | S_ISDIR(node->mode) | S_ISREG(node->mode));
+
+        if(sync)
+        {
+            UPDATE_ATIME(f, node);
+        }
+    }
+
+    this_core->cur_task->read_calls++;
 
     return res;
 }

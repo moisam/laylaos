@@ -301,7 +301,7 @@ syscall_func syscalls[] =
     __SYSCALL_NOSYS,                // setfsgid - TODO
     __SYSCALL_NOSYS,                // pivot_root - TODO
     syscall_mincore,                // mmap.c
-    __SYSCALL_NOSYS,                // madvise - TODO
+    syscall_madvise,                // mmap.c
     __SYSCALL_NOSYS,
     __SYSCALL_NOSYS,
     __SYSCALL_NOSYS,                // unimplemented in Linux
@@ -323,8 +323,8 @@ syscall_func syscalls[] =
     __SYSCALL_NOSYS,                // tkill - obsolete Linux syscall
     __SYSCALL_NOSYS,
     __SYSCALL_NOSYS,
-    __SYSCALL_NOSYS,                // sched_setaffinity - TODO
-    __SYSCALL_NOSYS,                // sched_getaffinity - TODO
+    syscall_sched_setaffinity,      // sched.c
+    syscall_sched_getaffinity,      // sched.c
     syscall_set_thread_area,        // gdt.c
     syscall_get_thread_area,        // gdt.c
     __SYSCALL_NOSYS,
@@ -600,9 +600,11 @@ void syscall_dispatcher(struct regs *r)
     long res;
     unsigned syscall_num = GET_SYSCALL_NUMBER(r);
     unsigned long long oticks = ticks;
+    //if(ct->pid == 46) {printk("pid %d: syscall %d\n", ct->pid, syscall_num);screen_refresh(NULL);}
 
     if(syscall_num >= (unsigned)NR_SYSCALLS)
     {
+        //kpanic("unknown syscall\n");
         /* Kill task with SIGSYS signal */
         user_add_task_signal(ct, SIGSYS, 1);
 
@@ -722,29 +724,23 @@ skip:
 long has_access(struct fs_node_t *node, int mode, int use_ruid)
 {
     //printk("has_access: node->mode 0x%x, mode 0x%x\n", (node->mode & 0777), mode);
-    
-	int res = node->mode & 0777;
-	uid_t uid = use_ruid ? this_core->cur_task->uid : this_core->cur_task->euid;
-    struct mount_info_t *dinfo;
 
-    if(!node /* || node->links == 0 */)    // deleted file - no access whatsoever
+    if(!node)
     {
         return -EINVAL;
     }
 
+    volatile struct task_t *ct = this_core->cur_task;
+	int res = node->mode & 0777;
+	uid_t uid = use_ruid ? ct->uid : ct->euid;
+    struct mount_info_t *dinfo;
+
     /* if superuser, we may grant all permissions except for EXEC where at 
      * least one exec bit must be set
      */
-	if(suser(this_core->cur_task))
+	if(suser(ct))
 	{
-		if(res & 0111)
-		{
-			res = 0777;
-		}
-		else
-		{
-			res = 0666;
-		}
+		res = (res & 0111) ? 0777 : 0666;
 	}
 	
 	if(uid == node->uid)
@@ -760,8 +756,12 @@ long has_access(struct fs_node_t *node, int mode, int use_ruid)
 	mode &= 0007;
 	res &= 0007;
 
+	if((res & mode) != mode)
+	{
+	    return -EACCES;
+	}
+
     if((dinfo = node_mount_info(node)))
-    //if((dinfo = get_mount_info(node->dev)))
     {
         // can't grant write access if the filesystem was mount readonly
         if((mode & WRITE) && (dinfo->mountflags & MS_RDONLY))
@@ -780,7 +780,7 @@ long has_access(struct fs_node_t *node, int mode, int use_ruid)
 	
 	//printk("has_access: mode 0x%x & res 0x%x = 0x%x\n", mode, res, (res & mode));
 
-	return ((res & mode) == mode) ? 0 : -EACCES;
+	return 0;
 }
 
 
@@ -1208,6 +1208,17 @@ long syscall_brk(long incr, volatile uintptr_t *res)
 {
 	struct task_t *t = (struct task_t *)this_core->cur_task;
     uintptr_t old_end_data = t->end_data;
+
+    /*
+     * If the caller only wants to know where the break is, return it without
+     * the overhead of looking up the memory region.
+     */
+    if(incr == 0)
+    {
+        COPY_VAL_TO_USER(res, &old_end_data);
+        return 0;
+    }
+
     uintptr_t end_data_seg = t->end_data + incr;
 
     /*
@@ -1235,9 +1246,11 @@ long syscall_brk(long incr, volatile uintptr_t *res)
         // if the new size is not page-aligned, make it so
         uintptr_t end = align_up(end_data_seg);
 
+        /*
         uintptr_t private_flag = (memregion &&
                                 (memregion->flags & MEMREGION_FLAG_PRIVATE)) ?
                                                 I86_PTE_PRIVATE : 0;
+        */
 
         if(end_data_seg >= t->end_stack)
         {
@@ -1245,15 +1258,18 @@ long syscall_brk(long incr, volatile uintptr_t *res)
             return -ENOMEM;
         }
 
+        /*
         if(exceeds_rlimit(t, RLIMIT_DATA, (end - task_get_data_start(t))))
         {
             kpanic("syscall_brk: ENOMEM (2)\n");
             return -ENOMEM;
         }
+        */
         
         // now alloc memory for the new pages, starting from the current
         // brk (aligned to the nearest lower page size), up to the new
         // brk address.
+        /*
         volatile uintptr_t i;
         int err = 0;
         pt_entry *pt;
@@ -1300,6 +1316,7 @@ long syscall_brk(long incr, volatile uintptr_t *res)
             }
         }
         else
+        */
         {
             t->end_data = end_data_seg;
 
@@ -1329,7 +1346,7 @@ long syscall_brk(long incr, volatile uintptr_t *res)
             memregion->size = (start - memregion->addr) / PAGE_SIZE;
         }
     }
-    
+
     COPY_VAL_TO_USER(res, &old_end_data);
     return 0;
 }
@@ -1566,6 +1583,7 @@ long syscall_getrandom(void *buf, size_t buflen, unsigned int flags,
                        ssize_t *copied)
 {
     void *tmp;
+    char __tmp[256];
     ssize_t res;
     ssize_t (*func)(dev_t, unsigned char *, size_t);
 
@@ -1581,23 +1599,37 @@ long syscall_getrandom(void *buf, size_t buflen, unsigned int flags,
     {
         return -EINVAL;
     }
-    
-    if(!(tmp = kmalloc(buflen)))
+
+    if(buflen <= 256)
     {
-        return -EAGAIN;
+        tmp = &__tmp;
     }
-    
+    else
+    {
+        if(!(tmp = kmalloc(buflen)))
+        {
+            return -EAGAIN;
+        }
+    }
+
     func = (flags & GRND_RANDOM) ? randdev_read : uranddev_read;
     A_memset(tmp, 0, buflen);
     res = (ssize_t)func(0, tmp, buflen);
-    
+
     if(copy_to_user(buf, tmp, res) != 0)
     {
-        kfree(tmp);
+        if(tmp != &__tmp)
+        {
+            kfree(tmp);
+        }
+
         return -EFAULT;
     }
-    
-    kfree(tmp);
+
+    if(tmp != &__tmp)
+    {
+        kfree(tmp);
+    }
 
     COPY_VAL_TO_USER(copied, &res);
     return 0;
@@ -1608,12 +1640,14 @@ long syscall_getrandom(void *buf, size_t buflen, unsigned int flags,
 /*
  * Read /proc/syscalls.
  */
-size_t get_syscalls(char **buf)
+size_t get_syscalls(char **buf, void *arg)
 {
     size_t len, count = 0, bufsz = 2048;
     char tmp[64];
     char *p;
     size_t i;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, bufsz);
     p = *buf;

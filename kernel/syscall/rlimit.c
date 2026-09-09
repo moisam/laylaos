@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: rlimit.c
  *    This file is part of LaylaOS.
@@ -42,24 +42,23 @@
 
 struct task_rlimit_t default_rlimits[] =
 {
-    { "Max cpu time", "seconds", { RLIM_INFINITY, RLIM_INFINITY, } },
-    { "Max file size", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
-    { "Max data size", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
-    { "Max stack size", "bytes", { 1024 * 1024 * 1024 /* 1GiB */, RLIM_INFINITY, } },
-    { "Max core file size", "bytes", { 0, RLIM_INFINITY, } },
-    { "Max resident set", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
-    { "Max processes", "processes", { NR_TASKS, NR_TASKS, } },
-    { "Max open files", "files", { NR_OPEN, NR_OPEN, } },
-    { "Max locked memory", "bytes", { 0, 0, } },
-    { "Max address space", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
-    { "Max file locks", "locks", { RLIM_INFINITY, RLIM_INFINITY, } },
-    { "Max pending signals", "integer", { RLIM_INFINITY, RLIM_INFINITY, } },
-    { "Max message queue", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
-    { "Max nice value", "integer", { 40, 40, } },
-    { "Max realtime priority", "integer", { MAX_RR_PRIO, MAX_RR_PRIO, } },
-    { "Max realtime", "mseconds", { RLIM_INFINITY, RLIM_INFINITY, } },
+    [RLIMIT_CPU] = { "Max cpu time", "seconds", { RLIM_INFINITY, RLIM_INFINITY, } },
+    [RLIMIT_FSIZE] = { "Max file size", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
+    [RLIMIT_DATA] = { "Max data size", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
+    [RLIMIT_STACK] = { "Max stack size", "bytes", { 1024 * 1024 * 1024 /* 1GiB */, RLIM_INFINITY, } },
+    [RLIMIT_CORE] = { "Max core file size", "bytes", { 0, RLIM_INFINITY, } },
+    [RLIMIT_RSS] = { "Max resident set", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
+    [RLIMIT_NPROC] = { "Max processes", "processes", { NR_TASKS, NR_TASKS, } },
+    [RLIMIT_NOFILE] = { "Max open files", "files", { NR_OPEN, NR_OPEN, } },
+    [RLIMIT_MEMLOCK] = { "Max locked memory", "bytes", { 0, 0, } },
+    [RLIMIT_AS] = { "Max address space", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
+    [RLIMIT_LOCKS] = { "Max file locks", "locks", { RLIM_INFINITY, RLIM_INFINITY, } },
+    [RLIMIT_SIGPENDING] = { "Max pending signals", "integer", { RLIM_INFINITY, RLIM_INFINITY, } },
+    [RLIMIT_MSGQUEUE] = { "Max message queue", "bytes", { RLIM_INFINITY, RLIM_INFINITY, } },
+    [RLIMIT_NICE] = { "Max nice value", "integer", { 40, 40, } },
+    [RLIMIT_RTPRIO] = { "Max realtime priority", "integer", { MAX_RR_PRIO, MAX_RR_PRIO, } },
+    [RLIMIT_RTTIME] = { "Max realtime", "mseconds", { RLIM_INFINITY, RLIM_INFINITY, } },
 };
-
 
 #define ADD_TIMEVAL(d, s)           \
 {                                   \
@@ -164,7 +163,10 @@ long syscall_setrlimit(int resource, struct rlimit *rlim)
 
 
 #define CHECK_BOUNDS(r, lim, min, max)                      \
-    if(r . lim < min || r . lim > max) return -EPERM;
+    if(r . lim < min || r . lim > max) {                    \
+        kernel_mutex_unlock(&task->common->mutex);          \
+        return -EPERM;                                      \
+    }
 
 
 /*
@@ -202,23 +204,36 @@ long syscall_prlimit(pid_t pid, int resource, struct rlimit *new_limit,
         return -EINVAL;
     }
     
+    kernel_mutex_lock(&task->common->mutex);
+
     which_rlim = &ct->task_rlimits[resource];
 
     if(old_limit)
     {
-        //COPY_TO_USER(old_limit, which_rlim, sizeof(struct rlimit));
-        COPY_VAL_TO_USER(&old_limit->rlim_cur, &which_rlim->rlim_cur);
-        COPY_VAL_TO_USER(&old_limit->rlim_max, &which_rlim->rlim_max);
+        //COPY_VAL_TO_USER(&old_limit->rlim_cur, &which_rlim->rlim_cur);
+        //COPY_VAL_TO_USER(&old_limit->rlim_max, &which_rlim->rlim_max);
+
+        if(copy_to_user(old_limit, which_rlim, sizeof(struct rlimit)) != 0)
+        {
+            kernel_mutex_unlock(&task->common->mutex);
+            return -EFAULT;
+        }
     }
     
     if(new_limit)
     {
-        //COPY_FROM_USER(&tmp, new_limit, sizeof(struct rlimit));
-        COPY_VAL_FROM_USER(&tmp.rlim_cur, &new_limit->rlim_cur);
-        COPY_VAL_FROM_USER(&tmp.rlim_max, &new_limit->rlim_max);
+        //COPY_VAL_FROM_USER(&tmp.rlim_cur, &new_limit->rlim_cur);
+        //COPY_VAL_FROM_USER(&tmp.rlim_max, &new_limit->rlim_max);
+
+        if(copy_from_user(&tmp, new_limit, sizeof(struct rlimit)) != 0)
+        {
+            kernel_mutex_unlock(&task->common->mutex);
+            return -EFAULT;
+        }
 
         if(tmp.rlim_max != RLIM_INFINITY && tmp.rlim_cur > tmp.rlim_max)
         {
+            kernel_mutex_unlock(&task->common->mutex);
             return -EINVAL;
         }
 
@@ -232,6 +247,7 @@ long syscall_prlimit(pid_t pid, int resource, struct rlimit *new_limit,
             if(tmp.rlim_cur > which_rlim->rlim_max ||
                tmp.rlim_max > which_rlim->rlim_max)
             {
+                kernel_mutex_unlock(&task->common->mutex);
                 return -EPERM;
             }
         }
@@ -240,6 +256,7 @@ long syscall_prlimit(pid_t pid, int resource, struct rlimit *new_limit,
         {
             if(tmp.rlim_max > FOPEN_MAX || tmp.rlim_cur > FOPEN_MAX)
             {
+                kernel_mutex_unlock(&task->common->mutex);
                 return -EPERM;
             }
         }
@@ -257,6 +274,8 @@ long syscall_prlimit(pid_t pid, int resource, struct rlimit *new_limit,
         which_rlim->rlim_cur = tmp.rlim_cur;
         which_rlim->rlim_max = tmp.rlim_max;
     }
+
+    kernel_mutex_unlock(&task->common->mutex);
 
     return 0;
 }

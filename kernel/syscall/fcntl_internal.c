@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: fcntl_internal.c
  *    This file is part of LaylaOS.
@@ -37,9 +37,9 @@
 /*
  * Free an advisory lock struct.
  */
-static inline void free_lock(struct alock_t *alock)
+static inline void free_lock(volatile struct alock_t *alock)
 {
-    kfree(alock);
+    kfree((void *)alock);
     
     /*
     alock->internal_lock.l_pid  = 0;
@@ -72,7 +72,7 @@ static struct alock_t *alloc_lock(void)
 /* 
  * Helper function to calculate the requested lock's start offset.
  */
-off_t get_start(struct file_t *fp, struct flock *lock)
+off_t get_start(struct file_t *fp, volatile struct flock *lock)
 {
     if(lock->l_whence == SEEK_SET)
     {
@@ -101,7 +101,7 @@ off_t get_start(struct file_t *fp, struct flock *lock)
  * negative l_len value. If l_len is negative, the lock covers bytes
  * (l_start + l_len) up to and including (l_start - 1).
  */
-void get_start_end(struct file_t *fp, struct flock *lock,
+void get_start_end(struct file_t *fp, volatile struct flock *lock,
                    off_t *__start, off_t *__end)
 {
     off_t start = get_start(fp, lock);
@@ -141,7 +141,7 @@ void get_start_end(struct file_t *fp, struct flock *lock,
 int can_acquire_lock(struct file_t *fp, struct flock *flock,
                      int wait, struct flock *oldflock)
 {
-    struct alock_t *alock;
+    volatile struct alock_t *alock;
     struct fs_node_t *node;
     off_t start , end ;
     off_t start2, end2;
@@ -154,14 +154,13 @@ loop:
 
     while(alock)
     {
-        //kernel_mutex_lock(&alock->lock_mutex);
         get_start_end(fp, &(alock->internal_lock), &start2, &end2);
 
         /* any overlap? */
         if((start < start2 && end < start2) || (start > end2 && end > end2))
         {        /* nope */
-            //kernel_mutex_unlock(&alock->lock_mutex);
-            alock = alock->next;
+            //alock = alock->next;
+            __atomic_store_n(&(alock), alock->next, __ATOMIC_SEQ_CST);
             continue;
         }
 
@@ -193,15 +192,15 @@ loop:
                 goto loop;
             }
             
-            A_memcpy(oldflock, &(alock->internal_lock),
+            A_memcpy(oldflock, (void *)&(alock->internal_lock),
                             sizeof(struct flock));
             kernel_mutex_unlock(&node->lock);
 
             return -EAGAIN;
         }
 
-        //kernel_mutex_unlock(&lock->lock_mutex);
-        alock = alock->next;
+        //alock = alock->next;
+        __atomic_store_n(&(alock), alock->next, __ATOMIC_SEQ_CST);
     }
 
     kernel_mutex_unlock(&node->lock);
@@ -209,7 +208,7 @@ loop:
     return 0;
 }
 
-
+#if 0
 #define UPDATE_POINTERS(alock, newlock)     \
 {                                           \
     newlock->next = alock->next;            \
@@ -218,7 +217,16 @@ loop:
     if(newlock->next)                       \
         newlock->next->prev = newlock;      \
 }
+#endif
 
+#define UPDATE_POINTERS(alock, newlock)                                 \
+{                                                                       \
+    __atomic_store_n(&(newlock->next), alock->next, __ATOMIC_SEQ_CST);  \
+    __atomic_store_n(&(newlock->prev), alock, __ATOMIC_SEQ_CST);        \
+    __atomic_store_n(&(alock->next), newlock, __ATOMIC_SEQ_CST);        \
+    if(newlock->next)                                                   \
+        __atomic_store_n(&(newlock->next->prev), newlock, __ATOMIC_SEQ_CST); \
+}
 
 #define ALLOC_LOCK(newlock)                 \
     if(!(newlock = alloc_lock())) return -ENOLCK;
@@ -230,7 +238,7 @@ loop:
  */
 long add_lock(struct file_t *fp, struct flock *flock)
 {
-    struct alock_t *alock, *newlock, *newlock2;
+    volatile struct alock_t *alock, *newlock, *newlock2;
     struct fs_node_t *node;
     off_t start , end ;
     off_t start2, end2;
@@ -247,14 +255,16 @@ long add_lock(struct file_t *fp, struct flock *flock)
         /* not our lock? */
         if(alock->internal_lock.l_pid != this_core->cur_task->pid)
         {
-            alock = alock->next;
+            //alock = alock->next;
+            __atomic_store_n(&(alock), alock->next, __ATOMIC_SEQ_CST);
             continue;
         }
 
         /* any overlap? */
         if((start < start2 && end < start2) || (start > end2 && end > end2))
         {           /* nope */
-            alock = alock->next;
+            //alock = alock->next;
+            __atomic_store_n(&(alock), alock->next, __ATOMIC_SEQ_CST);
             continue;
         }
 
@@ -294,7 +304,7 @@ long add_lock(struct file_t *fp, struct flock *flock)
                 else
                 {
                     ALLOC_LOCK(newlock);
-                    A_memcpy(&newlock->internal_lock, flock,
+                    A_memcpy((void *)&newlock->internal_lock, flock,
                                             sizeof(struct flock));
                     
                     /* shrink the old lock, removing the first part */
@@ -333,7 +343,7 @@ long add_lock(struct file_t *fp, struct flock *flock)
                 else
                 {
                     ALLOC_LOCK(newlock);
-                    A_memcpy(&newlock->internal_lock, flock,
+                    A_memcpy((void *)&newlock->internal_lock, flock,
                                             sizeof(struct flock));
 
                     /* shrink the old lock, removing the last part */
@@ -371,7 +381,7 @@ long add_lock(struct file_t *fp, struct flock *flock)
                     }
 
                     /* the middle part */
-                    A_memcpy(&newlock2->internal_lock, flock,
+                    A_memcpy((void *)&newlock2->internal_lock, flock,
                                             sizeof(struct flock));
 
                     /* the first part */
@@ -436,36 +446,44 @@ long add_lock(struct file_t *fp, struct flock *flock)
     newlock->internal_lock.l_pid = this_core->cur_task->pid;
 
     /* add the new lock */
-    newlock->prev = NULL;
-    newlock->next = node->alocks;
+    //newlock->prev = NULL;
+    //newlock->next = node->alocks;
+    __atomic_store_n(&(newlock->prev), NULL, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&(newlock->next), node->alocks, __ATOMIC_SEQ_CST);
 
     if(node->alocks)
     {
-        node->alocks->prev = newlock;
+        //node->alocks->prev = newlock;
+        __atomic_store_n(&(node->alocks->prev), newlock, __ATOMIC_SEQ_CST);
     }
 
-    node->alocks = newlock;
+    //node->alocks = newlock;
+    __atomic_store_n(&(node->alocks), newlock, __ATOMIC_SEQ_CST);
+
     kernel_mutex_unlock(&node->lock);
 
     return 0;
 }
 
 
-static void remove_lock_internal(struct fs_node_t *node, struct alock_t *alock)
+static void remove_lock_internal(struct fs_node_t *node, volatile struct alock_t *alock)
 {
     if(alock->next)
     {
-        alock->next->prev = alock->prev;
+        //alock->next->prev = alock->prev;
+        __atomic_store_n(&(alock->next->prev), alock->prev, __ATOMIC_SEQ_CST);
     }
     
     if(alock->prev)
     {
-        alock->prev->next = alock->next;
+        //alock->prev->next = alock->next;
+        __atomic_store_n(&(alock->prev->next), alock->next, __ATOMIC_SEQ_CST);
     }
     
     if(node->alocks == alock)
     {
-        node->alocks = alock->next;
+        //node->alocks = alock->next;
+        __atomic_store_n(&(node->alocks), alock->next, __ATOMIC_SEQ_CST);
     }
     
     free_lock(alock);
@@ -479,7 +497,7 @@ static void remove_lock_internal(struct fs_node_t *node, struct alock_t *alock)
  */
 long remove_lock(struct file_t *fp, struct flock *flock)
 {
-    struct alock_t *alock, *newlock;
+    volatile struct alock_t *alock, *newlock;
     struct fs_node_t *node;
     off_t start , end ;
     off_t start2, end2;
@@ -496,14 +514,16 @@ long remove_lock(struct file_t *fp, struct flock *flock)
         /* not our lock? */
         if(alock->internal_lock.l_pid != this_core->cur_task->pid)
         {
-            alock = alock->next;
+            //alock = alock->next;
+            __atomic_store_n(&(alock), alock->next, __ATOMIC_SEQ_CST);
             continue;
         }
 
         /* any overlap? */
         if((start < start2 && end < start2) || (start > end2 && end > end2))
         {           /* nope */
-            alock = alock->next;
+            //alock = alock->next;
+            __atomic_store_n(&(alock), alock->next, __ATOMIC_SEQ_CST);
             continue;
         }
         
@@ -609,16 +629,32 @@ long remove_lock(struct file_t *fp, struct flock *flock)
  */
 void remove_task_locks(struct task_t *task, struct file_t *fp)
 {
-    struct alock_t *alock, *nextlock;
+    volatile struct alock_t *alock, *nextlock;
     struct fs_node_t *node;
 
     node = fp->node;
     kernel_mutex_lock(&node->lock);
     alock = node->alocks;
 
+    if(node->flags & FS_NODE_HEADER_ONLY)
+    {
+        kpanic("remove_task_locks: header only node\n");
+    }
+
     while(alock)
     {
-        nextlock = alock->next;
+        /*
+        if(alock < KERNEL_MEM_START)
+        {
+            switch_tty(1);
+            printk("*** alocks %lx, lock %lx\n", node->alocks, alock);
+            dump_node(node);
+            kpanic("remove_task_locks: invalid lock ptr!!!!\n");
+        }
+        */
+
+        //nextlock = alock->next;
+        __atomic_store_n(&(nextlock), alock->next, __ATOMIC_SEQ_CST);
 
         /* not our lock? */
         if(alock->internal_lock.l_pid == task->pid)
@@ -626,7 +662,8 @@ void remove_task_locks(struct task_t *task, struct file_t *fp)
             remove_lock_internal(node, alock);
         }
 
-        alock = nextlock;
+        //alock = nextlock;
+        __atomic_store_n(&(alock), nextlock, __ATOMIC_SEQ_CST);
     }
 
     kernel_mutex_unlock(&node->lock);

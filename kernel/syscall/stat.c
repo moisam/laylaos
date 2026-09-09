@@ -67,7 +67,8 @@ static long copy_stat(struct fs_node_t *node, struct stat *statbuf)
 	tmp.st_ctim.tv_nsec = 0;
 	tmp.st_blksize = 0;
 
-    if((dinfo = get_mount_info(node->dev)))
+    if((dinfo = node_mount_info(node)))
+    //if((dinfo = get_mount_info(node->dev)))
     {
     	tmp.st_blksize = dinfo->block_size;
 	}

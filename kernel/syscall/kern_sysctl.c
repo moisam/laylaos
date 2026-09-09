@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2021, 2022, 2023, 2024, 2025
+ * Copyright (c) 2021, 2022, 2023, 2024, 2025, 2026
  *    Mohammed Isam [mohammed_isam1984@yahoo.com]
  * Copyright (c) 1982, 1986, 1989, 1993
  *    The Regents of the University of California.  All rights reserved.
@@ -199,7 +199,7 @@ int kern_sysctl(int *name, int namelen, void *oldp, size_t *oldlenp,
             return (sysctl_rdint(oldp, oldlenp, newp, NR_TASKS));
 
         case KERN_MAXFILES:
-            return (sysctl_rdint(oldp, oldlenp, newp, NR_FILE));
+            return (sysctl_rdint(oldp, oldlenp, newp, NR_FILETABLE));
 
         case KERN_ARGMAX:
             return (sysctl_rdint(oldp, oldlenp, newp, ARG_MAX));

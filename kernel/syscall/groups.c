@@ -83,6 +83,8 @@ long syscall_getgroups(int gidsetsize, gid_t grouplist[])
 {
     long count = 0, i;
 
+    kernel_mutex_lock(&(this_core->cur_task->threads->mutex));
+
     for(i = 0; i < NGROUPS_MAX; i++)
     {
         if(this_core->cur_task->extra_groups[i] != (gid_t)-1)
@@ -93,11 +95,13 @@ long syscall_getgroups(int gidsetsize, gid_t grouplist[])
     
     if(gidsetsize == 0)
     {
+        kernel_mutex_unlock(&(this_core->cur_task->threads->mutex));
         return count;
     }
     
     if(gidsetsize < 0 || gidsetsize < count)
     {
+        kernel_mutex_unlock(&(this_core->cur_task->threads->mutex));
         return -EINVAL;
     }
     
@@ -111,6 +115,8 @@ long syscall_getgroups(int gidsetsize, gid_t grouplist[])
             list[count++] = this_core->cur_task->extra_groups[i];
         }
     }
+
+    kernel_mutex_unlock(&(this_core->cur_task->threads->mutex));
     
     if(!grouplist)
     {
@@ -146,7 +152,7 @@ long syscall_setgroups(int ngroups, gid_t grouplist[])
     
     gid_t list[ngroups];
     COPY_FROM_USER(list, grouplist, sizeof(gid_t) * ngroups);
-    
+
     kernel_mutex_lock(&(this_core->cur_task->threads->mutex));
 
     for_each_thread(thread, this_core->cur_task)

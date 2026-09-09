@@ -76,8 +76,6 @@ static void activate_itimer(struct posix_timer_t *timer)
 
     if(timer->val.it_value.tv_sec || timer->val.it_value.tv_nsec)
     {
-
-
         timer->tgid = tgid(this_core->cur_task);
         res = do_clock_nanosleep(0, &timer->val.it_value, NULL, timer);
 
@@ -182,18 +180,26 @@ long syscall_setitimer(int which, struct itimerval *value,
         else if(which == ITIMER_REAL)
         {
             syscall_timer_delete(ITIMER_REAL_ID);
-            kernel_mutex_lock(&this_core->cur_task->common->mutex);
-            arm_itimer(&this_core->cur_task->itimer_real, &val, ITIMER_REAL_ID, SIGALRM);
-            activate_itimer(&this_core->cur_task->itimer_real);
-            kernel_mutex_unlock(&this_core->cur_task->common->mutex);
+
+            if(val.it_value.tv_sec && val.it_value.tv_usec)
+            {
+                kernel_mutex_lock(&this_core->cur_task->common->mutex);
+                arm_itimer(&this_core->cur_task->itimer_real, &val, ITIMER_REAL_ID, SIGALRM);
+                activate_itimer(&this_core->cur_task->itimer_real);
+                kernel_mutex_unlock(&this_core->cur_task->common->mutex);
+            }
         }
         else if(which == ITIMER_PROF)
         {
             syscall_timer_delete(ITIMER_PROF_ID);
-            kernel_mutex_lock(&this_core->cur_task->common->mutex);
-            arm_itimer(&this_core->cur_task->itimer_prof, &val, ITIMER_PROF_ID, SIGPROF);
-            activate_itimer(&this_core->cur_task->itimer_prof);
-            kernel_mutex_unlock(&this_core->cur_task->common->mutex);
+
+            if(val.it_value.tv_sec && val.it_value.tv_usec)
+            {
+                kernel_mutex_lock(&this_core->cur_task->common->mutex);
+                arm_itimer(&this_core->cur_task->itimer_prof, &val, ITIMER_PROF_ID, SIGPROF);
+                activate_itimer(&this_core->cur_task->itimer_prof);
+                kernel_mutex_unlock(&this_core->cur_task->common->mutex);
+            }
         }
         else
         {
