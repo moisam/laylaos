@@ -422,9 +422,6 @@ int i8254x_intr(struct regs *r, void *arg)
     // clear any pending IRQs
     pcidev_inl(dev, i8254x_REG_INTR);
 
-    // acknowledge the interrupt
-    pic_send_eoi(dev->dev->irq[0]);
-
     unblock_kernel_task(dev->task);
 
     return 1;
@@ -628,7 +625,6 @@ static void i8254x_func(void *arg)
             i8254x_process_input(&dev->netif);
         }
 
-        //block_task2(dev, PIT_FREQUENCY);
         set_task_waking_signal(this_core->cur_task, 0);
         __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
         block_task_timeout(this_core->cur_task, PIT_FREQUENCY);

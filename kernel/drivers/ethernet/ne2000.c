@@ -338,7 +338,6 @@ int ne2000_intr(struct regs *r, void *arg)
     //OUTB(ne->iobase + REG_INTERRUPT_STATUS, i);
 
     unblock_task_no_preempt(ne->task);
-    pic_send_eoi(ne->dev->irq[0]);
 
     return 1;
 }
@@ -695,7 +694,6 @@ static void ne2000_func(void *arg)
             ne2000_process_input(&ne->netif);
         }
 
-        //block_task(ne, 1);
         set_task_waitchan(this_core->cur_task, ne);
         set_task_state(this_core->cur_task, TASK_SLEEPING);
         scheduler();
