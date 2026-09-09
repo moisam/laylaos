@@ -224,15 +224,39 @@ void server_process_key(struct gc_t *gc, char *key)
 		}
 	}
 
+#define SEND_ALT_F4(w, k, m, brk)               \
+    (!((w)->flags & WINDOW_IGNORE_ALT_F4) &&    \
+     (k) == KEYCODE_F4 && ((m) & MODIFIER_MASK_ALT) && !(brk))
 
+    // Synthesize and send a window close event only if:
+    //   - the window accepts the event
+    //   - ALT-F4 is pressed (i.e. this is not a key break event)
+    // Otherwise just send the keycodes to the window
     if(grabbed_keyboard_window)
     {
-		send_key_event(grabbed_keyboard_window, key[1], key[0], modifiers);
+        if(SEND_ALT_F4(grabbed_keyboard_window, key[1], modifiers, brk))
+        {
+            server_window_close(gc, grabbed_keyboard_window);
+        }
+        else
+        {
+    		send_key_event(grabbed_keyboard_window, key[1], key[0], modifiers);
+		}
 	}
 	else if(root_window && root_window->focused_child)
 	{
-		send_key_event(root_window->focused_child, key[1], key[0], modifiers);
+        if(SEND_ALT_F4(root_window->focused_child, key[1], modifiers, brk))
+        {
+            server_window_close(gc, root_window->focused_child);
+        }
+        else
+        {
+    		send_key_event(root_window->focused_child, key[1], key[0], modifiers);
+		}
 	}
+
+#undef SEND_ALT_F4
+
 }
 
 

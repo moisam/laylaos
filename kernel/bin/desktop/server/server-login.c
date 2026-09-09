@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: server-login.c
  *    This file is part of LaylaOS.
@@ -42,6 +42,14 @@
  *       use the keyboard & mouse, draw to screen, etc.
  */
 
+static void set_environment(struct passwd *pwd)
+{
+    setenv("LAYLAOS_DESKTOP_VERSION", "1.0", 1);
+
+    set_creds(pwd, 0);
+    setsid();
+}
+
 void server_login(char *myname)
 {
     struct passwd *pwd = NULL;
@@ -54,7 +62,6 @@ void server_login(char *myname)
         return;
     }
 
-    set_creds(pwd);
-    setsid();
+    set_environment(pwd);
 }
 

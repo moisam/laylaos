@@ -34,6 +34,8 @@ INLINE void invalidate_screen_rect(int top, int left, int bottom, int right);
 // get the absolute on-screen x-coordinate of this window
 INLINE int server_window_screen_x(struct server_window_t *window)
 {
+    return window->x;
+    /*
     int x = 0;
 
     while(window)
@@ -43,12 +45,15 @@ INLINE int server_window_screen_x(struct server_window_t *window)
     }
     
     return x;
+    */
 }
 
 
 // get the absolute on-screen y-coordinate of this window
 INLINE int server_window_screen_y(struct server_window_t *window)
 {
+    return window->y;
+    /*
     int y = 0;
 
     while(window)
@@ -58,8 +63,32 @@ INLINE int server_window_screen_y(struct server_window_t *window)
     }
     
     return y;
+    */
 }
 
+INLINE int server_window_local_x(struct server_window_t *window, int x)
+{
+    x -= window->x;
+
+    if(!(window->flags & WINDOW_NODECORATION))
+    {
+        x -= WINDOW_BORDERWIDTH;
+    }
+
+    return x;
+}
+
+INLINE int server_window_local_y(struct server_window_t *window, int y)
+{
+    y -= window->y;
+
+    if(!(window->flags & WINDOW_NODECORATION))
+    {
+        y -= WINDOW_TITLEHEIGHT;
+    }
+
+    return y;
+}
 
 INLINE void grab_mouse(struct server_window_t *win, int confine)
 {
@@ -122,6 +151,30 @@ INLINE void server_window_set_size(struct server_window_t *window,
 }
 
 
+INLINE void repaint_siblings_above(struct gc_t *gc, 
+                                   struct server_window_t *window,
+                                   RectList *dirty_regions)
+{
+    struct server_window_t *sibling;
+    ListNode *current_node;
+    List siblings_above;
+
+    server_window_get_windows_above(window->parent, window, &siblings_above);
+    current_node = siblings_above.root_node;
+
+    while(current_node)
+    {
+        ListNode *next_node = current_node->next;
+
+        sibling = (struct server_window_t *)current_node->payload;
+        server_window_paint(gc, sibling, NULL, 
+                                dirty_regions, FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
+        Listnode_free_unlocked(current_node);
+        current_node = next_node;
+    }
+}
+
+
 INLINE void __draw_controlbox(struct gc_t *gc,
                               struct server_window_t *window,
                               int wscreen_x, int wscreen_y)
@@ -133,14 +186,18 @@ INLINE void __draw_controlbox(struct gc_t *gc,
     dirty_regions.last = &dirty_rect;
 
     dirty_rect.top = wscreen_y;
-    dirty_rect.left = wscreen_x + window->w - 
-                            WINDOW_BORDERWIDTH - CONTROL_BUTTON_LENGTH3;
+    dirty_rect.left = wscreen_x + window->w - CONTROL_BUTTON_LENGTH3 - 5;
     dirty_rect.bottom = wscreen_y + WINDOW_TITLEHEIGHT - 1;
     dirty_rect.right = wscreen_x + window->w - 1;
     dirty_rect.next = NULL;
 
     server_window_paint(gc, root_window, window, &dirty_regions,
                                 FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
+
+    // Due to the semitransparent borders, we may need to redraw the borders
+    // of siblings that overlay us if we have painted in an area that is
+    // partially overlapped by the siblings
+    repaint_siblings_above(gc, window, NULL);
 
     invalidate_screen_rect(dirty_rect.top,
                            dirty_rect.left,
@@ -165,15 +222,6 @@ INLINE void reset_controlbox_state(struct gc_t *gc,
         __draw_controlbox(gc, window,
                           server_window_screen_x(window), 
                           server_window_screen_y(window));
-
-#if 0
-        server_window_draw_controlbox(gc, window,
-                                          server_window_screen_x(window),
-                                          server_window_screen_y(window),
-                                          CONTROLBOX_FLAG_CLIP | 
-                                          CONTROLBOX_FLAG_INVALIDATE);
-#endif
-
     }
 }
 

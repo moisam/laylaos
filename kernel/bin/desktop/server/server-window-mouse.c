@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: server-window-mouse.c
  *    This file is part of LaylaOS.
@@ -46,6 +46,34 @@ struct mouse_state_t root_button_state;
 #define MY_Y        server_window_screen_y(window)
 
 
+void server_update_mouse_cursor(struct server_window_t *window)
+{
+    struct server_window_t *child;
+    ListNode *current_node;
+
+    current_node = window->children->last_node;
+
+    for( ; current_node != NULL; current_node = current_node->prev)
+    {
+        child = (struct server_window_t *)current_node->payload;
+
+        if((child->flags & WINDOW_HIDDEN))
+        {
+            continue;
+        }
+
+        if(!(root_mouse_x >= child->x && root_mouse_x <= child->xw1 &&
+             root_mouse_y >= child->y && root_mouse_y <= child->yh1))
+        {
+            continue;
+        }
+
+        change_cursor(child->cursor_id);
+        return;
+    }
+}
+
+
 static void do_child_mouse_event(struct server_window_t *window, 
                                  struct mouse_state_t *mstate)
 {
@@ -58,39 +86,39 @@ static void do_child_mouse_event(struct server_window_t *window,
         {
             if(mstate->x < WINDOW_BORDERWIDTH)
             {
-                change_cursor(CURSOR_NWSE);
+                change_cursor(CURSOR_NW);
             }
             else if(mstate->x >= (window->w - WINDOW_BORDERWIDTH))
             {
-                change_cursor(CURSOR_NESW);
+                change_cursor(CURSOR_NE);
             }
             else
             {
-                change_cursor(CURSOR_NS);
+                change_cursor(CURSOR_N);
             }
         }
         else if(mstate->y >= (window->h - WINDOW_BORDERWIDTH))
         {
             if(mstate->x < WINDOW_BORDERWIDTH)
             {
-                change_cursor(CURSOR_NESW);
+                change_cursor(CURSOR_SW);
             }
             else if(mstate->x >= (window->w - WINDOW_BORDERWIDTH))
             {
-                change_cursor(CURSOR_NWSE);
+                change_cursor(CURSOR_SE);
             }
             else
             {
-                change_cursor(CURSOR_NS);
+                change_cursor(CURSOR_S);
             }
         }
         else if(mstate->x < WINDOW_BORDERWIDTH)
         {
-            change_cursor(CURSOR_WE);
+            change_cursor(CURSOR_W);
         }
         else if(mstate->x >= (window->w - WINDOW_BORDERWIDTH))
         {
-            change_cursor(CURSOR_WE);
+            change_cursor(CURSOR_E);
         }
         else
         {
@@ -123,7 +151,53 @@ static void do_child_mouse_event(struct server_window_t *window,
     window->drag_type = type;                   \
     window->tracked_child = NULL;               \
     found = 1;                                  \
-    break;                                      \
+    goto skip; /* break; */                     \
+}
+
+
+struct server_window_t *find_mouse_child(struct server_window_t *window,
+                                         struct mouse_state_t *mstate)
+{
+    ListNode *current_node;
+    struct server_window_t *child;
+
+    if(!window->children)
+    {
+        return window;
+    }
+
+    // We go front-to-back in terms of the window stack for free occlusion
+    current_node = window->children->last_node;
+
+    for( ; current_node != NULL; current_node = current_node->prev)
+    {
+        child = (struct server_window_t *)current_node->payload;
+
+        // Don't check hidden windows, or windows that don't want mouse events
+        if((child->flags & (WINDOW_HIDDEN|WINDOW_NOINPUT)))
+        {
+            continue;
+        }
+
+        // Check if mouse is within a grandchild
+        struct server_window_t *grandchild;
+
+        if((grandchild = find_mouse_child(child, mstate)) != child)
+        {
+            return grandchild;
+        }
+
+        // If mouse isn't within window bounds, we can't possibly be interacting with it 
+        if(!(mstate->x >= child->x && mstate->x <= child->xw1 &&
+             mstate->y >= child->y && mstate->y <= child->yh1))
+        {
+            continue;
+        }
+
+        return child;
+    }
+
+    return window;
 }
 
 
@@ -135,7 +209,7 @@ void server_window_process_mouse(struct gc_t *gc,
     int found = 0;
     struct server_window_t *child;
     struct server_window_t *old_mouseover_child = window->mouseover_child;
-    ListNode *current_node;
+    //ListNode *current_node;
 
     window->mouseover_child = NULL;
 
@@ -147,31 +221,40 @@ void server_window_process_mouse(struct gc_t *gc,
     // If we had a button depressed, then we need to see if the mouse was
     // over any of the child windows
     // We go front-to-back in terms of the window stack for free occlusion
+    if((child = find_mouse_child(window, mstate)) != window)
+    {
+    /*
     current_node = window->children->last_node;
 
     for( ; current_node != NULL; current_node = current_node->prev)
     {
         child = (struct server_window_t *)current_node->payload;
 
-        // Don't check hidden windows
-        if((child->flags & WINDOW_HIDDEN))
+        // Don't check hidden windows, or windows that don't want mouse events
+        if((child->flags & (WINDOW_HIDDEN|WINDOW_NOINPUT)))
         {
             continue;
         }
 
-
-        // If mouse isn't window bounds, we can't possibly be interacting with it 
+        // If mouse isn't within window bounds, we can't possibly be interacting with it 
         if(!(mstate->x >= child->x && mstate->x <= child->xw1 &&
              mstate->y >= child->y && mstate->y <= child->yh1))
         {
             continue;
         }
-        
+    */
+
+        // Ignore mouse events if this is a window with a modal dialog open
+        if(child->displayed_dialog &&
+           child->displayed_dialog->type == WINDOW_TYPE_DIALOG)
+        {
+            return;
+        }
+
         // Now we'll check to see if we're dragging a titlebar
         if(mstate->left_pressed)
         {
-            // See if the mouse position lies within the bounds of the current
-            // window's 31 px tall titlebar
+            // See if the mouse position lies within the bounds of the current window's titlebar
             // We check the decoration flag since we can't drag a window 
             // without a titlebar
             if(!(child->flags & WINDOW_NODECORATION) &&
@@ -197,11 +280,10 @@ void server_window_process_mouse(struct gc_t *gc,
                         SET_DRAG_CHILD(RESIZE_NORTH);
                     }
                 }
-                else if(mstate->y < (child->y + WINDOW_TITLEHEIGHT - 
-                                                    WINDOW_BORDERWIDTH))
+                else if(mstate->y < (child->y + WINDOW_TITLEHEIGHT - 3))
                 {
                     if((child->flags & WINDOW_NOCONTROLBOX) ||
-                       (mstate->x < (xmax - (CONTROL_BUTTON_LENGTH * 3))))
+                       (mstate->x < (xmax - 2 - (CONTROL_BUTTON_LENGTH * 3))))
                     {
                         SET_DRAG_CHILD(RESIZE_DRAG);
                     }
@@ -258,7 +340,7 @@ void server_window_process_mouse(struct gc_t *gc,
 
         do_child_mouse_event(child, &mstate2);
 
-        break;
+        //break;
     }
 
 skip:
@@ -387,9 +469,9 @@ void server_window_mouseover(struct gc_t *gc, struct server_window_t *window,
     if(!(window->flags & (WINDOW_NODECORATION | WINDOW_NOCONTROLBOX)) &&
        !window->tracking_mouse)
     {
-        if(y >= 0 && y < WINDOW_TITLEHEIGHT - WINDOW_BORDERWIDTH)
+        if(y >= 0 && y < WINDOW_TITLEHEIGHT - 5)
         {
-            int bx = window->w - WINDOW_BORDERWIDTH - CONTROL_BUTTON_LENGTH;
+            int bx = window->w - 5 - CONTROL_BUTTON_LENGTH;
             int state = window->controlbox_state;
 
             if(mstate->left_pressed)
@@ -444,6 +526,8 @@ void server_window_mouseover(struct gc_t *gc, struct server_window_t *window,
 
                 if(x >= bx)
                 {
+                    CLOSEBTN_STATE(OVER);
+
                     // close button
                     if(state & CLOSEBUTTON_DOWN)
                     {
@@ -453,19 +537,36 @@ void server_window_mouseover(struct gc_t *gc, struct server_window_t *window,
                 }
                 else if(x >= (bx - CONTROL_BUTTON_LENGTH))
                 {
+                    MAXBTN_STATE(OVER);
+
                     // max button
                     if(state & MAXIMIZEBUTTON_DOWN)
                     {
-                        server_window_toggle_maximize(gc, window, 0);
+                        CLEAR_STATE(OVER);
+
+                        if(window->state == WINDOW_STATE_MAXIMIZED)
+                        {
+                            server_window_restore(gc, window, 0);
+                        }
+                        else
+                        {
+                            server_window_maximize(gc, window, 0);
+                        }
+                        //server_window_toggle_maximize(gc, window, 0);
                         return;
                     }
                 }
                 else if(x >= (bx - CONTROL_BUTTON_LENGTH2))
                 {
+                    MINBTN_STATE(OVER);
+
                     // min button
                     if(state & MINIMIZEBUTTON_DOWN)
                     {
-                        server_window_toggle_minimize(gc, window);
+                        CLEAR_STATE(OVER);
+
+                        server_window_minimize(gc, window);
+                        //server_window_toggle_minimize(gc, window);
                         return;
                     }
                 }
@@ -507,16 +608,16 @@ void server_window_mouseover(struct gc_t *gc, struct server_window_t *window,
     {
         window->tracking_mouse = !!(mstate->left_pressed);
     }
-            
+
     if((window->flags & WINDOW_NODECORATION))
     {
-        send_mouse_event(window, x, y, mstate->buttons);
+        send_mouse_event(window, x, y, modifiers, mstate->buttons);
     }
     else
     {
         reset_controlbox_state(gc, window);
         send_mouse_event(window, x - WINDOW_BORDERWIDTH, 
-                         y - WINDOW_TITLEHEIGHT, mstate->buttons);
+                         y - WINDOW_TITLEHEIGHT, modifiers, mstate->buttons);
     }
 }
 

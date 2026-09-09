@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: clipboard.c
  *    This file is part of LaylaOS.
@@ -39,11 +39,29 @@ struct clipboard_data_t
 static struct clipboard_data_t clipboard[CLIPBOARD_FORMAT_COUNT + 1] = { 0, };
 
 
+/*
+int server_clipboard_has_any_data(void)
+{
+    int i;
+
+    for(i = 1; i <= CLIPBOARD_FORMAT_COUNT; i++)
+    {
+        if(clipboard[i].data)
+        {
+            return i;
+        }
+    }
+
+    return 0;
+}
+*/
+
+
 size_t server_clipboard_set(struct event_res_t *evres)
 {
     void *copy;
     
-    if(!evres || evres->clipboard.fmt != CLIPBOARD_FORMAT_TEXT)
+    if(!evres || evres->clipboard.fmt == 0 || evres->clipboard.fmt > CLIPBOARD_FORMAT_COUNT)
     {
         return 0;
     }
@@ -69,7 +87,7 @@ size_t server_clipboard_set(struct event_res_t *evres)
 
 void *server_clipboard_get(int format, size_t *datasz)
 {
-    if(!datasz || format != CLIPBOARD_FORMAT_TEXT)
+    if(!datasz || format == 0 || format > CLIPBOARD_FORMAT_COUNT)
     {
         *datasz = 0;
         return NULL;
@@ -82,7 +100,7 @@ void *server_clipboard_get(int format, size_t *datasz)
 
 size_t server_clipboard_query_size(int format)
 {
-    if(format != CLIPBOARD_FORMAT_TEXT)
+    if(format == 0 || format > CLIPBOARD_FORMAT_COUNT)
     {
         return 0;
     }

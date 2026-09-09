@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: resources.c
  *    This file is part of LaylaOS.
@@ -45,8 +45,8 @@
 #include FT_FREETYPE_H
 
 #define GLOB                __global_gui_data
-#define SYSFONT_FILE        DEFAULT_FONT_PATH "/Tuffy.ttf"
-#define BOLD_SYSFONT_FILE   DEFAULT_FONT_PATH "/Tuffy_Bold.ttf"
+#define SYSFONT_FILE        DEFAULT_FONT_PATH "/NotoSans-Regular.ttf"
+#define BOLD_SYSFONT_FILE   DEFAULT_FONT_PATH "/NotoSans-Bold.ttf"
 
 #define INIT_HASHSZ         256
 
@@ -117,7 +117,7 @@ static void load_sysfont(char *path, struct font_t *font, char *resname)
 
     font->flags = FONT_FLAG_TRUE_TYPE | FONT_FLAG_DATA_SHMEM |
                   FONT_FLAG_SYSTEM_FONT;
-    font->ptsz = 16;
+    font->ptsz = 14;
 
     // arguments to FT_Set_Char_Size():
     //   font face,

@@ -33,6 +33,7 @@
 #define _POSIX_THREADS
 #define _POSIX_TIMERS
 #define _POSIX_MONOTONIC_CLOCK
+
 #include <time.h>
 #include <errno.h>
 #include <string.h>
@@ -53,6 +54,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/mman.h>
+#include <sys/hash.h>
 #include <sched.h>
 #include <kernel/laylaos.h>
 #include <kernel/mouse.h>
@@ -61,14 +63,15 @@
 #include "../include/server/cursor.h"
 #include "../include/server/event.h"
 #include "../include/server/server.h"
+#include "../include/server/dragndrop.h"
 #include "../include/gui.h"
 #include "../include/keys.h"
 #include "../include/resources.h"
 #include "../include/clipboard.h"
 #include "../include/directrw.h"
+#include "../include/rgb.h"
 
 mutex_t update_lock = MUTEX_INITIALIZER;
-mutex_t input_lock = MUTEX_INITIALIZER;
 
 Rect rtmp[64];
 int count = 0;
@@ -77,11 +80,12 @@ int count = 0;
 #include "inlines.c"
 
 #define GLOB                        __global_gui_data
-#define DESKTOP_EXE                 "/bin/desktop/desktop"
+#define DESKTOP_EXE                 "/bin/desktop/desktop-bg"
 #define SERVER_SOCKET_PATH          "/var/run/guiserver"
 
+#define INIT_HASHSZ                 256
+
 // defined in server-window-mouse.c
-extern int root_mouse_x, root_mouse_y;
 extern struct mouse_state_t root_button_state;
 
 int maxopenfd;
@@ -94,36 +98,43 @@ struct gc_t *gc;
 struct server_window_t *root_window = NULL;
 struct server_window_t *grabbed_mouse_window = NULL;
 struct server_window_t *grabbed_keyboard_window = NULL;
+struct server_window_t *window_event_listener = NULL;
+struct server_window_t *systray_manager = NULL;
+
+struct hashtab_t *winhash = NULL;
 
 Rect mouse_bounds = { 0, };
 Rect desktop_bounds = { 0, };
 
 int mouse_is_confined = 0;
 int received_sigwinch = 0;
+int received_sigalrm = 0;
 
 void tty_reset(void);
 
 
 void sig_handler(int signum __attribute__((unused)))
 {
+    __asm__ __volatile__("hlt"::);
 }
 
 
 void sigint_handler(int signum __attribute__((unused)))
 {
-
+    __asm__ __volatile__("hlt"::);
 }
 
 
 void sighup_handler(int signum __attribute__((unused)))
 {
-
+    __asm__ __volatile__("hlt"::);
 }
 
 
 void sigsegv_handler(int signum, siginfo_t *info, 
                      void *p __attribute__((unused)))
 {
+    __asm__ __volatile__("hlt"::);
     tty_reset();
     write(0, "\033[?25l", 6);
     __asm__ __volatile__("xchg %%bx, %%bx"::);
@@ -158,6 +169,13 @@ void sigwinch_handler(int signum __attribute__((unused)))
 }
 
 
+void sigalrm_handler(int signum __attribute__((unused)))
+{
+    //__asm__ __volatile__("xchg %%bx, %%bx"::);
+    received_sigalrm = 1;
+}
+
+
 void draw_mouse_cursor(int invalidate)
 {
     if(cur_cursor == 0)
@@ -178,13 +196,13 @@ void draw_mouse_cursor(int invalidate)
             {
                 child = (struct server_window_t *)current_node->payload;
 
-                //Don't check hidden windows
-                if((child->flags & WINDOW_HIDDEN))
+                // Don't check hidden windows or those that don't want mouse input
+                if((child->flags & (WINDOW_HIDDEN|WINDOW_NOINPUT)))
                 {
                     continue;
                 }
 
-                //Check mouse is within window bounds
+                // Check mouse is within window bounds
                 if(!(root_mouse_x >= child->x && root_mouse_x <= child->xw1 &&
                      root_mouse_y >= child->y && root_mouse_y <= child->yh1))
                 {
@@ -205,135 +223,165 @@ void draw_mouse_cursor(int invalidate)
         }
     }
 
-    if(!cursor[cur_cursor].data)
+    struct cursor_t *cur = cursor[cur_cursor];
+    struct cursor_bitmap_t *curbitmap = cur ? &cur->bitmaps[cur->curframe] : NULL;
+
+    if(!cur || !curbitmap || !curbitmap->data)
     {
         __asm__ __volatile__("xchg %%bx, %%bx"::);
         __asm__ __volatile__("xchg %%bx, %%bx"::);
         return;
     }
 
-    int _mouse_x = root_mouse_x - cursor[cur_cursor].hotx;
-    int _mouse_y = root_mouse_y - cursor[cur_cursor].hoty;
-    int index = 0;
-    int mouse_w = cursor[cur_cursor].w;
-    int mouse_h = cursor[cur_cursor].h;
-    uint32_t y2 = _mouse_y * gc->pitch;
-    uint32_t x2 = _mouse_x * gc->pixel_width;
-    uint32_t *mouse_img;
-    int ymax = _mouse_y;
-    int xmax2 = _mouse_x + mouse_w;
-    int ymax2 = _mouse_y + mouse_h;
+    int _mouse_x = root_mouse_x - curbitmap->hotx;
+    int _mouse_y = root_mouse_y - curbitmap->hoty;
+    int mouse_w = curbitmap->w;
+    int mouse_h = curbitmap->h;
+    int src_x = 0;
+    int src_y = 0;
 
     // Ensure we don't paint off the top of the screen
-    if(ymax < 0)
+    if(_mouse_y < 0)
     {
-        index += (-ymax * mouse_w);
-        y2 = 0;
-        ymax = 0;
+        src_y -= _mouse_y;
+        mouse_h += _mouse_y;
         _mouse_y = 0;
     }
 
     // Ensure we don't paint off the left border of the screen
     if(_mouse_x < 0)
     {
-        index += (-_mouse_x);
-        x2 = 0;
+        src_x -= _mouse_x;
+        mouse_w += _mouse_x;
         _mouse_x = 0;
     }
 
-    if(xmax2 > gc->w)
+    if(_mouse_x + mouse_w > gc->w)
     {
-        xmax2 = gc->w;
+        mouse_w = gc->w - _mouse_x;
     }
-    
-    if(ymax2 > gc->h)
+
+    if(_mouse_y + mouse_h > gc->h)
     {
-        ymax2 = gc->h;
+        mouse_h = gc->h - _mouse_y;
     }
+
+    // Exit immediately if the mouse is completely off-screen
+    if(mouse_w <= 0 || mouse_h <= 0)
+    {
+        return;
+    }
+
+    uint32_t *src_line = curbitmap->data + (src_y * curbitmap->w) + src_x;
+    uint8_t *dst_line = gc->buffer + (_mouse_y * gc->pitch) + (_mouse_x * gc->pixel_width);
+
+    int bpp = gc->pixel_width;
+    int y;
 
     // Copy the pixels from our mouse image into the framebuffer
-    if(gc->pixel_width == 1)
+    if(bpp == 1)
     {
-        for( ; ymax < ymax2; y2 += gc->pitch, index += mouse_w, ymax++)
+        for(y = 0; y < mouse_h; y++) 
         {
-            uint8_t *backbuf = gc->buffer + x2 + y2;
-            int xmax = _mouse_x;
+            uint8_t *dst_pixel = dst_line;
+            uint32_t *src_pixel = src_line;
+            int count = mouse_w;
 
-            mouse_img = cursor[cur_cursor].data + index;
-
-            for( ; xmax < xmax2; mouse_img++, backbuf++, xmax++)
+            while(count--) 
             {
-                // Don't place a pixel if it's transparent
-                if(*mouse_img != transparent_color)
-                {
-                    *backbuf = *mouse_img;
-                }
+                *dst_pixel = alpha_blend8(gc, *src_pixel, *dst_pixel);
+                src_pixel++;
+                dst_pixel++;
             }
+
+            dst_line += gc->pitch;
+            src_line += curbitmap->w;
         }
     }
-    else if(gc->pixel_width == 2)
+    else if(bpp == 2)
     {
-        for( ; ymax < ymax2; y2 += gc->pitch, index += mouse_w, ymax++)
+        for(y = 0; y < mouse_h; y++) 
         {
-            uint8_t *backbuf = gc->buffer + x2 + y2;
-            int xmax = _mouse_x;
+            uint16_t *dst_pixel = (uint16_t *)dst_line;
+            uint32_t *src_pixel = src_line;
+            int count = mouse_w;
 
-            mouse_img = cursor[cur_cursor].data + index;
-
-            for( ; xmax < xmax2; mouse_img++, backbuf += 2, xmax++)
+            while(count--) 
             {
-                // Don't place a pixel if it's transparent
-                if(*mouse_img != transparent_color)
-                {
-                    *(uint16_t *)backbuf = *mouse_img;
-                }
+                *dst_pixel = alpha_blend16(gc, *src_pixel, *dst_pixel);
+                src_pixel++;
+                dst_pixel++;
             }
+
+            dst_line += gc->pitch;
+            src_line += curbitmap->w;
         }
     }
-    else if(gc->pixel_width == 3)
+    else if(bpp == 3)
     {
-        for( ; ymax < ymax2; y2 += gc->pitch, index += mouse_w, ymax++)
+        for(y = 0; y < mouse_h; y++) 
         {
-            uint8_t *backbuf = gc->buffer + x2 + y2;
-            int xmax = _mouse_x;
+            uint8_t *dst_pixel = dst_line;
+            uint32_t *src_pixel = src_line;
+            int count = mouse_w;
 
-            mouse_img = cursor[cur_cursor].data + index;
-
-            for( ; xmax < xmax2; mouse_img++, backbuf += 3, xmax++)
+            // copy everything except the last pixel, we need to copy it
+            // safely so if it fails at the edge of the mapped framebuffer,
+            // we do not get a SIGSEGV!
+            while(count > 1) 
             {
-                // Don't place a pixel if it's transparent
-                if(*mouse_img != transparent_color)
-                {
-                    backbuf[0] = (*mouse_img) & 0xff;
-                    backbuf[1] = (*mouse_img >> 8) & 0xff;
-                    backbuf[2] = (*mouse_img >> 16) & 0xff;
-                }
+                uint32_t bg = *(uint32_t *)dst_pixel & 0x00FFFFFF;
+                uint32_t blended = alpha_blend24(gc, *src_pixel, bg);
+
+                *(uint16_t *)dst_pixel = blended & 0xFFFF;
+                dst_pixel[2] = (blended >> 16) & 0xFF;
+
+                src_pixel++;
+                dst_pixel += 3;
+                count--;
             }
+
+            if(count == 1)
+            {
+                uint32_t bg = (uint32_t)dst_pixel[0] |
+                             ((uint32_t)dst_pixel[1] << 8) |
+                             ((uint32_t)dst_pixel[2] << 16);
+
+                uint32_t blended = alpha_blend24(gc, *src_pixel, bg);
+
+                dst_pixel[0] = blended & 0xFF;
+                dst_pixel[1] = (blended >> 8) & 0xFF;
+                dst_pixel[2] = (blended >> 16) & 0xFF;
+            }
+
+            dst_line += gc->pitch;
+            src_line += curbitmap->w;
         }
     }
     else
     {
-        for( ; ymax < ymax2; y2 += gc->pitch, index += mouse_w, ymax++)
+        for(y = 0; y < mouse_h; y++) 
         {
-            uint8_t *backbuf = gc->buffer + x2 + y2;
-            int xmax = _mouse_x;
+            uint32_t *dst_pixel = (uint32_t *)dst_line;
+            uint32_t *src_pixel = src_line;
 
-            mouse_img = cursor[cur_cursor].data + index;
+            int count = mouse_w;
 
-            for( ; xmax < xmax2; mouse_img++, backbuf += 4, xmax++)
+            while(count--) 
             {
-                // Don't place a pixel if it's transparent
-                if(*mouse_img != transparent_color)
-                {
-                    *(uint32_t *)backbuf = *mouse_img;
-                }
+                *dst_pixel = alpha_blend32(gc, *src_pixel, *dst_pixel);
+                src_pixel++;
+                dst_pixel++;
             }
+
+            dst_line += gc->pitch;
+            src_line += curbitmap->w;
         }
     }
     
     if(invalidate)
     {
-        invalidate_screen_rect(_mouse_y, _mouse_x, ymax2 - 1, xmax2 - 1);
+        invalidate_screen_rect(_mouse_y, _mouse_x, _mouse_y + mouse_h - 1, _mouse_x + mouse_w - 1);
     }
 }
 
@@ -341,9 +389,16 @@ void draw_mouse_cursor(int invalidate)
 void force_redraw_cursor(int _mouse_x, int _mouse_y)
 {
     volatile int mx, my;
+    struct cursor_t *cur = cursor[old_cursor];
+    struct cursor_bitmap_t *curbitmap = cur ? &cur->bitmaps[cur->curframe] : NULL;
 
-    my = root_mouse_y - cursor[old_cursor].hoty;
-    mx = root_mouse_x - cursor[old_cursor].hotx;
+    if(!cur || !curbitmap)
+    {
+        return;
+    }
+
+    my = root_mouse_y - curbitmap->hoty;
+    mx = root_mouse_x - curbitmap->hotx;
 
     RectList dirty_list;
     Rect mouse_rect;
@@ -353,8 +408,8 @@ void force_redraw_cursor(int _mouse_x, int _mouse_y)
 
     mouse_rect.top = my;
     mouse_rect.left = mx;
-    mouse_rect.bottom = my + cursor[old_cursor].h - 1;
-    mouse_rect.right = mx + cursor[old_cursor].w - 1;
+    mouse_rect.bottom = my + curbitmap->h - 1;
+    mouse_rect.right = mx + curbitmap->w - 1;
     mouse_rect.next = NULL;
 
     // Do a dirty update for the desktop, which will, in turn, do a 
@@ -362,9 +417,9 @@ void force_redraw_cursor(int _mouse_x, int _mouse_y)
     server_window_paint(gc, root_window, /* root_window->mouseover_child */ NULL, 
                         &dirty_list, 
                         FLAG_PAINT_CHILDREN         | 
-                        FLAG_PAINT_BORDER           |
+                        FLAG_PAINT_BORDER           /*|
                         FLAG_PAINT_NO_CLIP_CHILDREN |
-                        FLAG_PAINT_NO_CLIP_SIBLINGS);
+                        FLAG_PAINT_NO_CLIP_SIBLINGS*/);
 
     // Update mouse position
     root_mouse_x = _mouse_x;
@@ -372,10 +427,18 @@ void force_redraw_cursor(int _mouse_x, int _mouse_y)
     
     draw_mouse_cursor(0);
 
-    int new_mouse_x = root_mouse_x - cursor[cur_cursor].hotx;
-    int new_mouse_y = root_mouse_y - cursor[cur_cursor].hoty;
-    int new_mouse_b = new_mouse_y + cursor[cur_cursor].h - 1;
-    int new_mouse_r = new_mouse_x + cursor[cur_cursor].w - 1;
+    cur = cursor[cur_cursor];
+    curbitmap = cur ? &cur->bitmaps[cur->curframe] : NULL;
+
+    if(!cur || !curbitmap)
+    {
+        return;
+    }
+
+    int new_mouse_x = root_mouse_x - curbitmap->hotx;
+    int new_mouse_y = root_mouse_y - curbitmap->hoty;
+    int new_mouse_b = new_mouse_y + curbitmap->h - 1;
+    int new_mouse_r = new_mouse_x + curbitmap->w - 1;
 
     if(new_mouse_x < mouse_rect.left)
     {
@@ -478,27 +541,8 @@ void process_mouse(struct mouse_packet_t *packet)
         server_window_process_mouse(gc, root_window, &mstate);
     }
 
-#if 0
-    // if no window was clicked, the click must have occurred in the desktop
-    // background itself
-    if(mstate.left_pressed && !grabbed_mouse_window &&
-                              !root_window->drag_child &&
-                              !root_window->tracked_child)
-    {
-        //__asm__ __volatile__("xchg %%bx, %%bx"::);
-        if(root_window->active_child)
-        {
-            // hide any open menus
-            server_window_hide_menu(root_window->active_child);
-        }
-    }
-#endif
-
     if(old_mouseover_child && 
-       old_mouseover_child != root_window->mouseover_child /* &&
-       !(root_window->mouseover_child &&
-         root_window->mouseover_child->type == WINDOW_TYPE_MENU_FRAME &&
-         root_window->mouseover_child->owner_winid == old_mouseover_child->winid) */)
+       old_mouseover_child != root_window->mouseover_child)
     {
         mouse_exit(gc, old_mouseover_child, 
                        mstate.x, mstate.y, mstate.buttons);
@@ -543,44 +587,53 @@ uint8_t *create_canvas(uint32_t canvas_size, int *__shmid)
 
 struct server_window_t *server_window_by_winid(winid_t winid)
 {
-    struct server_window_t *window;
-    ListNode *current_node;
+    struct hashtab_item_t *hitem;
+    struct server_window_t *win = NULL;
 
-    if(!root_window)
+    if((hitem = hashtab_lookup(winhash, (void *)winid)))
     {
-        return NULL;
-    }
-    
-    if(winid == root_window->winid)
-    {
-        return root_window;
+        win = hitem->val;
     }
 
-    if(!root_window->children)
-    {
-        return NULL;
-    }
-
-    // Find the child in the list
-    for(current_node = root_window->children->root_node;
-        current_node != NULL;
-        current_node = current_node->next)
-    {
-        window = (struct server_window_t *)current_node->payload;
-
-        if(winid == window->winid)
-        {
-            return (struct server_window_t *)window;
-        }
-    }
-    
-    return NULL;
+    return win;
 }
 
 
-void server_window_add(struct server_window_t *window)
+static inline int mouse_within_bounds(struct server_window_t *win)
 {
-    if(root_window == NULL)
+    int top = win->y;
+    int left = win->x;
+    int bottom = win->yh1;
+    int right = win->xw1;
+
+    struct cursor_t *cur = cursor[cur_cursor];
+    struct cursor_bitmap_t *curbitmap = cur ? &cur->bitmaps[cur->curframe] : NULL;
+
+    if(!cur || !curbitmap)
+    {
+        return 0;
+    }
+
+    return (root_mouse_x <= right && (root_mouse_x + curbitmap->w) >= left &&
+            root_mouse_y <= bottom && (root_mouse_y + curbitmap->h) >= top);
+}
+
+
+struct server_window_t *get_window_under_mouse(void)
+{
+    struct mouse_state_t mstate;
+
+    mstate.x = root_mouse_x;
+    mstate.y = root_mouse_y;
+
+    return find_mouse_child(root_window, &mstate);
+}
+
+
+void server_window_add(struct server_window_t *window, struct server_window_t *parent)
+{
+    // add to the parent's children list
+    if(parent == NULL)
     {
         root_window = window;
         root_window->children = List_new();
@@ -592,17 +645,20 @@ void server_window_add(struct server_window_t *window)
     }
     else
     {
-        server_window_insert_child(root_window, window);
-        
-        window->cursor_id = window->parent->cursor_id;
+        server_window_insert_child(parent, window);
+        window->cursor_id = parent->cursor_id;
     }
+
+    // add to the global hash table
+    hashtab_add(winhash, (void *)window->winid, window);
 }
 
 
 struct server_window_t *server_window_create(int16_t x, int16_t y, 
                                              uint16_t w, uint16_t h,
                                              int gravity, uint32_t flags, 
-                                             winid_t winid)
+                                             winid_t winid,
+                                             struct server_window_t *parent)
 {
     struct server_window_t *win;
     
@@ -714,6 +770,12 @@ struct server_window_t *server_window_create(int16_t x, int16_t y,
         }
     }
 
+    if(parent && (win->flags & WINDOW_SUBWINDOW))
+    {
+        x += parent->client_x;
+        y += parent->client_y;
+    }
+
     // now set the window's size
     server_window_set_size(win, x, y, w, h);
     win->minw = WINDOW_MIN_WIDTH;
@@ -736,9 +798,23 @@ struct server_window_t *server_window_create(int16_t x, int16_t y,
     mutex_init(&win->lock);
     
     // add to our list
-    server_window_add(win);
+    server_window_add(win, parent);
 
     return win;
+}
+
+
+static void destroy_resources(struct server_window_t *window)
+{
+    // the call to server_window_remove_child() will call cancel_active_child()
+
+    server_resource_free(window->icon);
+    window->icon = NULL;
+
+    shmctl(window->shmid, IPC_RMID, NULL);
+    shmdt(window->canvas);
+    window->shmid = 0;
+    window->canvas = NULL;
 }
 
 
@@ -752,17 +828,53 @@ struct server_window_t *server_window_create(int16_t x, int16_t y,
  */
 void server_window_destroy(struct server_window_t *window)
 {
+    struct server_window_t *tmp;
+    ListNode *current_node, *next_node;
+
     if(!window)
     {
         return;
     }
 
+    // destroy child windows
+    if(window->children)
+    {
+        for(current_node = window->children->root_node;
+            current_node != NULL;
+            current_node = next_node)
+        {
+            next_node = current_node->next;
+            tmp = (struct server_window_t *)current_node->payload;
+
+            /*
+            //server_window_may_hide(tmp);
+            //server_window_destroy(tmp);
+            destroy_resources(tmp);
+
+            if(tmp->clientfd->fd >= 0)
+            {
+                tmp->clientfd->clients--;
+            }
+
+            free(tmp);
+            */
+            server_window_insert_child(root_window, tmp);
+
+            Listnode_free((ListNode *)current_node); 
+        }
+
+        /*
+        window->children->root_node = NULL;
+        window->children->last_node = NULL;
+        window->children->count = 0;
+        */
+        List_free(window->children);
+        window->children = NULL;
+    }
+
     // ensure we hide any open menus before we destroy them!
     draw_mouse_cursor(1);
     
-    struct server_window_t *tmp;
-    ListNode *current_node;
-
     if(root_window && window->winid != root_window->winid && 
        root_window->children)
     {
@@ -786,18 +898,15 @@ void server_window_destroy(struct server_window_t *window)
             }
         }
     }
-    
-    // the call to server_window_remove_child() will call cancel_active_child()
 
-    server_resource_free(window->icon);
-    window->icon = NULL;
+    destroy_resources(window);
 
-    shmctl(window->shmid, IPC_RMID, NULL);
-    shmdt(window->canvas);
-    window->shmid = 0;
-    window->canvas = NULL;
+    // remove from the parent's children list
+    server_window_remove_child(window->parent, window);
 
-    server_window_remove_child(root_window, window);
+    // remove from the global hash table
+    hashtab_remove(winhash, (void *)window->winid);
+
     notify_parent_win_destroyed(window);
     
     if(window->owner_winid && 
@@ -807,6 +916,16 @@ void server_window_destroy(struct server_window_t *window)
         {
             tmp->displayed_dialog = NULL;
         }
+    }
+
+    if(window == window_event_listener)
+    {
+        window_event_listener = NULL;
+    }
+
+    if(window == systray_manager)
+    {
+        systray_manager = NULL;
     }
 
     if(window->clientfd->fd >= 0)
@@ -823,6 +942,41 @@ void server_window_destroy(struct server_window_t *window)
     }
 
     free(window);
+}
+
+
+void notify_clients_of_event(int event)
+{
+    struct server_window_t *window;
+    ListNode *current_node;
+
+    if(!root_window)
+    {
+        return;
+    }
+
+    // if no children, notify root and return
+    if(!root_window->children)
+    {
+        notify_simple_event(root_window->clientfd->fd, event, 
+                            root_window->winid, GLOB.mypid, 0);
+        return;
+    }
+
+    // notify all children
+    for(current_node = root_window->children->root_node;
+        current_node != NULL;
+        current_node = current_node->next)
+    {
+        window = (struct server_window_t *)current_node->payload;
+
+        notify_simple_event(window->clientfd->fd, event, 
+                            window->winid, GLOB.mypid, 0);
+    }
+
+    // notify root last
+    notify_simple_event(root_window->clientfd->fd, event, 
+                        root_window->winid, GLOB.mypid, 0);
 }
 
 
@@ -848,24 +1002,29 @@ void server_window_dead(struct server_window_t *window)
 void cancel_active_child(struct server_window_t *parent, 
                          struct server_window_t *win)
 {
-    if(parent->active_child == win)
+    if(root_window->mouseover_child == win)
     {
-        parent->active_child = NULL;
+        root_window->mouseover_child = NULL;
     }
 
-    if(parent->focused_child == win)
+    if(root_window->active_child == win)
     {
-        parent->focused_child = parent->active_child;
+        root_window->active_child = NULL;
     }
 
-    if(parent->drag_child == win)
+    if(root_window->focused_child == win)
     {
-        parent->drag_child = NULL;
+        root_window->focused_child = root_window->active_child;
     }
 
-    if(parent->tracked_child == win)
+    if(root_window->drag_child == win)
     {
-        parent->tracked_child = NULL;
+        root_window->drag_child = NULL;
+    }
+
+    if(root_window->tracked_child == win)
+    {
+        root_window->tracked_child = NULL;
     }
 
     if(grabbed_keyboard_window == win)
@@ -877,6 +1036,16 @@ void cancel_active_child(struct server_window_t *parent,
     {
         ungrab_mouse();
     }
+
+    if(dnd_current_source == win)
+    {
+        dnd_current_source = NULL;
+    }
+
+    if(dnd_current_target == win)
+    {
+        dnd_current_target = NULL;
+    }
 }
 
 
@@ -887,10 +1056,16 @@ void may_draw_mouse_cursor(struct server_window_t *win)
     int bottom = win->yh1;
     int right = win->xw1;
 
-    if(root_mouse_x <= right &&
-       (root_mouse_x + cursor[cur_cursor].w) >= left &&
-       root_mouse_y <= bottom &&
-       (root_mouse_y + cursor[cur_cursor].h) >= top)
+    struct cursor_t *cur = cursor[cur_cursor];
+    struct cursor_bitmap_t *curbitmap = cur ? &cur->bitmaps[cur->curframe] : NULL;
+
+    if(!cur || !curbitmap)
+    {
+        return;
+    }
+
+    if(root_mouse_x <= right && (root_mouse_x + curbitmap->w) >= left &&
+       root_mouse_y <= bottom && (root_mouse_y + curbitmap->h) >= top)
     {
 
         draw_mouse_cursor(1);
@@ -905,10 +1080,16 @@ void may_change_mouse_cursor(struct server_window_t *win)
     int bottom = win->yh1;
     int right = win->xw1;
 
-    if(root_mouse_x <= right &&
-       (root_mouse_x + cursor[cur_cursor].w) >= left &&
-       root_mouse_y <= bottom &&
-       (root_mouse_y + cursor[cur_cursor].h) >= top &&
+    struct cursor_t *cur = cursor[cur_cursor];
+    struct cursor_bitmap_t *curbitmap = cur ? &cur->bitmaps[cur->curframe] : NULL;
+
+    if(!cur || !curbitmap)
+    {
+        return;
+    }
+
+    if(root_mouse_x <= right && (root_mouse_x + curbitmap->w) >= left &&
+       root_mouse_y <= bottom && (root_mouse_y + curbitmap->h) >= top &&
        win->cursor_id != cur_cursor)
     {
         change_cursor(win->cursor_id);
@@ -920,24 +1101,19 @@ void may_change_mouse_cursor(struct server_window_t *win)
 void server_window_may_hide(struct server_window_t *win)
 {
     int redraw = 0;
-    
+
+    if(!(win->flags & WINDOW_HIDDEN))
+    {
+        server_window_minimize(gc, win);
+        redraw = 1;
+    }
+    /*
     if(win->state != WINDOW_STATE_MINIMIZED)
     {
         server_window_toggle_minimize(gc, win);
         redraw = 1;
-
-        /*
-        if(grabbed_mouse_window == win)
-        {
-            ungrab_mouse();
-        }
-
-        if(grabbed_keyboard_window == win)
-        {
-            grabbed_keyboard_window = NULL;
-        }
-        */
     }
+    */
 
     if(redraw)
     {
@@ -946,26 +1122,27 @@ void server_window_may_hide(struct server_window_t *win)
         int bottom = win->yh1;
         int right = win->xw1;
 
-        if(root_mouse_x <= right &&
-           (root_mouse_x + cursor[cur_cursor].w) >= left &&
-           root_mouse_y <= bottom &&
-           (root_mouse_y + cursor[cur_cursor].h) >= top)
+        struct cursor_t *cur = cursor[cur_cursor];
+        struct cursor_bitmap_t *curbitmap = cur ? &cur->bitmaps[cur->curframe] : NULL;
+
+        if(!cur || !curbitmap)
+        {
+            return;
+        }
+
+        if(root_mouse_x <= right && (root_mouse_x + curbitmap->w) >= left &&
+           root_mouse_y <= bottom && (root_mouse_y + curbitmap->h) >= top)
         {
             /*
-             * Force showing the new cursor. We call process_mouse() so it
-             * can determine the appropriate mouse cursor according to who
-             * is under focus now.
+             * Force showing the new cursor
              */
-            struct mouse_packet_t mouse_packet;
-            mouse_packet.dx = 0;
-            mouse_packet.dy = 0;
-            mouse_packet.buttons = root_button_state.buttons;
-            process_mouse(&mouse_packet);
+            server_update_mouse_cursor(root_window);
+            force_redraw_cursor(root_mouse_x, root_mouse_y);
         }
     }
 }
 
-volatile int dont_update = 0;
+//volatile int dont_update = 0;
 
 void *screen_updater(void *unused)
 {
@@ -989,7 +1166,7 @@ void *screen_updater(void *unused)
             //__asm__ __volatile__("xchg %%bx, %%bx"::);
             struct timeval tv;
             tv.tv_sec = 0;
-            tv.tv_usec = dont_update ? 1000 : ((needed - elapsed) * 1000);
+            tv.tv_usec = /* dont_update ? 1000 : */ ((needed - elapsed) * 1000);
             select(0, NULL, NULL, NULL, &tv);
         }
     }
@@ -1014,13 +1191,11 @@ void *screen_updater(void *unused)
     }
 
 
-#define MAX_CLIENT_TICKS            5
-
-
 void process_win_create_request(struct clientfd_t *clientfd, 
                                 struct event_t *ev)
 {
     struct server_window_t *win, *owner = NULL;
+    struct server_window_t *parent = root_window;
     struct event_t ev2;
     uint32_t evtype;
     int wintype;
@@ -1053,6 +1228,16 @@ void process_win_create_request(struct clientfd_t *clientfd,
     {
         // get the owner window
         if(!(owner = server_window_by_winid(ev->win.owner)))
+        {
+            owner = root_window;
+            //send_err_event(clientfd->fd, ev->src, evtype, ENOENT, ev->seqid);
+            //return;
+        }
+    }
+    else if(ev->win.owner != 0)
+    {
+        // get the parent window
+        if(!(parent = server_window_by_winid(ev->win.owner)))
         {
             send_err_event(clientfd->fd, ev->src, evtype, ENOENT, ev->seqid);
             return;
@@ -1089,11 +1274,14 @@ void process_win_create_request(struct clientfd_t *clientfd,
                                               ev->win.w, ev->win.h,
                                               ev->win.gravity,
                                               ev->win.flags | WINDOW_HIDDEN,
-                                              ev->src)))
+                                              ev->src, parent)))
     {
         win->type = wintype;
+        win->state = WINDOW_STATE_NORMAL;
+        /*
         win->state = WINDOW_STATE_MINIMIZED;
         win->saved.state = WINDOW_STATE_NORMAL;
+        */
         win->clientfd = clientfd;
         clientfd->clients++;
 
@@ -1210,8 +1398,13 @@ void process_win_icon_request(struct server_window_t *win, struct event_t *ev)
     evres.restype = RESOURCE_TYPE_IMAGE;
     evres.resid = win->icon->resid;
 
-    direct_write(win->parent->clientfd->fd, (void *)&evres, 
-                        sizeof(struct event_res_t));
+    direct_write(win->parent->clientfd->fd, (void *)&evres, sizeof(struct event_res_t));
+
+    if(window_event_listener)
+    {
+        evres.dest = window_event_listener->winid;
+        direct_write(window_event_listener->clientfd->fd, (void *)&evres, sizeof(struct event_res_t));
+    }
 }
 
 
@@ -1311,10 +1504,12 @@ try:
                 GET_WINDOW_SILENT(win, ev->src);
                 GET_WINDOW_SILENT(owner, win->owner_winid);
 
+                /*
                 if(win->state != WINDOW_STATE_MINIMIZED)
                 {
                     break;
                 }
+                */
 
                 if(owner->displayed_dialog &&
                    owner->displayed_dialog->type == WINDOW_TYPE_DIALOG)
@@ -1322,7 +1517,10 @@ try:
                     break;
                 }
 
+                server_window_restore(gc, win, 0);
+                /*
                 server_window_toggle_minimize(gc, win);
+                */
                 may_draw_mouse_cursor(win);
                 break;
             
@@ -1339,19 +1537,24 @@ try:
                 GET_WINDOW_SILENT(win, ev->src);
                 GET_WINDOW_SILENT(owner, win->owner_winid);
 
+                /*
                 if(win->state != WINDOW_STATE_MINIMIZED)
                 {
                     break;
                 }
+                */
                 
                 if(owner->displayed_dialog)
                 {
                     break;
                 }
 
-                server_window_toggle_minimize(gc, win);
-                may_draw_mouse_cursor(win);
                 owner->displayed_dialog = win;
+                server_window_restore(gc, win, 0);
+                /*
+                server_window_toggle_minimize(gc, win);
+                */
+                may_draw_mouse_cursor(win);
                     
                 break;
 
@@ -1359,8 +1562,8 @@ try:
                 GET_WINDOW_SILENT(win, ev->src);
                 GET_WINDOW_SILENT(owner, win->owner_winid);
                 
-                server_window_may_hide(win);
                 owner->displayed_dialog = NULL;
+                server_window_may_hide(win);
                 break;
 
             case REQUEST_WINDOW_CREATE:
@@ -1379,6 +1582,14 @@ try:
                 server_window_set_title(gc, win,
                                   (char *)((struct event_buf_t *)ev)->buf,
                                   ((struct event_buf_t *)ev)->bufsz);
+
+                // notify any global listeners
+                if(window_event_listener)
+                {
+                    notify_win_title_event(window_event_listener->clientfd->fd,
+                                           win->title,
+                                           window_event_listener->winid, win->winid);
+                }
 
                 // notify parent
                 if(!win->parent)
@@ -1423,12 +1634,16 @@ try:
             case REQUEST_WINDOW_SHOW:
                 GET_WINDOW_SILENT(win, ev->src);
 
+                server_window_restore(gc, win, 0);
+                may_draw_mouse_cursor(win);
+                /*
                 if(win->state == WINDOW_STATE_MINIMIZED)
                 {
                     server_window_toggle_minimize(gc, win);
                     may_draw_mouse_cursor(win);
                     break;
                 }
+                */
 
                 break;
 
@@ -1440,6 +1655,14 @@ try:
             case REQUEST_WINDOW_RAISE:
                 GET_WINDOW_SILENT(win, ev->src);
 
+                // Don't raise if window is hidden
+                if(win->flags & WINDOW_HIDDEN)
+                {
+                    break;
+                }
+
+                server_window_raise(gc, win, 1);
+                /*
                 if(win->state == WINDOW_STATE_MINIMIZED)
                 {
                     server_window_toggle_minimize(gc, win);
@@ -1448,6 +1671,7 @@ try:
                 {
                     server_window_raise(gc, win, 1);
                 }
+                */
 
                 break;
 
@@ -1468,6 +1692,12 @@ try:
                         ev->win.x += WINDOW_BORDERWIDTH;
                         ev->win.y += WINDOW_TITLEHEIGHT;
                     }
+                }
+
+                if(win->parent && (win->flags & WINDOW_SUBWINDOW))
+                {
+                    ev->win.x += win->parent->client_x;
+                    ev->win.y += win->parent->client_y;
                 }
 
                 // if the window is hidden, just set the new position
@@ -1500,6 +1730,21 @@ try:
                 if(ev->win.h > WINDOW_MIN_HEIGHT)
                 {
                     win->minh = ev->win.h;
+                }
+
+                break;
+
+            case REQUEST_WINDOW_SET_MAX_SIZE:
+                GET_WINDOW_SILENT(win, ev->src);
+
+                if(ev->win.w > 0)
+                {
+                    win->maxw = ev->win.w;
+                }
+
+                if(ev->win.h > 0)
+                {
+                    win->maxh = ev->win.h;
                 }
 
                 break;
@@ -1553,8 +1798,8 @@ try:
                 GET_WINDOW_SILENT(win, ev->src);
 
                 server_window_resize_finalize(gc, win);
-                
-                if(!(win->flags & WINDOW_HIDDEN))
+
+                //if(!(win->flags & WINDOW_HIDDEN))
                 {
                     /*
                     server_window_paint(gc, win, NULL, NULL,
@@ -1589,7 +1834,7 @@ try:
                         int left = win->client_x + ev->rect.left;
                         int bottom = win->client_y + ev->rect.bottom;
                         int right = win->client_x + ev->rect.right;
-                        
+
                         server_window_invalidate(gc, win,
                                             ev->rect.top, ev->rect.left,
                                             ev->rect.bottom, ev->rect.right);
@@ -1607,6 +1852,19 @@ try:
 
                 if(win->parent->active_child == win)
                 {
+                    server_window_minimize(gc, win);
+                }
+                else if(win->flags & WINDOW_HIDDEN)
+                {
+                    server_window_restore(gc, win, 0);
+                }
+                else
+                {
+                    server_window_raise(gc, win, 1);
+                }
+                /*
+                if(win->parent->active_child == win)
+                {
                     server_window_toggle_minimize(gc, win);
                 }
                 else if(win->state == WINDOW_STATE_MINIMIZED)
@@ -1617,6 +1875,7 @@ try:
                 {
                     server_window_raise(gc, win, 1);
                 }
+                */
 
                 break;
 
@@ -1632,6 +1891,8 @@ try:
                     break;
                 }
 
+                server_window_maximize(gc, win, ev->seqid);
+                /*
                 // if window is hidden, show it first
                 if(win->state == WINDOW_STATE_MINIMIZED)
                 {
@@ -1640,12 +1901,22 @@ try:
                 
                 // lastly, maximize
                 server_window_toggle_maximize(gc, win, ev->seqid);
+                */
 
                 break;
 
             case REQUEST_WINDOW_MINIMIZE:
                 GET_WINDOW_SILENT(win, ev->src);
 
+                // if window is hidden, do nothing
+                if(win->flags & WINDOW_HIDDEN)
+                {
+                    break;
+                }
+
+                // otherwise, hide it
+                server_window_minimize(gc, win);
+                /*
                 // if window is already minimized, do nothing
                 if(win->state == WINDOW_STATE_MINIMIZED)
                 {
@@ -1654,12 +1925,15 @@ try:
 
                 // otherwise, minimize it
                 server_window_toggle_minimize(gc, win);
+                */
 
                 break;
 
             case REQUEST_WINDOW_RESTORE:
                 GET_WINDOW_SILENT(win, ev->src);
 
+                server_window_restore(gc, win, 0);
+                /*
                 // if window is not minimized, do nothing
                 if(win->state != WINDOW_STATE_MINIMIZED)
                 {
@@ -1668,6 +1942,7 @@ try:
 
                 // otherwise, restore it
                 server_window_toggle_minimize(gc, win);
+                */
 
                 break;
 
@@ -1683,6 +1958,8 @@ try:
                     break;
                 }
                 
+                server_window_fullscreen(gc, win, ev->seqid);
+                /*
                 // make sure it has the right flags
                 if(win->flags & (WINDOW_NOFOCUS | 
                                  WINDOW_NORAISE | 
@@ -1702,6 +1979,7 @@ try:
 
                 // lastly, make it fullscreen
                 server_window_toggle_fullscreen(gc, win, ev->seqid);
+                */
 
                 //grab_mouse(win);
                 break;
@@ -1718,6 +1996,8 @@ try:
                     break;
                 }
 
+                server_window_restore(gc, win, ev->seqid);
+                /*
                 // if window is hidden, show it first
                 if(win->state == WINDOW_STATE_MINIMIZED)
                 {
@@ -1726,6 +2006,7 @@ try:
 
                 // lastly, exit fullscreen
                 server_window_toggle_fullscreen(gc, win, ev->seqid);
+                */
 
                 //ungrab_mouse();
                 break;
@@ -1734,35 +2015,45 @@ try:
                 GET_WINDOW_SILENT(win, ev->winattr.winid);
                 
                 int flags = win->flags;
-                
+
+#define TOGGLE(f, f2)                               \
+    if((ev->winattr.flags & (f))) flags |= (f2);    \
+    else flags &= ~(f2);
+
                 // for now, only accept flags changes
-                if((ev2.winattr.flags & WINDOW_NODECORATION) ||
-                   (ev2.winattr.flags & WINDOW_NOCONTROLBOX))
+                // these cannot be changed once a menu frame is created
+                if(win->type != WINDOW_TYPE_MENU_FRAME)
                 {
-                    flags |= (WINDOW_NODECORATION | WINDOW_NOCONTROLBOX);
-                }
-                else
-                {
-                    flags &= ~(WINDOW_NODECORATION | WINDOW_NOCONTROLBOX);
+                    TOGGLE(WINDOW_NODECORATION, WINDOW_NODECORATION | WINDOW_NOCONTROLBOX);
+                    TOGGLE(WINDOW_NOCONTROLBOX, WINDOW_NODECORATION | WINDOW_NOCONTROLBOX);
+                    TOGGLE(WINDOW_NORESIZE, WINDOW_NORESIZE);
+                    TOGGLE(WINDOW_NORAISE, WINDOW_NORAISE);
                 }
 
-                if((ev2.winattr.flags & WINDOW_NORESIZE))
-                {
-                    flags |= (WINDOW_NORESIZE);
-                }
-                else
-                {
-                    flags &= ~(WINDOW_NORESIZE);
-                }
-                
+                TOGGLE(WINDOW_ALWAYSONTOP, WINDOW_ALWAYSONTOP);
+                TOGGLE(WINDOW_NOFOCUS, WINDOW_NOFOCUS);
+                TOGGLE(WINDOW_NOINPUT, WINDOW_NOINPUT);
+                TOGGLE(WINDOW_TRANSPARENT, WINDOW_TRANSPARENT);
+
+#undef TOGGLE
+
+                // force redraw if the flags changed
                 if(flags != win->flags)
                 {
+                    win->flags = flags;
                     server_window_set_size(win, win->x, win->y,
                                                 win->client_w, win->client_h);
 
-                    server_window_paint(gc, win, NULL, NULL,
-                                        FLAG_PAINT_CHILDREN | 
-                                        FLAG_PAINT_BORDER);
+                    if((win->flags & (WINDOW_HIDDEN | WINDOW_ALWAYSONTOP)) ==
+                                            (WINDOW_HIDDEN | WINDOW_ALWAYSONTOP))
+                    {
+                        server_window_place_on_top(win);
+                    }
+                    else
+                    {
+                        server_window_paint(gc, win, NULL, NULL,
+                                            FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
+                    }
                 }
 
                 break;
@@ -1789,6 +2080,26 @@ try:
                 ev2.src = TO_WINID(GLOB.mypid, 0);
                 ev2.dest = ev->src;
                 ev2.winst.state = win->state;
+                ev2.valid_reply = 1;
+                direct_write(clientfd->fd, (void *)&ev2, sizeof(struct event_t));
+                break;
+
+            case REQUEST_WINDOW_UNDER_MOUSE:
+                if(!(win = get_window_under_mouse()))
+                {
+                    send_err_event(clientfd->fd, ev->src, EVENT_WINDOW_ATTRIBS, ENOENT, ev->seqid);
+                    break;
+                }
+
+                ev2.type = EVENT_WINDOW_ATTRIBS;
+                ev2.seqid = ev->seqid;
+                ev2.winattr.x = win->x;
+                ev2.winattr.y = win->y;
+                ev2.winattr.w = win->client_w;
+                ev2.winattr.h = win->client_h;
+                ev2.winattr.flags = win->flags;
+                ev2.src = TO_WINID(GLOB.mypid, 0);
+                ev2.dest = ev->src;
                 ev2.valid_reply = 1;
                 direct_write(clientfd->fd, (void *)&ev2, sizeof(struct event_t));
                 break;
@@ -1919,13 +2230,19 @@ try:
 
                 // check the cursor id is valid
                 if(ev->cur.curid >= CURSOR_COUNT || 
-                   cursor[ev->cur.curid].data == NULL)
+                   //cursor[ev->cur.curid].data == NULL
+                   cursor[ev->cur.curid] == NULL ||
+                   cursor[ev->cur.curid]->bitmaps[0].data == NULL)
                 {
                     break;
                 }
 
                 win->cursor_id = ev->cur.curid;
                 may_change_mouse_cursor(win);
+                break;
+
+            case REQUEST_CURSOR_CHANGE_SYSCURSOR:
+                server_cursor_change_syscursor((struct event_res_t *)ev);
                 break;
 
             case REQUEST_CURSOR_HIDE:
@@ -2098,6 +2415,7 @@ try:
 
                     A_memcpy(GLOB.themecolor, evbuf->data, count * sizeof(uint32_t));
 
+#if 0
 #define FIX_TRANSPARENCY(c)                     \
     GLOB.themecolor[c] &= 0xFFFFFF00;           \
     GLOB.themecolor[c] |= WINDOW_BORDER_ALPHA;
@@ -2109,6 +2427,7 @@ try:
                     FIX_TRANSPARENCY(THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE);
 
 #undef FIX_TRANSPARENCY
+#endif
 
                     // Now broadcast it to all apps
                     broadcast_new_theme();
@@ -2138,6 +2457,19 @@ try:
                     //ungrab_mouse();
                 }
 
+                break;
+
+            case REQUEST_GET_DESKTOP_BOUNDS:
+                ev2.type = EVENT_DESKTOP_BOUNDS;
+                ev2.seqid = ev->seqid;
+                ev2.rect.top = desktop_bounds.top;
+                ev2.rect.left = desktop_bounds.left;
+                ev2.rect.bottom = desktop_bounds.bottom;
+                ev2.rect.right = desktop_bounds.right;
+                ev2.src = TO_WINID(GLOB.mypid, 0);
+                ev2.dest = ev->src;
+                ev2.valid_reply = 1;
+                direct_write(clientfd->fd, (void *)&ev2, sizeof(struct event_t));
                 break;
             
             case REQUEST_GET_MODIFIER_KEYS:
@@ -2211,7 +2543,7 @@ try:
                     break;
                 }
             */
-            
+
             case REQUEST_CLIPBOARD_SET:
                 {
                     struct event_res_t *evres = (struct event_res_t *)ev;
@@ -2286,7 +2618,134 @@ try:
                 break;
 
             /*
-             * Event forwarding.
+             * Client requests to emulate native events.
+             */
+
+            case REQUEST_EMULATE_MOUSE_EVENT:
+                {
+                    struct mouse_packet_t packet;
+
+                    packet.dx = ev->mouse.x - root_mouse_x;
+                    packet.dy = root_mouse_y - ev->mouse.y;
+                    packet.buttons = ev->mouse.buttons;
+                    process_mouse(&packet);
+                }
+
+                break;
+
+            case REQUEST_EMULATE_KEY_PRESS_EVENT:
+                // only process if we get valid data
+                if(ev->key.code > 0 && ev->key.code < KEYCODE_LAST)
+                {
+                    char key[2];   // key[0] = flags, key[1] = keycode
+
+                    key[0] = 0;
+                    key[1] = ev->key.code;
+                    server_process_key(gc, key);
+                }
+                break;
+
+            case REQUEST_EMULATE_KEY_RELEASE_EVENT:
+                // only process if we get valid data
+                if(ev->key.code > 0 && ev->key.code < KEYCODE_LAST)
+                {
+                    char key[2];   // key[0] = flags, key[1] = keycode
+
+                    key[0] = KEYCODE_BREAK_MASK;
+                    key[1] = ev->key.code;
+                    server_process_key(gc, key);
+                }
+                break;
+
+            case REQUEST_GET_SCREENSHOT:
+                server_screenshot_get(gc, clientfd->fd, ev);
+                break;
+
+            case REQUEST_DRAG_START:
+                server_drag_start(ev);
+                break;
+
+            case REQUEST_DRAG_MOVE:
+                server_drag_move(ev);
+                break;
+
+            case REQUEST_DRAG_CANCEL:
+                server_drag_cancel();
+                break;
+
+            case REQUEST_DRAG_RESPONSE:
+                server_drag_response(ev);
+                break;
+
+            case REQUEST_DRAG_DROP:
+                server_drag_drop(ev);
+                break;
+
+            case REQUEST_REGISTER_WINDOW_LISTENER:
+                GET_WINDOW_SILENT(win, ev->src);
+
+                // NOTE: at the moment, we only support one listener
+                // TODO: fix this
+                if(!window_event_listener)
+                {
+                    window_event_listener = win;
+                }
+                break;
+
+            case REQUEST_REGISTER_SYSTRAY_MANAGER:
+                GET_WINDOW_SILENT(win, ev->src);
+
+                // NOTE: at the moment, we only support one systray manager
+                // TODO: fix this
+                if(!systray_manager)
+                {
+                    systray_manager = win;
+                }
+                break;
+
+            case REQUEST_SYSTRAY_MANAGER_WINID:
+                ev2.winattr.winid = systray_manager ? systray_manager->winid : 0;
+                ev2.type = EVENT_SYSTRAY_MANAGER_WINID;
+                ev2.seqid = ev->seqid;
+                ev2.src = TO_WINID(GLOB.mypid, 0);
+                ev2.dest = ev->src;
+                ev2.valid_reply = 1;
+                direct_write(clientfd->fd, (void *)&ev2, sizeof(struct event_t));
+                break;
+
+            /*
+             * Event forwarding -- systray client to manager.
+             * Client app sending a request to the systray manager.
+             */
+            case REQUEST_SYSTRAY_ADD:
+            case REQUEST_SYSTRAY_REMOVE:
+            case REQUEST_SYSTRAY_SHOW:
+            case REQUEST_SYSTRAY_HIDE:
+            case REQUEST_SYSTRAY_SET_ICON:
+            case REQUEST_SYSTRAY_SET_TOOLTIP:
+            case REQUEST_SYSTRAY_GET_BOUNDS:
+            case REQUEST_SYSTRAY_SHOW_MESSAGE:
+                if(!systray_manager)
+                {
+                    break;
+                }
+
+                direct_write(systray_manager->clientfd->fd, (void *)ev, sz);
+                break;
+
+            /*
+             * Event forwarding -- systray manager to client.
+             * Systray manager sending an event to a client.
+             */
+            case EVENT_SYSTRAY_BOUNDS:
+            case EVENT_SYSTRAY_CLICK:
+            case EVENT_SYSTRAY_DOUBLE_CLICK:
+                GET_WINDOW_SILENT(win, ev->dest);
+                direct_write(win->clientfd->fd, (void *)ev, sz);
+                break;
+
+            /*
+             * Event forwarding -- general.
              *
              * Clients cannot talk to each other, as they only have open sockets
              * with the server. We just grab the destination client's socket and
@@ -2397,6 +2856,32 @@ void *conn_alive_checker(void *unused)
 }
 
 
+static void prep_hashtab(char *myname)
+{
+    if(!(winhash = hashtab_create(INIT_HASHSZ, calc_hash_for_ptr, ptr_compare)))
+    {
+        fprintf(stderr, "%s: cannot initialize hashtab: %s\n",
+                        myname, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+}
+
+
+static void fill_screen_struct(void)
+{
+    GLOB.screen.w = vbe_framebuffer.width;
+    GLOB.screen.h = vbe_framebuffer.height;
+    GLOB.screen.pixel_width = vbe_framebuffer.pixel_width;
+    GLOB.screen.red_pos = vbe_framebuffer.color_info.rgb.red_pos;
+    GLOB.screen.green_pos = vbe_framebuffer.color_info.rgb.green_pos;
+    GLOB.screen.blue_pos = vbe_framebuffer.color_info.rgb.blue_pos;
+    GLOB.screen.red_mask_size = vbe_framebuffer.color_info.rgb.red_mask_size;
+    GLOB.screen.green_mask_size = vbe_framebuffer.color_info.rgb.green_mask_size;
+    GLOB.screen.blue_mask_size = vbe_framebuffer.color_info.rgb.blue_mask_size;
+    GLOB.screen.rgb_mode = !!(vbe_framebuffer.type);
+}
+
+
 static struct termios orig_termios;
 
 void tty_reset(void)
@@ -2499,7 +2984,7 @@ int main(int argc, char **argv)
     SET_SIGACTION(SIGINT, sigint_handler);
     SET_SIGACTION(SIGHUP, sighup_handler);
     SET_SIGACTION(SIGCHLD, sigchld_handler);
-    SET_SIGACTION(SIGALRM, sig_handler);
+    SET_SIGACTION(SIGALRM, sigalrm_handler);
     SET_SIGACTION(SIGPWR, sig_handler);
     SET_SIGACTION(SIGWINCH, sigwinch_handler);
     SET_SIGACTION(SIGUSR1, sig_handler);
@@ -2537,7 +3022,7 @@ int main(int argc, char **argv)
     atexit(tty_atexit);
     tty_raw(argv[0]);
 
-    GLOB.evbufsz = 0x1000;
+    GLOB.evbufsz = 0x8000;
     GLOB.evbuf_internal = malloc(GLOB.evbufsz);
     
     open_or_die(GLOB.fbfd, "/dev/fb0", O_RDONLY | O_NOATIME);
@@ -2589,15 +3074,7 @@ int main(int argc, char **argv)
     // disable automatic screen update - we will update it when we want to
     ioctl(GLOB.fbfd, FB_INVALIDATE_SCREEN, 0);
 
-    GLOB.screen.w = vbe_framebuffer.width;
-    GLOB.screen.h = vbe_framebuffer.height;
-    GLOB.screen.pixel_width = vbe_framebuffer.pixel_width;
-    GLOB.screen.red_pos = vbe_framebuffer.color_info.rgb.red_pos;
-    GLOB.screen.green_pos = vbe_framebuffer.color_info.rgb.green_pos;
-    GLOB.screen.blue_pos = vbe_framebuffer.color_info.rgb.blue_pos;
-    GLOB.screen.red_mask_size = vbe_framebuffer.color_info.rgb.red_mask_size;
-    GLOB.screen.green_mask_size = vbe_framebuffer.color_info.rgb.green_mask_size;
-    GLOB.screen.blue_mask_size = vbe_framebuffer.color_info.rgb.blue_mask_size;
+    fill_screen_struct();
 
     desktop_bounds.top = 0;
     desktop_bounds.left = 0;
@@ -2608,7 +3085,7 @@ int main(int argc, char **argv)
                 vbe_framebuffer.pixel_width, vbe_framebuffer.back_buffer,
                 vbe_framebuffer.memsize, vbe_framebuffer.pitch, &GLOB.screen);
 
-    //Do a few initializations first
+    // Do a few initializations first
     server_init_resources();
     server_init_theme();
     
@@ -2617,24 +3094,13 @@ int main(int argc, char **argv)
     prep_rect_cache();
     prep_list_cache();
     prep_listnode_cache();
-    
+    prep_hashtab(argv[0]);
+
     ungrab_mouse();
     
     gc_set_font(gc, GLOB.sysfont.data ? &GLOB.sysfont : &GLOB.mono);
     
     server_login(argv[0]);
-
-    if(!fork())
-    {
-        char *argv[] = { DESKTOP_EXE, NULL };
-
-        nice(40);
-        close(GLOB.mousefd);
-        close(GLOB.fbfd);
-        munmap(vbe_framebuffer.back_buffer, vbe_framebuffer.memsize);
-        execvp(DESKTOP_EXE, argv);
-        exit(EXIT_FAILURE);
-    }
     
     pthread_t thread;
     
@@ -2695,6 +3161,20 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    // start the desktop environment
+    if(!fork())
+    {
+        char *argv[] = { DESKTOP_EXE, NULL };
+
+        nice(40);
+        close(GLOB.mousefd);
+        close(GLOB.fbfd);
+        close(server_sockfd);
+        munmap(vbe_framebuffer.back_buffer, vbe_framebuffer.memsize);
+        execvp(DESKTOP_EXE, argv);
+        exit(EXIT_FAILURE);
+    }
+
     while(1)
     {
         fd_set rdfs;
@@ -2714,13 +3194,36 @@ int main(int argc, char **argv)
             // disable automatic screen update - we will update it when we want to
             ioctl(GLOB.fbfd, FB_INVALIDATE_SCREEN, 0);
 
-            /*
-             * TODO: Get the new screen size and update our records accordingly.
-             *       Also, send a WINCH signal to all windows to inform of the
-             *       new screen coordinates.
-             */
+            // get the new screen size and update our records accordingly.
+            if(ioctl(GLOB.fbfd, FB_GET_VBE_BUF, &vbe_framebuffer) == 0)
+            {
+                vbe_framebuffer.back_buffer = (uint8_t *)backbuf_addr;
 
-            // Do a dirty update for the desktop, which will, in turn, do a 
+                fill_screen_struct();
+
+                desktop_bounds.bottom = GLOB.screen.h - 1;
+                desktop_bounds.right = GLOB.screen.w - 1;
+
+                // we do not need to create a new gc as the backbuffer address
+                // does not change, we only need to store the new information
+                gc->w = vbe_framebuffer.width;
+                gc->h = vbe_framebuffer.height;
+                gc->pixel_width = vbe_framebuffer.pixel_width;
+                gc->buffer_size = vbe_framebuffer.memsize;
+                gc->pitch = vbe_framebuffer.pitch;
+
+                if(!mouse_is_confined)
+                {
+                    mouse_bounds.right = gc->w - 1;
+                    mouse_bounds.bottom = gc->h - 1;
+                }
+            }
+
+            // send a message to all windows to inform them of the
+            // new screen coordinates
+            notify_clients_of_event(EVENT_SCREEN_RES_CHANGED);
+
+            // do a dirty update for the desktop, which will, in turn, do a 
             // dirty update for all affected child windows
             server_window_paint(gc, root_window, NULL, NULL, 
                                 FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
@@ -2768,7 +3271,21 @@ int main(int argc, char **argv)
                 process_mouse(&mouse_packet);
             }
         }
-        
+
+        if(received_sigalrm)
+        {
+            received_sigalrm = 0;
+
+            struct cursor_t *cur = cursor[cur_cursor];
+
+            if(++cur->curframe >= cur->count)
+            {
+                cur->curframe = 0;
+            }
+
+            force_redraw_cursor(root_mouse_x, root_mouse_y);
+        }
+
         for(i = 0; i < NR_OPEN; i++)
         {
             if(FD_ISSET(i, &rdfs) && clientfds[i].fd > 0)

@@ -39,141 +39,281 @@
 #include "inlines.c"
 
 
-#define GLOB            __global_gui_data
-#define pixels          CONTROL_BUTTON_LENGTH
+#define GLOB                        __global_gui_data
+#define pixels                      CONTROL_BUTTON_LENGTH
 
+/*
+ * Each controlbox button has 4 states:
+ *    - normal
+ *    - mouse over
+ *    - disabled
+ *    - disabled and mouse over
+ *
+ * These 4 states has similar states for when the window is not focused.
+ * The state defines what background and text color are used to draw the button.
+ */
+#define TOTAL_BUTTON_STATES         8
+#define STATE_NORMAL                0
+#define STATE_HOVER                 1
+#define STATE_DISABLED              2
+#define STATE_DISABLED_HOVER        3
 
-uint32_t *bclose_pixels = NULL;
-uint32_t *bmin_pixels = NULL;
-uint32_t *bmax_pixels = NULL;
-
-uint32_t *bclose_over_pixels = NULL;
-uint32_t *bmin_over_pixels = NULL;
-uint32_t *bmax_over_pixels = NULL;
-
-uint32_t *bclose_disabled_pixels = NULL;
-uint32_t *bmin_disabled_pixels = NULL;
-uint32_t *bmax_disabled_pixels = NULL;
+uint32_t *bclose_pixels[TOTAL_BUTTON_STATES];
+uint32_t *bmin_pixels[TOTAL_BUTTON_STATES];
+uint32_t *bmax_pixels[TOTAL_BUTTON_STATES];
 
 // defined in main.c
 extern Rect desktop_bounds;
 extern pid_t mypid;
 
+#define __      0,
+#define _X      0xff,
+
+static uint32_t bclose_mask[pixels * pixels] =
+{
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X __ __ __ __ __ _X _X __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ _X _X __ __ __ _X _X __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ _X _X __ _X _X __ __ __ __ __ __ __ __ __
+    __ __ __ __ __ __ __ __ __ _X _X _X __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ _X __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ _X _X _X __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ _X _X __ _X _X __ __ __ __ __ __ __ __ __
+    __ __ __ __ __ __ __ _X _X __ __ __ _X _X __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X __ __ __ __ __ _X _X __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+};
+
+static uint32_t bmax_mask[pixels * pixels] =
+{
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X _X _X _X _X _X _X _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X _X _X _X _X _X _X _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X __ __ __ __ __ __ _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X __ __ __ __ __ __ _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X __ __ __ __ __ __ _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X __ __ __ __ __ __ _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X __ __ __ __ __ __ _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X __ __ __ __ __ __ _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X __ __ __ __ __ __ _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X _X _X _X _X _X _X _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X _X _X _X _X _X _X _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+};
+
+static uint32_t bmin_mask[pixels * pixels] =
+{
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X _X _X _X _X _X _X _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ _X _X _X _X _X _X _X _X _X _X __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ 
+};
+
+#undef __
+#undef _X
+
 
 static void alloc_controlbox_bitmaps(void)
 {
     size_t sz = 4 * pixels * pixels;
+    int i;
 
     // alloc some memory for the button "bitmaps"
-    bclose_pixels = (uint32_t *)malloc(sz);
-    bmax_pixels = (uint32_t *)malloc(sz);
-    bmin_pixels = (uint32_t *)malloc(sz);
-    bclose_over_pixels = (uint32_t *)malloc(sz);
-    bmax_over_pixels = (uint32_t *)malloc(sz);
-    bmin_over_pixels = (uint32_t *)malloc(sz);
-    bclose_disabled_pixels = (uint32_t *)malloc(sz);
-    bmax_disabled_pixels = (uint32_t *)malloc(sz);
-    bmin_disabled_pixels = (uint32_t *)malloc(sz);
-
-    if(!bclose_pixels || !bmax_pixels || !bmin_pixels ||
-       !bclose_over_pixels || !bmax_over_pixels || !bmin_over_pixels ||
-       !bclose_disabled_pixels || !bmax_disabled_pixels || !bmin_disabled_pixels)
+    for(i = 0; i < TOTAL_BUTTON_STATES; i++)
     {
-        printf("gui: failed to alloc memory for controlbox buttons!");
-        abort();
-        //return;
+        bclose_pixels[i] = malloc(sz);
+        bmax_pixels[i] = malloc(sz);
+        bmin_pixels[i] = malloc(sz);
+
+        if(!bclose_pixels[i] || !bmax_pixels[i] || !bmin_pixels[i])
+        {
+            printf("gui: failed to alloc memory for controlbox buttons!");
+            abort();
+        }
     }
 }
 
 
 void reinit_window_controlbox(void)
 {
-    int x, y;
-    int sz = sizeof(uint32_t) * pixels * pixels;
+    int x;
+    int sz = pixels * pixels;
+    int bottomline = (pixels - 1) * pixels;
+    uint32_t text = GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_TEXT];
+    uint32_t textdis = GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_TEXT];
+    uint32_t textdishi = GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_TEXT_SHADOW];
+    uint32_t intext = GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_INACTIVE_TEXT];
+    uint32_t intextdis = GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_INACTIVE_TEXT];
+    uint32_t intextdishi = GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_INACTIVE_TEXT_SHADOW];
 
     // fill in the backgrounds
-    A_memset(bclose_pixels, 0, sz);
-    A_memset(bmax_pixels, 0, sz);
-    A_memset(bmin_pixels, 0, sz);
+#define FILL_ALL_BACKGROUNDS(state, color)      \
+    memset32(bclose_pixels[state], color, sz);  \
+    memset32(bmax_pixels[state], color, sz);    \
+    memset32(bmin_pixels[state], color, sz);
 
-    A_memset(bclose_over_pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR, sz);
-    A_memset(bmax_over_pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR, sz);
-    A_memset(bmin_over_pixels, CLOSEBUTTON_MOUSEOVER_BGCOLOR, sz);
+    FILL_ALL_BACKGROUNDS(0, GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_BGCOLOR]);
+    FILL_ALL_BACKGROUNDS(1, GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_BGCOLOR_HOVER]);
+    FILL_ALL_BACKGROUNDS(2, GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_BGCOLOR]);
+    FILL_ALL_BACKGROUNDS(3, GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_BGCOLOR]);
+    FILL_ALL_BACKGROUNDS(4, GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_INACTIVE_BGCOLOR]);
+    FILL_ALL_BACKGROUNDS(5, GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_INACTIVE_BGCOLOR_HOVER]);
+    FILL_ALL_BACKGROUNDS(6, GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_INACTIVE_BGCOLOR]);
+    FILL_ALL_BACKGROUNDS(7, GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_DISABLED_INACTIVE_BGCOLOR]);
 
-    A_memset(bclose_disabled_pixels, 0, sz);
-    A_memset(bmax_disabled_pixels, 0, sz);
-    A_memset(bmin_disabled_pixels, 0, sz);
+#undef FILL_ALL_BACKGROUNDS
 
-
-    static int idx[] =
+    // for the disabled button state, fill the shadow icon before the normal one
+    for(x = 0; x < bottomline; x++)
     {
-        8, 9, 15, 16,
-        pixels+9, pixels+10, pixels+14, pixels+15,
-        (pixels*2)+10, (pixels*2)+11, (pixels*2)+13, (pixels*2)+14,
-        (pixels*3)+11, (pixels*3)+12, (pixels*3)+13,
-        (pixels*4)+12,
-        (pixels*5)+11, (pixels*5)+12, (pixels*5)+13,
-        (pixels*6)+10, (pixels*6)+11, (pixels*6)+13, (pixels*6)+14,
-        (pixels*7)+9, (pixels*7)+10, (pixels*7)+14, (pixels*7)+15,
-        (pixels*8)+8, (pixels*8)+9, (pixels*8)+15, (pixels*8)+16,
-        0,
-    };
+        if(bclose_mask[x])
+        {
+            bclose_pixels[2][x + pixels + 1] = textdishi;
+            bclose_pixels[3][x + pixels + 1] = textdishi;
+            bclose_pixels[6][x + pixels + 1] = intextdishi;
+            bclose_pixels[7][x + pixels + 1] = intextdishi;
+        }
 
-    // fill the 'X' in the close button
-    y = ((pixels / 2) - 4) * pixels;
+        if(bmax_mask[x])
+        {
+            bmax_pixels[2][x + pixels + 1] = textdishi;
+            bmax_pixels[3][x + pixels + 1] = textdishi;
+            bmax_pixels[6][x + pixels + 1] = intextdishi;
+            bmax_pixels[7][x + pixels + 1] = intextdishi;
+        }
 
-    for(x = 0; idx[x] != 0; x++)
-    {
-        bclose_pixels[y + idx[x]] = CLOSEBUTTON_TEXTCOLOR;
-        bclose_over_pixels[y + idx[x]] = CLOSEBUTTON_MOUSEOVER_TEXTCOLOR;
-        bclose_disabled_pixels[y + idx[x]] = CLOSEBUTTON_TEXTCOLOR_DISABLED;
+        if(bmin_mask[x])
+        {
+            bmin_pixels[2][x + pixels + 1] = textdishi;
+            bmin_pixels[3][x + pixels + 1] = textdishi;
+            bmin_pixels[6][x + pixels + 1] = intextdishi;
+            bmin_pixels[7][x + pixels + 1] = intextdishi;
+        }
     }
 
-    // fill the box in the maximize button
-    y = ((pixels / 2) - 4) * pixels;
-    memset32(bmax_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR, 10);
-    memset32(bmax_over_pixels + y + 8, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 10);
-    memset32(bmax_disabled_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR_DISABLED, 10);
-    y += pixels;
-    memset32(bmax_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR, 10);
-    memset32(bmax_over_pixels + y + 8, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 10);
-    memset32(bmax_disabled_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR_DISABLED, 10);
-    y -= pixels;
-
-    for(x = 1; x < 8; x++)
+    // now draw the buttons
+    for(x = 0; x < pixels * pixels; x++)
     {
-        bmax_pixels[y + (x * pixels) + 8] = MAXIMIZEBUTTON_TEXTCOLOR;
-        bmax_pixels[y + (x * pixels) + 9] = MAXIMIZEBUTTON_TEXTCOLOR;
-        bmax_pixels[y + (x * pixels) + 16] = MAXIMIZEBUTTON_TEXTCOLOR;
-        bmax_pixels[y + (x * pixels) + 17] = MAXIMIZEBUTTON_TEXTCOLOR;
-        bmax_over_pixels[y + (x * pixels) + 8] = MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR;
-        bmax_over_pixels[y + (x * pixels) + 9] = MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR;
-        bmax_over_pixels[y + (x * pixels) + 16] = MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR;
-        bmax_over_pixels[y + (x * pixels) + 17] = MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR;
-        bmax_disabled_pixels[y + (x * pixels) + 8] = MAXIMIZEBUTTON_TEXTCOLOR_DISABLED;
-        bmax_disabled_pixels[y + (x * pixels) + 9] = MAXIMIZEBUTTON_TEXTCOLOR_DISABLED;
-        bmax_disabled_pixels[y + (x * pixels) + 16] = MAXIMIZEBUTTON_TEXTCOLOR_DISABLED;
-        bmax_disabled_pixels[y + (x * pixels) + 17] = MAXIMIZEBUTTON_TEXTCOLOR_DISABLED;
+        if(bclose_mask[x])
+        {
+            bclose_pixels[0][x] = text;
+            bclose_pixels[1][x] = text;
+            bclose_pixels[2][x] = textdis;
+            bclose_pixels[3][x] = textdis;
+            bclose_pixels[4][x] = intext;
+            bclose_pixels[5][x] = intext;
+            bclose_pixels[6][x] = intextdis;
+            bclose_pixels[7][x] = intextdis;
+        }
+
+        if(bmax_mask[x])
+        {
+            bmax_pixels[0][x] = text;
+            bmax_pixels[1][x] = text;
+            bmax_pixels[2][x] = textdis;
+            bmax_pixels[3][x] = textdis;
+            bmax_pixels[4][x] = intext;
+            bmax_pixels[5][x] = intext;
+            bmax_pixels[6][x] = intextdis;
+            bmax_pixels[7][x] = intextdis;
+        }
+
+        if(bmin_mask[x])
+        {
+            bmin_pixels[0][x] = text;
+            bmin_pixels[1][x] = text;
+            bmin_pixels[2][x] = textdis;
+            bmin_pixels[3][x] = textdis;
+            bmin_pixels[4][x] = intext;
+            bmin_pixels[5][x] = intext;
+            bmin_pixels[6][x] = intextdis;
+            bmin_pixels[7][x] = intextdis;
+        }
     }
 
-    y += (8 * pixels);
-    memset32(bmax_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR, 10);
-    memset32(bmax_over_pixels + y + 8, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 10);
-    memset32(bmax_disabled_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR_DISABLED, 10);
-    y += pixels;
-    memset32(bmax_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR, 10);
-    memset32(bmax_over_pixels + y + 8, MAXIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 10);
-    memset32(bmax_disabled_pixels + y + 8, MAXIMIZEBUTTON_TEXTCOLOR_DISABLED, 10);
+    // draw the borders
+    uint32_t bhi = GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_BORDER_HI];
+    uint32_t bhovhi = GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_BORDER_HI_HOVER];
+    uint32_t blo = GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_BORDER_LO];
+    uint32_t bhovlo = GLOB.themecolor[THEME_COLOR_WINDOW_CONTROLBOX_BORDER_LO_HOVER];
+    int i, j;
 
-    // fill the '_' in the minimize button
-    y = (((pixels / 2) - 4) + 8) * pixels;
+#define PUT_PIXEL(state, x, color)      \
+        bclose_pixels[state][x] = color;\
+        bmax_pixels[state][x] = color;  \
+        bmin_pixels[state][x] = color;  \
 
-    for(x = 0; x < 2; x++)
+    // top
+    for(x = 0; x < pixels; x++)
     {
-        memset32(bmin_pixels + y + 8, MINIMIZEBUTTON_TEXTCOLOR, 8);
-        memset32(bmin_over_pixels + y + 8, MINIMIZEBUTTON_MOUSEOVER_TEXTCOLOR, 8);
-        memset32(bmin_disabled_pixels + y + 8, MINIMIZEBUTTON_TEXTCOLOR_DISABLED, 8);
-        y += pixels;
+        PUT_PIXEL(0, x, bhi);
+        PUT_PIXEL(1, x, bhovhi);
+        PUT_PIXEL(4, x, bhi);
+        PUT_PIXEL(5, x, bhovhi);
+    }
+
+    // bottom
+    for(x = 0; x < pixels; x++)
+    {
+        i = bottomline + x;
+
+        PUT_PIXEL(0, i, blo);
+        PUT_PIXEL(1, i, bhovlo);
+        PUT_PIXEL(4, i, blo);
+        PUT_PIXEL(5, i, bhovlo);
+    }
+
+    // sides
+    for(x = 0; x < pixels; x++)
+    {
+        i = (x * pixels);
+        j = (x * pixels) + pixels - 1;
+
+        PUT_PIXEL(0, i, bhi);
+        PUT_PIXEL(0, j, blo);
+        PUT_PIXEL(1, i, bhovhi);
+        PUT_PIXEL(1, j, bhovlo);
+        PUT_PIXEL(4, i, bhi);
+        PUT_PIXEL(4, j, blo);
+        PUT_PIXEL(5, i, bhovhi);
+        PUT_PIXEL(5, j, bhovlo);
     }
 }
 
@@ -190,8 +330,7 @@ void server_window_invalidate_controlbox(int wscreen_x, int wscreen_y,
                                          uint16_t winw)
 {
     invalidate_screen_rect(wscreen_y,
-                           wscreen_x + winw - WINDOW_BORDERWIDTH -
-                                              CONTROL_BUTTON_LENGTH3,
+                           wscreen_x + winw - CONTROL_BUTTON_LENGTH3 - 5,
                            wscreen_y + WINDOW_TITLEHEIGHT - 1,
                            wscreen_x + winw - 1);
 }
@@ -205,34 +344,7 @@ void server_window_draw_controlbox(struct gc_t *gc,
     struct bitmap32_t bitmap = { .width = pixels, .height = pixels };
     struct clipping_t saved_clipping;
     int active = (window->parent->active_child == window);
-    uint32_t bgcolor = active ?
-                GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR] :
-                GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE];
-
-#if 0
-    // If the mouse moved in the titlebar or control box area, we need to
-    // redraw the control box. The problem with semitransparent window borders
-    // is that we need to redraw the stuff behind the control box, otherwise
-    // the background color will darken with each redraw
-    if(flags & CONTROLBOX_FLAG_INVALIDATE)
-    {
-        RectList dirty_regions;
-        Rect dirty_rect;
-
-        dirty_regions.root = &dirty_rect;
-        dirty_regions.last = &dirty_rect;
-
-        dirty_rect.top = wscreen_y;
-        dirty_rect.left = wscreen_x + window->w - 
-                            WINDOW_BORDERWIDTH - CONTROL_BUTTON_LENGTH3;
-        dirty_rect.bottom = wscreen_y + WINDOW_TITLEHEIGHT - 1;
-        dirty_rect.right = wscreen_x + window->w - 1;
-        dirty_rect.next = NULL;
-
-        server_window_paint(gc, root_window, window, &dirty_regions,
-                                FLAG_PAINT_CHILDREN | FLAG_PAINT_BORDER);
-    }
-#endif
+    int index;
 
     if(flags & CONTROLBOX_FLAG_CLIP)
     {
@@ -243,26 +355,30 @@ void server_window_draw_controlbox(struct gc_t *gc,
     gc_set_clipping(gc, &window->clipping);
 
     // draw the close button
-    bitmap.data = (window->controlbox_state & CLOSEBUTTON_OVER) ?
-                        bclose_over_pixels : bclose_pixels;
-    x = wscreen_x + window->w - WINDOW_BORDERWIDTH - pixels;
-    y = wscreen_y + WINDOW_BORDERWIDTH;
+    index = (window->controlbox_state & CLOSEBUTTON_OVER) ? STATE_HOVER : STATE_NORMAL;
+    index += active ? 0 : 4;
 
-    gc_fill_rect(gc, x - (pixels * 2), y, pixels * 3, pixels, bgcolor);
+    bitmap.data = bclose_pixels[index];
+    x = wscreen_x + window->w - 5 - pixels;
+    y = wscreen_y + 5;
 
     gc_blit_bitmap_highlighted(gc, &bitmap, x, y, 0, 0, pixels, pixels, 0);
 
     // draw the maximize button
-    bitmap.data = (window->flags & WINDOW_NORESIZE) ? bmax_disabled_pixels :
-                     (window->controlbox_state & MAXIMIZEBUTTON_OVER) ?
-                        bmax_over_pixels : bmax_pixels;
+    index = (window->flags & WINDOW_NORESIZE) ? STATE_DISABLED : STATE_NORMAL;
+    index += (window->controlbox_state & MAXIMIZEBUTTON_OVER) ? 1 : 0;
+    index += active ? 0 : 4;
+
+    bitmap.data = bmax_pixels[index];
     x -= pixels;
     gc_blit_bitmap_highlighted(gc, &bitmap, x, y, 0, 0, pixels, pixels, 0);
 
     // draw the minimize button
-    bitmap.data = (window->flags & WINDOW_NOMINIMIZE) ? bmin_disabled_pixels :
-                     (window->controlbox_state & MINIMIZEBUTTON_OVER) ?
-                        bmin_over_pixels : bmin_pixels;
+    index = (window->flags & WINDOW_NOMINIMIZE) ? STATE_DISABLED : STATE_NORMAL;
+    index += (window->controlbox_state & MINIMIZEBUTTON_OVER) ? 1 : 0;
+    index += active ? 0 : 4;
+
+    bitmap.data = bmin_pixels[index];
     x -= pixels;
     gc_blit_bitmap_highlighted(gc, &bitmap, x, y, 0, 0, pixels, pixels, 0);
 
@@ -282,72 +398,59 @@ void server_window_draw_controlbox(struct gc_t *gc,
 #undef pixels
 
 
-void server_window_toggle_maximize(struct gc_t *gc,
-                                   struct server_window_t *window,
-                                   uint32_t seqid)
+static inline void save_window_state(struct server_window_t *window)
+{
+    window->saved.x = window->x;
+    window->saved.y = window->y;
+    window->saved.w = window->client_w;
+    window->saved.h = window->client_h;
+    window->saved.flags = window->flags;
+}
+
+void server_window_maximize(struct gc_t *gc,
+                            struct server_window_t *window,
+                            uint32_t seqid)
 {
     if(window->state == WINDOW_STATE_MAXIMIZED)
     {
-        // Return to normal state
-        window->state = WINDOW_STATE_NORMAL;
-        window->flags = window->saved.flags;
-        server_window_resize_absolute(gc, window,
-                                        window->saved.x, window->saved.y,
-                                        window->saved.w, window->saved.h, seqid);
+        return;
     }
-    else
-    {
-        // Maximize the window
-        // Take into account the window border and title if the window has
-        // decorations on
-        int neww = desktop_bounds.right - desktop_bounds.left -
+
+    // Maximize the window
+    // Take into account the window border and title if the window has
+    // decorations on
+    int neww = desktop_bounds.right - desktop_bounds.left -
                         ((window->flags & WINDOW_NODECORATION) ? 0 :
                             (2 * WINDOW_BORDERWIDTH));
-        int newh = desktop_bounds.bottom - desktop_bounds.top -
+    int newh = desktop_bounds.bottom - desktop_bounds.top -
                         ((window->flags & WINDOW_NODECORATION) ? 0 :
                             (WINDOW_TITLEHEIGHT + WINDOW_BORDERWIDTH));
 
-        window->saved.x = window->x;
-        window->saved.y = window->y;
-        window->saved.w = window->client_w;
-        window->saved.h = window->client_h;
-        window->saved.flags = window->flags;
-        window->state = WINDOW_STATE_MAXIMIZED;
-        server_window_resize_absolute(gc, window,
+    save_window_state(window);
+    window->state = WINDOW_STATE_MAXIMIZED;
+    server_window_resize_absolute(gc, window,
                                   desktop_bounds.left, desktop_bounds.top,
                                   neww, newh, seqid);
-    }
 }
 
 
-void server_window_toggle_fullscreen(struct gc_t *gc,
-                                     struct server_window_t *window,
-                                     uint32_t seqid)
+void server_window_fullscreen(struct gc_t *gc,
+                              struct server_window_t *window,
+                              uint32_t seqid)
 {
     if(window->state == WINDOW_STATE_FULLSCREEN)
     {
-        // Return to normal state
-        window->state = WINDOW_STATE_NORMAL;
-        window->flags = window->saved.flags;
-        server_window_resize_absolute(gc, window,
-                                        window->saved.x, window->saved.y,
-                                        window->saved.w, window->saved.h, seqid);
+        return;
     }
-    else
-    {
-        // Enter fullscreen mode
-        window->saved.x = window->x;
-        window->saved.y = window->y;
-        window->saved.w = window->client_w;
-        window->saved.h = window->client_h;
-        window->saved.flags = window->flags;
-        window->state = WINDOW_STATE_FULLSCREEN;
-        window->flags |= (WINDOW_NODECORATION | 
-                          WINDOW_NOCONTROLBOX | 
-                          WINDOW_ALWAYSONTOP);
-        server_window_resize_absolute(gc, window, 0, 0,
-                                        GLOB.screen.w, GLOB.screen.h, seqid);
-    }
+
+    // Enter fullscreen mode
+    save_window_state(window);
+    window->state = WINDOW_STATE_FULLSCREEN;
+    window->flags |= (WINDOW_NODECORATION | 
+                      WINDOW_NOCONTROLBOX | 
+                      WINDOW_ALWAYSONTOP);
+    server_window_resize_absolute(gc, window, 0, 0,
+                                      GLOB.screen.w, GLOB.screen.h, seqid);
 }
 
 
@@ -391,62 +494,76 @@ struct server_window_t *prev_active_sibling(volatile ListNode *current_node)
 }
 
 
-void server_window_toggle_minimize(struct gc_t *gc, struct server_window_t *window)
+void server_window_minimize(struct gc_t *gc, struct server_window_t *window)
 {
     struct server_window_t *sibling;
     volatile ListNode *current_node;
 
-    if(window->state == WINDOW_STATE_MINIMIZED)
+    if(window->flags & WINDOW_HIDDEN)
     {
-        // Return to normal state
-        window->state = window->saved.state;
+        return;
+    }
+
+    // Minimize the window
+    window->flags |= WINDOW_HIDDEN;
+    server_window_hide(gc, window);
+    notify_win_hidden(window);
+
+    if(window->parent->active_child != window)
+    {
+        cancel_active_child(window->parent, window);
+        return;
+    }
+
+    // now we have to find the next eligible active window and bring it
+    // to the top
+    for(current_node = window->parent->children->root_node;
+        current_node != NULL;
+        current_node = current_node->next)
+    {
+        if(window == (struct server_window_t *)current_node->payload)
+        {
+            // found the current window, now check the higher, then the
+            // lower, sibling and bring one of them to the top
+            if((sibling = next_active_sibling(current_node->next)))
+            {
+                server_window_raise(gc, sibling, 1);
+                break;
+            }
+
+            if((sibling = prev_active_sibling(current_node->prev)))
+            {
+                server_window_raise(gc, sibling, 1);
+                break;
+            }
+
+            // this is the sole window on the screen
+            break;
+        }
+    }
+
+    cancel_active_child(window->parent, window);
+}
+
+
+void server_window_restore(struct gc_t *gc, struct server_window_t *window, uint32_t seqid)
+{
+    if(window->flags & WINDOW_HIDDEN)
+    {
+        // If hidden, show the window
         window->flags &= ~WINDOW_HIDDEN;
         server_window_raise(gc, window, 1);
         notify_win_shown(window);
+        return;
     }
-    else
+    else if(window->state != WINDOW_STATE_NORMAL)
     {
-        // Minimize the window
-        window->saved.state = window->state;
-        window->state = WINDOW_STATE_MINIMIZED;
-        window->flags |= WINDOW_HIDDEN;
-        server_window_hide(gc, window);
-        notify_win_hidden(window);
-        
-        if(window->parent->active_child != window)
-        {
-            cancel_active_child(window->parent, window);
-            return;
-        }
-
-        // now we have to find the next eligible active window and bring it
-        // to the top
-        for(current_node = window->parent->children->root_node;
-            current_node != NULL;
-            current_node = current_node->next)
-        {
-            if(window == (struct server_window_t *)current_node->payload)
-            {
-                // found the current window, now check the higher, then the
-                // lower, sibling and bring one of them to the top
-                if((sibling = next_active_sibling(current_node->next)))
-                {
-                    server_window_raise(gc, sibling, 1);
-                    break;
-                }
-
-                if((sibling = prev_active_sibling(current_node->prev)))
-                {
-                    server_window_raise(gc, sibling, 1);
-                    break;
-                }
-
-                // this is the sole window on the screen
-                break;
-            }
-        }
-
-        cancel_active_child(window->parent, window);
+        // If maximized or fullscreen, return to normal state
+        window->state = WINDOW_STATE_NORMAL;
+        window->flags = window->saved.flags;
+        server_window_resize_absolute(gc, window,
+                                          window->saved.x, window->saved.y,
+                                          window->saved.w, window->saved.h, seqid);
     }
 }
 

@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: gc.c
  *    This file is part of LaylaOS.
@@ -29,6 +29,8 @@
 #define GUI_SERVER
 
 #include "../common/gc.c"
+
+#define GLOB                            __global_gui_data
 
 
 void gc_clipped_window(struct gc_t *gc, struct server_window_t *window,
@@ -66,20 +68,117 @@ void gc_clipped_window(struct gc_t *gc, struct server_window_t *window,
         y = max_y;
     }
 
-    // Draw the rectangle into the framebuffer line-by line
-    // (bonus points if you write an assembly routine to do it faster)
     unsigned where = x * gc->pixel_width + y * gc->pitch;
     unsigned wwhere = (x - window->client_x) * gc->pixel_width +
                       (y - window->client_y) * window->canvas_pitch;
     uint8_t *buf = (uint8_t *)(gc->buffer + where);
     uint8_t *wbuf = (uint8_t *)(window->canvas + wwhere);
-    int cnt = (max_x - x) * gc->pixel_width;
 
-    for(; y < max_y; y++)
+    if(window->flags & WINDOW_TRANSPARENT)
     {
-        A_memcpy(buf, wbuf, cnt);
-        buf += gc->pitch;
-        wbuf += window->canvas_pitch;
+        int x1;
+
+        if(gc->pixel_width == 1)
+        {
+            for(; y < max_y; y++)
+            {
+                uint8_t *pd = buf;
+                uint8_t *ps = wbuf;
+
+                for(x1 = x; x1 < max_x; x1++)
+                {
+                    if(*ps != 0)
+                    {
+                        *pd = *ps;
+                    }
+
+                    pd++;
+                    ps++;
+                }
+
+                buf += gc->pitch;
+                wbuf += window->canvas_pitch;
+            }
+        }
+        else if(gc->pixel_width == 2)
+        {
+            for(; y < max_y; y++)
+            {
+                uint16_t *pd = (uint16_t *)buf;
+                uint16_t *ps = (uint16_t *)wbuf;
+
+                for(x1 = x; x1 < max_x; x1++)
+                {
+                    if(*ps != 0)
+                    {
+                        *pd = *ps;
+                    }
+
+                    pd++;
+                    ps++;
+                }
+
+                buf += gc->pitch;
+                wbuf += window->canvas_pitch;
+            }
+        }
+        else if(gc->pixel_width == 3)
+        {
+            for(; y < max_y; y++)
+            {
+                uint8_t *pd = buf;
+                uint8_t *ps = wbuf;
+
+                for(x1 = x; x1 < max_x; x1++)
+                {
+                    if(*ps != 0)
+                    {
+                        pd[0] = ps[0];
+                        pd[1] = ps[1];
+                        pd[2] = ps[2];
+                    }
+
+                    pd += 3;
+                    ps += 3;
+                }
+
+                buf += gc->pitch;
+                wbuf += window->canvas_pitch;
+            }
+        }
+        else if(gc->pixel_width == 4)
+        {
+            for(; y < max_y; y++)
+            {
+                uint32_t *pd = (uint32_t *)buf;
+                uint32_t *ps = (uint32_t *)wbuf;
+
+                for(x1 = x; x1 < max_x; x1++)
+                {
+                    if(*ps != 0)
+                    {
+                        *pd = *ps;
+                    }
+
+                    pd++;
+                    ps++;
+                }
+
+                buf += gc->pitch;
+                wbuf += window->canvas_pitch;
+            }
+        }
+    }
+    else
+    {
+        int cnt = (max_x - x) * gc->pixel_width;
+
+        for(; y < max_y; y++)
+        {
+            A_memcpy(buf, wbuf, cnt);
+            buf += gc->pitch;
+            wbuf += window->canvas_pitch;
+        }
     }
 }
 
@@ -92,7 +191,6 @@ void gc_copy_window(struct gc_t *gc, struct server_window_t *window)
     int max_y = window->client_yh1 + 1;
     Rect screen_area;
     Rect *cur_rect;
-    
     
     if(!window->canvas)
     {

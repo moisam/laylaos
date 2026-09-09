@@ -35,6 +35,34 @@
 
 #define GLOB                            __global_gui_data
 
+uint32_t window_titlebar_gradient_colors_active[WINDOW_TITLEHEIGHT];
+uint32_t window_titlebar_gradient_colors_inactive[WINDOW_TITLEHEIGHT];
+
+
+static void fill_gradient_colors(void)
+{
+    int halfheight = WINDOW_TITLEHEIGHT / 2;
+
+    gc_vertical_gradient_fill_colorarr(window_titlebar_gradient_colors_active, 
+                                       halfheight,
+                                       GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_TOP],
+                                       GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_MID1]);
+    gc_vertical_gradient_fill_colorarr(&window_titlebar_gradient_colors_active[halfheight], 
+                                       halfheight,
+                                       GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_MID2],
+                                       GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_BOTTOM]);
+
+    gc_vertical_gradient_fill_colorarr(window_titlebar_gradient_colors_inactive, 
+                                       halfheight,
+                                       GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE_TOP],
+                                       GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE_MID1]);
+    gc_vertical_gradient_fill_colorarr(&window_titlebar_gradient_colors_inactive[halfheight], 
+                                       halfheight,
+                                       GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE_MID2],
+                                       GLOB.themecolor[THEME_COLOR_WINDOW_TITLECOLOR_INACTIVE_BOTTOM]);
+}
+
+
 void server_init_theme(void)
 {
     int i;
@@ -44,6 +72,9 @@ void server_init_theme(void)
     {
         GLOB.themecolor[i] = builtin_color_theme[i];
     }
+
+    // prefill window titlebar color gradient
+    fill_gradient_colors();
 }
 
 
@@ -67,10 +98,13 @@ void send_theme_data(winid_t dest, uint32_t seqid, int fd)
     direct_write(fd, (void *)evbuf, bufsz);
 }
 
+
 void broadcast_new_theme(void)
 {
     struct server_window_t *window;
     ListNode *current_node;
+
+    fill_gradient_colors();
 
     if(!root_window)
     {
