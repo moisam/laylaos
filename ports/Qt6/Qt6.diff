@@ -1,0 +1,817 @@
+diff -rub ./qt6/qt5compat/src/core5/codecs/qtextcodec.cpp ./qt6/qt5compat/src/core5/codecs/qtextcodec.cpp
+--- ./qt6/qt5compat/src/core5/codecs/qtextcodec.cpp	2026-05-08 02:19:10.000000000 +0100
++++ ./qt6/qt5compat/src/core5/codecs/qtextcodec.cpp	2026-06-16 17:18:25.967663543 +0100
+@@ -252,6 +252,13 @@
+     if (!locale)
+         locale = QTextCodec::codecForName("ISO 8859-1");
+     globalData->codecForLocale.storeRelease(locale);
++
++#ifdef Q_OS_LAYLAOS
++    // XXX: for some reason returning a result gives us a segfault
++    // TODO: investigate and fix this
++    return 0;
++#endif
++
+     return locale;
+ }
+ 
+diff -rub ./qt6/qtbase/cmake/QtMkspecHelpers.cmake ./qt6/qtbase/cmake/QtMkspecHelpers.cmake
+--- ./qt6/qtbase/cmake/QtMkspecHelpers.cmake	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/cmake/QtMkspecHelpers.cmake	2026-06-16 18:50:11.689563248 +0100
+@@ -81,6 +81,8 @@
+                 set(QT_DEFAULT_MKSPEC qnx-${arch}-qcc)
+             endif()
+         endforeach()
++    elseif(LAYLAOS)
++        set(QT_DEFAULT_MKSPEC laylaos-g++)
+     elseif(FREEBSD)
+         if(CLANG)
+             set(QT_DEFAULT_MKSPEC freebsd-clang)
+diff -rub ./qt6/qtbase/mkspecs/features/qt_functions.prf ./qt6/qtbase/mkspecs/features/qt_functions.prf
+--- ./qt6/qtbase/mkspecs/features/qt_functions.prf	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/mkspecs/features/qt_functions.prf	2026-06-16 17:46:30.406137004 +0100
+@@ -239,7 +239,7 @@
+             libs = bins
+             deppath.CONFIG = always_prepend
+             deppath.name = PATH
+-        } else:contains(QMAKE_HOST.os, Linux|FreeBSD|OpenBSD|NetBSD|DragonFly|SunOS|HP-UX|QNX|GNU) {
++        } else:contains(QMAKE_HOST.os, Linux|FreeBSD|OpenBSD|NetBSD|DragonFly|SunOS|HP-UX|QNX|GNU|LaylaOS) {
+             deppath.name = LD_LIBRARY_PATH
+         } else:contains(QMAKE_HOST.os, Haiku) {
+             deppath.name = LIBRARY_PATH
+diff -rub ./qt6/qtbase/qmake/library/ioutils.cpp ./qt6/qtbase/qmake/library/ioutils.cpp
+--- ./qt6/qtbase/qmake/library/ioutils.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/qmake/library/ioutils.cpp	2026-06-16 17:43:47.026434098 +0100
+@@ -13,6 +13,7 @@
+ #else
+ #  include <sys/types.h>
+ #  include <sys/stat.h>
++#  include <limits.h>       /* PATH_MAX */
+ #  include <unistd.h>
+ #  include <utime.h>
+ #  include <fcntl.h>
+diff -rub ./qt6/qtbase/src/3rdparty/forkfd/forkfd.c ./qt6/qtbase/src/3rdparty/forkfd/forkfd.c
+--- ./qt6/qtbase/src/3rdparty/forkfd/forkfd.c	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/3rdparty/forkfd/forkfd.c	2026-06-29 14:04:53.691972632 +0100
+@@ -65,6 +65,12 @@
+ #  endif
+ #endif
+ 
++#ifdef __laylaos__
++#  define HAVE_WAIT4    1
++#  define HAVE_WAITID   1
++#  define HAVE_PIPE2    1
++#endif
++
+ #if _POSIX_VERSION-0 >= 200809L || _XOPEN_VERSION-0 >= 500
+ #  define HAVE_WAITID   1
+ #endif
+diff -rub ./qt6/qtbase/src/corelib/CMakeLists.txt ./qt6/qtbase/src/corelib/CMakeLists.txt
+--- ./qt6/qtbase/src/corelib/CMakeLists.txt	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/CMakeLists.txt	2026-06-16 16:13:28.144623594 +0100
+@@ -932,7 +932,7 @@
+         ../3rdparty/easing
+ )
+ 
+-qt_internal_extend_target(Core CONDITION UNIX AND NOT HAIKU AND NOT INTEGRITY AND NOT VXWORKS AND NOT WASM AND NOT MACOS
++qt_internal_extend_target(Core CONDITION UNIX AND NOT HAIKU AND NOT INTEGRITY AND NOT VXWORKS AND NOT WASM AND NOT MACOS AND NOT LAYLAOS
+     LIBRARIES
+         m
+ )
+@@ -1215,8 +1215,14 @@
+         be
+ )
+ 
++qt_internal_extend_target(Core CONDITION LAYLAOS
++    SOURCES
++        io/qstandardpaths_laylaos.cpp
++        io/qstorageinfo_unix.cpp
++)
++
+ qt_internal_extend_target(Core
+-    CONDITION UNIX AND NOT LINUX AND NOT APPLE AND NOT HAIKU AND NOT ANDROID AND NOT VXWORKS
++    CONDITION UNIX AND NOT LINUX AND NOT APPLE AND NOT HAIKU AND NOT ANDROID AND NOT VXWORKS AND NOT LAYLAOS
+     SOURCES
+         io/qstandardpaths_unix.cpp
+         io/qstorageinfo_unix.cpp
+diff -rub ./qt6/qtbase/src/corelib/global/qgettid_p.h ./qt6/qtbase/src/corelib/global/qgettid_p.h
+--- ./qt6/qtbase/src/corelib/global/qgettid_p.h	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/global/qgettid_p.h	2026-06-17 23:57:27.223416463 +0100
+@@ -18,7 +18,14 @@
+ 
+ #include "qglobal_p.h"
+ 
+-#if defined(Q_OS_LINUX) && (defined(__GLIBC__) || __has_include(<sys/syscall.h>))
++#if defined(Q_OS_LAYLAOS)
++#  include <unistd.h>
++
++static inline long qt_gettid()
++{
++    return ::gettid();
++}
++#elif defined(Q_OS_LINUX) && (defined(__GLIBC__) || __has_include(<sys/syscall.h>))
+ #  include <sys/syscall.h>
+ #  include <unistd.h>
+ 
+diff -rub ./qt6/qtbase/src/corelib/global/qglobal.h ./qt6/qtbase/src/corelib/global/qglobal.h
+--- ./qt6/qtbase/src/corelib/global/qglobal.h	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/global/qglobal.h	2026-06-16 16:09:02.264409945 +0100
+@@ -15,6 +15,7 @@
+ #  include <cstddef>
+ #  include <utility>
+ #  include <cstdint>
++#  include <limits>
+ #endif
+ #ifndef __ASSEMBLER__
+ #  include <assert.h>
+diff -rub ./qt6/qtbase/src/corelib/global/qsystemdetection.h ./qt6/qtbase/src/corelib/global/qsystemdetection.h
+--- ./qt6/qtbase/src/corelib/global/qsystemdetection.h	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/global/qsystemdetection.h	2026-06-16 16:10:37.749895677 +0100
+@@ -39,6 +39,7 @@
+      UNIX     - Any UNIX BSD/SYSV system
+      ANDROID  - Android platform
+      HAIKU    - Haiku
++     LAYLAOS  - LaylaOS
+      WEBOS    - LG WebOS
+      WASM     - WebAssembly
+ 
+@@ -97,6 +98,8 @@
+ #  define Q_OS_HPUX
+ #elif defined(__EMSCRIPTEN__)
+ #  define Q_OS_WASM
++#elif defined(__laylaos__)
++#  define Q_OS_LAYLAOS
+ #elif defined(__linux__) || defined(__linux)
+ #  define Q_OS_LINUX
+ #elif defined(__FreeBSD__) || defined(__DragonFly__) || defined(__FreeBSD_kernel__)
+diff -rub ./qt6/qtbase/src/corelib/io/qfilesystemengine_unix.cpp ./qt6/qtbase/src/corelib/io/qfilesystemengine_unix.cpp
+--- ./qt6/qtbase/src/corelib/io/qfilesystemengine_unix.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/io/qfilesystemengine_unix.cpp	2026-07-03 06:14:42.724295607 +0100
+@@ -77,7 +77,11 @@
+ # endif
+ #endif
+ 
+-#if defined(Q_OS_ANDROID)
++#if defined(Q_OS_LAYLAOS)
++# include <sys/mount.h>
++#endif
++
++#if defined(Q_OS_ANDROID) || defined(Q_OS_LAYLAOS)
+ // statx() is disabled on Android because quite a few systems
+ // come with sandboxes that kill applications that make system calls outside a
+ // whitelist and several Android vendors can't be bothered to update the list.
+@@ -558,7 +562,7 @@
+             }
+         }
+     }
+-#elif defined(_DIRENT_HAVE_D_TYPE) || defined(Q_OS_BSD4)
++#elif defined(_DIRENT_HAVE_D_TYPE) || defined(Q_OS_BSD4)  || defined(Q_OS_LAYLAOS)
+     // BSD4 includes OS X and iOS
+ 
+     // ### This will clear all entry flags and knownFlagsMask
+diff -rub ./qt6/qtbase/src/corelib/io/qlockfile_unix.cpp ./qt6/qtbase/src/corelib/io/qlockfile_unix.cpp
+--- ./qt6/qtbase/src/corelib/io/qlockfile_unix.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/io/qlockfile_unix.cpp	2026-06-16 17:24:24.692696486 +0100
+@@ -36,7 +36,7 @@
+ 
+ #if defined(Q_OS_MACOS)
+ #   include <libproc.h>
+-#elif defined(Q_OS_LINUX)
++#elif defined(Q_OS_LINUX) || defined(Q_OS_LAYLAOS)
+ #   include <unistd.h>
+ #   include <cstdio>
+ #elif defined(Q_OS_HAIKU)
+@@ -207,7 +207,7 @@
+     char name[1024];
+     proc_name(pid, name, sizeof(name) / sizeof(char));
+     return QFile::decodeName(name);
+-#elif defined(Q_OS_LINUX)
++#elif defined(Q_OS_LINUX) || defined(Q_OS_LAYLAOS)
+     if (!qt_haveLinuxProcfs())
+         return QString();
+ 
+diff -rub ./qt6/qtbase/src/corelib/io/qstorageinfo_unix.cpp ./qt6/qtbase/src/corelib/io/qstorageinfo_unix.cpp
+--- ./qt6/qtbase/src/corelib/io/qstorageinfo_unix.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/io/qstorageinfo_unix.cpp	2026-06-16 17:29:52.214888785 +0100
+@@ -18,7 +18,7 @@
+ #if defined(Q_OS_BSD4)
+ #  include <sys/mount.h>
+ #  include <sys/statvfs.h>
+-#elif defined(Q_OS_HURD)
++#elif defined(Q_OS_HURD) || defined(Q_OS_LAYLAOS)
+ #  include <mntent.h>
+ #  include <sys/statvfs.h>
+ #  include <sys/sysmacros.h>
+@@ -96,7 +96,7 @@
+ #elif defined(Q_OS_SOLARIS)
+     FILE *fp;
+     mnttab mnt;
+-#elif defined(Q_OS_HURD)
++#elif defined(Q_OS_HURD) || defined(Q_OS_LAYLAOS)
+     FILE *fp;
+     QByteArray buffer;
+     struct mntent mnt;
+diff -rub ./qt6/qtbase/src/corelib/ipc/qsharedmemory_systemv.cpp ./qt6/qtbase/src/corelib/ipc/qsharedmemory_systemv.cpp
+--- ./qt6/qtbase/src/corelib/ipc/qsharedmemory_systemv.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/ipc/qsharedmemory_systemv.cpp	2026-06-16 16:17:26.744563179 +0100
+@@ -98,7 +98,11 @@
+         return errno != EINVAL;
+ 
+     // If there are still attachments, keep the keep file and shm
++#ifdef __laylaos__
++    if (shmid_ds.shm_nattach != 0)
++#else
+     if (shmid_ds.shm_nattch != 0)
++#endif
+         return true;
+ 
+     if (shmctl(id, IPC_RMID, &shmid_ds) < 0) {
+diff -rub ./qt6/qtbase/src/corelib/kernel/qcoreapplication.cpp ./qt6/qtbase/src/corelib/kernel/qcoreapplication.cpp
+--- ./qt6/qtbase/src/corelib/kernel/qcoreapplication.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/kernel/qcoreapplication.cpp	2026-07-03 21:54:14.844888761 +0100
+@@ -2420,7 +2420,7 @@
+ #  if defined(Q_OS_ANDROID)
+     // the actual process on Android is the Java VM, so this doesn't help us
+     return QString();
+-#  elif defined(Q_OS_LINUX)
++#  elif defined(Q_OS_LINUX) || defined(Q_OS_LAYLAOS)
+     // this includes the Embedded Android builds
+     return QFile::decodeName(qt_readlink("/proc/self/exe"));
+ #  elif defined(AT_EXECPATH)
+diff -rub ./qt6/qtbase/src/corelib/kernel/qeventdispatcher_unix.cpp ./qt6/qtbase/src/corelib/kernel/qeventdispatcher_unix.cpp
+--- ./qt6/qtbase/src/corelib/kernel/qeventdispatcher_unix.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/kernel/qeventdispatcher_unix.cpp	2026-06-29 13:58:13.748001099 +0100
+@@ -21,7 +21,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ 
+-#if __has_include(<sys/eventfd.h>)
++#if __has_include(<sys/eventfd.h>) && !defined(Q_OS_LAYLAOS)
+ #  include <sys/eventfd.h>
+ static constexpr bool UsingEventfd = true;
+ #else
+diff -rub ./qt6/qtbase/src/corelib/text/qbytearray.h ./qt6/qtbase/src/corelib/text/qbytearray.h
+--- ./qt6/qtbase/src/corelib/text/qbytearray.h	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/text/qbytearray.h	2026-06-16 16:19:06.046232224 +0100
+@@ -20,6 +20,7 @@
+ 
+ #include <string>
+ #include <iterator>
++#include <limits>
+ 
+ #ifndef QT5_NULL_STRINGS
+ // Would ideally be off, but in practice breaks too much (Qt 6.0).
+diff -rub ./qt6/qtbase/src/corelib/thread/qthread_unix.cpp ./qt6/qtbase/src/corelib/thread/qthread_unix.cpp
+--- ./qt6/qtbase/src/corelib/thread/qthread_unix.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/corelib/thread/qthread_unix.cpp	2026-07-03 21:54:33.464479916 +0100
+@@ -570,7 +570,7 @@
+     } else {
+         cores = (int)psd.psd_proc_cnt;
+     }
+-#elif (defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)) || defined(Q_OS_FREEBSD)
++#elif (defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)) || defined(Q_OS_FREEBSD) || defined(Q_OS_LAYLAOS)
+     QT_WARNING_PUSH
+ #  if defined(Q_CC_CLANG) && Q_CC_CLANG >= 1800
+     QT_WARNING_DISABLE_CLANG("-Wvla-cxx-extension")
+diff -rub ./qt6/qtbase/src/gui/CMakeLists.txt ./qt6/qtbase/src/gui/CMakeLists.txt
+--- ./qt6/qtbase/src/gui/CMakeLists.txt	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/gui/CMakeLists.txt	2026-06-19 20:28:25.788235079 +0100
+@@ -27,6 +27,8 @@
+         set(_default_platform "haiku")
+     elseif(WASM)
+         set(_default_platform "wasm")
++    elseif(LAYLAOS)
++        set(_default_platform "laylaos")
+     else()
+         set(_default_platform "xcb")
+     endif()
+@@ -416,6 +418,15 @@
+         platform/wasm/qwasmnativeinterface.cpp
+ )
+ 
++qt_internal_extend_target(Gui CONDITION LAYLAOS
++    SOURCES
++        painting/qrasterbackingstore.cpp painting/qrasterbackingstore_p.h
++        painting/qrhibackingstore.cpp painting/qrhibackingstore_p.h
++    PUBLIC_LIBRARIES
++        gui
++        freetype
++)
++
+ qt_internal_extend_target(Gui CONDITION APPLE
+     SOURCES
+         image/qimage_darwin.mm
+diff -rub ./qt6/qtbase/src/gui/platform/unix/qdesktopunixservices.cpp ./qt6/qtbase/src/gui/platform/unix/qdesktopunixservices.cpp
+--- ./qt6/qtbase/src/gui/platform/unix/qdesktopunixservices.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/gui/platform/unix/qdesktopunixservices.cpp	2026-07-19 11:52:25.886552808 +0100
+@@ -59,6 +59,8 @@
+         return QByteArrayLiteral("KDE");
+     if (!qEnvironmentVariableIsEmpty("GNOME_DESKTOP_SESSION_ID"))
+         return QByteArrayLiteral("GNOME");
++    if (!qEnvironmentVariableIsEmpty("LAYLAOS_DESKTOP_VERSION"))
++        return QByteArrayLiteral("LAYLAOS");
+ 
+     // Fallback to checking $DESKTOP_SESSION (unreliable)
+     QByteArray desktopSession = qgetenv("DESKTOP_SESSION");
+@@ -123,6 +125,9 @@
+     } else if (desktop == QByteArray("GNOME")) {
+         if (checkExecutable(QStringLiteral("gnome-open"), browser))
+             return true;
++    } else if (desktop == QByteArray("LAYLAOS")) {
++        if (checkExecutable(QStringLiteral("gui-open"), browser))
++            return true;
+     }
+ 
+     for (size_t i = 0; i < sizeof(browsers)/sizeof(char *); ++i)
+diff -rub ./qt6/qtbase/src/plugins/platforms/CMakeLists.txt ./qt6/qtbase/src/plugins/platforms/CMakeLists.txt
+--- ./qt6/qtbase/src/plugins/platforms/CMakeLists.txt	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/plugins/platforms/CMakeLists.txt	2026-06-16 16:42:06.496485969 +0100
+@@ -47,6 +47,9 @@
+ if(HAIKU)
+     # add_subdirectory(haiku) # TODO: QTBUG-112768
+ endif()
++if(LAYLAOS)
++     add_subdirectory(laylaos)
++endif()
+ if(WASM)
+      add_subdirectory(wasm)
+ endif()
+diff -rub ./qt6/qtbase/src/tools/bootstrap/CMakeLists.txt ./qt6/qtbase/src/tools/bootstrap/CMakeLists.txt
+--- ./qt6/qtbase/src/tools/bootstrap/CMakeLists.txt	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/tools/bootstrap/CMakeLists.txt	2026-06-16 17:15:43.453423105 +0100
+@@ -154,6 +154,12 @@
+         ${FWUIKit}
+ )
+ 
++qt_internal_extend_target(Bootstrap CONDITION LAYLAOS
++    DEFINES
++        _GNU_SOURCE
++        __laylaos__
++)
++
+ qt_internal_extend_target(Bootstrap CONDITION CMAKE_CROSSCOMPILING OR NOT QT_FEATURE_system_pcre2
+     SOURCES
+         ../../3rdparty/pcre2/src/config.h
+diff -rub ./qt6/qtbase/src/tools/moc/generator.cpp ./qt6/qtbase/src/tools/moc/generator.cpp
+--- ./qt6/qtbase/src/tools/moc/generator.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/tools/moc/generator.cpp	2026-06-16 17:07:18.614776692 +0100
+@@ -22,6 +22,8 @@
+ #include <private/qmetaobject_p.h> //for the flags.
+ #include <private/qplugin_p.h> //for the flags.
+ 
++#include <limits>
++
+ QT_BEGIN_NAMESPACE
+ 
+ using namespace QtMiscUtils;
+diff -rub ./qt6/qtbase/src/widgets/kernel/qtooltip.cpp ./qt6/qtbase/src/widgets/kernel/qtooltip.cpp
+--- ./qt6/qtbase/src/widgets/kernel/qtooltip.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/widgets/kernel/qtooltip.cpp	2026-06-16 17:31:16.472176870 +0100
+@@ -248,7 +248,7 @@
+         break;
+ 
+ 
+-#if defined (Q_OS_QNX)  || defined (Q_OS_WASM) // On QNX the window activate and focus events are delayed and will appear
++#if defined (Q_OS_QNX)  || defined (Q_OS_WASM) || defined(Q_OS_LAYLAOS) // On QNX the window activate and focus events are delayed and will appear
+                        // after the window is shown.
+     case QEvent::WindowActivate:
+     case QEvent::FocusIn:
+diff -rub ./qt6/qtbase/src/widgets/widgets/qcombobox.cpp ./qt6/qtbase/src/widgets/widgets/qcombobox.cpp
+--- ./qt6/qtbase/src/widgets/widgets/qcombobox.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/widgets/widgets/qcombobox.cpp	2026-06-30 13:26:34.220198169 +0100
+@@ -3067,7 +3067,7 @@
+     container->hideScrollers();
+     container->setGeometry(listRect);
+ 
+-#ifndef Q_OS_MAC
++#if !defined(Q_OS_MAC) && !defined(Q_OS_LAYLAOS)
+     const bool updatesEnabled = container->updatesEnabled();
+ #endif
+ 
+@@ -3083,7 +3083,7 @@
+ // If updates are disabled at this point we'll miss our chance at painting the popup
+ // menu before it's shown, causing flicker since the window then displays the standard gray
+ // background.
+-#ifndef Q_OS_MAC
++#if !defined(Q_OS_MAC) && !defined(Q_OS_LAYLAOS)
+     container->setUpdatesEnabled(false);
+ #endif
+ 
+@@ -3126,7 +3126,7 @@
+                              ? QAbstractItemView::PositionAtCenter
+                              : QAbstractItemView::EnsureVisible);
+ 
+-#ifndef Q_OS_MAC
++#if !defined(Q_OS_MAC) && !defined(Q_OS_LAYLAOS)
+     container->setUpdatesEnabled(updatesEnabled);
+ #endif
+ 
+diff -rub ./qt6/qtbase/src/widgets/widgets/qmenu.cpp ./qt6/qtbase/src/widgets/widgets/qmenu.cpp
+--- ./qt6/qtbase/src/widgets/widgets/qmenu.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/src/widgets/widgets/qmenu.cpp	2026-08-22 11:45:35.088640839 +0100
+@@ -576,7 +576,7 @@
+         bool deleteLater = false;
+     };
+ 
+-#if QT_CONFIG(effects)
++#if QT_CONFIG(effects) && !defined(Q_OS_LAYLAOS)
+     // If deleteLater has been called and the event loop spins, while waiting
+     // for visual effects to happen, menu might become stale.
+     // To prevent a QSignalBlocker from restoring a stale object, block and restore signals manually.
+@@ -764,7 +764,7 @@
+     }
+     if (hideActiveMenu && previousAction != currentAction) {
+         if (popup == -1) {
+-#if QT_CONFIG(effects)
++#if QT_CONFIG(effects) && !defined(Q_OS_LAYLAOS)
+             // kill any running effect
+             qFadeEffect(nullptr);
+             qScrollEffect(nullptr);
+@@ -2561,7 +2561,7 @@
+     }
+ #endif
+ 
+-#if QT_CONFIG(effects)
++#if QT_CONFIG(effects) && !defined(Q_OS_LAYLAOS)
+     int hGuess = q->isRightToLeft() ? QEffects::LeftScroll : QEffects::RightScroll;
+     int vGuess = QEffects::DownScroll;
+     if (q->isRightToLeft()) {
+diff -rub ./qt6/qtbase/tests/auto/corelib/io/qfileselector/CMakeLists.txt ./qt6/qtbase/tests/auto/corelib/io/qfileselector/CMakeLists.txt
+--- ./qt6/qtbase/tests/auto/corelib/io/qfileselector/CMakeLists.txt	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/tests/auto/corelib/io/qfileselector/CMakeLists.txt	2026-06-16 17:11:05.825691362 +0100
+@@ -30,6 +30,8 @@
+     "platforms/+haiku/test2"
+     "platforms/+ios/test"
+     "platforms/+ios/test2"
++    "platforms/+laylaos/test"
++    "platforms/+laylaos/test2"
+     "platforms/+linux/test"
+     "platforms/+linux/test2"
+     "platforms/+wasm/test"
+@@ -45,6 +47,7 @@
+     "platforms/+unix/+darwin/+macos/test"
+     "platforms/+unix/+darwin/test"
+     "platforms/+unix/+haiku/test"
++    "platforms/+unix/+laylaos/test"
+     "platforms/+unix/+linux/test"
+     "platforms/+unix/+qnx/test"
+     "platforms/+unix/+vxworks/test"
+diff -rub ./qt6/qtbase/tests/auto/corelib/io/qfileselector/tst_qfileselector.cpp ./qt6/qtbase/tests/auto/corelib/io/qfileselector/tst_qfileselector.cpp
+--- ./qt6/qtbase/tests/auto/corelib/io/qfileselector/tst_qfileselector.cpp	2026-05-07 08:50:01.000000000 +0100
++++ ./qt6/qtbase/tests/auto/corelib/io/qfileselector/tst_qfileselector.cpp	2026-06-16 17:10:14.489019429 +0100
+@@ -61,7 +61,7 @@
+     QString expectedPlatform2File(""); //Only the last selector
+     QString expectedPlatform3File; // Only the first selector (the family)
+ #if defined(Q_OS_UNIX) && !defined(Q_OS_ANDROID) && !defined(Q_OS_WASM) && \
+-    !defined(Q_OS_DARWIN) && !defined(Q_OS_LINUX) && !defined(Q_OS_HAIKU) && !defined(Q_OS_QNX) && !defined(Q_OS_VXWORKS)
++    !defined(Q_OS_DARWIN) && !defined(Q_OS_LINUX) && !defined(Q_OS_HAIKU) && !defined(Q_OS_QNX) && !defined(Q_OS_VXWORKS) && !defined(Q_OS_LAYLAOS)
+     /* We are only aware of specific unixes, and do not have test files for any of the others.
+        However those unixes can get a selector added from the result of a uname call, so this will
+        lead to a case where we don't have that file so we can't expect the concatenation of platform
+diff -rub ./qt6/qtdeclarative/src/qml/jit/qv4assemblercommon_p.h ./qt6/qtdeclarative/src/qml/jit/qv4assemblercommon_p.h
+--- ./qt6/qtdeclarative/src/qml/jit/qv4assemblercommon_p.h	2026-05-07 21:59:48.000000000 +0100
++++ ./qt6/qtdeclarative/src/qml/jit/qv4assemblercommon_p.h	2026-06-16 17:35:38.254470746 +0100
+@@ -34,7 +34,7 @@
+ namespace JIT {
+ 
+ #if defined(Q_PROCESSOR_X86_64) || defined(ENABLE_ALL_ASSEMBLERS_FOR_REFACTORING_PURPOSES)
+-#if defined(Q_OS_LINUX) || defined(Q_OS_QNX) || defined(Q_OS_FREEBSD) || defined(Q_OS_DARWIN) || defined(Q_OS_SOLARIS) || defined(Q_OS_VXWORKS) || defined(Q_OS_HURD)
++#if defined(Q_OS_LINUX) || defined(Q_OS_QNX) || defined(Q_OS_FREEBSD) || defined(Q_OS_DARWIN) || defined(Q_OS_SOLARIS) || defined(Q_OS_VXWORKS) || defined(Q_OS_HURD) || defined(Q_OS_LAYLAOS)
+ 
+ class PlatformAssembler_X86_64_SysV : public JSC::MacroAssembler<JSC::MacroAssemblerX86_64>
+ {
+diff -rub ./qt6/qtdeclarative/src/qml/memory/qv4stacklimits.cpp ./qt6/qtdeclarative/src/qml/memory/qv4stacklimits.cpp
+--- ./qt6/qtdeclarative/src/qml/memory/qv4stacklimits.cpp	2026-05-07 21:59:48.000000000 +0100
++++ ./qt6/qtdeclarative/src/qml/memory/qv4stacklimits.cpp	2026-06-28 23:46:04.187307891 +0100
+@@ -16,7 +16,7 @@
+ #  include <QtCore/qt_windows.h>
+ #elif defined(Q_OS_FREEBSD_KERNEL) || defined(Q_OS_OPENBSD)
+ #  include <pthread_np.h>
+-#elif defined(Q_OS_LINUX)
++#elif defined(Q_OS_LINUX) || defined(Q_OS_LAYLAOS)
+ #  include <unistd.h>
+ #  include <sys/resource.h> // for getrlimit()
+ #  include <sys/syscall.h>  // for SYS_gettid
+@@ -81,7 +81,7 @@
+     };
+ }
+ 
+-#if defined(Q_OS_DARWIN) || defined(Q_OS_LINUX)
++#if defined(Q_OS_DARWIN) || defined(Q_OS_LINUX) || defined(Q_OS_LAYLAOS)
+ 
+ // On linux and darwin, on the main thread, the pthread functions
+ // may not return the true stack size since the main thread stack
+@@ -255,7 +255,7 @@
+     return createStackProperties(stackBase, stackSize ? stackSize : regionSize);
+ }
+ 
+-#if defined(Q_OS_LINUX)
++#if defined(Q_OS_LINUX) || defined(Q_OS_LAYLAOS)
+ 
+ static void *stackBaseFromLibc()
+ {
+diff -rub ./qt6/qtdeclarative/src/qml/qml/qqmlplatform.cpp ./qt6/qtdeclarative/src/qml/qml/qqmlplatform.cpp
+--- ./qt6/qtdeclarative/src/qml/qml/qqmlplatform.cpp	2026-05-07 21:59:48.000000000 +0100
++++ ./qt6/qtdeclarative/src/qml/qml/qqmlplatform.cpp	2026-06-16 17:38:59.332057967 +0100
+@@ -40,6 +40,8 @@
+     return QStringLiteral("windows");
+ #elif defined(Q_OS_LINUX)
+     return QStringLiteral("linux");
++#elif defined(Q_OS_LAYLAOS)
++    return QStringLiteral("laylaos");
+ #elif defined(Q_OS_QNX)
+     return QStringLiteral("qnx");
+ #elif defined(Q_OS_WASM)
+diff -rub ./qt6/qtmultimedia/src/multimedia/CMakeLists.txt ./qt6/qtmultimedia/src/multimedia/CMakeLists.txt
+--- ./qt6/qtmultimedia/src/multimedia/CMakeLists.txt	2026-05-08 04:28:44.000000000 +0100
++++ ./qt6/qtmultimedia/src/multimedia/CMakeLists.txt	2026-06-16 13:08:55.909752805 +0100
+@@ -357,6 +357,17 @@
+         asound
+ )
+ 
++qt_internal_extend_target(Multimedia CONDITION LAYLAOS
++    SOURCES
++        laylaos/qlaylaosaudiodevice.cpp laylaos/qlaylaosaudiodevice_p.h
++        laylaos/qlaylaosaudiosink.cpp laylaos/qlaylaosaudiosink_p.h
++        laylaos/qlaylaosaudiosource.cpp laylaos/qlaylaosaudiosource_p.h
++        laylaos/qlaylaosaudiodevices.cpp laylaos/qlaylaosaudiodevices_p.h
++        laylaos/qlaylaosaudioutils.cpp laylaos/qlaylaosaudioutils_p.h
++    INCLUDE_DIRECTORIES
++        laylaos
++)
++
+ qt_internal_extend_target(Multimedia CONDITION WIN32
+     SOURCES
+         windows/qcominitializer.cpp windows/qcominitializer_p.h
+diff -rub ./qt6/qtmultimedia/src/multimedia/configure.cmake ./qt6/qtmultimedia/src/multimedia/configure.cmake
+--- ./qt6/qtmultimedia/src/multimedia/configure.cmake	2026-05-08 04:28:44.000000000 +0100
++++ ./qt6/qtmultimedia/src/multimedia/configure.cmake	2026-07-15 21:37:48.457695814 +0100
+@@ -224,6 +224,10 @@
+     LABEL "WASAPI (Windows Audio Session API)"
+     CONDITION WIN32
+ )
++qt_feature("laylaos" PRIVATE
++    LABEL "LaylaOS"
++    CONDITION LAYLAOS
++)
+ 
+ qt_feature("spatialaudio" PRIVATE
+     LABEL "Spatial Audio"
+@@ -237,7 +241,7 @@
+     ENABLE INPUT_ffmpeg STREQUAL 'yes'
+     DISABLE INPUT_ffmpeg STREQUAL 'no'
+     CONDITION FFmpeg_FOUND
+-              AND (APPLE OR WIN32 OR ANDROID OR QNX OR QT_FEATURE_pulseaudio OR QT_FEATURE_pipewire)
++              AND (APPLE OR WIN32 OR ANDROID OR QNX OR LAYLAOS OR QT_FEATURE_pulseaudio OR QT_FEATURE_pipewire)
+               AND QT_FEATURE_thread
+ )
+ 
+@@ -260,6 +264,7 @@
+ qt_configure_add_summary_entry(ARGS "aaudio")
+ qt_configure_add_summary_entry(ARGS "wasm")
+ qt_configure_add_summary_entry(ARGS "wasapi")
++qt_configure_add_summary_entry(ARGS "laylaos")
+ qt_configure_end_summary_section()
+ qt_configure_add_summary_section(NAME "Plugin")
+ qt_configure_add_summary_entry(ARGS "gstreamer")
+@@ -272,6 +277,7 @@
+ qt_configure_add_summary_entry(ARGS "native_android_backend")
+ qt_configure_add_summary_entry(ARGS "native_windows_backend")
+ qt_configure_add_summary_entry(ARGS "wasm")
++qt_configure_add_summary_entry(ARGS "laylaos")
+ qt_configure_end_summary_section()
+ qt_configure_add_summary_section(NAME "Hardware acceleration and features")
+ qt_configure_add_summary_entry(ARGS "linux_v4l")
+@@ -285,7 +291,7 @@
+     TYPE WARNING
+     MESSAGE "No backend for low level audio found."
+     CONDITION NOT QT_FEATURE_alsa AND NOT QT_FEATURE_pulseaudio AND NOT QT_FEATURE_mmrenderer AND NOT QT_FEATURE_coreaudio
+-              AND NOT WIN32 AND NOT ANDROID AND NOT WASM AND NOT QT_FEATURE_pipewire
++              AND NOT WIN32 AND NOT ANDROID AND NOT WASM AND NOT QT_FEATURE_pipewire AND NOT LAYLAOS
+ )
+ 
+ qt_configure_add_report_entry(
+@@ -307,6 +313,12 @@
+ )
+ 
+ qt_configure_add_report_entry(
++    TYPE WARNING
++    MESSAGE "No media backend found"
++    CONDITION LAYLAOS AND NOT QT_FEATURE_laylaos
++)
++
++qt_configure_add_report_entry(
+     TYPE ERROR
+     MESSAGE "ALSA and PulseAudio backend are mutually exclusive"
+     CONDITION QT_FEATURE_alsa AND QT_FEATURE_pulseaudio
+diff -rub ./qt6/qtmultimedia/src/multimedia/platform/qplatformaudiodevices.cpp ./qt6/qtmultimedia/src/multimedia/platform/qplatformaudiodevices.cpp
+--- ./qt6/qtmultimedia/src/multimedia/platform/qplatformaudiodevices.cpp	2026-05-08 04:28:44.000000000 +0100
++++ ./qt6/qtmultimedia/src/multimedia/platform/qplatformaudiodevices.cpp	2026-06-16 10:18:22.493574355 +0100
+@@ -33,6 +33,9 @@
+ #if defined(Q_OS_WASM)
+ #  include <QtMultimedia/private/qwasmmediadevices_p.h>
+ #endif
++#if defined(Q_OS_LAYLAOS)
++#  include <QtMultimedia/private/qlaylaosaudiodevices_p.h>
++#endif
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -92,6 +95,9 @@
+ #if defined(Q_OS_WASM)
+     return std::make_unique<QWasmAudioDevices>();
+ #endif
++#if defined(Q_OS_LAYLAOS)
++    return std::make_unique<QLaylaOSAudioDevices>();
++#endif
+     return std::make_unique<QPlatformAudioDevices>();
+ }
+ 
+diff -rub ./qt6/qtmultimedia/src/multimedia/platform/qplatformmediaintegration.cpp ./qt6/qtmultimedia/src/multimedia/platform/qplatformmediaintegration.cpp
+--- ./qt6/qtmultimedia/src/multimedia/platform/qplatformmediaintegration.cpp	2026-05-08 04:28:44.000000000 +0100
++++ ./qt6/qtmultimedia/src/multimedia/platform/qplatformmediaintegration.cpp	2026-06-16 10:20:18.789423805 +0100
+@@ -52,7 +52,7 @@
+         return backend;
+ #endif
+ 
+-#if defined(Q_OS_DARWIN) || defined(Q_OS_LINUX) || defined(Q_OS_WINDOWS) || defined(Q_OS_ANDROID)
++#if defined(Q_OS_DARWIN) || defined(Q_OS_LINUX) || defined(Q_OS_WINDOWS) || defined(Q_OS_ANDROID) || defined(Q_OS_LAYLAOS)
+     // Return ffmpeg backend by default.
+     // Platform backends for the OS list are optionally available but have limited support.
+     if (backends.contains(FFmpegBackend))
+diff -rub ./qt6/qtmultimedia/src/plugins/multimedia/CMakeLists.txt ./qt6/qtmultimedia/src/plugins/multimedia/CMakeLists.txt
+--- ./qt6/qtmultimedia/src/plugins/multimedia/CMakeLists.txt	2026-05-08 04:28:44.000000000 +0100
++++ ./qt6/qtmultimedia/src/plugins/multimedia/CMakeLists.txt	2026-06-16 10:02:54.249613551 +0100
+@@ -22,3 +22,6 @@
+ if(QT_FEATURE_mmrenderer)
+     add_subdirectory(qnx)
+ endif()
++if(LAYLAOS)
++    add_subdirectory(laylaos)
++endif()
+diff -rub ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/PxIntrinsics.h ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/PxIntrinsics.h
+--- ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/PxIntrinsics.h	2026-05-08 04:28:40.000000000 +0100
++++ ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/PxIntrinsics.h	2026-06-27 11:29:51.563679704 +0100
+@@ -34,7 +34,7 @@
+ 
+ #if PX_WINDOWS_FAMILY
+ #include "foundation/windows/PxWindowsIntrinsics.h"
+-#elif(PX_LINUX || PX_ANDROID || PX_APPLE_FAMILY || PX_PS4)
++#elif(PX_LINUX || PX_ANDROID || PX_APPLE_FAMILY || PX_PS4 || PX_LAYLAOS)
+ #include "foundation/unix/PxUnixIntrinsics.h"
+ #elif PX_XBOXONE
+ #include "foundation/XboxOne/PxXboxOneIntrinsics.h"
+diff -rub ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/PxPreprocessor.h ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/PxPreprocessor.h
+--- ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/PxPreprocessor.h	2026-05-08 04:28:40.000000000 +0100
++++ ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/PxPreprocessor.h	2026-06-27 11:36:54.663157532 +0100
+@@ -105,6 +105,8 @@
+ #define PX_PS4 1
+ #elif defined(__NX__)
+ #define PX_SWITCH 1
++#elif defined(__laylaos__)
++#define PX_LAYLAOS 1
+ #else
+ #error "Unknown operating system"
+ #endif
+@@ -185,6 +187,9 @@
+ #ifndef PX_LINUX
+ #define PX_LINUX 0
+ #endif
++#ifndef PX_LAYLAOS
++#define PX_LAYLAOS 0
++#endif
+ #ifndef PX_IOS
+ #define PX_IOS 0
+ #endif
+@@ -266,7 +271,7 @@
+ #define PX_MICROSOFT_FAMILY (PX_XBOXONE || PX_WINDOWS_FAMILY || PX_XBOX_SERIES_X)
+ #define PX_LINUX_FAMILY (PX_LINUX || PX_ANDROID)
+ #define PX_APPLE_FAMILY (PX_IOS || PX_OSX)                  // equivalent to #if __APPLE__
+-#define PX_UNIX_FAMILY (PX_LINUX_FAMILY || PX_APPLE_FAMILY) // shortcut for unix/posix platforms
++#define PX_UNIX_FAMILY (PX_LINUX_FAMILY || PX_APPLE_FAMILY || PX_LAYLAOS) // shortcut for unix/posix platforms
+ #if defined(__EMSCRIPTEN__)
+ #define PX_EMSCRIPTEN 1
+ #else
+@@ -304,7 +309,7 @@
+ DLL export macros
+ */
+ #ifndef PX_C_EXPORT
+-#if PX_WINDOWS_FAMILY || PX_LINUX
++#if PX_WINDOWS_FAMILY || PX_LINUX || PX_LAYLAOS
+ #define PX_C_EXPORT extern "C"
+ #else
+ #define PX_C_EXPORT
+diff -rub ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/unix/PxUnixIntrinsics.h ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/unix/PxUnixIntrinsics.h
+--- ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/unix/PxUnixIntrinsics.h	2026-05-08 04:28:40.000000000 +0100
++++ ./qt6/qtquick3dphysics/src/3rdparty/PhysX/pxshared/include/foundation/unix/PxUnixIntrinsics.h	2026-06-27 11:22:29.987165386 +0100
+@@ -33,7 +33,7 @@
+ #include "foundation/Px.h"
+ #include "foundation/PxSharedAssert.h"
+ 
+-#if !(PX_LINUX || PX_ANDROID || PX_PS4 || PX_APPLE_FAMILY)
++#if !(PX_LINUX || PX_ANDROID || PX_PS4 || PX_APPLE_FAMILY || PX_LAYLAOS)
+ #error "This file should only be included by Unix builds!!"
+ #endif
+ 
+diff -rub ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsAllocator.h ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsAllocator.h
+--- ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsAllocator.h	2026-05-08 04:28:40.000000000 +0100
++++ ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsAllocator.h	2026-06-27 11:48:55.746264975 +0100
+@@ -100,7 +100,7 @@
+ #if PX_WINDOWS_FAMILY
+ 	#include <malloc.h>
+ 	#define PxAlloca(x) _alloca(x)
+-#elif PX_LINUX || PX_ANDROID
++#elif PX_LINUX || PX_ANDROID || PX_LAYLAOS
+ 	#include <malloc.h>
+ 	#define PxAlloca(x) alloca(x)
+ #elif PX_APPLE_FAMILY
+diff -rub ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsIntrinsics.h ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsIntrinsics.h
+--- ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsIntrinsics.h	2026-05-08 04:28:40.000000000 +0100
++++ ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsIntrinsics.h	2026-06-27 11:30:41.479001858 +0100
+@@ -34,7 +34,7 @@
+ 
+ #if PX_WINDOWS_FAMILY
+ #include "windows/PsWindowsIntrinsics.h"
+-#elif(PX_LINUX || PX_ANDROID || PX_APPLE_FAMILY || PX_PS4)
++#elif(PX_LINUX || PX_ANDROID || PX_APPLE_FAMILY || PX_PS4 || PX_LAYLAOS)
+ #include "unix/PsUnixIntrinsics.h"
+ #elif PX_XBOXONE
+ #include "XboxOne/PsXboxOneIntrinsics.h"
+diff -rub ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsThread.h ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsThread.h
+--- ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsThread.h	2026-05-08 04:28:40.000000000 +0100
++++ ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsThread.h	2026-06-27 11:51:42.722959736 +0100
+@@ -41,7 +41,7 @@
+ 
+ #if PX_WINDOWS_FAMILY || PX_XBOXONE || PX_XBOX_SERIES_X
+ #define PxSpinLockPause() __asm pause
+-#elif PX_LINUX || PX_ANDROID || PX_PS4 || PX_APPLE_FAMILY || PX_SWITCH
++#elif PX_LINUX || PX_ANDROID || PX_PS4 || PX_APPLE_FAMILY || PX_SWITCH || PX_LAYLAOS
+ #define PxSpinLockPause() asm("nop")
+ #else
+ #error "Platform not supported!"
+diff -rub ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsTime.h ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsTime.h
+--- ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsTime.h	2026-05-08 04:28:40.000000000 +0100
++++ ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/PsTime.h	2026-06-27 11:55:34.213729208 +0100
+@@ -33,7 +33,7 @@
+ #include "Ps.h"
+ #include "foundation/PxFoundationConfig.h"
+ 
+-#if PX_LINUX || PX_ANDROID
++#if PX_LINUX || PX_ANDROID || PX_LAYLAOS
+ #include <time.h>
+ #endif
+ 
+@@ -84,7 +84,7 @@
+ 	Second getLastTime() const;
+ 
+   private:
+-#if PX_LINUX || PX_ANDROID || PX_APPLE_FAMILY || PX_PS4
++#if PX_LINUX || PX_ANDROID || PX_APPLE_FAMILY || PX_PS4 || PX_LAYLAOS
+ 	Second mLastTime;
+ #else
+ 	int64_t mTickCount;
+diff -rub ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/unix/PsUnixIntrinsics.h ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/unix/PsUnixIntrinsics.h
+--- ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/unix/PsUnixIntrinsics.h	2026-05-08 04:28:40.000000000 +0100
++++ ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/include/unix/PsUnixIntrinsics.h	2026-06-27 11:31:04.494834898 +0100
+@@ -45,7 +45,7 @@
+ // this file is for internal intrinsics - that is, intrinsics that are used in
+ // cross platform code but do not appear in the API
+ 
+-#if !(PX_LINUX || PX_ANDROID || PX_PS4 || PX_APPLE_FAMILY)
++#if !(PX_LINUX || PX_ANDROID || PX_PS4 || PX_APPLE_FAMILY || PX_LAYLAOS)
+ #error "This file should only be included by unix builds!!"
+ #endif
+ 
+diff -rub ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/src/unix/PsUnixThread.cpp ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/src/unix/PsUnixThread.cpp
+--- ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/src/unix/PsUnixThread.cpp	2026-05-08 04:28:40.000000000 +0100
++++ ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/foundation/src/unix/PsUnixThread.cpp	2026-06-27 11:57:45.943967263 +0100
+@@ -44,7 +44,7 @@
+ #include <unistd.h>
+ #if !PX_PS4
+ #include <sys/syscall.h>
+-#if !PX_APPLE_FAMILY && !PX_EMSCRIPTEN
++#if !PX_APPLE_FAMILY && !PX_EMSCRIPTEN && !PX_LAYLAOS
+ #include <asm/unistd.h>
+ #include <sys/resource.h>
+ #endif
+@@ -116,6 +116,8 @@
+ 	threadImpl.tid = syscall(SYS_gettid);
+ #elif PX_EMSCRIPTEN
+ 	// No thread id for emscripten
++#elif PX_LAYLAOS
++    threadImpl.tid = ::gettid();
+ #else
+ 	threadImpl.tid = syscall(__NR_gettid);
+ #endif
+diff -rub ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/pvd/include/PxProfileAllocatorWrapper.h ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/pvd/include/PxProfileAllocatorWrapper.h
+--- ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/pvd/include/PxProfileAllocatorWrapper.h	2026-05-08 04:28:40.000000000 +0100
++++ ./qt6/qtquick3dphysics/src/3rdparty/PhysX/source/pvd/include/PxProfileAllocatorWrapper.h	2026-06-27 11:53:18.707895251 +0100
+@@ -74,7 +74,7 @@
+ 	{
+ 		static const char* getName()
+ 		{
+-#if PX_LINUX || PX_ANDROID || PX_PS4 || PX_IOS || PX_OSX || PX_EMSCRIPTEN || PX_SWITCH
++#if PX_LINUX || PX_ANDROID || PX_PS4 || PX_IOS || PX_OSX || PX_EMSCRIPTEN || PX_SWITCH || PX_LAYLAOS
+ 			return __PRETTY_FUNCTION__;
+ #else
+ 			return typeid(T).name();
