@@ -6,15 +6,20 @@
 
 # Set the global PATH for all users
 if [ $EUID -eq 0 ]; then
-    export PATH="/sbin:/usr/sbin:/bin:/usr/bin:/bin/desktop"
+    export PATH="/sbin:/usr/sbin:/bin:/usr/bin:/bin/desktop:/usr/lib/jvm/java-26/bin"
 else
-    export PATH="/bin:/usr/bin:/bin/desktop"
+    export PATH="/bin:/usr/bin:/bin/desktop:/usr/lib/jvm/java-26/bin"
 fi
 
 # Fix the library search dir for man and Qt apps
-export LD_LIBRARY_PATH=/usr/lib:/usr/lib/man-db:/usr/Qt-5.12/lib
+export LD_LIBRARY_PATH=/usr/lib:/usr/lib/man-db:/usr/Qt-6.11/lib:/usr/lib/jvm/java-26/lib
 export QT_QPA_PLATFORM=laylaos
-export QT_QPA_PLATFORM_PLUGIN_PATH=/usr/Qt-5.12/plugins/platforms/
+export QT_QPA_PLATFORM_PLUGIN_PATH=/usr/Qt-6.11/plugins/platforms/
+export QT_PLUGIN_PATH=/usr/Qt-6.11/plugins
+export QT_QPA_FONTDIR=/usr/Qt-6.11/lib/fonts
+export QT_ENABLE_HIGHDPI_SCALING=0
+export QT_MEDIA_BACKEND=laylaos
+#export QT_NO_GLIB=1
 
 # Fon't put duplicate lines or lines starting with space in the history
 export HISTCONTROL=ignoreboth
