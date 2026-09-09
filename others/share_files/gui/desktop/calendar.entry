@@ -3,10 +3,10 @@
 #
 
 [Desktop Entry]
-Name=Clock
-Command=/bin/desktop/appclock
+Name=Calendar
+Command=/bin/desktop/appcalendar
 IconPath=Default
-Icon=clock
+Icon=calendar
 ShowOnDesktop=no
-Category=Accessories
+Category=Office
 

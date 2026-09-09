@@ -3,10 +3,10 @@
 #
 
 [Desktop Entry]
-Name=System settings
-Command=/bin/desktop/desktop-settings-main
+Name=System Monitor
+Command=/bin/desktop/appsysmonitor
 IconPath=Default
-Icon=settings
+Icon=sysmon
 ShowOnDesktop=no
 Category=System Tools
 

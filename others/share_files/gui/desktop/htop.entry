@@ -3,7 +3,7 @@
 #
 
 [Desktop Entry]
-Name=Process viewer
+Name=HTop Process viewer
 Command=/bin/desktop/ltermapp /usr/bin/htop
 IconPath=Default
 Icon=htop

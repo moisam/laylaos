@@ -3,10 +3,10 @@
 #
 
 [Desktop Entry]
-Name=Clock
-Command=/bin/desktop/appclock
+Name=Paint
+Command=/bin/desktop/apppaint
 IconPath=Default
-Icon=clock
+Icon=paint
 ShowOnDesktop=no
-Category=Accessories
+Category=Graphics
 

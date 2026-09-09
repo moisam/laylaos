@@ -4,7 +4,7 @@
 
 [Desktop Entry]
 Name=Onscreen Keyboard
-Command=/bin/desktop/kbdapp
+Command=/bin/desktop/appkbd
 IconPath=Default
 Icon=keyboard
 ShowOnDesktop=no

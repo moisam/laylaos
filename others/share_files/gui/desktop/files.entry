@@ -4,7 +4,7 @@
 
 [Desktop Entry]
 Name=Files
-Command=/bin/desktop/filesapp
+Command=/bin/desktop/appfileexplorer
 IconPath=Default
 Icon=folder
 ShowOnDesktop=yes

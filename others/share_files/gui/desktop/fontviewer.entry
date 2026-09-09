@@ -1,0 +1,13 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Font Viewer
+Command=/bin/desktop/appfontviewer
+IconPath=Default
+Icon=fontviewer
+ShowOnDesktop=no
+Category=System Tools
+MimeType=font/otf;font/sfnt;font/ttf;
+

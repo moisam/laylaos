@@ -3,10 +3,10 @@
 #
 
 [Desktop Entry]
-Name=Clock
-Command=/bin/desktop/appclock
+Name=Prince of Persia
+Command=/usr/bin/prince
 IconPath=Default
-Icon=clock
+Icon=SDLPoP
 ShowOnDesktop=no
-Category=Accessories
+Category=Games
 

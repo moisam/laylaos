@@ -1,0 +1,13 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=PDF Viewer
+Command=/bin/desktop/apppdfviewer
+IconPath=Default
+Icon=pdf
+ShowOnDesktop=no
+Category=Office
+MimeType=application/pdf;
+

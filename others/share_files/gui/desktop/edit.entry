@@ -1,0 +1,13 @@
+#
+# Desktop entry file
+#
+
+[Desktop Entry]
+Name=Text Editor
+Command=/bin/desktop/appedit
+IconPath=Default
+Icon=edit
+ShowOnDesktop=no
+Category=Accessories
+MimeType=text/plain;text/x-asm;text/x-c;text/x-c++;text/xml;
+

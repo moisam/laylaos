@@ -4,7 +4,7 @@
 
 [Desktop Entry]
 Name=Calculator
-Command=/bin/desktop/calcapp
+Command=/bin/desktop/appcalc
 IconPath=Default
 Icon=calculator
 ShowOnDesktop=yes

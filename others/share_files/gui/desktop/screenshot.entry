@@ -3,10 +3,10 @@
 #
 
 [Desktop Entry]
-Name=Clock
-Command=/bin/desktop/appclock
+Name=Screenshot
+Command=/bin/desktop/appscreenshot
 IconPath=Default
-Icon=clock
+Icon=screenshot
 ShowOnDesktop=no
 Category=Accessories
 
