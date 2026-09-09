@@ -51,7 +51,7 @@ This is mostly to keep track of where we are at and what needs to be done next:
 
 * Add IPv6 support to the network stack
 * More syscalls including POSIX message queues syscalls
-* More GUI functionality (text editor, screenshot facility, paint program, desktop themes, archiver, web browser, etc.)
+* More GUI functionality (music player, web browser, etc.)
 * Ext3, Ext4, NFS filesystem support (maybe NTFS at some point)
 * Kernel logging and perhaps a syslogd server
 * Swap support
@@ -93,7 +93,7 @@ Here is how you can run the Live CD image of LaylaOS:
      ```
      qemu-system-x86_64 -accel tcg,thread=single -cpu core2duo \
                         -m 2048 -M pc -no-reboot -no-shutdown \
-                        -drive format=raw,file=/DOWNLOADS_PATH/bootable_disk.img,index=0,media=disk \
+                        -drive format=raw,file=/DOWNLOADS_PATH/laylaos.iso,index=0,media=cdrom \
                         -boot d -serial stdio \
                         -smp 1 -usb -vga std \
                         -device intel-hda,debug=4 -device hda-duplex -audiodev id=pa,driver=pa,server=/run/user/$(id -u)/pulse/native
@@ -109,7 +109,7 @@ Here is how you can run the Bootable Disk Image of LaylaOS:
 1. Download the disk image from the [releases page](https://github.com/moisam/laylaos/releases).
 2. To run under [Bochs](https://bochs.sourceforge.io/):
    * Download the `bochsrc` file from the [build-scrpits folder](https://github.com/moisam/laylaos/tree/main/build-scripts).
-   * Find the following line, and replace **DOWNLOADS_PATH** with the actual path where you downloaded the Live CD image:
+   * Find the following line, and replace **DOWNLOADS_PATH** with the actual path where you downloaded the bootable disk image:
 
      ```
      ata0-master:  type=disk, path="/DOWNLOADS_PATH/bootable_disk.img", mode=flat, translation=auto
@@ -119,7 +119,17 @@ Here is how you can run the Bootable Disk Image of LaylaOS:
      ```
      bochs -q
      ```
-3. To run under [QEmu](https://www.qemu.org/), use the same command at the end of the last section.
+3. To run under [QEmu](https://www.qemu.org/):
+   * Change to the directory where you downloaded the image and type this command, replacing **DOWNLOADS_PATH** with the actual path where you downloaded the bootable disk image:
+     ```
+     qemu-system-x86_64 -accel tcg,thread=single -cpu core2duo \
+                        -m 2048 -M pc -no-reboot -no-shutdown \
+                        -drive format=raw,file=/DOWNLOADS_PATH/bootable_disk.img,index=0,media=disk \
+                        -boot d -serial stdio \
+                        -smp 1 -usb -vga std \
+                        -device intel-hda,debug=4 -device hda-duplex -audiodev id=pa,driver=pa,server=/run/user/$(id -u)/pulse/native
+     ```
+
 4. To run under [Oracle VM VirtualBox](https://www.virtualbox.org/), see the next section.
 
 ## 3. Running under Oracle VM VirtualBox
