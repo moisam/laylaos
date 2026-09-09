@@ -172,15 +172,9 @@ void mouse_handle_code(int code)
         }
 
         cur_button_state = buttons;
-
         add_mouse_packet(dx, dy, buttons);
-        pic_send_eoi(IRQ_MOUSE);
 
         unblock_kernel_task(mouse_task);
-    }
-    else
-    {
-        pic_send_eoi(IRQ_MOUSE);
     }
 }
 

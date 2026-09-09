@@ -45,14 +45,8 @@
 #include <kernel/ahci.h>
 #include <kernel/dev.h>
 #include <kernel/cdrom.h>
+#include <kernel/scsi.h>
 #include <mm/kheap.h>
-
-#define SCSI_CMD_TEST_UNIT_READY        0x00
-#define SCSI_CMD_REQUEST_SENSE          0x03
-#define SCSI_CMD_INQUIRY                0x12
-#define SCSI_CMD_READ_CAPACITY          0x25
-#define SCSI_CMD_READ                   0x28
-#define SCSI_CMD_WRITE                  0x2A
 
 #define CBW_SIG                         0x43425355
 #define CBW_SIG_OK                      0x53425355
@@ -66,6 +60,7 @@ struct kernel_mutex_t usb_disk_tablock;
 
 void usb_msd_register_dev(void *__dev, struct parttab_s *part, int n);
 #endif
+
 int usb_msd_read_sector_direct(void *__dev, uintptr_t phys_buf, uintptr_t virt_buf, uint32_t lba);
 
 // defined in ahci.c
@@ -74,60 +69,159 @@ long __ahci_remove_dev(dev_t dev_id, int remove_parent, int force);
 
 
 static void prep_scsi_cmd(struct usb_cmd_blk_wrapper_t *cbw, 
-                          uint32_t tag, uint8_t cmd, uint32_t lba, uint16_t len, uint32_t blksz)
+                          uint32_t tag, uint8_t *cmdbuf, uint16_t len, uint32_t blksz)
 {
     cbw->sig = CBW_SIG;
     cbw->tag = tag;
     cbw->lun = 0;
+    A_memcpy(cbw->cmd, cmdbuf, 16);
 
-#define CMD_BYTES8(a, b, c, d, e, f, g, h)              \
-    cbw->cmd[0] = cmd;                                  \
-    cbw->cmd[1] = a; cbw->cmd[2] = b; cbw->cmd[3] = c;  \
-    cbw->cmd[4] = d; cbw->cmd[5] = e; cbw->cmd[6] = f;  \
-    cbw->cmd[7] = g; cbw->cmd[8] = h;                   \
-    for(int z = 9; z < 16; z++) cbw->cmd[z] = 0;
-
-    switch(cmd)
+    switch(cmdbuf[0])
     {
         case SCSI_CMD_TEST_UNIT_READY:
             cbw->len = 0;
             cbw->flags = 0;
             cbw->cblen = 6;
-            CMD_BYTES8(0, 0, 0, 0, 0, 0, 0, 0);
             break;
 
         case SCSI_CMD_REQUEST_SENSE:
             cbw->len = 18;
             cbw->flags = 0x80;
             cbw->cblen = 6;
-            CMD_BYTES8(0, 0, 0, 18, 0, 0, 0, 0);
             break;
 
         case SCSI_CMD_INQUIRY:
             cbw->len = 36;
             cbw->flags = 0x80;
             cbw->cblen = 6;
-            CMD_BYTES8(0, 0, 0, 36, 0, 0, 0, 0);
             break;
 
-        case SCSI_CMD_READ_CAPACITY:
+        case SCSI_CMD_READ_CAPACITY10:
             cbw->len = 8;
             cbw->flags = 0x80;
             cbw->cblen = 10;
-            CMD_BYTES8(0, BYTE4(lba), BYTE3(lba), BYTE2(lba), BYTE1(lba), 0, 0, 0);
             break;
 
-        case SCSI_CMD_READ:
+        case SCSI_CMD_READ_CAPACITY16:
+            cbw->len = 32;
+            cbw->flags = 0x80;
+            cbw->cblen = 16;
+            break;
+
+        case SCSI_CMD_READ6:
+            cbw->len = len * blksz;
+            cbw->flags = 0x80;
+            cbw->cblen = 6;
+            break;
+
+        case SCSI_CMD_READ10:
             cbw->len = len * blksz;
             cbw->flags = 0x80;
             cbw->cblen = 10;
-            CMD_BYTES8(0, BYTE4(lba), BYTE3(lba), BYTE2(lba), BYTE1(lba), 0, BYTE2(len), BYTE1(len));
             break;
 
-        case SCSI_CMD_WRITE:
+        case SCSI_CMD_READ12:
+            cbw->len = len * blksz;
+            cbw->flags = 0x80;
+            cbw->cblen = 12;
+            break;
+
+        case SCSI_CMD_READ16:
+            cbw->len = len * blksz;
+            cbw->flags = 0x80;
+            cbw->cblen = 16;
+            break;
+
+        case SCSI_CMD_WRITE6:
+            cbw->len = len * blksz;
+            cbw->flags = 0;
+            cbw->cblen = 6;
+            break;
+
+        case SCSI_CMD_WRITE10:
             cbw->len = len * blksz;
             cbw->flags = 0;
             cbw->cblen = 10;
+            break;
+
+        case SCSI_CMD_WRITE12:
+            cbw->len = len * blksz;
+            cbw->flags = 0;
+            cbw->cblen = 12;
+            break;
+
+        case SCSI_CMD_WRITE16:
+            cbw->len = len * blksz;
+            cbw->flags = 0;
+            cbw->cblen = 16;
+            break;
+
+        case SCSI_CMD_MODE_SELECT6:
+            cbw->len = (uint32_t)cmdbuf[4];       // param list length
+            cbw->flags = 0;
+            cbw->cblen = 6;
+            break;
+
+        case SCSI_CMD_MODE_SELECT10:
+            cbw->len = ((uint32_t)cmdbuf[7] << 8) | (uint32_t)cmdbuf[8]; // param list length
+            cbw->flags = 0;
+            cbw->cblen = 10;
+            break;
+
+        case SCSI_CMD_MODE_SENSE6:
+            cbw->len = (uint32_t)cmdbuf[4];       // allocation length
+            cbw->flags = 0x80;
+            cbw->cblen = 6;
+            break;
+
+        case SCSI_CMD_MODE_SENSE10:
+            cbw->len = ((uint32_t)cmdbuf[7] << 8) | (uint32_t)cmdbuf[8]; // allocation length
+            cbw->flags = 0x80;
+            cbw->cblen = 10;
+            break;
+
+        case SCSI_CMD_START_STOP_UNIT:
+            cbw->len = 0;
+            cbw->flags = 0;
+            cbw->cblen = 6;
+            break;
+    }
+}
+
+
+static void fill_cmd_buf(uint8_t *cmdbuf, int cmd, uint32_t lba, uint16_t len)
+{
+
+#define CMD_BYTES8(a, b, c, d, e, f, g, h)        \
+    cmdbuf[0] = cmd;                              \
+    cmdbuf[1] = a; cmdbuf[2] = b; cmdbuf[3] = c;  \
+    cmdbuf[4] = d; cmdbuf[5] = e; cmdbuf[6] = f;  \
+    cmdbuf[7] = g; cmdbuf[8] = h;                 \
+    for(int z = 9; z < 16; z++) cmdbuf[z] = 0;
+
+    switch(cmd)
+    {
+        case SCSI_CMD_TEST_UNIT_READY:
+            CMD_BYTES8(0, 0, 0, 0, 0, 0, 0, 0);
+            break;
+
+        case SCSI_CMD_REQUEST_SENSE:
+            CMD_BYTES8(0, 0, 0, 18, 0, 0, 0, 0);
+            break;
+
+        case SCSI_CMD_INQUIRY:
+            CMD_BYTES8(0, 0, 0, 36, 0, 0, 0, 0);
+            break;
+
+        case SCSI_CMD_READ_CAPACITY10:
+            CMD_BYTES8(0, BYTE4(lba), BYTE3(lba), BYTE2(lba), BYTE1(lba), 0, 0, 0);
+            break;
+
+        case SCSI_CMD_READ10:
+            CMD_BYTES8(0, BYTE4(lba), BYTE3(lba), BYTE2(lba), BYTE1(lba), 0, BYTE2(len), BYTE1(len));
+            break;
+
+        case SCSI_CMD_WRITE10:
             CMD_BYTES8(0, BYTE4(lba), BYTE3(lba), BYTE2(lba), BYTE1(lba), 0, BYTE2(len), BYTE1(len));
             break;
     }
@@ -249,7 +343,7 @@ static int check_scsi_cmd(struct usb_interface_t *iface, uint32_t tag, void *sta
 static inline int sense_ok(struct usb_interface_t *iface, char *statbuf);
 
 static int send_scsi_cmd(struct usb_interface_t *iface, 
-                         uint8_t cmd, uint32_t lba, uint16_t __len,
+                         uint8_t *cmdbuf, uint16_t __len,
                          void *buf, void *statbuf)
 {
     struct usb_cmd_blk_wrapper_t cbw;
@@ -262,7 +356,7 @@ static int send_scsi_cmd(struct usb_interface_t *iface,
     kernel_mutex_lock_infinite_wait(&iface->usb->lock);
 
     tag = iface->cur_tag++;
-    prep_scsi_cmd(&cbw, tag, cmd, lba, len, blksz);
+    prep_scsi_cmd(&cbw, tag, cmdbuf, len, blksz);
 
     usb_setup_transfer(iface->usb, iface->endpoint_out, &transfer, USB_TRANSFER_BULK);
     usb_out_transaction(&transfer, 0, &cbw, 31);
@@ -273,13 +367,16 @@ static int send_scsi_cmd(struct usb_interface_t *iface,
     if(!transfer.success)
     {
         switch_tty(1);
-        printk("usb: failed to issue SCSI cmd 0x%x (send_scsi_cmd)\n", cmd);
+        printk("usb: failed to issue SCSI cmd 0x%x (send_scsi_cmd)\n", cmdbuf[0]);
         kpanic("*****\n");
         kernel_mutex_unlock(&iface->usb->lock);
         return -EIO;
     }
 
-    if(cmd == SCSI_CMD_READ || cmd == SCSI_CMD_WRITE)
+    if(cmdbuf[0] == SCSI_CMD_READ6 || cmdbuf[0] == SCSI_CMD_READ10 ||
+       cmdbuf[0] == SCSI_CMD_READ12 || cmdbuf[0] == SCSI_CMD_READ16 ||
+       cmdbuf[0] == SCSI_CMD_WRITE6 || cmdbuf[0] == SCSI_CMD_WRITE10 ||
+       cmdbuf[0] == SCSI_CMD_WRITE12 || cmdbuf[0] == SCSI_CMD_WRITE16)
     {
         len *= blksz;
     }
@@ -320,7 +417,7 @@ static int send_scsi_cmd(struct usb_interface_t *iface,
 
 
 static int send_scsi_cmd_out(struct usb_interface_t *iface, 
-                             uint8_t cmd, uint32_t lba, uint16_t __len,
+                             uint8_t *cmdbuf, uint16_t __len,
                              void *buf, void *statbuf)
 {
     struct usb_cmd_blk_wrapper_t cbw;
@@ -333,9 +430,10 @@ static int send_scsi_cmd_out(struct usb_interface_t *iface,
     kernel_mutex_lock_infinite_wait(&iface->usb->lock);
 
     tag = iface->cur_tag++;
-    prep_scsi_cmd(&cbw, tag, cmd, lba, len, blksz);
+    prep_scsi_cmd(&cbw, tag, cmdbuf, len, blksz);
 
-    if(cmd == SCSI_CMD_WRITE)
+    if(cmdbuf[0] == SCSI_CMD_WRITE6 || cmdbuf[0] == SCSI_CMD_WRITE10 ||
+       cmdbuf[0] == SCSI_CMD_WRITE12 || cmdbuf[0] == SCSI_CMD_WRITE16)
     {
         len *= blksz;
     }
@@ -350,7 +448,7 @@ static int send_scsi_cmd_out(struct usb_interface_t *iface,
     if(!transfer.success)
     {
         switch_tty(1);
-        printk("usb: failed to issue SCSI cmd 0x%x (send_scsi_cmd_out)\n", cmd);
+        printk("usb: failed to issue SCSI cmd 0x%x (send_scsi_cmd_out)\n", cmdbuf[0]);
         kpanic("*****\n");
         kernel_mutex_unlock(&iface->usb->lock);
         return -EIO;
@@ -404,17 +502,22 @@ uint8_t get_max_lun(struct usb_interface_t *iface)
 static inline int sense_ok(struct usb_interface_t *iface, char *statbuf)
 {
     struct sense_data_t sense_data;
+    uint8_t cmdbuf[16];
 
+    fill_cmd_buf(cmdbuf, SCSI_CMD_REQUEST_SENSE, 0, 0);
     A_memset(&sense_data, 0, sizeof(struct sense_data_t));
 
-    if(send_scsi_cmd(iface, SCSI_CMD_REQUEST_SENSE, 0, 
-                        sizeof(struct sense_data_t), &sense_data, statbuf) < 0)
+    if(send_scsi_cmd(iface, cmdbuf, sizeof(struct sense_data_t), &sense_data, statbuf) < 0)
     {
         return -EIO;
     }
 
-    // check we got valid data
-    if(!(sense_data.err_code & 0x80))
+    // Bit 7 means there is valid data in the sense response. We check it but
+    // we don't use the data except for the sense key and additional sense 
+    // code. These are valid in any case. We only need to check the error
+    // code is either 0x70 (current error) or 0x71 (deferred error)
+    if(!(sense_data.err_code & 0x80) && 
+       sense_data.err_code != 0x70 && sense_data.err_code != 0x71)
     {
         return -EINVAL;
     }
@@ -446,10 +549,13 @@ int test_unit_ready(struct usb_interface_t *iface)
     int res = -EIO;
     volatile uint8_t byte;
     volatile int timeout = 50;
+    uint8_t cmdbuf[16];
+
+    fill_cmd_buf(cmdbuf, SCSI_CMD_TEST_UNIT_READY, 0, 0);
 
     while(timeout--)
     {
-        if((res = send_scsi_cmd(iface, SCSI_CMD_TEST_UNIT_READY, 0, 0, 0, statbuf)) < 0)
+        if((res = send_scsi_cmd(iface, cmdbuf, 0, 0, statbuf)) < 0)
         {
             printk("usb-msd: TEST_UNIT_READY failed (err %d)\n", res);
 
@@ -512,6 +618,7 @@ void usb_msd_remove(struct usb_interface_t *iface)
 long usb_msd_read(struct ata_dev_s *dev, size_t lba, int sectors, uintptr_t buf)
 {
     struct usb_interface_t *iface = dev->priv;
+    uint8_t cmdbuf[16];
 
     if(!dev || !dev->priv)
     {
@@ -520,7 +627,8 @@ long usb_msd_read(struct ata_dev_s *dev, size_t lba, int sectors, uintptr_t buf)
 
     if(sectors <= SECTORS_TO_DO)
     {
-        return send_scsi_cmd(iface, SCSI_CMD_READ, lba, sectors, (void *)buf, 0);
+        fill_cmd_buf(cmdbuf, SCSI_CMD_READ10, lba, sectors);
+        return send_scsi_cmd(iface, cmdbuf, sectors, (void *)buf, 0);
     }
     else
     {
@@ -529,8 +637,9 @@ long usb_msd_read(struct ata_dev_s *dev, size_t lba, int sectors, uintptr_t buf)
         while(remaining > 0)
         {
             //printk("usb_msd_read: sectors %d, remaining %d, howmany %d\n", sectors, remaining, howmany);
+            fill_cmd_buf(cmdbuf, SCSI_CMD_READ10, lba, howmany);
 
-            if(send_scsi_cmd(iface, SCSI_CMD_READ, lba, howmany, (void *)buf, 0) < 0)
+            if(send_scsi_cmd(iface, cmdbuf, howmany, (void *)buf, 0) < 0)
             {
                 return -EIO;
             }
@@ -553,6 +662,7 @@ long usb_msd_read(struct ata_dev_s *dev, size_t lba, int sectors, uintptr_t buf)
 long usb_msd_write(struct ata_dev_s *dev, size_t lba, int sectors, uintptr_t buf)
 {
     struct usb_interface_t *iface = dev->priv;
+    uint8_t cmdbuf[16];
 
     if(!dev || !dev->priv)
     {
@@ -561,7 +671,8 @@ long usb_msd_write(struct ata_dev_s *dev, size_t lba, int sectors, uintptr_t buf
 
     if(sectors <= SECTORS_TO_DO)
     {
-        return send_scsi_cmd_out(iface, SCSI_CMD_WRITE, lba, sectors, (void *)buf, 0);
+        fill_cmd_buf(cmdbuf, SCSI_CMD_WRITE10, lba, sectors);
+        return send_scsi_cmd_out(iface, cmdbuf, sectors, (void *)buf, 0);
     }
     else
     {
@@ -569,7 +680,9 @@ long usb_msd_write(struct ata_dev_s *dev, size_t lba, int sectors, uintptr_t buf
 
         while(remaining > 0)
         {
-            if(send_scsi_cmd_out(iface, SCSI_CMD_WRITE, lba, howmany, (void *)buf, 0) < 0)
+            fill_cmd_buf(cmdbuf, SCSI_CMD_WRITE10, lba, howmany);
+
+            if(send_scsi_cmd_out(iface, cmdbuf, howmany, (void *)buf, 0) < 0)
             {
                 return -EIO;
             }
@@ -600,6 +713,7 @@ long usb_msd_strategy(struct disk_req_t *req)
     long res = 0;
     int sectors_per_block, sectors_to_read;
     int min = MINOR(req->dev);
+    unsigned long long oticks = ticks;
     /*
     struct ata_dev_s *dev = usb_disk_dev[min];
     struct parttab_s *part = usb_disk_part[min];
@@ -627,6 +741,8 @@ long usb_msd_strategy(struct disk_req_t *req)
         res = usb_msd_write(dev, block, sectors_to_read, req->data);
     }
 
+    this_core->iowait += (ticks - oticks);
+
     return res ? -EIO : (long)(sectors_to_read * dev->bytes_per_sector);
 }
 
@@ -642,6 +758,7 @@ int usb_msd_read_sector_direct(void *__dev, uintptr_t phys_buf, uintptr_t virt_b
 int init_msd(struct usb_interface_t *iface)
 {
     char buf[36];
+    uint8_t cmdbuf[16];
     int res;
     uint32_t lba, blksz;
     struct ata_dev_s *dev;
@@ -689,7 +806,9 @@ int init_msd(struct usb_interface_t *iface)
     //get_max_lun(iface);
 
     // send SCSI command INQUIRY
-    if((res = send_scsi_cmd(iface, SCSI_CMD_INQUIRY, 0, 36, buf, 0)) < 0)
+    fill_cmd_buf(cmdbuf, SCSI_CMD_INQUIRY, 0, 0);
+
+    if((res = send_scsi_cmd(iface, cmdbuf, 36, buf, 0)) < 0)
     {
         printk("usb-msd: INQUIRY failed (err %d)\n", res);
         return res;
@@ -703,7 +822,9 @@ int init_msd(struct usb_interface_t *iface)
     }
 
     // send SCSI command READ CAPACITY
-    if((res = send_scsi_cmd(iface, SCSI_CMD_READ_CAPACITY, 0, 8, buf, 0)) < 0)
+    fill_cmd_buf(cmdbuf, SCSI_CMD_READ_CAPACITY10, 0, 0);
+
+    if((res = send_scsi_cmd(iface, cmdbuf, 8, buf, 0)) < 0)
     {
         printk("usb-msd: READ_CAPACITY failed (err %d)\n", res);
         return res;
@@ -744,5 +865,192 @@ int init_msd(struct usb_interface_t *iface)
     read_disk_mbr("usb", dev, dev->bytes_per_sector, usb_msd_read_sector_direct, ahci_register_dev);
 
     return 0;
+}
+
+
+/*
+ * Pass the SCSI command to the USB device, copying data in
+ * and out as asked by the user.
+ */
+long scsi_usb_passthrough(struct ata_dev_s *dev, char *arg)
+{
+    struct usb_interface_t *iface = dev->priv;
+    struct scsi_ioctl_command_t *userarg = (struct scsi_ioctl_command_t *)arg;
+    uintptr_t tmp_phys, tmp_virt;
+    unsigned int inlen, outlen, op, cmdlen, bytes = 0;
+    long res;
+    unsigned char cmdbuf[16];
+
+    if(!dev || !dev->priv)
+    {
+        return -EINVAL;
+    }
+
+    COPY_VAL_FROM_USER(&inlen, &userarg->inlen);
+    COPY_VAL_FROM_USER(&outlen, &userarg->outlen);
+    COPY_VAL_FROM_USER(&op, &userarg->data[0]);
+
+    if(inlen > PAGE_SIZE || outlen > PAGE_SIZE)
+    {
+        return -EINVAL;
+    }
+
+    cmdlen = SCSI_COMMAND_SIZE(op);
+    COPY_FROM_USER(cmdbuf, userarg->data, cmdlen);
+
+    if(!(tmp_phys = (uintptr_t)pmmngr_alloc_block()))
+    {
+        return -ENOMEM;
+    }
+
+    tmp_virt = PHYS_TO_HIMEM(tmp_phys);
+    A_memset((void *)tmp_virt, 0, PAGE_SIZE);
+
+    if(inlen && copy_from_user((void *)tmp_virt, userarg->data + cmdlen, inlen) != 0)
+    {
+        pmmngr_free_block((void *)tmp_phys);
+        return -EFAULT;
+    }
+
+    /*
+     * TODO: we should check for r/w permissions here and fail with -EPERM.
+     */
+
+#define ENSURE_OUTLEN()                         \
+    if(!outlen) {                               \
+        pmmngr_free_block((void *)tmp_phys);    \
+        return -EINVAL;                         \
+    }
+
+#define ENSURE_INLEN()                          \
+    if(!inlen) {                                \
+        pmmngr_free_block((void *)tmp_phys);    \
+        return -EINVAL;                         \
+    }
+
+    switch(op)
+    {
+        // No data transfer
+        case SCSI_CMD_TEST_UNIT_READY:
+        case SCSI_CMD_START_STOP_UNIT:
+            res = send_scsi_cmd(iface, cmdbuf, 0, 0, NULL);
+            break;
+
+        // Device to Host
+        case SCSI_CMD_REQUEST_SENSE:
+            ENSURE_OUTLEN();
+            res = send_scsi_cmd(iface, cmdbuf, 18, (void *)tmp_virt, NULL);
+            bytes = 18;
+            break;
+
+        case SCSI_CMD_INQUIRY:
+            ENSURE_OUTLEN();
+            res = send_scsi_cmd(iface, cmdbuf, 36, (void *)tmp_virt, NULL);
+            bytes = 36;
+            break;
+
+        case SCSI_CMD_READ_CAPACITY10:
+            ENSURE_OUTLEN();
+            res = send_scsi_cmd(iface, cmdbuf,  8, (void *)tmp_virt, NULL);
+            bytes = 8;
+            break;
+
+        case SCSI_CMD_READ_CAPACITY16:
+            ENSURE_OUTLEN();
+            res = send_scsi_cmd(iface, cmdbuf, 32, (void *)tmp_virt, NULL);
+            bytes = 32;
+            break;
+
+        case SCSI_CMD_MODE_SENSE6:
+            ENSURE_OUTLEN();
+            res = send_scsi_cmd(iface, cmdbuf, outlen, (void *)tmp_virt, NULL);
+            bytes = outlen;
+            break;
+
+        case SCSI_CMD_MODE_SENSE10:
+            ENSURE_OUTLEN();
+            res = send_scsi_cmd(iface, cmdbuf, outlen, (void *)tmp_virt, NULL);
+            bytes = outlen;
+            break;
+
+        case SCSI_CMD_READ6:
+        case SCSI_CMD_READ10:
+        case SCSI_CMD_READ12:
+        case SCSI_CMD_READ16:
+        {
+            ENSURE_OUTLEN();
+
+            struct scsi_rw_args_t rwargs = {0, };
+
+            if(!parse_scsi_rw_command(cmdbuf, &rwargs))
+            {
+                pmmngr_free_block((void *)tmp_phys);
+                return -EINVAL;
+            }
+
+            bytes = rwargs.sector_count * dev->bytes_per_sector;
+
+            if(bytes > PAGE_SIZE)
+            {
+                pmmngr_free_block((void *)tmp_phys);
+                return -EINVAL;
+            }
+
+            res = send_scsi_cmd(iface, cmdbuf, rwargs.sector_count, (void *)tmp_virt, NULL);
+            break;
+        }
+
+        // Host to Device
+        case SCSI_CMD_MODE_SELECT6:
+        case SCSI_CMD_MODE_SELECT10:
+            ENSURE_INLEN();
+            res = send_scsi_cmd_out(iface, cmdbuf, inlen, (void *)tmp_virt, NULL);
+            break;
+
+        case SCSI_CMD_WRITE6:
+        case SCSI_CMD_WRITE10:
+        case SCSI_CMD_WRITE12:
+        case SCSI_CMD_WRITE16:
+        {
+            ENSURE_INLEN();
+
+            struct scsi_rw_args_t rwargs = {0, };
+
+            if(!parse_scsi_rw_command(cmdbuf, &rwargs))
+            {
+                pmmngr_free_block((void *)tmp_phys);
+                return -EINVAL;
+            }
+
+            bytes = rwargs.sector_count * dev->bytes_per_sector;
+
+            if(bytes > PAGE_SIZE)
+            {
+                pmmngr_free_block((void *)tmp_phys);
+                return -EINVAL;
+            }
+
+            res = send_scsi_cmd_out(iface, cmdbuf, rwargs.sector_count, (void *)tmp_virt, NULL);
+            break;
+        }
+
+        default:
+            pmmngr_free_block((void *)tmp_phys);
+            return -EINVAL;
+    }
+
+    if(res == 0 && outlen)
+    {
+        bytes = MIN(bytes, outlen);
+
+        if(copy_to_user(userarg->data, (void *)tmp_virt, bytes) != 0)
+        {
+            res = -EFAULT;
+        }
+    }
+
+    pmmngr_free_block((void *)tmp_phys);
+
+    return res;
 }
 

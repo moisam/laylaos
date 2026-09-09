@@ -653,19 +653,15 @@ static void uhci_wait_transfer(struct usb_transfer_t *transfer)
             break;
         }
 
+        __asm__ __volatile__("pause":::);
         /*
-        __asm__ __volatile__("pause":::);
-        __asm__ __volatile__("pause":::);
-        __asm__ __volatile__("pause":::);
-        //scheduler();
-        //tick_delay(2);
-        */
         set_task_waking_signal(this_core->cur_task, 0);
         __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
         block_task_timeout(this_core->cur_task, 1);
+        */
     }
 
-    if(!timeout)
+    if(timeout <= 0)
     {
         printk("%s: transfer timed out\n", "uhci");
     }
@@ -677,6 +673,8 @@ static void uhci_wait_transfer(struct usb_transfer_t *transfer)
     {
         struct uhci_transaction_t *uhcitrans = usbtrans->data;
         transfer->success = (transfer->success && transaction_success(uhcitrans->tdvirt));
+
+        //printk("uhci_wait_transfer: usbtrans 0x%lx, td->dword1 0x%x, success %d\n", usbtrans, uhcitrans->tdvirt->dword1, transfer->success);
 
         if(transfer->success)
         {
@@ -1527,8 +1525,6 @@ int uhci_intr(struct regs *r, void *arg)
         KDEBUG("uhci_intr: host system error\n");
         pcidev_outw(uhci, UHCI_REG_STS, UHCI_STS_HOSTERR);
     }
-
-    pic_send_eoi(uhci->pci->irq[0]);
 
     return 1;
 }

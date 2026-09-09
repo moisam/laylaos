@@ -200,6 +200,7 @@ static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
     }
 
     out->bdl = (struct hda_bdl_entry_t *)mmio_map(out->pbdl_base, out->pbdl_base + PAGE_SIZE);
+    A_memset(out->bdl, 0, PAGE_SIZE);
 
     for(i = 0; i < BDL_ENTRIES; i += 2)
     {
@@ -210,6 +211,7 @@ static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
         }
 
         out->vbdl[i] = mmio_map(out->bdl[i].paddr, out->bdl[i].paddr + PAGE_SIZE);
+        A_memset((void *)out->vbdl[i], 0, PAGE_SIZE);
 
         out->bdl[i].len = BDL_BUFSZ;
         out->bdl[i].flags = 1;
@@ -283,7 +285,7 @@ static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
     printk("hdi: gain steps 0x%x (amp caps 0x%x)\n", out->amp_gain_steps, dword);
 
 
-
+    /*
     uint64_t response;
     dword = hda_get_verb_response(hda, codec, node, VERB_GET_EAPD_BTL);
     printk("eapd 0x%x, ", dword);
@@ -308,8 +310,7 @@ static int hda_add_codec_output(struct hda_dev_t *hda, int codec, int node)
     printk("lgain 0x%x, ", dword);
     dword = hda_get_verb_response(hda, codec, node, VERB_GET_AMP_GAIN_MUTE | (1 << 15) | (0 << 13));
     printk("rgain 0x%x\n", dword);
-
-
+    */
 
 
     // enable IRQs from this stream
@@ -811,6 +812,7 @@ int hda_init(struct pci_dev_t *pci)
     }
 
     hda->corb = (uint32_t *)mmio_map(hda->pcorb, hda->pcorb + PAGE_SIZE);
+    A_memset(hda->corb, 0, PAGE_SIZE);
 
     if(!(hda->prirb = (uintptr_t)pmmngr_alloc_block()))
     {
@@ -819,6 +821,7 @@ int hda_init(struct pci_dev_t *pci)
     }
 
     hda->rirb = (uint64_t *)mmio_map(hda->prirb, hda->prirb + PAGE_SIZE);
+    A_memset((void *)hda->rirb, 0, PAGE_SIZE);
 
     // reset
     hda_outl(REG_GLOBCTL, 1);
@@ -1165,7 +1168,6 @@ int hda_intr(struct regs *r, void *arg)
     }
     
     hda_outl(REG_INTSTS, isr);
-    pic_send_eoi(hda->pci->irq[0]);
 
     return 1;
 }
@@ -1186,7 +1188,12 @@ static void wait_for_buffer(struct hda_dev_t *hda, uint32_t bufindex)
             return;
         }
 
-        scheduler();
+        //scheduler();
+        //__asm__ __volatile__("pause":::);
+        set_task_waking_signal(this_core->cur_task, 0);
+        __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
+        block_task_timeout(this_core->cur_task, 5);
+
         playing = (hda->flags & HDA_FLAG_PLAYING);
     }
 }

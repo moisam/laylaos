@@ -32,6 +32,8 @@
 
 #include <errno.h>
 #include <sys/hdreg.h>
+#include <scsi/scsi.h>
+#include <scsi/scsi_ioctl.h>
 #include <kernel/laylaos.h>
 #include <kernel/timer.h>
 #include <kernel/ata.h>
@@ -44,6 +46,8 @@
 #include <kernel/cdrom.h>
 #include <kernel/asm.h>
 #include <kernel/usb.h>
+#include <kernel/blkpg.h>
+#include <kernel/scsi.h>
 #include <mm/kheap.h>
 #include <mm/kstack.h>
 //#include <kernel/gpt_mbr.h>
@@ -98,15 +102,11 @@ struct ata_dev_s *ahci_cdrom_dev[MAX_AHCI_CDROMS];
 struct parttab_s *ahci_disk_part[MAX_AHCI_DEVICES];
 struct kernel_mutex_t ahci_disk_tablock;
 
-int ahci_intr(struct regs *r, void *arg);
-long ahci_sata_read(struct ata_dev_s *dev, size_t lba, int __sectors,
-                                           uintptr_t phys_buf);
-long ahci_sata_write(struct ata_dev_s *dev, size_t lba, int __sectors,
-                                            uintptr_t phys_buf);
-long ahci_satapi_read(struct ata_dev_s *dev, size_t lba, int __sectors,
-                                             uintptr_t phys_buf);
-long ahci_satapi_write(struct ata_dev_s *dev, size_t lba, int __sectors,
-                                              uintptr_t phys_buf);
+int ahci_intr(struct regs *, void *);
+long ahci_sata_read(struct ata_dev_s *, size_t, int, uintptr_t);
+long ahci_sata_write(struct ata_dev_s *, size_t, int, uintptr_t);
+long ahci_satapi_read(struct ata_dev_s *, size_t, int, uintptr_t);
+long ahci_satapi_write(struct ata_dev_s *, size_t, int, uintptr_t);
 
 void ahci_register_dev(void *__dev, struct parttab_s *part, int n);
 static int read_sector_direct(void *__dev, uintptr_t phys_buf, uintptr_t virt_buf, uint32_t lba);
@@ -146,9 +146,9 @@ STATIC_INLINE struct parttab_s *AHCI_PART(dev_t dev)
  */
 long ahci_strategy(struct disk_req_t *req)
 {
-    size_t block;
+    volatile size_t block;
     long res = 0;
-    int sectors_per_block, sectors_to_read;
+    int sectors_per_block, sectors_to_read, save_sectors_to_read;
     struct ata_dev_s *dev = AHCI_DEV(req->dev);
     struct parttab_s *part = AHCI_PART(req->dev);
 
@@ -172,6 +172,7 @@ long ahci_strategy(struct disk_req_t *req)
     }
 
     sectors_to_read = req->datasz / dev->bytes_per_sector;
+    save_sectors_to_read = sectors_to_read;
     sectors_per_block = req->fs_blocksz / dev->bytes_per_sector;
     block = req->blockno * sectors_per_block;
 
@@ -186,9 +187,11 @@ long ahci_strategy(struct disk_req_t *req)
     // page, which we read in the if-block after the loop.
     int sectors_per_page = PAGE_SIZE / dev->bytes_per_sector;
     int pages = sectors_to_read / sectors_per_page;
-    int i;
+    volatile int i;
     long (*func)(struct ata_dev_s *, size_t, int, uintptr_t);
-    uintptr_t virt = req->data;
+    volatile uintptr_t virt = req->data;
+    volatile uintptr_t phys;
+    unsigned long long oticks = ticks;
 
     if(!req->write)
     {
@@ -199,26 +202,61 @@ long ahci_strategy(struct disk_req_t *req)
         func = (dev->type == IDE_SATA) ? ahci_sata_write : ahci_satapi_write;
     }
 
-    for(i = 0; i < pages; i++, block += sectors_per_page, virt += PAGE_SIZE)
+    // BUGFIX: We cannot read directly into the virtual address's physical
+    //         memory because it might not be page-aligned. As the lowest 12
+    //         bits are used by the paging system for page flags, we need to
+    //         ensure we are reading on a page boundary, hence the unfortunate
+    //         use of a temporary physical frame with copy
+    if(!(phys = (uintptr_t)pmmngr_alloc_block()))
     {
-        uintptr_t phys = get_phys_addr(virt) + (virt - align_down(virt));
+        printk("ahci: insufficient memory to read/write\n");
+        return -EIO;
+    }
 
-        if((res = func(dev, block, sectors_per_page, phys)) != 0)
+    // BUGFIX: If the page cache requests a read/write smaller than PAGE_SIZE
+    //         we should only read as much as requested
+    if(sectors_to_read >= sectors_per_page)
+    {
+        for(i = 0; i < pages; i++, block += sectors_per_page, virt += PAGE_SIZE)
         {
-            break;
-        }
+            if(req->write)
+            {
+                A_memcpy((void *)PHYS_TO_HIMEM(phys), (void *)virt, PAGE_SIZE);
+            }
 
-        sectors_to_read -= sectors_per_page;
+            if((res = func(dev, block, sectors_per_page, phys)) != 0)
+            {
+                break;
+            }
+
+            if(!req->write)
+            {
+                A_memcpy((void *)virt, (void *)PHYS_TO_HIMEM(phys), PAGE_SIZE);
+            }
+
+            sectors_to_read -= sectors_per_page;
+        }
     }
 
     if(res == 0 && sectors_to_read)
     {
-        uintptr_t phys = get_phys_addr(virt) + (virt - align_down(virt));
+        size_t bytes = sectors_to_read * dev->bytes_per_sector;
 
-        res = func(dev, block, sectors_to_read, phys);
+        if(req->write)
+        {
+            A_memcpy((void *)PHYS_TO_HIMEM(phys), (void *)virt, bytes);
+        }
+
+        if((res = func(dev, block, sectors_to_read, phys)) == 0 && !req->write)
+        {
+            A_memcpy((void *)virt, (void *)PHYS_TO_HIMEM(phys), bytes);
+        }
     }
 
-    return res ? -EIO : (long)(sectors_to_read * dev->bytes_per_sector);
+    pmmngr_free_block((void *)phys);
+    this_core->iowait += (ticks - oticks);
+
+    return res ? -EIO : (long)(save_sectors_to_read * dev->bytes_per_sector);
 }
 
 
@@ -285,6 +323,180 @@ long __ahci_remove_dev(dev_t dev_id, int remove_parent, int force)
 }
 
 
+long ahci_remove_partition(dev_t devid, int partno)
+{
+    int maj = MAJOR(devid);
+    int min = MINOR(devid);
+    struct parttab_s *part;
+
+    partno += min;
+    remove_dev_node(TO_DEVID(maj, partno));
+
+    kernel_mutex_lock(&ahci_disk_tablock);
+
+    if(!AHCI_PART(TO_DEVID(maj, partno)))
+    {
+        kernel_mutex_unlock(&ahci_disk_tablock);
+        return -ENXIO;
+    }
+
+    part = ahci_disk_part[partno];
+    ahci_disk_dev[partno] = NULL;
+    ahci_disk_part[partno] = NULL;
+
+    kernel_mutex_unlock(&ahci_disk_tablock);
+
+    if(part)
+    {
+        kfree(ahci_disk_part[partno]);
+    }
+
+    return 0;
+}
+
+
+long ahci_partition_overlaps(dev_t devid, int partno, size_t lba, size_t end)
+{
+    int min = MINOR(devid);
+    int i, curpart = 1;
+
+    kernel_mutex_lock(&ahci_disk_tablock);
+
+    for(i = min + 1; i < min + 16; i++, curpart++)
+    {
+        if(ahci_disk_part[i] == NULL)
+        {
+            continue;
+        }
+
+        if(partno != curpart &&
+           lba < (ahci_disk_part[i]->lba + ahci_disk_part[i]->total_sectors) &&
+           end > ahci_disk_part[i]->lba)
+        {
+            kernel_mutex_unlock(&ahci_disk_tablock);
+            return -EBUSY;
+        }
+    }
+
+    kernel_mutex_unlock(&ahci_disk_tablock);
+
+    return 0;
+}
+
+
+long ahci_add_partition(dev_t devid, int partno, size_t lba, size_t end)
+{
+    char name[8];
+    int maj = MAJOR(devid);
+    int min = MINOR(devid);
+    struct parttab_s *part;
+
+    if(partno >= 16)
+    {
+        return -ENXIO;
+    }
+
+    if(!(part = kmalloc(sizeof(struct parttab_s))))
+    {
+        return -ENOMEM;
+    }
+
+    A_memset(part, 0, sizeof(struct parttab_s));
+
+    kernel_mutex_lock(&ahci_disk_tablock);
+
+    // parent device must exist, and make sure no one slipped in and created
+    // a partition here before us
+    if(ahci_disk_dev[min] == NULL || ahci_disk_part[min + partno] != NULL)
+    {
+        kernel_mutex_unlock(&ahci_disk_tablock);
+        kfree(part);
+        return -ENXIO;
+    }
+
+    part->lba = lba;
+    part->total_sectors = end - lba;
+    part->dev = ahci_disk_dev[min];
+
+    name[0] = 's';
+    name[1] = 'd';
+    name[2] = 'a' + (min / 16);
+
+    int j = 3;
+
+    if(partno >= 10)
+    {
+        name[j++] = '0' + (int)(partno / 10);
+    }
+
+    name[j++] = '0' + (int)(partno % 10);
+    name[j] = '\0';
+
+    partno += min;
+    ahci_disk_dev[partno] = part->dev;
+    ahci_disk_part[partno] = part;
+
+    kernel_mutex_unlock(&ahci_disk_tablock);
+
+    add_dev_node(name, TO_DEVID(maj, partno), (S_IFBLK | 0664));
+
+    return 0;
+}
+
+
+long ahci_resize_partition(dev_t devid, int partno, size_t lba, size_t end)
+{
+    int min = MINOR(devid);
+
+    if(partno >= 16)
+    {
+        return -ENXIO;
+    }
+
+    partno += min;
+
+    kernel_mutex_lock(&ahci_disk_tablock);
+
+    // parent device must exist, as well as the partition itself
+    if(ahci_disk_dev[partno] == NULL || ahci_disk_part[partno] == NULL)
+    {
+        kernel_mutex_unlock(&ahci_disk_tablock);
+        return -ENXIO;
+    }
+
+    // TODO: should we allow resize to the left?
+    if(lba != ahci_disk_part[partno]->lba)
+    {
+        kernel_mutex_unlock(&ahci_disk_tablock);
+        return -ENXIO;
+    }
+
+    ahci_disk_part[partno]->total_sectors = end - lba;
+
+    kernel_mutex_unlock(&ahci_disk_tablock);
+
+    return 0;
+}
+
+
+int ahci_max_partitions(dev_t devid)
+{
+    UNUSED(devid);
+
+    return 16;
+}
+
+
+struct blkpg_ops_t ahci_blkpg_ops =
+{
+    .remove = ahci_remove_partition,
+    .overlaps = ahci_partition_overlaps,
+    .add = ahci_add_partition,
+    .resize = ahci_resize_partition,
+    .maxparts = ahci_max_partitions,
+};
+
+
 /*
  * General AHCI block device control function
  */
@@ -306,6 +518,34 @@ long ahci_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
         case BLKFLSBUF:
         case HDIO_GETGEO:
             return common_ata_ioctl(dev_id, dev, part, cmd, arg, kernel);
+
+        case BLKPG:
+            return common_blkpg_ioctl(dev_id, dev, part, &ahci_blkpg_ops, arg);
+
+        case SCSI_IOCTL_SEND_COMMAND:
+            return scsi_to_ata_command(dev_id, dev, arg);
+
+        case SCSI_IOCTL_GET_IDLUN:
+        {
+            /*
+             * "four_in_one" is made up as follows:
+             *      (scsi_device_id | (lun << 8) | (channel << 16) | (host_no << 24))
+             * See: https://tldp.org/HOWTO/SCSI-Generic-HOWTO/scsi_g_idlun.html
+             */
+            struct scsi_idlun_t
+            {
+                int four_in_one;    /* 4 separate bytes of info compacted into 1 int */
+                int host_unique_id; /* distinguishes adapter cards from same supplier */
+            } argres;
+
+            argres.four_in_one = (MINOR(dev_id)) |
+                                 (0 /* LUN */ << 8) |
+                                 (dev->port_index << 16) |
+                                 (0 /* host_no */ << 24);
+            argres.host_unique_id = 0 /* LUN */;
+
+            return copy_to_user(arg, &argres, sizeof(struct scsi_idlun_t));
+        }
 
         case BLKRRPART:
         {
@@ -409,7 +649,7 @@ int find_cmdslot(HBA_PORT *port)
         slots >>= 1;
     }
 
-    printk("ahci: cannot find free command list entry\n");
+    kpanic("ahci: cannot find free command list entry\n");
     return -1;
 }
 
@@ -436,7 +676,7 @@ static inline int lock_and_find_cmdslot(struct ahci_dev_t *ahci, HBA_PORT *port,
 
 
 static inline void setup_fis(FIS_REG_H2D *fis, uint8_t command,
-                                               size_t lba, int sectors)
+                             size_t lba, int sectors, int force_dma)
 {
     fis->fis_type = FIS_TYPE_REG_H2D;
     fis->c = 1;
@@ -444,12 +684,22 @@ static inline void setup_fis(FIS_REG_H2D *fis, uint8_t command,
     fis->lba0 = (uint8_t)lba;
     fis->lba1 = (uint8_t)(lba >> 8);
     fis->lba2 = (uint8_t)(lba >> 16);
-    fis->device = (1 << 6);         // LBA mode
     fis->lba3 = (uint8_t)(lba >> 24);
     fis->lba4 = (uint8_t)(lba >> 32);
     fis->lba5 = (uint8_t)(lba >> 40);
     fis->countl = (sectors & 0xff);
     fis->counth = (sectors >> 8) & 0xff;
+
+    if(force_dma)
+    {
+        fis->featurel = 1;          // DMA mode
+        fis->device = 0;
+    }
+    else
+    {
+        fis->featurel = 0;
+        fis->device = (1 << 6);         // LBA mode
+    }
 }
 
 
@@ -472,17 +722,22 @@ static inline void setup_cmd_hdr(HBA_CMD_HEADER *cmd_hdr, int write, int atapi, 
 static inline void setup_prdt(HBA_CMD_HEADER *cmd_hdr, HBA_CMD_TBL *table, 
                               uintptr_t phys_buf, int sectors, int sectorsz)
 {
-    int i, j = 0x2000 / sectorsz;
+    int i = 0, j = 0x1000 / sectorsz;
+
+    if(cmd_hdr->prdtl > 1 || sectors > 8)
+    {
+        kpanic("**** error in setup_prdt -- revise the code!\n");
+    }
 
     for(i = 0; i < cmd_hdr->prdtl - 1; i++)
     {
         table->prdt_entry[i].dba = (phys_buf & 0xffffffff);
         table->prdt_entry[i].dbau = (phys_buf >> 32);
-        table->prdt_entry[i].dbc = 0x2000 - 1;  // 8kb - 1
+        table->prdt_entry[i].dbc = 0x1000 - 1;  // 4kb - 1
         table->prdt_entry[i].i = 1;
-        phys_buf += 0x2000;      // 8kb
-        sectors -= j;            // 16 sectors for 512 byte-sectors
-                                 // 4 sectors for 2048 byte-sectors
+        phys_buf += 0x1000;      // 4kb
+        sectors -= j;            // 8 sectors for 512 byte-sectors
+                                 // 2 sectors for 2048 byte-sectors
     }
 
     // set up the last entry
@@ -596,7 +851,7 @@ long ahci_sata_read(struct ata_dev_s *dev, size_t lba, int __sectors,
 
     // set up the command
     setup_fis((FIS_REG_H2D *)table->cfis, ATA_CMD_READ_DMA_EXT,
-                                          lba, __sectors);
+                                          lba, __sectors, 0);
     
     return wait_for_port(port, slot, &ahci->port_lock[port_index]);
 }
@@ -608,7 +863,8 @@ long ahci_sata_read(struct ata_dev_s *dev, size_t lba, int __sectors,
  */
 long achi_satapi_read_packet(struct ata_dev_s *dev,
                              uintptr_t phys_buf, size_t bufsz,
-                             size_t lba, int sectors, unsigned char *packet)
+                             size_t lba, int sectors, 
+                             unsigned char *packet, int force_dma)
 {
     volatile long i;
     int slot;
@@ -651,10 +907,10 @@ long achi_satapi_read_packet(struct ata_dev_s *dev,
                                             ATAPI_SECTOR_SIZE);
     }
 
-    setup_fis((FIS_REG_H2D *)table->cfis, ATA_CMD_PACKET, lba, sectors);
+    setup_fis((FIS_REG_H2D *)table->cfis, ATA_CMD_PACKET, lba, sectors, force_dma);
 
     // set up the command
-    for(i = 0; i < 12; i++)
+    for(i = 0; i < 16; i++)
     {
         table->acmd[i] = packet[i];
     }
@@ -687,7 +943,7 @@ long achi_satapi_read_packet_virt(struct ata_dev_s *dev,
         tmp_virt = PHYS_TO_HIMEM(tmp_phys);
     }
 
-    if(achi_satapi_read_packet(dev, tmp_phys, bufsz, lba, sectors, packet) != 0)
+    if(achi_satapi_read_packet(dev, tmp_phys, bufsz, lba, sectors, packet, 0) != 0)
     {
         if(tmp_phys)
         {
@@ -716,7 +972,7 @@ long achi_satapi_read_packet_virt(struct ata_dev_s *dev,
  */
 int ahci_satapi_read_capacity(struct ata_dev_s *dev)
 {
-    unsigned char packet[12];
+    unsigned char packet[16];
     uint8_t ide_buf[8];
     printk("ahci_satapi_read_capacity:\n");
 
@@ -732,6 +988,10 @@ int ahci_satapi_read_capacity(struct ata_dev_s *dev)
     packet[9 ] = 0;
     packet[10] = 0;
     packet[11] = 0;
+    packet[12] = 0;
+    packet[13] = 0;
+    packet[14] = 0;
+    packet[15] = 0;
 
     if(achi_satapi_read_packet_virt(dev, (uintptr_t)ide_buf, 8, 0, 0, packet) != 0)
     {
@@ -761,8 +1021,8 @@ int ahci_satapi_read_capacity(struct ata_dev_s *dev)
 long ahci_satapi_read(struct ata_dev_s *dev, size_t lba, int __sectors,
                                              uintptr_t phys_buf)
 {
-    unsigned char packet[12];
-    printk("ahci_satapi_read:\n");
+    unsigned char packet[16];
+    //printk("ahci_satapi_read:\n");
 
     // make sure we have the device capacity
     if(dev->size == 0)
@@ -789,8 +1049,12 @@ long ahci_satapi_read(struct ata_dev_s *dev, size_t lba, int __sectors,
     packet[9 ] = __sectors;
     packet[10] = 0;
     packet[11] = 0;
+    packet[12] = 0;
+    packet[13] = 0;
+    packet[14] = 0;
+    packet[15] = 0;
 
-    return achi_satapi_read_packet(dev, phys_buf, 0, lba, __sectors, packet);
+    return achi_satapi_read_packet(dev, phys_buf, 0, lba, __sectors, packet, 0);
 }
 
 
@@ -831,7 +1095,7 @@ long ahci_sata_write(struct ata_dev_s *dev, size_t lba, int __sectors,
 
     // set up the command
     setup_fis((FIS_REG_H2D *)table->cfis, ATA_CMD_WRITE_DMA_EXT,
-                                          lba, __sectors);
+                                          lba, __sectors, 0);
 
     return wait_for_port(port, slot, &ahci->port_lock[port_index]);
 }
@@ -1027,8 +1291,9 @@ int ahci_sata_identify(struct ahci_dev_t *ahci, int port_index,
     setup_fis((FIS_REG_H2D *)table->cfis, 
                 (type == IDE_SATA) ? ATA_CMD_IDENTIFY : ATA_CMD_IDENTIFY_PACKET, 
                 0, 
-                (type == IDE_SATA) ? 1 : 0);
-    
+                (type == IDE_SATA) ? 1 : 0,
+                0);
+
     //printk("fis @ 0x%lx\n", fis);
     
     while((port->tfd & (ATA_SR_BUSY  | ATA_SR_DRQ)) && spin < 1000000)
@@ -1159,8 +1424,6 @@ void ahci_sata_init(struct ahci_dev_t *ahci, int port_index, int type)
     /*
      * Send the identify command. We will use a temporary page for this
      */
-    uint8_t *ide_buf;
-
     if(!(tmp_phys = (uintptr_t)pmmngr_alloc_block()))
     {
         printk("ahci: insufficient memory to read device info\n");
@@ -1180,62 +1443,14 @@ void ahci_sata_init(struct ahci_dev_t *ahci, int port_index, int type)
         kfree(dev);
         return;
     }
-    
-    ide_buf = (uint8_t *)tmp_virt;
-    
-    // read device parameters
+
     dev->type = type;
-    //dev->type = IDE_SATA;
     dev->irq = ahci->pci->irq[0];
     dev->base = ahci->iobase;
     dev->ahci = ahci;
     dev->port_index = port_index;
 
-    dev->sign = U16(ide_buf, ATA_IDENT_DEVICETYPE);
-    dev->capabilities = U16(ide_buf, ATA_IDENT_CAPABILITIES);
-    dev->commandsets =  U32(ide_buf, ATA_IDENT_COMMANDSETS);
-
-    // string indicating device model
-    for(l = ATA_IDENT_MODEL; l < (ATA_IDENT_MODEL + 40); l += 2)
-    {
-        dev->model[l - ATA_IDENT_MODEL] = ide_buf[l + 1];
-        dev->model[(l + 1) - ATA_IDENT_MODEL] = ide_buf[l];
-    }
-    
-    dev->model[40] = 0;
-
-    for(l = ATA_IDENT_SERIAL; l < (ATA_IDENT_SERIAL + 20); l += 2)
-    {
-        dev->serial[l - ATA_IDENT_SERIAL] = ide_buf[l + 1];
-        dev->serial[(l + 1) - ATA_IDENT_SERIAL] = ide_buf[l];
-    }
-    
-    dev->serial[20] = 0;
-
-    for(l = 46; l < 54; l += 2)
-    {
-        dev->firmware[l - 46] = ide_buf[l + 1];
-        dev->firmware[(l + 1) - 46] = ide_buf[l];
-    }
-    
-    dev->firmware[8] = 0;
-
-    if(type == IDE_SATA)
-    {
-        ata_get_blocksz(dev, ide_buf);
-    }
-    else
-    {
-        /*
-        if(ahci_satapi_read_capacity(dev) != 0)
-        {
-            printk("ahci: failed to read SATAPI device capacity\n");
-        }
-        */
-
-        dev->size = 0;
-        dev->bytes_per_sector = ATAPI_SECTOR_SIZE;
-    }
+    ata_parse_identify_data(dev, (uint8_t *)tmp_virt);
     
     printk("  %s disk:\n", (type == IDE_SATA) ? "SATA" : "SATAPI");
     printk("    Model = %s\n", dev->model);
@@ -1497,7 +1712,6 @@ int ahci_intr(struct regs *r, void *arg)
     }
     
     hba->is = isr;
-    pic_send_eoi(ahci->pci->irq[0]);
 
     return 1;
 }

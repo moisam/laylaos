@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2021, 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2021, 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: ata_rw.c
  *    This file is part of LaylaOS.
@@ -40,22 +40,24 @@
 #include <kernel/task.h>
 #include <mm/dma.h>
 
+#define MAX_RW_SECTORS          (256)
+
 extern struct ata_devtab_s tab1;     // for devices with maj == 3
 extern struct ata_devtab_s tab2;     // for devices with maj == 22
 
 // function prototypes
 
-static long ata_read_pio(struct ata_dev_s *dev, unsigned char numsects,
+static long ata_read_pio(struct ata_dev_s *dev, int numsects,
                          size_t lba, virtual_addr buf);
-static long ata_write_pio(struct ata_dev_s *dev, unsigned char numsects,
+static long ata_write_pio(struct ata_dev_s *dev, int numsects,
                           size_t lba, virtual_addr buf);
-static long ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
+static long ata_read_dma(struct ata_dev_s *dev, int numsects,
                          size_t lba, virtual_addr buf);
-static long ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
+static long ata_write_dma(struct ata_dev_s *dev, int numsects,
                           size_t lba, virtual_addr buf);
-static long atapi_read_pio(struct ata_dev_s *dev, unsigned char numsects,
+static long atapi_read_pio(struct ata_dev_s *dev, int numsects,
                            size_t lba, virtual_addr buf);
-static long atapi_write_pio(struct ata_dev_s *dev, unsigned char numsects,
+static long atapi_write_pio(struct ata_dev_s *dev, int numsects,
                             size_t lba, virtual_addr buf);
 static int atapi_read_capacity(struct ata_dev_s *dev);
 
@@ -313,7 +315,7 @@ void ata_setup_transfer(struct ata_dev_s *dev, unsigned char numsects,
 /*
  * Read sectors from an ATA device.
  */
-long ata_read_sectors(struct ata_dev_s *dev, unsigned char numsects,
+long ata_read_sectors(struct ata_dev_s *dev, int numsects,
                       size_t lba, virtual_addr buf)
 {
     long res = 0;
@@ -375,7 +377,7 @@ long ata_read_sectors(struct ata_dev_s *dev, unsigned char numsects,
 /*
  * Write sectors to an ATA device.
  */
-long ata_write_sectors(struct ata_dev_s *dev, unsigned char numsects,
+long ata_write_sectors(struct ata_dev_s *dev, int numsects,
                        size_t lba, virtual_addr buf)
 {
     long res = 0;
@@ -431,8 +433,8 @@ long ata_write_sectors(struct ata_dev_s *dev, unsigned char numsects,
 }
 
 
-long ata_read_pio(struct ata_dev_s *dev, unsigned char numsects,
-                  size_t lba, virtual_addr buf)
+static long __ata_read_pio(struct ata_dev_s *dev, unsigned char numsects,
+                           size_t lba, virtual_addr buf)
 {
     unsigned char i, lba_mode, head;
     unsigned char cmd = 0;
@@ -487,8 +489,44 @@ long ata_read_pio(struct ata_dev_s *dev, unsigned char numsects,
 }
 
 
-long ata_write_pio(struct ata_dev_s *dev, unsigned char numsects,
-                   size_t lba, virtual_addr buf)
+long ata_read_pio(struct ata_dev_s *dev, int numsects,
+                  size_t lba, virtual_addr buf)
+{
+    int max_bytes = MAX_RW_SECTORS * dev->bytes_per_sector;
+    int i;
+    long res;
+
+    /*
+     * We can only read/write up to 256 sectors at one time (0 means 256),
+     * because sector count is passed as one byte to disk.
+     */
+    if(numsects <= MAX_RW_SECTORS)
+    {
+        return __ata_read_pio(dev, (unsigned char)numsects, lba, buf);
+    }
+
+    for(i = 0; i <= numsects - MAX_RW_SECTORS; i += MAX_RW_SECTORS)
+    {
+        if((res = __ata_read_pio(dev, (unsigned char)MAX_RW_SECTORS, lba, buf)) != 0)
+        {
+            return res;
+        }
+
+        lba += MAX_RW_SECTORS;
+        buf += max_bytes;
+    }
+
+    if(i < numsects)
+    {
+        return __ata_read_pio(dev, (unsigned char)(numsects - i), lba, buf);
+    }
+
+    return 0;
+}
+
+
+static long __ata_write_pio(struct ata_dev_s *dev, unsigned char numsects,
+                            size_t lba, virtual_addr buf)
 {
     unsigned char i, lba_mode, head;
     unsigned char cmd = 0;
@@ -538,6 +576,42 @@ long ata_write_pio(struct ata_dev_s *dev, unsigned char numsects,
     /*
      * TODO: the flush command
      */
+
+    return 0;
+}
+
+
+long ata_write_pio(struct ata_dev_s *dev, int numsects,
+                   size_t lba, virtual_addr buf)
+{
+    int max_bytes = MAX_RW_SECTORS * dev->bytes_per_sector;
+    int i;
+    long res;
+
+    /*
+     * We can only read/write up to 256 sectors at one time (0 means 256),
+     * because sector count is passed as one byte to disk.
+     */
+    if(numsects <= MAX_RW_SECTORS)
+    {
+        return __ata_write_pio(dev, (unsigned char)numsects, lba, buf);
+    }
+
+    for(i = 0; i <= numsects - MAX_RW_SECTORS; i += MAX_RW_SECTORS)
+    {
+        if((res = __ata_write_pio(dev, (unsigned char)MAX_RW_SECTORS, lba, buf)) != 0)
+        {
+            return res;
+        }
+
+        lba += MAX_RW_SECTORS;
+        buf += max_bytes;
+    }
+
+    if(i < numsects)
+    {
+        return __ata_write_pio(dev, (unsigned char)(numsects - i), lba, buf);
+    }
 
     return 0;
 }
@@ -625,11 +699,11 @@ static long __ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
 }
 
 
-long ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
+long ata_read_dma(struct ata_dev_s *dev, int numsects,
                   size_t lba, virtual_addr buf)
 {
-    unsigned char sects_per_page = PAGE_SIZE / dev->bytes_per_sector;
-    unsigned char i;
+    int sects_per_page = PAGE_SIZE / dev->bytes_per_sector;
+    int i;
     long res;
 
     /*
@@ -642,12 +716,12 @@ long ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
      */
     if(numsects <= sects_per_page)
     {
-        return __ata_read_dma(dev, numsects, lba, buf);
+        return __ata_read_dma(dev, (unsigned char)numsects, lba, buf);
     }
 
     for(i = 0; i <= numsects - sects_per_page; i += sects_per_page)
     {
-        if((res = __ata_read_dma(dev, sects_per_page, lba, buf)) != 0)
+        if((res = __ata_read_dma(dev, (unsigned char)sects_per_page, lba, buf)) != 0)
         {
             return res;
         }
@@ -658,7 +732,7 @@ long ata_read_dma(struct ata_dev_s *dev, unsigned char numsects,
 
     if(i < numsects)
     {
-        return __ata_read_dma(dev, numsects - i, lba, buf);
+        return __ata_read_dma(dev, (unsigned char)(numsects - i), lba, buf);
     }
 
     return 0;
@@ -711,11 +785,11 @@ static long __ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
 }
 
 
-long ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
+long ata_write_dma(struct ata_dev_s *dev, int numsects,
                    size_t lba, virtual_addr buf)
 {
-    unsigned char sects_per_page = PAGE_SIZE / dev->bytes_per_sector;
-    unsigned char i;
+    int sects_per_page = PAGE_SIZE / dev->bytes_per_sector;
+    int i;
     long res;
 
     /*
@@ -728,12 +802,12 @@ long ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
      */
     if(numsects <= sects_per_page)
     {
-        return __ata_write_dma(dev, numsects, lba, buf);
+        return __ata_write_dma(dev, (unsigned char)numsects, lba, buf);
     }
 
     for(i = 0; i <= numsects - sects_per_page; i += sects_per_page)
     {
-        if((res = __ata_write_dma(dev, sects_per_page, lba, buf)) != 0)
+        if((res = __ata_write_dma(dev, (unsigned char)sects_per_page, lba, buf)) != 0)
         {
             return res;
         }
@@ -744,7 +818,7 @@ long ata_write_dma(struct ata_dev_s *dev, unsigned char numsects,
 
     if(i < numsects)
     {
-        return __ata_write_dma(dev, numsects - i, lba, buf);
+        return __ata_write_dma(dev, (unsigned char)(numsects - i), lba, buf);
     }
 
     return 0;
@@ -855,7 +929,7 @@ long atapi_read_packet(struct ata_dev_s *dev,
 }
 
 
-long atapi_read_pio(struct ata_dev_s *dev, unsigned char numsects,
+long atapi_read_pio(struct ata_dev_s *dev, int numsects,
                     size_t lba, virtual_addr buf)
 {
     unsigned char packet[12];
@@ -879,7 +953,7 @@ long atapi_read_pio(struct ata_dev_s *dev, unsigned char numsects,
     packet[3 ] = (lba >> 16) & 0xFF;
     packet[4 ] = (lba >>  8) & 0xFF;
     packet[5 ] = (lba >>  0) & 0xFF;
-    packet[9 ] = numsects;
+    packet[9 ] = numsects;      // TODO: this would not read more than 256 sectors!
     
     // do the read
     res = atapi_read_packet(dev, packet, 12, (void *)buf,
@@ -947,7 +1021,7 @@ long atapi_write_packet(struct ata_dev_s *dev,
 }
 
 
-long atapi_write_pio(struct ata_dev_s *dev, unsigned char numsects,
+long atapi_write_pio(struct ata_dev_s *dev, int numsects,
                      size_t lba, virtual_addr buf)
 {
     UNUSED(dev);

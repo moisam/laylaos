@@ -879,12 +879,21 @@ int usb_get_config_descriptor(struct usb_dev_t *dev)
         }
         else if(type == 33)
         {
-#ifdef __DEBUG
             struct usb_hid_descriptor_t *desc =
                             (struct usb_hid_descriptor_t *)addr;
 
+#ifdef __DEBUG
             print_hid_descriptor(desc);
 #endif
+
+            if(!(dev->hid_desc = kmalloc(sizeof(struct usb_hid_descriptor_t))))
+            {
+                printk("usb: failed to alloc HID descriptor struct\n");
+            }
+            else
+            {
+                A_memcpy(dev->hid_desc, desc, sizeof(struct usb_hid_descriptor_t));
+            }
         }
         else
         {

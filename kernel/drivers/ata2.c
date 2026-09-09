@@ -47,6 +47,7 @@
 #include <kernel/loop_internal.h>
 #include <kernel/cdrom.h>
 #include <kernel/syscall.h>
+#include <kernel/blkpg.h>
 #include <mm/kheap.h>
 #include <mm/dma.h>
 #include <kernel/gpt_mbr.h>
@@ -60,6 +61,7 @@ char *msstr[] = { "master", "slave" };
 
 struct ata_devtab_s tab1 = {0,};     // for devices with maj == 3
 struct ata_devtab_s tab2 = {0,};     // for devices with maj == 22
+volatile struct kernel_mutex_t atatab_lock = {0,};
 
 char *dev_type_str[] =
 {
@@ -92,6 +94,18 @@ int ata_cmd(struct ata_dev_s *dev, unsigned int cmd,
 
 void ata_register_dev(void *dev, struct parttab_s *part, int n);
 static int read_sector_direct(void *__dev, uintptr_t phys_buf, uintptr_t virt_buf, uint32_t lba);
+
+
+static inline size_t disk_size_in_bytes(struct ata_dev_s *dev)
+{
+    return dev->size ? dev->size : (dev->sectors * dev->bytes_per_sector);
+}
+
+
+static inline size_t disk_size_in_sectors(struct ata_dev_s *dev)
+{
+    return dev->size ? (dev->size / dev->bytes_per_sector) : dev->sectors;
+}
 
 
 /*
@@ -243,16 +257,16 @@ void ata_get_blocksz(struct ata_dev_s *dev, uint8_t *ide_buf)
     // information from words 106 & 107
     if(dev->bytes_per_sector == 0)
     {
-        uint16_t info = U16(ide_buf, ATA_IDENT_LOGICSECTSZ);
+        dev->physlog = U16(ide_buf, ATA_IDENT_LOGICSECTSZ);
 
         // If bit 14 is set and bit 15 is clear, this word contains valid info
-        if((info & 0xC000) == 0x4000)
+        if((dev->physlog & 0xC000) == 0x4000)
         {
             // If bit 12 is set, sector size is > 256 words and can be found in
             // words 117 & 118. Otherwise, sector size is the default 256 words.
-            if(info & 0x1000)
+            if(dev->physlog & 0x1000)
             {
-                dev->bytes_per_sector = U16(ide_buf, (117 * 2));
+                dev->bytes_per_sector = U32(ide_buf, (117 * 2));
                 dev->bytes_per_sector *= 2;
             }
             else
@@ -273,7 +287,7 @@ void ata_get_blocksz(struct ata_dev_s *dev, uint8_t *ide_buf)
     if(dev->commandsets & (1 << 26))
     {
         // device uses 48bit addressing
-        dev->size = U32(ide_buf, ATA_IDENT_MAX_LBA_EXT);
+        dev->size = U64(ide_buf, ATA_IDENT_MAX_LBA_EXT);
         //printk("    Uses 48bit LBA, size = %luMB\n", dev->size / 1024 / 2);
     }
     else
@@ -287,20 +301,18 @@ void ata_get_blocksz(struct ata_dev_s *dev, uint8_t *ide_buf)
 }
 
 
-int ata_identify(struct ata_dev_s *dev)
+static int send_identify_cmd(struct ata_dev_s *dev, unsigned char *buf)
 {
     unsigned int slavebit = MS(dev);
     uint8_t ch, cl;
     int type = IDE_UNKNOWN;
-    uint16_t valid, udma;
-    int res, l, err;
+    volatile uint8_t status;
+    int res, err;
+    int i;
 
     // select device
     outb(dev->base + ATA_REG_FEATURE, 0);
     outb(dev->base + ATA_REG_DRVHD, (slavebit << 4));
-
-    volatile uint8_t status;
-    int i;
     
     ata_delay(dev->base + ATA_REG_STATUS);
 
@@ -363,12 +375,12 @@ int ata_identify(struct ata_dev_s *dev)
     }
     else
     {
-        return -EIO;    // unknown type
+        return IDE_ERROR;    // unknown type
     }
 
     if(err)
     {
-        return -EIO;    // unknown type
+        return IDE_ERROR;    // unknown type
     }
 
     if(type & 1)    // ATAPI
@@ -378,39 +390,80 @@ int ata_identify(struct ata_dev_s *dev)
     }
 
     // read the identification space
-    insl(dev->base + ATA_REG_DATA, ide_buf, 128);
+    insl(dev->base + ATA_REG_DATA, buf, 128);
+
+    return type;
+}
+
+
+void ata_parse_identify_data(struct ata_dev_s *dev, unsigned char *buf)
+{
+    int l;
 
     // read device parameters
-    dev->type = type;
-    dev->sign = U16(ide_buf, ATA_IDENT_DEVICETYPE);
-    dev->capabilities = U16(ide_buf, ATA_IDENT_CAPABILITIES);
-    dev->commandsets =  U32(ide_buf, ATA_IDENT_COMMANDSETS);
+    dev->sign = U16(buf, ATA_IDENT_DEVICETYPE);
+    dev->capabilities = U16(buf, ATA_IDENT_CAPABILITIES);
+    dev->commandsets =  U32(buf, ATA_IDENT_COMMANDSETS);
 
     // string indicating device model
     for(l = ATA_IDENT_MODEL; l < (ATA_IDENT_MODEL + 40); l += 2)
     {
-	    dev->model[l - ATA_IDENT_MODEL] = ide_buf[l + 1];
-	    dev->model[(l + 1) - ATA_IDENT_MODEL] = ide_buf[l];
+	    dev->model[l - ATA_IDENT_MODEL] = buf[l + 1];
+	    dev->model[(l + 1) - ATA_IDENT_MODEL] = buf[l];
     }
     
     dev->model[40] = 0;
 
     for(l = ATA_IDENT_SERIAL; l < (ATA_IDENT_SERIAL + 20); l += 2)
     {
-	    dev->serial[l - ATA_IDENT_SERIAL] = ide_buf[l + 1];
-	    dev->serial[(l + 1) - ATA_IDENT_SERIAL] = ide_buf[l];
+	    dev->serial[l - ATA_IDENT_SERIAL] = buf[l + 1];
+	    dev->serial[(l + 1) - ATA_IDENT_SERIAL] = buf[l];
     }
     
     dev->serial[20] = 0;
 
     for(l = 46; l < 54; l += 2)
     {
-	    dev->firmware[l - 46] = ide_buf[l + 1];
-	    dev->firmware[(l + 1) - 46] = ide_buf[l];
+	    dev->firmware[l - 46] = buf[l + 1];
+	    dev->firmware[(l + 1) - 46] = buf[l];
     }
     
     dev->firmware[8] = 0;
 
+    if(dev->type & 1)    // (S)ATAPI
+    {
+        dev->size = 0;
+        dev->bytes_per_sector = ATAPI_SECTOR_SIZE;
+
+        /*
+        uint16_t commandsets =  U32(buf, 166);
+        printk("    Capabilities = 0x%x, Commandsets = 0x%x:0x%x\n",
+                dev->capabilities, dev->commandsets, commandsets);
+        screen_refresh(NULL);
+        __asm__ __volatile__("xchg %%bx, %%bx"::);
+        for(;;);
+        */
+    }
+    /* read (S)ATA device capacity */
+    else
+    {
+        ata_get_blocksz(dev, buf);
+    }
+}
+
+
+int ata_identify(struct ata_dev_s *dev)
+{
+    int type;
+    uint16_t valid, udma;
+
+    if((type = send_identify_cmd(dev, ide_buf)) == IDE_ERROR)
+    {
+        return -EIO;
+    }
+
+    dev->type = type;
+    ata_parse_identify_data(dev, ide_buf);
 
 	/*
 	 * Determine UDMA mode
@@ -460,27 +513,6 @@ int ata_identify(struct ata_dev_s *dev)
     
     //dev->uses_dma = 0;
 
-
-    if(type & 1)    // ATAPI
-    {
-        dev->size = 0;
-        dev->bytes_per_sector = ATAPI_SECTOR_SIZE;
-
-        /*
-        uint16_t commandsets =  U32(ide_buf, 166);
-        printk("    Capabilities = 0x%x, Commandsets = 0x%x:0x%x\n",
-                dev->capabilities, dev->commandsets, commandsets);
-        screen_refresh(NULL);
-        __asm__ __volatile__("xchg %%bx, %%bx"::);
-        for(;;);
-        */
-    }
-    /* read ATA device capacity */
-    else
-    {
-        ata_get_blocksz(dev, ide_buf);
-    }
-
    	printk("  %s %s exists and is %s\n", psstr[PS(dev)], msstr[MS(dev)],
    	                dev_type_str[type == 0xFF ? 4 : type]);
     printk("    Model = %s\n", dev->model);
@@ -517,7 +549,7 @@ void ata_setup_device(uint16_t iobase,
 	dev->irq = irq;
     dev->masterslave = ((!ps) * 2) + !ms;
     //dev->type = type;
-	
+
 	// identify
 	if(ata_identify(dev) != 0)
 	{
@@ -526,7 +558,17 @@ void ata_setup_device(uint16_t iobase,
 	    kfree(dev);
 	    return;
 	}
-	
+
+    if(!(dev->identify = kmalloc(512)))
+	{
+	    printk("ata: insufficient memory to identify %s %s\n",
+	           psstr[PS(dev)], msstr[MS(dev)]);
+	}
+	else
+	{
+	    memcpy(dev->identify, ide_buf, 512);
+	}
+
     // add the new device
     ata_register_dev(dev, NULL, 0);
     
@@ -584,21 +626,32 @@ static void add_ata_dev(struct ata_dev_s *tmp, struct parttab_s *part,
                         int maj, int min)
 {
     struct ata_devtab_s *tab = (maj == 3) ? &tab1 : &tab2;
+
+    kernel_mutex_lock(&atatab_lock);
+
     tab->dev[min] = tmp;
     tab->part[min] = part;
+
+    kernel_mutex_unlock(&atatab_lock);
 }
 
 
 static void remove_ata_dev(int maj, int min)
 {
     struct ata_devtab_s *tab = (maj == 3) ? &tab1 : &tab2;
+    struct parttab_s *part;
+
+    kernel_mutex_lock(&atatab_lock);
 
     tab->dev[min] = NULL;
+    part = tab->part[min];
+    tab->part[min] = NULL;
 
-    if(tab->part[min])
+    kernel_mutex_unlock(&atatab_lock);
+
+    if(part)
     {
-        kfree(tab->part[min]);
-        tab->part[min] = NULL;
+        kfree(part);
     }
 }
 
@@ -805,7 +858,7 @@ int read_disk_mbr(char *module, void *dev, size_t bytes_per_sector,
 
     tmp_virt = PHYS_TO_HIMEM(tmp_phys);
     ide_buf = (uint8_t *)tmp_virt;
-    A_memset(ide_buf, 0, PAGE_SIZE);
+    memset(ide_buf, 0, PAGE_SIZE);
 
     if((i = read_sector(dev, tmp_phys, tmp_virt, 0)) < 0)
     {
@@ -923,7 +976,8 @@ long common_ata_ioctl(dev_t devid, struct ata_dev_s *dev,
         }
 
         case BLKFLSBUF:
-            syscall_sync();
+            //syscall_sync();
+            remove_old_cached_pages(MAJOR(devid), 1);
             invalidate_dev_dentries(devid);
             remove_cached_disk_pages(devid);
             return 0;
@@ -932,6 +986,281 @@ long common_ata_ioctl(dev_t devid, struct ata_dev_s *dev,
             return -EINVAL;
     }
 }
+
+
+long common_blkpg_ioctl(dev_t devid, struct ata_dev_s *dev, 
+                        struct parttab_s *part, 
+                        struct blkpg_ops_t *ops, char *arg)
+{
+    struct blkpg_ioctl_arg blkpgarg;
+    struct blkpg_partition userpart;
+    size_t disksz, lba, sectors, end;
+    int maj = MAJOR(devid);
+    int min = MINOR(devid);
+
+    // cannot manipulate partitions on a partition, has to be the whole disk
+    if(part != NULL)
+    {
+        return -EINVAL;
+    }
+
+    COPY_FROM_USER(&blkpgarg, arg, sizeof(struct blkpg_ioctl_arg));
+    COPY_FROM_USER(&userpart, blkpgarg.data, sizeof(struct blkpg_partition));
+
+    /*
+    switch_tty(1);
+    printk("common_blkpg_ioctl: %d:%d: op %d, ", maj, min, blkpgarg.op);
+    printk("pno %d, start %lld, length %lld ", userpart.pno, userpart.start, userpart.length);
+    screen_refresh(NULL);
+    */
+
+    if(userpart.pno <= 0 || userpart.pno >= ops->maxparts(devid))
+    {
+        return -ENXIO;
+    }
+
+    // 1. remove a partition
+    if(blkpgarg.op == BLKPG_DEL_PARTITION)
+    {
+        // first ensure the partition and the whole disk are not mounted
+        if(get_mount_info(TO_DEVID(maj, min)))
+        {
+            return -EBUSY;
+        }
+
+        if(get_mount_info(TO_DEVID(maj, min + userpart.pno)))
+        {
+            return -EBUSY;
+        }
+
+        // just in case but it shouldn't happen
+        remove_cached_disk_pages(TO_DEVID(maj, min + userpart.pno));
+
+        return ops->remove(devid, userpart.pno);
+    }
+
+    // check start and end are legit
+    if(userpart.start < 0 || userpart.length <= 0 ||
+       userpart.length < (long long)dev->bytes_per_sector ||
+       LLONG_MAX - userpart.length < userpart.start)
+    {
+        return -EINVAL;
+    }
+
+    // check partition is aligned to sector size
+    if((userpart.start & (dev->bytes_per_sector - 1)) ||
+       (userpart.length & (dev->bytes_per_sector - 1)))
+    {
+        return -EINVAL;
+    }
+
+    disksz = disk_size_in_sectors(dev);
+    lba = userpart.start / dev->bytes_per_sector;
+    sectors = userpart.length / dev->bytes_per_sector;
+    end = lba + sectors;
+
+    // check start and end are within disk boundaries
+    if(lba >= disksz || end > disksz)
+    {
+        return -EINVAL;
+    }
+
+    // 2. add a new partition
+    if(blkpgarg.op == BLKPG_ADD_PARTITION)
+    {
+        if(ops->overlaps(devid, userpart.pno, lba, end) != 0)
+        {
+            return -EBUSY;
+        }
+
+        return ops->add(devid, userpart.pno, lba, end);
+    }
+
+    // 3. resize a partition
+    if(blkpgarg.op == BLKPG_RESIZE_PARTITION)
+    {
+        if(ops->overlaps(devid, userpart.pno, lba, end) != 0)
+        {
+            return -EBUSY;
+        }
+
+        return ops->resize(devid, userpart.pno, lba, end);
+    }
+
+    return -EINVAL;
+}
+
+
+long ata_remove_partition(dev_t devid, int part)
+{
+    int maj = MAJOR(devid);
+    int min = MINOR(devid);
+
+    remove_dev_node(TO_DEVID(maj, min + part));
+    remove_ata_dev(maj, min + part);
+
+    /*
+    printk("(done)\n");
+    screen_refresh(NULL);
+    */
+
+    return 0;
+}
+
+
+long ata_partition_overlaps(dev_t devid, int partno, size_t lba, size_t end)
+{
+    int maj = MAJOR(devid);
+    int min = MINOR(devid);
+    int i, curpart = 1;
+    struct ata_devtab_s *tab = (maj == 3) ? &tab1 : &tab2;
+
+    kernel_mutex_lock(&atatab_lock);
+
+    for(i = min + 1; i < min + 64; i++, curpart++)
+    {
+        if(tab->part[i] == NULL)
+        {
+            continue;
+        }
+
+        if(partno != curpart &&
+           lba < (tab->part[i]->lba + tab->part[i]->total_sectors) &&
+           end > tab->part[i]->lba)
+        {
+            kernel_mutex_unlock(&atatab_lock);
+            return -EBUSY;
+        }
+    }
+
+    kernel_mutex_unlock(&atatab_lock);
+
+    return 0;
+}
+
+
+long ata_add_partition(dev_t devid, int partno, size_t lba, size_t end)
+{
+    char name[8];
+    int maj = MAJOR(devid);
+    int min = MINOR(devid);
+    struct parttab_s *part;
+    struct ata_devtab_s *tab = (maj == 3) ? &tab1 : &tab2;
+
+    if(partno >= 64)
+    {
+        return -ENXIO;
+    }
+
+    if(!(part = kmalloc(sizeof(struct parttab_s))))
+    {
+        return -ENOMEM;
+    }
+
+    memset(part, 0, sizeof(struct parttab_s));
+
+    kernel_mutex_lock(&atatab_lock);
+
+    // parent device must exist, and make sure no one slipped in and created
+    // a partition here before us
+    if(tab->dev[min] == NULL || tab->part[min + partno] != NULL)
+    {
+        kernel_mutex_unlock(&atatab_lock);
+        kfree(part);
+        return -ENXIO;
+    }
+
+    part->lba = lba;
+    part->total_sectors = end - lba;
+    part->dev = tab->dev[min];
+
+    name[0] = 'h';
+    name[1] = 'd';
+
+    if(maj == 3)
+    {
+        name[2] = (min == 0) ? 'a' : 'b';
+    }
+    else
+    {
+        name[2] = (min == 0) ? 'c' : 'd';
+    }
+
+    int j = 3;
+
+    if(partno >= 10)
+    {
+        name[j++] = '0' + (int)(partno / 10);
+    }
+
+    name[j++] = '0' + (int)(partno % 10);
+    name[j] = '\0';
+
+    partno += min;
+    tab->dev[partno] = part->dev;
+    tab->part[partno] = part;
+
+    kernel_mutex_unlock(&atatab_lock);
+
+    add_dev_node(name, TO_DEVID(maj, partno), (S_IFBLK | 0664));
+
+    return 0;
+}
+
+
+long ata_resize_partition(dev_t devid, int partno, size_t lba, size_t end)
+{
+    int maj = MAJOR(devid);
+    int min = MINOR(devid);
+    struct ata_devtab_s *tab = (maj == 3) ? &tab1 : &tab2;
+
+    if(partno >= 64)
+    {
+        return -ENXIO;
+    }
+
+    partno += min;
+
+    kernel_mutex_lock(&atatab_lock);
+
+    // parent device must exist, as well as the partition itself
+    if(tab->dev[partno] == NULL || tab->part[partno] == NULL)
+    {
+        kernel_mutex_unlock(&atatab_lock);
+        return -ENXIO;
+    }
+
+    // TODO: should we allow resize to the left?
+    if(lba != tab->part[partno]->lba)
+    {
+        kernel_mutex_unlock(&atatab_lock);
+        return -ENXIO;
+    }
+
+    tab->part[partno]->total_sectors = end - lba;
+
+    kernel_mutex_unlock(&atatab_lock);
+
+    return 0;
+}
+
+
+int ata_max_partitions(dev_t devid)
+{
+    UNUSED(devid);
+
+    return 64;
+}
+
+
+struct blkpg_ops_t ata_blkpg_ops =
+{
+    .remove = ata_remove_partition,
+    .overlaps = ata_partition_overlaps,
+    .add = ata_add_partition,
+    .resize = ata_resize_partition,
+    .maxparts = ata_max_partitions,
+};
 
 
 /*
@@ -944,8 +1273,12 @@ long ata_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
     struct ata_devtab_s *tab = (maj == 3) ? &tab1 : &tab2;
     struct ata_dev_s *dev = tab->dev[min];
     struct parttab_s *part = tab->part[min];
-    //printk("ata_ioctl: dev 0x%x\n", dev_id);
-    
+
+    /*
+    printk("ata_ioctl: dev 0x%x (%d:%d), cmd 0x%x\n", dev_id, maj, min, cmd);
+    screen_refresh(NULL);
+    */
+
     if(!dev)
     {
         /*
@@ -965,6 +1298,98 @@ long ata_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
         case HDIO_GETGEO:
             return common_ata_ioctl(dev_id, dev, part, cmd, arg, kernel);
 
+        case BLKPG:
+            // has to be PATA or SATA
+            if(dev->type & 1)
+            {
+                return -EINVAL;
+            }
+
+            return common_blkpg_ioctl(dev_id, dev, part, &ata_blkpg_ops, arg);
+
+        case HDIO_GET_IDENTITY:
+        {
+            int res;
+            //unsigned char *tmp;
+
+            // has to be PATA or SATA
+            if(dev->type & 1)
+            {
+                return -ENOSYS;
+            }
+
+            if(!dev->identify)
+            {
+                return -EIO;
+            }
+
+            /*
+            printk("identity: %p, %p\n", arg, dev->identify);
+            memcpy(arg, dev->identify, 512);
+            res = 0;
+            */
+            res = copy_to_user(arg, dev->identify, 512);
+
+            if(res == 0)
+            {
+                /*
+                 * Byte pairs for mode, serial and firmware come in reverse 
+                 * order, we need to fix this now.
+                 *
+                 * We can access arg safely as copy_to_user() checked it was 
+                 * a kosher user address.
+                 */
+                int l;
+                char c;
+
+                for(l = ATA_IDENT_MODEL; l < (ATA_IDENT_MODEL + 40); l += 2)
+                {
+                    c = arg[l];
+            	    arg[l] = arg[l + 1];
+            	    arg[l + 1] = c;
+                }
+
+                for(l = ATA_IDENT_SERIAL; l < (ATA_IDENT_SERIAL + 20); l += 2)
+                {
+                    c = arg[l];
+            	    arg[l] = arg[l + 1];
+            	    arg[l + 1] = c;
+                }
+
+                for(l = 46; l < 54; l += 2)     // firmware
+                {
+                    c = arg[l];
+            	    arg[l] = arg[l + 1];
+            	    arg[l + 1] = c;
+                }
+            }
+
+            /*
+            if(!(tmp = kmalloc(1024)))      // more than required
+            {
+                return -ENOMEM;
+            }
+
+            memset(tmp, 0, 1024);
+
+            extern volatile struct kernel_mutex_t request_lock;
+            elevated_priority_lock(&request_lock);
+            res = send_identify_cmd(dev, tmp);
+            elevated_priority_unlock(&request_lock);
+
+            if(res == IDE_ERROR)
+            {
+                kfree(tmp);
+                return -EIO;
+            }
+
+            res = copy_to_user(arg, tmp, 512);
+            kfree(tmp);
+            */
+
+            return res;
+        }
+
         case BLKRRPART:
         {
             // force re-reading the partition table
@@ -975,7 +1400,7 @@ long ata_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
             min = (min / 64) * 64;
 
             // has to be PATA or SATA
-            if(!(dev->type & 1))
+            if(dev->type & 1)
             {
                 return -EINVAL;
             }
@@ -991,7 +1416,7 @@ long ata_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
 
             // now remove the partitions and their /dev nodes, but leave the
             // parent disk intact
-            for(dev_index = min + 1; dev_index < min + 16; dev_index++)
+            for(dev_index = min + 1; dev_index < min + 64; dev_index++)
             {
                 remove_dev_node(TO_DEVID(maj, dev_index));
                 remove_ata_dev(maj, dev_index);
@@ -1031,7 +1456,7 @@ long ata_ioctl(dev_t dev_id, unsigned int cmd, char *arg, int kernel)
 /*
  * Read /proc/partitions.
  */
-size_t get_partitions(char **buf)
+size_t get_partitions(char **buf, void *arg)
 {
     struct ata_devtab_s *tab;
     struct dirent *entry;
@@ -1039,6 +1464,8 @@ size_t get_partitions(char **buf)
     size_t kb, len, count = 0, bufsz = 1024;
     char tmp[64];
     char *p;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, bufsz);
     p = *buf;
@@ -1072,11 +1499,7 @@ size_t get_partitions(char **buf)
 
                 if(devfs_find_deventry(TO_DEVID(maj, i), 1, &entry) == 0)
                 {
-                    // get disk size in sectors
-                    kb = tab->dev[i]->size ? 
-                                (tab->dev[i]->size /
-                                    tab->dev[i]->bytes_per_sector) :
-                                tab->dev[i]->sectors;
+                    kb = disk_size_in_sectors(tab->dev[i]);
                 }
             }
             else if(devfs_find_deventry(TO_DEVID(maj, i), 1, &entry) == 0)
@@ -1110,11 +1533,7 @@ size_t get_partitions(char **buf)
 
             if(devfs_find_deventry(TO_DEVID(AHCI_DEV_MAJ, i), 1, &entry) == 0)
             {
-                // get disk size in sectors
-                    kb = ahci_disk_dev[i]->size ? 
-                                (ahci_disk_dev[i]->size /
-                                    ahci_disk_dev[i]->bytes_per_sector) :
-                                ahci_disk_dev[i]->sectors;
+                kb = disk_size_in_sectors(ahci_disk_dev[i]);
             }
         }
         else if(devfs_find_deventry(TO_DEVID(AHCI_DEV_MAJ, i), 1, &entry) == 0)
@@ -1144,11 +1563,7 @@ size_t get_partitions(char **buf)
 
         if(devfs_find_deventry(TO_DEVID(AHCI_CDROM_MAJ, i), 1, &entry) == 0)
         {
-            // get disk size in sectors
-            kb = ahci_cdrom_dev[i]->size ? 
-                       (ahci_cdrom_dev[i]->size /
-                            ahci_cdrom_dev[i]->bytes_per_sector) :
-                                ahci_cdrom_dev[i]->sectors;
+            kb = disk_size_in_sectors(ahci_cdrom_dev[i]);
         }
 
         if(entry)

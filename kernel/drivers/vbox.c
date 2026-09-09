@@ -23,6 +23,10 @@
  *  \file vbox.c
  *
  *  Oracle VM VirtualBox device driver implementation.
+ *
+ *  See: https://github.com/VirtualBox/virtualbox/blob/a99405e075c62a7997b22bd7940c14feb456f0ad/include/VBox/VMMDev.h
+ *       https://wiki.osdev.org/VirtualBox_Guest_Additions
+ *       https://github.com/klange/toaruos/blob/master/kernel/video/lfbvideo.c
  */
 
 #include <kernel/laylaos.h>
@@ -41,18 +45,20 @@
 #define VBOX_VMMDEV_VERSION             0x00010003
 #define VBOX_REQUEST_HEADER_VERSION     0x10001
 
+#define VBOX_REQUEST_DISPLAY_CHANGE_ACK 11
 #define VBOX_REQUEST_ACK_EVENTS         41 
 #define VBOX_REQUEST_GUEST_INFO         50
 #define VBOX_REQUEST_DISPLAY_CHANGE     51
+#define VBOX_REQUEST_REPORT_GUEST_CAPS  55
 
 #define VBOX_REQUEST_GET_MOUSE          1
 #define VBOX_REQUEST_SET_MOUSE          2
 
 #define VBOX_EVENT_MOUSE                (1 << 9)
+#define VBOX_EVENT_DISPLAY_CHANGE       (1 << 2)
 
-
-#define VMM_ReportGuestCapabilities     55
-#define VMMCAP_Graphics                 (1 << 2)
+#define VBOX_CAP_SEAMLESS               (1 << 0)
+#define VBOX_CAP_GRAPHICS               (1 << 2)
 
 
 
@@ -128,10 +134,8 @@ uintptr_t vbox_mouse_get_phys = 0;
 struct vbox_ack_events_t *vbox_ack_virt = NULL;
 uintptr_t vbox_ack_phys = 0;
 
-/*
 struct vbox_display_change_t *vbox_disp_virt = NULL;
 uintptr_t vbox_disp_phys = 0;
-*/
 
 static int vbox_mouse_x = 0;
 static int vbox_mouse_y = 0;
@@ -184,17 +188,13 @@ void vbox_init(struct pci_dev_t *pci)
     }
     */
 
-#define PAGE_FLAGS      (PTE_FLAGS_PW | I86_PTE_NOT_CACHEABLE)
-
     // Allocate memory for our Guest Info packet
     if(!(guest_info_phys = (uintptr_t)pmmngr_alloc_block()))
     {
         return;
     }
 
-    guest_info_virt = PHYS_TO_HIMEM(guest_info_phys);
-
-#undef PAGE_FLAGS
+    guest_info_virt = mmio_map(guest_info_phys, guest_info_phys + PAGE_SIZE);
 
     // Populate the packet
     struct vbox_guest_info_t *guest_info = 
@@ -216,24 +216,19 @@ void vbox_init(struct pci_dev_t *pci)
     // And send it to the VM
     outl(vbox_port, guest_info_phys);
     
-    
-    /*
-    struct vbox_guest_caps_t *caps = (struct vbox_guest_caps_t *)(guest_info_virt + 512);
+    struct vbox_guest_caps_t *caps = (struct vbox_guest_caps_t *)(guest_info_virt + 1024 + 512);
 	caps->header.size = sizeof(struct vbox_guest_caps_t);
 	caps->header.version = VBOX_REQUEST_HEADER_VERSION;
-	caps->header.requestType = VMM_ReportGuestCapabilities;
+	caps->header.requestType = VBOX_REQUEST_REPORT_GUEST_CAPS;
 	caps->header.rc = 0;
 	caps->header.reserved1 = 0;
 	caps->header.reserved2 = 0;
-	caps->caps = VMMCAP_Graphics;
-	outl(vbox_port, guest_info_phys + 512);
-	
-    //printk("caps " _XPTR_ ", caps_phys " _XPTR_ "\n", guest_info_virt + 512, guest_info_phys + 512);
-    //printk("rc = %d\n", caps->header.rc);
-    */
-    
+	caps->caps = /* VBOX_CAP_SEAMLESS | */ VBOX_CAP_GRAPHICS;
+	outl(vbox_port, guest_info_phys + 1024 + 512);
 
-    /*
+    //printk("caps " _XPTR_ ", caps_phys " _XPTR_ "\n", guest_info_virt + 1024 + 512, guest_info_phys + 1024 + 512);
+    //printk("rc = %d\n", caps->header.rc);
+    
     vbox_disp_virt = (struct vbox_display_change_t *)(guest_info_virt + 512);
     vbox_disp_phys = (guest_info_phys + 512);
 	vbox_disp_virt->header.size = sizeof(struct vbox_display_change_t);
@@ -245,10 +240,8 @@ void vbox_init(struct pci_dev_t *pci)
 	vbox_disp_virt->xres = 0;
 	vbox_disp_virt->yres = 0;
 	vbox_disp_virt->bpp = 0;
-	vbox_disp_virt->eventack = 1;
-	*/
+	vbox_disp_virt->eventack = VBOX_EVENT_DISPLAY_CHANGE;
 	
-
     // We'll also set up the packets we'll use later for 
     // AcknowledgeEvents and GetDisplayChange
     vbox_ack_virt = (struct vbox_ack_events_t *)(guest_info_virt + 1024);
@@ -260,7 +253,7 @@ void vbox_init(struct pci_dev_t *pci)
     vbox_ack_virt->header.reserved1 = 0;
     vbox_ack_virt->header.reserved2 = 0;
     vbox_ack_virt->events = 0;
-    
+
     vbox_mouse_virt = (struct vbox_mouse_absolute_t *)(guest_info_virt + 2048);
     vbox_mouse_phys = (guest_info_phys + 2048);
     vbox_mouse_virt->header.size = sizeof(struct vbox_mouse_absolute_t);
@@ -289,18 +282,17 @@ void vbox_init(struct pci_dev_t *pci)
 	vbox_mouse_get_virt->header.reserved1 = 0;
 	vbox_mouse_get_virt->header.reserved2 = 0;
 
-    /*
+	vbox_vmmdev_virt[3] = 0xFFFFFFFF; /* Enable all for now */
+    
+	vbox_disp_virt->eventack = 0;
     outl(vbox_port, vbox_disp_phys);
     outl(vbox_port, vbox_disp_phys);
     vbox_xres = vbox_disp_virt->xres;
     vbox_yres = vbox_disp_virt->yres;
-    printk("vbox_xres %d, vbox_yres %d\n", vbox_xres, vbox_yres);
-    //screen_refresh(NULL);
-    //empty_loop();
-    */
-	
-	vbox_vmmdev_virt[3] = 0xFFFFFFFF; /* Enable all for now */
-    
+	vbox_disp_virt->eventack = VBOX_EVENT_DISPLAY_CHANGE;
+    //printk("vbox_xres %d, vbox_yres %d\n", vbox_xres, vbox_yres);
+    //printk("rc = %d\n", caps->header.rc);
+
     /*
      * By trial and error, I found that VirtualBox sends only one mouse byte 
      * containing button data. It does not send the 2nd and 3rd bytes with
@@ -331,7 +323,6 @@ int vbox_intr(struct regs *r, void *arg)
     
     ev = vbox_vmmdev_virt[2];
     vbox_ack_virt->events = ev;
-    outl(vbox_port, vbox_ack_phys);
 
     //printk("vbox_intr: ev 0x%x, ", ev);
 
@@ -361,7 +352,6 @@ int vbox_intr(struct regs *r, void *arg)
         {
             //x = vbox_mouse_get_virt->x;
             //y = vbox_mouse_get_virt->y;
-            pic_send_eoi(vbox_irq);
             return 1;
         }
 
@@ -376,15 +366,47 @@ int vbox_intr(struct regs *r, void *arg)
             vbox_mouse_y = y;
             unblock_mouse_task = 1;
         }
+
+        if(unblock_mouse_task)
+        {
+            unblock_kernel_task(mouse_task);
+        }
     }
 
-    pic_send_eoi(vbox_irq);
-    
-    if(unblock_mouse_task)
+    if(ev & VBOX_EVENT_DISPLAY_CHANGE)
     {
-        unblock_kernel_task(mouse_task);
+        outl(vbox_port, vbox_disp_phys);
+        outl(vbox_port, vbox_disp_phys);
+        vbox_xres = vbox_disp_virt->xres;
+        vbox_yres = vbox_disp_virt->yres;
+        //printk("vbox: new resolution: x %d, y %d\n", vbox_xres, vbox_yres);
+
+        // ensure we can handle this
+        if(vbox_xres <= MAX_VGA_WIDTH && vbox_yres <= MAX_VGA_HEIGHT)
+        {
+            // update the display if the framebuffer device is happy
+            if(vga_resize_display(vbox_xres, vbox_yres) == 0)
+            {
+                // use Bochs/VBoxVGA interface
+                outw(0x1CE, 0x04);      // select VBE
+                outw(0x1CF, 0x00);
+                outw(0x1CE, 0x01);      // select width
+                outw(0x1CF, vbox_xres);
+                outw(0x1CE, 0x02);      // select height
+                outw(0x1CF, vbox_yres);
+                outw(0x1CE, 0x03);      // select BPP
+                outw(0x1CF, 32);        // XXX: should not assume 32 bpp
+                outw(0x1CE, 0x07);
+                outw(0x1CF, 4096);
+                outw(0x1CE, 0x04);
+                outw(0x1CF, 0x41);
+                outw(0x1CE, 0x01);
+            }
+        }
     }
-    
+
+    outl(vbox_port, vbox_ack_phys);
+
     return 1;
 }
 

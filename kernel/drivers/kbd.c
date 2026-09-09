@@ -102,8 +102,6 @@ void kbd_handle_code(int code)
         unblock = 1;
     }
 
-    pic_send_eoi(IRQ_KBD);
-
     if(unblock)
     {
         unblock_kernel_task(kbd_task);

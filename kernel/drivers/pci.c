@@ -562,6 +562,8 @@ static void pci_check_func(uint16_t segment,
     	return;
     }
 
+    A_memset(pci, 0, sizeof(struct pci_dev_t));
+
     if(last_pci)
     {
         last_pci->next = pci;
@@ -750,7 +752,11 @@ void pci_check_all_buses(void)
     if((acpifunc = ksym_value("acpi_get_table")))
     {
         mcfg = acpifunc("MCFG");
-        printk("pci: found MCFG table at " _XPTR_ "\n", mcfg);
+
+        if(mcfg)
+        {
+            printk("pci: found MCFG table at " _XPTR_ "\n", mcfg);
+        }
     }
 
 #pragma GCC diagnostic pop

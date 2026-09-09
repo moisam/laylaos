@@ -685,19 +685,15 @@ static void ohci_wait_transfer(struct usb_transfer_t *transfer)
             break;
         }
 
+        __asm__ __volatile__("pause":::);
         /*
-        __asm__ __volatile__("pause":::);
-        __asm__ __volatile__("pause":::);
-        __asm__ __volatile__("pause":::);
-        //scheduler();
-        //tick_delay(2);
-        */
         set_task_waking_signal(this_core->cur_task, 0);
         __sync_and_and_fetch(&this_core->cur_task->properties, ~PROPERTY_SELECT_EVENT);
         block_task_timeout(this_core->cur_task, 1);
+        */
     }
 
-    if(!timeout)
+    if(timeout <= 0)
     {
         printk("%s: transfer timed out\n", "ohci");
     }
@@ -1458,8 +1454,6 @@ int ohci_intr(struct regs *r, void *arg)
 
     // acknowledge interrupt
     pcidev_outl(ohci, OHCI_REG_INT_STS, dword);
-
-    pic_send_eoi(ohci->pci->irq[0]);
 
     return 1;
 }

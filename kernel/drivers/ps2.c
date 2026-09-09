@@ -197,6 +197,7 @@ loop:
 int sharedps2_callback(struct regs *r, void *arg)
 {
     UNUSED(arg);
+    UNUSED(r);
 
     volatile uint8_t status, data;
 
@@ -214,8 +215,6 @@ int sharedps2_callback(struct regs *r, void *arg)
 
     if(!(status & 0x01))
     {
-        //pic_send_eoi(r->int_no - 32);
-        //return 1;
         return 0;
     }
     
@@ -226,10 +225,6 @@ int sharedps2_callback(struct regs *r, void *arg)
     else if(status & 0x21)
     {
         mouse_handle_code(data);
-    }
-    else
-    {
-        pic_send_eoi(r->int_no - 32);
     }
     
     return 1;

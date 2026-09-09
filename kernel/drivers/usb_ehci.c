@@ -1752,7 +1752,6 @@ int ehci_intr(struct regs *r, void *arg)
         ehci_start(ehci);
     }
 
-    pic_send_eoi(ehci->pci->irq[0]);
     printk("ehci_intr: irq %d\n", ehci->pci->irq[0]);
 
     return 1;

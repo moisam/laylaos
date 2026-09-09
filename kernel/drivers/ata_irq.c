@@ -50,7 +50,8 @@ struct ata_request_t
     int write, err;
     struct ata_dev_s *dev;
     size_t lba;
-    unsigned char numsects, irq, active;
+    int numsects;
+    unsigned char irq, active;
     virtual_addr buf;
     volatile struct ata_request_t *next;
     //int wait_channel;
@@ -70,8 +71,6 @@ volatile int serving = 0;
 int request_wait_channel;
 volatile struct task_t *disk_task = NULL;
 #endif
-
-int irq_wait_channel;
 
 static void ata_do_request(void);
 
@@ -93,7 +92,7 @@ static inline void init_bufs(void)
  * Request an ATA I/O operation.
  */
 long ata_add_req(struct ata_dev_s *dev,
-                 size_t lba, unsigned char numsects,
+                 size_t lba, int numsects,
                  virtual_addr buf, int write,
                  long (*func)(struct ata_dev_s *, virtual_addr))
 {
@@ -116,9 +115,9 @@ long ata_add_req(struct ata_dev_s *dev,
         return -EINVAL;
     }
 
-
     volatile struct ata_request_t req;
     int res;
+    unsigned long long oticks = ticks;
 
     elevated_priority_lock(&request_lock);
     cur_request = &req;
@@ -141,6 +140,8 @@ long ata_add_req(struct ata_dev_s *dev,
     
     elevated_priority_unlock(&request_lock);
     //printk("ata_add_req: res %d\n", res);
+
+    this_core->iowait += (ticks - oticks);
 
     return res ? -EIO : (long)(numsects * dev->bytes_per_sector);
 
@@ -366,7 +367,6 @@ static void ata_do_request(void)
     else
     {
         if(!cur_request->write)
-        //if(cur_request->buf->flags & IOBUF_FLAG_READ)
         {
             cur_request->res = ata_read_sectors(cur_request->dev,
                                                 cur_request->numsects,
@@ -464,7 +464,6 @@ int ide_wait_irq(void)
         return missed_irq ? 0 : -EAGAIN;
     }
 
-    //cur_request->irq--;
     __atomic_fetch_sub(&cur_request->irq, 1, __ATOMIC_SEQ_CST);
     KDEBUG("cur_request->irq %d\n", cur_request->irq);
 
@@ -479,8 +478,6 @@ int ide_irq_callback(struct regs *r, void *arg)
 {
     UNUSED(arg);
     volatile uint8_t int_no = (r->int_no & 0xFF);
-    
-    //ide_irq_invoked = 1;
     
     if(!cur_request)
     {
@@ -538,27 +535,13 @@ int ide_irq_callback(struct regs *r, void *arg)
     // read the device status register
     status = inb(cur_request->dev->base + ATA_REG_STATUS);
 
-    /*
-    cur_request->numsects--;
-    cur_request->err = 0;
-    */
     __atomic_fetch_sub(&cur_request->numsects, 1, __ATOMIC_SEQ_CST);
     __atomic_store_n(&cur_request->err, 0, __ATOMIC_SEQ_CST);
 
-    //cli();
     volatile uintptr_t s = int_off();
 
-    /*
-    //ide_irq_invoked = 1;
-    volatile unsigned char irq = cur_request->irq;
-    //cur_request->irq++;
-    cur_request->irq = irq + 1;
-    */
     __atomic_fetch_add(&cur_request->irq, 1, __ATOMIC_SEQ_CST);
 
-    pic_send_eoi(int_no);
-
-    //sti();
     int_on(s);
 
     return 1;
