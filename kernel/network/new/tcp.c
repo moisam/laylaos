@@ -87,11 +87,8 @@ static struct socket_t *tcp_socket(void)
 }
 
 
-static long tcp_connect(struct socket_t *so)
+static inline void tcpsock_init(struct socket_tcp_t *tsock)
 {
-    struct socket_tcp_t *tsock = (struct socket_tcp_t *)so;
-    long res;
-
     tsock->iss = genrand_int32();
     tsock->snd_wnd = 0;
     tsock->snd_wl1 = 0;
@@ -100,7 +97,15 @@ static long tcp_connect(struct socket_t *so)
     tsock->snd_nxt = tsock->iss;
     tsock->rcv_nxt = 0;
     tsock->rcv_wnd = 44477;
+}
 
+
+static long tcp_connect(struct socket_t *so)
+{
+    struct socket_tcp_t *tsock = (struct socket_tcp_t *)so;
+    long res;
+
+    tcpsock_init(tsock);
     res = tcp_send_syn(tsock);
     tsock->snd_nxt++;
 
@@ -1184,7 +1189,7 @@ static int tcp_send_synack(struct socket_tcp_t *tsock)
 
     if(tsock->tcpstate != TCPSTATE_SYN_SENT)
     {
-        printk("tcp: socket in incorrect state for SYN-ACK\n");
+        printk("tcp: socket %d in incorrect state for SYN-ACK\n", ntohs(tsock->sock.local_port));
         return -EINVAL;
     }
 
@@ -1689,6 +1694,90 @@ static void tcp_send_next(struct socket_tcp_t *tsock, int amount)
 }
 
 
+static long tcp_listen(struct socket_t *so)
+{
+    struct socket_tcp_t *tsock = (struct socket_tcp_t *)so;
+
+    tsock->tcpstate = TCPSTATE_LISTEN;
+
+    return 0;
+}
+
+
+static void tcp_input_listen(struct socket_tcp_t *tsock, struct tcp_hdr_t *tcph, struct packet_t *p)
+{
+    struct ipv4_hdr_t *iph;
+    struct socket_t *newsock;
+
+    iph = IPv4_HDR(p);
+
+    // 1 - check RST
+    if(tcph->rst)
+    {
+        free_packet(p);
+        return;
+    }
+
+    // 2 - check ACK
+    if(tcph->ack)
+    {
+        tcp_send_reset(tsock);
+        free_packet(p);
+        return;
+    }
+
+    // 3 - check SYN
+    if(!tcph->syn)
+    {
+        tcp_send_reset(tsock);
+        free_packet(p);
+        return;
+    }
+
+    if(sock_create(tsock->sock.domain, tsock->sock.type, tsock->sock.proto->protocol, &newsock) != 0)
+    {
+        free_packet(p);
+        return;
+    }
+
+    newsock->pid = this_core->cur_task->pid;
+    newsock->uid = this_core->cur_task->euid;
+    newsock->gid = this_core->cur_task->egid;
+
+    if(tsock->sock.domain == AF_INET)
+    {
+        newsock->local_addr.ipv4 = tsock->sock.local_addr.ipv4;
+        newsock->local_port = tsock->sock.local_port;
+        newsock->remote_addr.ipv4 = iph->src;
+        newsock->remote_port = tcph->srcp;
+    }
+    else
+    {
+        /*
+         * TODO: handle IPv6
+         */
+        free_packet(p);
+        return;
+    }
+
+    struct socket_tcp_t *newtsock = (struct socket_tcp_t *)newsock;
+
+    tcpsock_init(newtsock);
+    newtsock->rcv_nxt = tcph->seqno + 1;
+    newtsock->irs = tcph->seqno;
+    newtsock->tcpstate = TCPSTATE_SYN_SENT;
+    newtsock->snd_una = newtsock->iss;
+    tcp_send_synack(newtsock);
+    newtsock->snd_nxt++;
+    newtsock->tcpstate = TCPSTATE_SYN_RECV;
+
+    newsock->parent = (struct socket_t *)tsock;
+    tsock->sock.pending_connections++;
+
+    free_packet(p);
+}
+
+
 static void tcp_input_state(struct socket_t *so, struct tcp_hdr_t *tcph, struct packet_t *p)
 {
     struct socket_tcp_t *tsock = (struct socket_tcp_t *)so;
@@ -1707,7 +1796,8 @@ static void tcp_input_state(struct socket_t *so, struct tcp_hdr_t *tcph, struct 
             return;
 
         case TCPSTATE_LISTEN:
-            free_packet(p);
+            tcp_input_listen(tsock, tcph, p);
+            //free_packet(p);
             return;
 
         case TCPSTATE_SYN_SENT:
@@ -1759,14 +1849,41 @@ static void tcp_input_state(struct socket_t *so, struct tcp_hdr_t *tcph, struct 
     switch(tsock->tcpstate)
     {
         case TCPSTATE_SYN_RECV:
-            if(tsock->snd_una <= tcph->ackno && tcph->ackno < tsock->snd_nxt)
+            if(tsock->snd_una <= tcph->ackno && tcph->ackno <= tsock->snd_nxt)
             {
+                // update send window
+                tsock->snd_wnd = tcph->wnd;
+                tsock->snd_wl1 = tcph->seqno;
+                tsock->snd_wl2 = tcph->ackno;
+
                 tsock->tcpstate = TCPSTATE_ESTABLISHED;
+                tsock->snd_una = tsock->snd_nxt;
+                tsock->backoff = 0;
+                // RFC 6298: Sender SHOULD set RTO <- 1 second
+                tsock->rto = PIT_FREQUENCY;
+                tcp_rearm_user_timeout(tsock);
+                tcp_parse_opts(tsock, tcph);
+                sock_connected((struct socket_t *)tsock);
+
+                if(so->parent)
+                {
+                    so->parent->poll_events |= POLLIN;
+
+                    // wakeup waiters blocked in an accept() call
+                    unblock_tasks(&so->parent->pending_connections);
+
+                    // wakeup waiters who are polling/selecting to know when connections
+                    // are pending
+                    selwakeup(&so->parent->selrecv);
+                }
             }
             else
             {
+                tcp_send_reset(tsock);
                 DROP_AND_RETURN(p);
             }
+
+            break;
 
         case TCPSTATE_ESTABLISHED:
         case TCPSTATE_FIN_WAIT_1:
@@ -1802,9 +1919,14 @@ static void tcp_input_state(struct socket_t *so, struct tcp_hdr_t *tcph, struct 
                 DROP_AND_RETURN(p);
             }
 
-            if(tsock->snd_una < tcph->ackno && tcph->ackno <= tsock->snd_nxt)
+            if((tsock->snd_una <= tcph->ackno && tcph->ackno <= tsock->snd_nxt) &&
+               (tsock->snd_wl1 < tcph->seqno || 
+                    (tsock->snd_wl1 == tcph->seqno && tsock->snd_wl2 <= tcph->ackno)))
             {
-                // TODO: update send window
+                // update send window
+                tsock->snd_wnd = tcph->wnd;
+                tsock->snd_wl1 = tcph->seqno;
+                tsock->snd_wl2 = tcph->ackno;
             }
 
             break;
@@ -2029,12 +2151,24 @@ void tcp_input(struct packet_t *p)
     p->seq = tcph->seqno;
     p->end_seq = p->seq + dlen;
 
+    // find a connected socket
     if(!(so = sock_lookup(IPPROTO_TCP, tcph->srcp, tcph->destp)))
     {
-        printk("tcp: cannot find socket for src %d and dest %d\n", 
-                ntohs(tcph->srcp), ntohs(tcph->destp));
-        DROP_PACKET(p);
-        return;
+        // see if someone is listening for connections on this socket
+        if(!(so = sock_lookup(IPPROTO_TCP, 0, tcph->destp)) ||
+            (so->state != SOCKSTATE_LISTENING))
+        {
+            printk("tcp: cannot find socket for src %d and dest %d\n", 
+                    ntohs(tcph->srcp), ntohs(tcph->destp));
+            DROP_PACKET(p);
+            return;
+        }
+
+        if(so->max_backlog && so->pending_connections >= so->max_backlog)
+        {
+            DROP_PACKET(p);
+            return;
+        }
     }
 
     SOCKET_LOCK(so);
@@ -2100,5 +2234,6 @@ struct sockops_t tcp_sockops =
     .read = tcp_read,
     .getsockopt = tcp_getsockopt,
     .setsockopt = tcp_setsockopt,
+    .listen = tcp_listen,
 };
 

@@ -1642,6 +1642,11 @@ long syscall_listen(int s, int backlog)
         return -EINVAL;
     }
 
+    if(so->proto->sockops->listen)
+    {
+        so->proto->sockops->listen(so);
+    }
+
     SOCKET_LOCK(so);
     so->state = SOCKSTATE_LISTENING;
     so->max_backlog = backlog;
@@ -1657,7 +1662,7 @@ long syscall_listen(int s, int backlog)
 long syscall_accept(int fd, struct sockaddr *_name, socklen_t *anamelen)
 {
     struct sockaddr *name;
-	socklen_t namelen, namelen_tmp;
+	socklen_t namelen, namelen_tmp = 0;
 	long res;
 	struct socket_t *so, *newso = NULL;
 
@@ -1676,7 +1681,7 @@ long syscall_accept(int fd, struct sockaddr *_name, socklen_t *anamelen)
         return -ENOTCONN;
     }
 
-	if((res = copy_from_user(&namelen_tmp, anamelen, sizeof(namelen_tmp))))
+	if(anamelen && (res = copy_from_user(&namelen_tmp, anamelen, sizeof(namelen_tmp))))
 	{
 		return res;
 	}
@@ -1765,7 +1770,7 @@ try:
     	return res;
     }
 
-	if(_name)
+	if(_name && anamelen)
 	{
 		/* SHOULD COPY OUT A CHAIN HERE */
 		if(copy_to_user(_name, name, namelen) == 0)

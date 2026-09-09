@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: netif.c
  *    This file is part of LaylaOS.
@@ -154,12 +154,14 @@ struct netif_t *netif_by_name(char *name)
 /*
  * Read /proc/net/dev.
  */
-size_t get_net_dev_stats(char **buf)
+size_t get_net_dev_stats(char **buf, void *arg)
 {
     struct netif_t *ifp;
     size_t len, count = 0, bufsz = 1024;
     char tmp[156];
     char *p;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, bufsz);
     p = *buf;

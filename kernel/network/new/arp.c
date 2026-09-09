@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: arp.c
  *    This file is part of LaylaOS.
@@ -598,12 +598,14 @@ static void check_delayed_packets(void)
 /*
  * Read /proc/net/arp.
  */
-size_t get_arp_list(char **buf)
+size_t get_arp_list(char **buf, void *arg)
 {
     size_t len, count = 0, bufsz = 1024;
     char tmp[128];
     char *p;
     int i;
+
+    UNUSED(arg);
 
     PR_MALLOC(*buf, bufsz);
     p = *buf;

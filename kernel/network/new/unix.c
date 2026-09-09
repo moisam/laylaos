@@ -40,19 +40,19 @@
 #include "iovec.c"
 #include "../../kernel/task_funcs.c"
 
-#define SHORT_PACKET_COUNT                  32
+#define SHORT_PACKET_COUNT                  64
 #define SHORT_PACKET_SIZE                   256
 #define SHORT_PACKET_BUFFER_SIZE            (SHORT_PACKET_SIZE - sizeof(struct packet_t))
 #define SHORT_PACKET_TOTALMEM               (SHORT_PACKET_COUNT * SHORT_PACKET_SIZE)
 
-static volatile uint32_t short_packet_use_bitmap = 0;
+static volatile uint64_t short_packet_use_bitmap = 0;
 static char *short_packets = NULL;
 static struct kernel_mutex_t short_packet_lock;
 
 
 static void short_packet_free(struct packet_t *_p)
 {
-    uint32_t i;
+    uint64_t i;
     char *p = (char *)_p;
 
     if(p < short_packets || p >= (short_packets + SHORT_PACKET_TOTALMEM))
@@ -79,14 +79,21 @@ static void short_packet_free(struct packet_t *_p)
 static struct packet_t *alloc_short_packet(size_t len)
 {
     struct packet_t *p;
-    volatile int i;
+    //volatile int i;
 
-    if(len > SHORT_PACKET_BUFFER_SIZE || short_packet_use_bitmap == 0xFFFFFFFF)
+    if(len > SHORT_PACKET_BUFFER_SIZE)
     {
         return alloc_packet(len);
     }
 
     kernel_mutex_lock(&short_packet_lock);
+
+    if(short_packet_use_bitmap == 0xFFFFFFFFFFFFFFFF)
+    {
+        kernel_mutex_unlock(&short_packet_lock);
+        //printk("unix: alloc: full short packet cache\n");
+        return alloc_packet(len);
+    }
 
     // first use
     if(!short_packets && !(short_packets = kmalloc(SHORT_PACKET_TOTALMEM)))
@@ -96,6 +103,18 @@ static struct packet_t *alloc_short_packet(size_t len)
     }
 
     // find a slot
+    uint64_t free_bits = ~short_packet_use_bitmap;
+
+    // __builtin_ctz calculates the index of the first '1' bit
+    int j = __builtin_ctzll(free_bits);
+
+    short_packet_use_bitmap |= ((uint64_t)1 << j);
+    __asm__ __volatile__("":::"memory");
+
+    kernel_mutex_unlock(&short_packet_lock);
+
+    p = (struct packet_t *)(short_packets + (j * SHORT_PACKET_SIZE));
+    /*
     for(i = 0; i < SHORT_PACKET_COUNT; i++)
     {
         if(!(short_packet_use_bitmap & (1 << i)))
@@ -115,6 +134,7 @@ static struct packet_t *alloc_short_packet(size_t len)
     kernel_mutex_unlock(&short_packet_lock);
 
     p = (struct packet_t *)(short_packets + (i * SHORT_PACKET_SIZE));
+    */
 
     //A_memset(p, 0, sizeof(struct packet_t) + len);
     p->data = ((uint8_t *)p + sizeof(struct packet_t));
