@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024, 2025 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: fb.h
  *    This file is part of LaylaOS.
@@ -177,6 +177,22 @@ long fb_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel);
  * @return  nothing.
  */
 void fb_change_charset(struct tty_t *tty, int which, char c);
+
+/**
+ * @brief Resize display.
+ *
+ * This function is called when the display size changes, e.g. when the
+ * guest window is resized in VirtualBox. It resizes all ttys and sends
+ * SIGWINCH signals to each tty's foreground process group to notify them
+ * of the change.
+ *
+ * @param   neww    new display width
+ * @param   newh    new display height
+ *
+ * @return  zero on success, -(errno) on failure.
+ */
+int vga_resize_display(uint32_t neww, uint32_t newh);
+
 
 /**
  * @var fb_backbuf_text
