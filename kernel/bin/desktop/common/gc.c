@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: gc.c
  *    This file is part of LaylaOS.
@@ -31,7 +31,10 @@
  *  - gc-circle.c: functions to draw circles (hollow and filled),
  *  - gc-line.c: functions to draw lines of different thickness,
  *  - gc-poly.c: functions to draw polygons (hollow and filled),
+ *  - gc-round-rect.c: functions to draw round edge rectangles (hollow and filled),
  *  - gc-ttf.c: functions to draw text using TrueType Fonts (TTF),
+ *  - gc-gc.c: functions to convert pixels between different gc formats,
+ *  - gc-grad-vert.c: functions to draw vertical gradients,
  */
 
 #include "../include/memops.h"
@@ -154,57 +157,6 @@ int gc_realloc_backbuf(struct gc_t *orig_gc, struct gc_t *backbuf_gc,
 }
 
 
-//typedef uint32_t u32vect_t __attribute__ ((vector_size(16)));
-
-
-static inline void fill_line_32(uint8_t *buf, uint32_t color, int cnt)
-{
-    uint32_t *buf32 = (uint32_t *)buf;
-
-    while((uintptr_t)buf32 & 0x0f)
-    {
-        if(cnt--)
-        {
-            *buf32++ = color;
-        }
-        else
-        {
-            return;
-        }
-    }
-
-    __m128i m0 = _mm_setr_epi32(color, color, color, color);
-
-    while(cnt >= 8)
-    {
-        _mm_storeu_si128((__m128i *)buf32, m0);
-        _mm_storeu_si128((__m128i *)(buf32 + 4), m0);
-
-        buf32 += 8;
-        cnt -= 8;
-    }
-    /*
-    if(cnt >= 4)
-    {
-        u32vect_t valvec = { color, color, color, color };
-        u32vect_t *destvec = (u32vect_t *)buf32;
-
-        while(cnt >= 4)
-        {
-            *destvec++ = valvec;
-            cnt -= 4;
-        }
-
-        buf32 = (uint32_t *)destvec;
-    }
-    */
-
-    while(cnt--)
-    {
-        *buf32++ = color;
-    }
-}
-
 static inline void fill_rect_32(uint8_t *buf, uint32_t pitch, uint32_t color,
                                 int x, int max_x, int y, int max_y)
 {
@@ -225,19 +177,57 @@ static inline void fill_rect_24(uint8_t *buf, uint32_t pitch, uint32_t color,
     uint8_t b0 = color & 0xff;
     uint8_t b1 = ((color >> 8) & 0xff);
     uint8_t b2 = ((color >> 16) & 0xff);
-    uint8_t *buf2;
+    uint8_t *p;
     int i;
 
-    for(; y < max_y; y++)
-    {
-        buf2 = buf;
+    // A 16-pixel sequence requires exactly 48 bytes (16 pixels * 3 bytes).
+    // We pre-calculate three 16-byte blocks (v0, v1, v2) that match the pattern.
+    uint8_t pat[48];
 
-        for(i = x; i < max_x; i++)
+    for(i = 0; i < 16; i++)
+    {
+        pat[i * 3 + 0] = b0;
+        pat[i * 3 + 1] = b1;
+        pat[i * 3 + 2] = b2;
+    }
+
+    // Load the pattern blocks into 128-bit SIMD registers
+    __m128i v0 = _mm_loadu_si128((__m128i const*)&pat[0]);
+    __m128i v1 = _mm_loadu_si128((__m128i const*)&pat[16]);
+    __m128i v2 = _mm_loadu_si128((__m128i const*)&pat[32]);
+
+    int width = max_x - x;
+    
+    // We process loops in groups of 16 pixels (48 bytes)
+    int blocks_of_16 = width / 16;
+    int remaining_pixels = width % 16;
+
+    for( ; y < max_y; y++)
+    {
+        p = buf;
+
+        if(blocks_of_16 > 0)
         {
-            buf2[0] = b0;
-            buf2[1] = b1;
-            buf2[2] = b2;
-            buf2 += 3;
+            int count = blocks_of_16;
+
+            // Loop unrolling: Blast 48 bytes (16 pixels) per step using unaligned stores
+            while(count > 0)
+            {
+                _mm_storeu_si128((__m128i*)(p + 0),  v0);
+                _mm_storeu_si128((__m128i*)(p + 16), v1);
+                _mm_storeu_si128((__m128i*)(p + 32), v2);
+                p += 48;
+                count--;
+            }
+        }
+
+        // Clean up any trailing edge pixels under 16-pixel bounds
+        for(i = 0; i < remaining_pixels; i++)
+        {
+            p[0] = b0;
+            p[1] = b1;
+            p[2] = b2;
+            p += 3;
         }
 
         buf += pitch;
@@ -380,7 +370,8 @@ void gc_clipped_rect(struct gc_t *gc, int x, int y,
         {
             // color with some transparency
             int x2;
-            uint8_t *buf8, tmp;
+            uint8_t *buf8;
+            uint32_t tmp;
 
             for( ; y < max_y; y++)
             {
@@ -388,7 +379,9 @@ void gc_clipped_rect(struct gc_t *gc, int x, int y,
 
                 for(x2 = x; x2 < max_x; x2++)
                 {
-                    tmp = buf8[0] | (buf8[1] << 8) | (buf8[2] << 16);
+                    tmp = (uint32_t)(buf8[0]) | 
+                          ((uint32_t)(buf8[1]) << 8) | 
+                          ((uint32_t)(buf8[2]) << 16);
                     tmp = alpha_blend24(gc, color, tmp);
                     buf8[0] = (tmp & 0xff);
                     buf8[1] = (tmp >> 8) & 0xff;

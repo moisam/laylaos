@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: gc-bitmap.c
  *    This file is part of LaylaOS.
@@ -31,7 +31,10 @@
  *  - gc-circle.c: functions to draw circles (hollow and filled),
  *  - gc-line.c: functions to draw lines of different thickness,
  *  - gc-poly.c: functions to draw polygons (hollow and filled),
+ *  - gc-round-rect.c: functions to draw round edge rectangles (hollow and filled),
  *  - gc-ttf.c: functions to draw text using TrueType Fonts (TTF),
+ *  - gc-gc.c: functions to convert pixels between different gc formats,
+ *  - gc-grad-vert.c: functions to draw vertical gradients,
  */
 
 #include <limits.h>
@@ -54,17 +57,10 @@
 static inline void blit_bitmap_32(struct gc_t *gc, uint8_t *dest,
                                   uint32_t *src, unsigned int srcw,
                                   int x, int maxx, int y, int maxy,
-                                  uint32_t hicolor)
+                                  uint32_t hicolor, int src_alpha_pos)
 {
-
-// our colors are in the RGBA format
-#define R(c)            ((c >> 24) & 0xff)
-#define G(c)            ((c >> 16) & 0xff)
-#define B(c)            ((c >> 8) & 0xff)
-#define A(c)            ((c) & 0xff)
-
+    // our colors are in the RGBA format
     int curx, i;
-    //uint32_t compalpha, alpha, r, g, b, tmp;
     uint32_t tmp;
     uint32_t hir = ((hicolor >> 24) & 0xff);
     uint32_t hig = ((hicolor >> 16) & 0xff);
@@ -77,42 +73,11 @@ static inline void blit_bitmap_32(struct gc_t *gc, uint8_t *dest,
 
         for(i = 0, curx = x; curx < maxx; i++, curx++)
         {
-            //alpha = A(src[i]);
-            
-            if(hicolor)
-            {
-                tmp = highlight(src[i], hir, hig, hib);
-            }
-            else
-            {
-                tmp = src[i];
-            }
-
+            // src bitmap pixels can either be RGBA or ARGB
+            // convert to RGBA as the blending function expects this format
+            tmp = (src_alpha_pos == 0) ? src[i] : ((src[i] << 8) | (src[i] >> 24));
+            tmp = hicolor ? highlight(tmp, hir, hig, hib) : tmp;
             buf32[i] = alpha_blend32(gc, tmp, buf32[i]);
-
-            /*
-            if(alpha == 0)
-            {
-                // foreground is transparent - nothing to do here
-            }
-            else if(alpha == 0xff)
-            {
-                // foreground is opaque - copy to buffer
-                buf32[i] = to_rgb32(gc, tmp);
-            }
-            else
-            {
-                compalpha = 0x100 - alpha;
-                r = ((R(tmp) * alpha) >> 8) + 
-                    ((gc_red_component32(gc, buf32[i]) * compalpha) >> 8);
-                g = ((G(tmp) * alpha) >> 8) + 
-                    ((gc_green_component32(gc, buf32[i]) * compalpha) >> 8);
-                b = ((B(tmp) * alpha) >> 8) + 
-                    ((gc_blue_component32(gc, buf32[i]) * compalpha) >> 8);
-
-                buf32[i] = gc_comp_to_rgb32(gc, r, g, b);
-            }
-            */
         }
 
         dest += gc->pitch;
@@ -123,10 +88,10 @@ static inline void blit_bitmap_32(struct gc_t *gc, uint8_t *dest,
 static inline void blit_bitmap_24(struct gc_t *gc, uint8_t *dest,
                                   uint32_t *src, unsigned int srcw,
                                   int x, int maxx, int y, int maxy, 
-                                  uint32_t hicolor)
+                                  uint32_t hicolor, int src_alpha_pos)
 {
     int curx, i, j;
-    uint32_t /* compalpha, alpha, r, g, b, */ tmp, tmp2;
+    uint32_t tmp, tmp2;
     uint32_t hir = ((hicolor >> 24) & 0xff);
     uint32_t hig = ((hicolor >> 16) & 0xff);
     uint32_t hib = ((hicolor >> 8 ) & 0xff);
@@ -137,60 +102,20 @@ static inline void blit_bitmap_24(struct gc_t *gc, uint8_t *dest,
 
         for(i = 0, j = 0, curx = x; curx < maxx; i++, curx++, j += 3)
         {
-            //alpha = A(src[i]);
-            
-            if(hicolor)
-            {
-                tmp = highlight(src[i], hir, hig, hib);
-            }
-            else
-            {
-                tmp = src[i];
-            }
+            // src bitmap pixels can either be RGBA or ARGB
+            // convert to RGBA as the blending function expects this format
+            tmp = (src_alpha_pos == 0) ? src[i] : ((src[i] << 8) | (src[i] >> 24));
+            tmp = hicolor ? highlight(tmp, hir, hig, hib) : tmp;
 
             tmp2 = (uint32_t)buf8[j] |
                    ((uint32_t)buf8[j + 1]) << 8 |
                    ((uint32_t)buf8[j + 2]) << 16;
+
             tmp2 = alpha_blend24(gc, tmp, tmp2);
+
             buf8[j + 0] = tmp2 & 0xff;
             buf8[j + 1] = (tmp2 >> 8) & 0xff;
             buf8[j + 2] = (tmp2 >> 16) & 0xff;
-
-            /*
-            if(alpha == 0)
-            {
-                // foreground is transparent - nothing to do here
-            }
-            else if(alpha == 0xff)
-            {
-                // foreground is opaque - copy to buffer
-                tmp = to_rgb24(gc, tmp);
-                buf8[j + 0] = tmp & 0xff;
-                buf8[j + 1] = (tmp >> 8) & 0xff;
-                buf8[j + 2] = (tmp >> 16) & 0xff;
-            }
-            else
-            {
-                // partial opacity - compositing is needed
-                // for each color component (R, G, B), the formula is:
-                //    color = alpha * fg + (1 - alpha) * bg
-                compalpha = 0x100 - alpha;
-                tmp2 = (uint32_t)buf8[j] |
-                       ((uint32_t)buf8[j + 1]) << 8 |
-                       ((uint32_t)buf8[j + 2]) << 16;
-                r = ((R(tmp) * alpha) >> 8) + 
-                    ((gc_red_component24(gc, tmp2) * compalpha) >> 8);
-                g = ((G(tmp) * alpha) >> 8) + 
-                    ((gc_green_component24(gc, tmp2) * compalpha) >> 8);
-                b = ((B(tmp) * alpha) >> 8) + 
-                    ((gc_blue_component24(gc, tmp2) * compalpha) >> 8);
-
-                tmp = gc_comp_to_rgb24(gc, r, g, b);
-                buf8[j + 0] = tmp & 0xff;
-                buf8[j + 1] = (tmp >> 8) & 0xff;
-                buf8[j + 2] = (tmp >> 16) & 0xff;
-            }
-            */
         }
 
         dest += gc->pitch;
@@ -201,10 +126,9 @@ static inline void blit_bitmap_24(struct gc_t *gc, uint8_t *dest,
 static inline void blit_bitmap_16(struct gc_t *gc, uint8_t *dest,
                                   uint32_t *src, unsigned int srcw,
                                   int x, int maxx, int y, int maxy, 
-                                  uint32_t hicolor)
+                                  uint32_t hicolor, int src_alpha_pos)
 {
     int curx, i;
-    //uint32_t compalpha, alpha, r, g, b, tmp;
     uint32_t tmp;
     uint32_t hir = ((hicolor >> 24) & 0xff);
     uint32_t hig = ((hicolor >> 16) & 0xff);
@@ -216,45 +140,11 @@ static inline void blit_bitmap_16(struct gc_t *gc, uint8_t *dest,
 
         for(i = 0, curx = x; curx < maxx; i++, curx++)
         {
-            //alpha = A(src[i]);
-            
-            if(hicolor)
-            {
-                tmp = highlight(src[i], hir, hig, hib);
-            }
-            else
-            {
-                tmp = src[i];
-            }
-
+            // src bitmap pixels can either be RGBA or ARGB
+            // convert to RGBA as the blending function expects this format
+            tmp = (src_alpha_pos == 0) ? src[i] : ((src[i] << 8) | (src[i] >> 24));
+            tmp = hicolor ? highlight(tmp, hir, hig, hib) : tmp;
             buf16[i] = alpha_blend16(gc, tmp, buf16[i]);
-
-            /*
-            if(alpha == 0)
-            {
-                // foreground is transparent - nothing to do here
-            }
-            else if(alpha == 0xff)
-            {
-                // foreground is opaque - copy to buffer
-                buf16[i] = to_rgb16(gc, tmp);
-            }
-            else
-            {
-                // partial opacity - compositing is needed
-                // for each color component (R, G, B), the formula is:
-                //    color = alpha * fg + (1 - alpha) * bg
-                compalpha = 0x100 - alpha;
-                r = ((R(tmp) * alpha) >> 8) + 
-                    ((gc_red_component16(gc, buf16[i]) * compalpha) >> 8);
-                g = ((G(tmp) * alpha) >> 8) + 
-                    ((gc_green_component16(gc, buf16[i]) * compalpha) >> 8);
-                b = ((B(tmp) * alpha) >> 8) + 
-                    ((gc_blue_component16(gc, buf16[i]) * compalpha) >> 8);
-
-                buf16[i] = gc_comp_to_rgb16(gc, r, g, b);
-            }
-            */
         }
 
         dest += gc->pitch;
@@ -265,10 +155,9 @@ static inline void blit_bitmap_16(struct gc_t *gc, uint8_t *dest,
 static inline void blit_bitmap_8(struct gc_t *gc, uint8_t *dest,
                                  uint32_t *src, unsigned int srcw,
                                  int x, int maxx, int y, int maxy, 
-                                 uint32_t hicolor)
+                                 uint32_t hicolor, int src_alpha_pos)
 {
     int curx, i;
-    //uint32_t compalpha, alpha, r, g, b, tmp;
     uint32_t tmp;
     uint32_t hir = ((hicolor >> 24) & 0xff);
     uint32_t hig = ((hicolor >> 16) & 0xff);
@@ -280,56 +169,17 @@ static inline void blit_bitmap_8(struct gc_t *gc, uint8_t *dest,
 
         for(i = 0, curx = x; curx < maxx; i++, curx++)
         {
-            //alpha = A(src[i]);
-            
-            if(hicolor)
-            {
-                tmp = highlight(src[i], hir, hig, hib);
-            }
-            else
-            {
-                tmp = src[i];
-            }
-
+            // src bitmap pixels can either be RGBA or ARGB
+            // convert to RGBA as the blending function expects this format
+            tmp = (src_alpha_pos == 0) ? src[i] : ((src[i] << 8) | (src[i] >> 24));
+            tmp = hicolor ? highlight(tmp, hir, hig, hib) : tmp;
             buf8[i] = alpha_blend8(gc, tmp, buf8[i]);
-
-            /*
-            if(alpha == 0)
-            {
-                // foreground is transparent - nothing to do here
-            }
-            else if(alpha == 0xff)
-            {
-                // foreground is opaque - copy to buffer
-                buf8[i] = to_rgb8(gc, tmp);
-            }
-            else
-            {
-                // partial opacity - compositing is needed
-                // for each color component (R, G, B), the formula is:
-                //    color = alpha * fg + (1 - alpha) * bg
-                compalpha = 0x100 - alpha;
-                r = ((R(tmp) * alpha) >> 8) + 
-                    ((gc_red_component8(gc, buf8[i]) * compalpha) >> 8);
-                g = ((G(tmp) * alpha) >> 8) + 
-                    ((gc_green_component8(gc, buf8[i]) * compalpha) >> 8);
-                b = ((B(tmp) * alpha) >> 8) + 
-                    ((gc_blue_component8(gc, buf8[i]) * compalpha) >> 8);
-
-                buf8[i] = gc_comp_to_rgb8(gc, r, g, b);
-            }
-            */
         }
 
         dest += gc->pitch;
         src += srcw;
     }
 }
-
-#undef R
-#undef G
-#undef B
-#undef A
 
 
 static inline void blit_for_pixel_width(struct gc_t *gc, 
@@ -339,6 +189,7 @@ static inline void blit_for_pixel_width(struct gc_t *gc,
 {
     uint32_t *src;
     uint8_t *dest;
+    int src_alpha_pos = (bitmap->format == BITMAP_FORMAT_ARGB) ? 24 : 0;
 
     dest = (uint8_t *)(gc->buffer +
                        (dx * gc->pixel_width + dy * gc->pitch));
@@ -347,26 +198,26 @@ static inline void blit_for_pixel_width(struct gc_t *gc,
     if(gc->pixel_width == 1)
     {
         blit_bitmap_8(gc, dest, src, bitmap->width, 
-                                dx, maxdx, dy, maxdy, hicolor);
+                                dx, maxdx, dy, maxdy, hicolor, src_alpha_pos);
     }
     else if(gc->pixel_width == 2)
     {
         blit_bitmap_16(gc, dest, src, bitmap->width, 
-                                dx, maxdx, dy, maxdy, hicolor);
+                                dx, maxdx, dy, maxdy, hicolor, src_alpha_pos);
     }
     else if(gc->pixel_width == 3)
     {
         blit_bitmap_24(gc, dest, src, bitmap->width, 
-                                dx, maxdx, dy, maxdy, hicolor);
+                                dx, maxdx, dy, maxdy, hicolor, src_alpha_pos);
     }
     else
     {
 #ifdef __x86_64__
         blit_bitmap_32_128bit(gc, dest, src, bitmap->width, 
-                                  dx, maxdx, dy, maxdy, hicolor);
+                                  dx, maxdx, dy, maxdy, hicolor, src_alpha_pos);
 #else
         blit_bitmap_32(gc, dest, src, bitmap->width, 
-                                dx, maxdx, dy, maxdy, hicolor);
+                                dx, maxdx, dy, maxdy, hicolor, src_alpha_pos);
 #endif
     }
 }

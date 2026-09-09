@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: gc-line.c
  *    This file is part of LaylaOS.
@@ -31,7 +31,10 @@
  *  - gc-circle.c: functions to draw circles (hollow and filled),
  *  - gc-line.c: functions to draw lines of different thickness,
  *  - gc-poly.c: functions to draw polygons (hollow and filled),
+ *  - gc-round-rect.c: functions to draw round edge rectangles (hollow and filled),
  *  - gc-ttf.c: functions to draw text using TrueType Fonts (TTF),
+ *  - gc-gc.c: functions to convert pixels between different gc formats,
+ *  - gc-grad-vert.c: functions to draw vertical gradients,
  */
 
 #include <math.h>
@@ -70,22 +73,7 @@ void gc_line_simple_clipped(struct gc_t *gc, struct clipping_t *__clipping,
     Rect screen_area;
     RectList clip_rects;
 
-    if(gc->pixel_width == 1)
-    {
-        color = to_rgb8(gc, color);
-    }
-    else if(gc->pixel_width == 2)
-    {
-        color = to_rgb16(gc, color);
-    }
-    else if(gc->pixel_width == 3)
-    {
-        color = to_rgb24(gc, color);
-    }
-    else
-    {
-        color = to_rgb32(gc, color);
-    }
+    color = color_for_pixelwidth(gc, color);
 
     if(__clipping && __clipping->clip_rects && __clipping->clip_rects->root)
     {
@@ -200,22 +188,7 @@ void gc_line_clipped(struct gc_t *gc, struct clipping_t *__clipping,
         alpha = MAX(0, 255 * (ABS(err - dx + dy) / ed - thickness + 1));
         //color = color_no_alpha | alpha;
 
-        if(gc->pixel_width == 1)
-        {
-            color = to_rgb8(gc, (color_no_alpha | alpha));
-        }
-        else if(gc->pixel_width == 2)
-        {
-            color = to_rgb16(gc, (color_no_alpha | alpha));
-        }
-        else if(gc->pixel_width == 3)
-        {
-            color = to_rgb24(gc, (color_no_alpha | alpha));
-        }
-        else
-        {
-            color = to_rgb32(gc, (color_no_alpha | alpha));
-        }
+        color = color_for_pixelwidth(gc, (color_no_alpha | alpha));
 
         __PIXEL(x1, y1);
 
@@ -230,22 +203,7 @@ void gc_line_clipped(struct gc_t *gc, struct clipping_t *__clipping,
                 alpha = MAX(0, 255 * (ABS(e2) / ed - thickness + 1));
                 //color = color_no_alpha | alpha;
 
-                if(gc->pixel_width == 1)
-                {
-                    color = to_rgb8(gc, (color_no_alpha | alpha));
-                }
-                else if(gc->pixel_width == 2)
-                {
-                    color = to_rgb16(gc, (color_no_alpha | alpha));
-                }
-                else if(gc->pixel_width == 3)
-                {
-                    color = to_rgb24(gc, (color_no_alpha | alpha));
-                }
-                else
-                {
-                    color = to_rgb32(gc, (color_no_alpha | alpha));
-                }
+                color = color_for_pixelwidth(gc, (color_no_alpha | alpha));
 
                 yy += sy;
                 __PIXEL(x1, yy);
@@ -268,22 +226,7 @@ void gc_line_clipped(struct gc_t *gc, struct clipping_t *__clipping,
                 alpha = MAX(0, 255 * (ABS(e2) / ed - thickness + 1));
                 //color = color_no_alpha | alpha;
 
-                if(gc->pixel_width == 1)
-                {
-                    color = to_rgb8(gc, (color_no_alpha | alpha));
-                }
-                else if(gc->pixel_width == 2)
-                {
-                    color = to_rgb16(gc, (color_no_alpha | alpha));
-                }
-                else if(gc->pixel_width == 3)
-                {
-                    color = to_rgb24(gc, (color_no_alpha | alpha));
-                }
-                else
-                {
-                    color = to_rgb32(gc, (color_no_alpha | alpha));
-                }
+                color = color_for_pixelwidth(gc, (color_no_alpha | alpha));
 
                 xx += sx;
                 __PIXEL(xx, y1);

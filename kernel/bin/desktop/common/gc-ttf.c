@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: gc-ttf.c
  *    This file is part of LaylaOS.
@@ -31,7 +31,10 @@
  *  - gc-circle.c: functions to draw circles (hollow and filled),
  *  - gc-line.c: functions to draw lines of different thickness,
  *  - gc-poly.c: functions to draw polygons (hollow and filled),
+ *  - gc-round-rect.c: functions to draw round edge rectangles (hollow and filled),
  *  - gc-ttf.c: functions to draw text using TrueType Fonts (TTF),
+ *  - gc-gc.c: functions to convert pixels between different gc formats,
+ *  - gc-grad-vert.c: functions to draw vertical gradients,
  */
 
 #include "../include/gc.h"
@@ -128,8 +131,6 @@ void __gc_draw_char_clipped_ttf(struct gc_t *gc, struct TGlyph *glyph,
 
     if(gc->pixel_width == 1)
     {
-        //uint8_t col8 = to_rgb8(gc, color), tmp;
-
         for(l = srcy; l < srcy2; l++)
         {
             buf2 = buf;
@@ -138,35 +139,6 @@ void __gc_draw_char_clipped_ttf(struct gc_t *gc, struct TGlyph *glyph,
             {
                 *buf2 = alpha_blend8(gc, color | srcbuf[i], *buf2);
                 buf2++;
-
-                /*
-                alpha = srcbuf[i];
-
-                if(alpha == 0)
-                {
-                    // foreground is transparent - nothing to do here
-                }
-                else if(alpha == 0xff)
-                {
-                    // foreground is opaque - copy to buffer
-                    *buf2 = col8;
-                }
-                else
-                {
-                    compalpha = 0x100 - alpha;
-                    tmp = *buf2;
-                    r = ((R(color) * alpha) >> 8) + 
-                        ((gc_red_component8(gc, tmp) * compalpha) >> 8);
-                    g = ((G(color) * alpha) >> 8) + 
-                        ((gc_green_component8(gc, tmp) * compalpha) >> 8);
-                    b = ((B(color) * alpha) >> 8) + 
-                        ((gc_blue_component8(gc, tmp) * compalpha) >> 8);
-
-                    *buf2 = gc_comp_to_rgb8(gc, r, g, b);
-                }
-
-                buf2 += gc->pixel_width;
-                */
             }
 
             buf += gc->pitch;
@@ -189,8 +161,6 @@ void __gc_draw_char_clipped_ttf(struct gc_t *gc, struct TGlyph *glyph,
     }
     else if(gc->pixel_width == 2)
     {
-        //uint16_t col16 = to_rgb16(gc, color), tmp;
-
         for(l = srcy; l < srcy2; l++)
         {
             buf2 = buf;
@@ -200,35 +170,6 @@ void __gc_draw_char_clipped_ttf(struct gc_t *gc, struct TGlyph *glyph,
                 *(uint16_t *)buf2 = alpha_blend16(gc, color | srcbuf[i], 
                                                       *(uint16_t *)buf2);
                 buf2 += 2;
-
-                /*
-                alpha = srcbuf[i];
-
-                if(alpha == 0)
-                {
-                    // foreground is transparent - nothing to do here
-                }
-                else if(alpha == 0xff)
-                {
-                    // foreground is opaque - copy to buffer
-                    *(uint16_t *)buf2 = col16;
-                }
-                else
-                {
-                    compalpha = 0x100 - alpha;
-                    tmp = *(uint16_t *)buf2;
-                    r = ((R(color) * alpha) >> 8) + 
-                        ((gc_red_component16(gc, tmp) * compalpha) >> 8);
-                    g = ((G(color) * alpha) >> 8) + 
-                        ((gc_green_component16(gc, tmp) * compalpha) >> 8);
-                    b = ((B(color) * alpha) >> 8) + 
-                        ((gc_blue_component16(gc, tmp) * compalpha) >> 8);
-
-                    *(uint16_t *)buf2 = gc_comp_to_rgb16(gc, r, g, b);
-                }
-
-                buf2 += gc->pixel_width;
-                */
             }
 
             buf += gc->pitch;
@@ -251,12 +192,6 @@ void __gc_draw_char_clipped_ttf(struct gc_t *gc, struct TGlyph *glyph,
     }
     else if(gc->pixel_width == 3)
     {
-        /*
-        uint32_t col24 = to_rgb24(gc, color), tmp;
-        uint8_t b0 = col24 & 0xff;
-        uint8_t b1 = ((col24 >> 8) & 0xff);
-        uint8_t b2 = ((col24 >> 16) & 0xff);
-        */
         uint32_t tmp;
 
         for(l = srcy; l < srcy2; l++)
@@ -273,42 +208,6 @@ void __gc_draw_char_clipped_ttf(struct gc_t *gc, struct TGlyph *glyph,
                 buf2[1] = (tmp >> 8) & 0xff;
                 buf2[2] = (tmp >> 16) & 0xff;
                 buf2 += 3;
-
-                /*
-                alpha = srcbuf[i];
-
-                if(alpha == 0)
-                {
-                    // foreground is transparent - nothing to do here
-                }
-                else if(alpha == 0xff)
-                {
-                    // foreground is opaque - copy to buffer
-                    buf2[0] = b0;
-                    buf2[1] = b1;
-                    buf2[2] = b2;
-                }
-                else
-                {
-                    compalpha = 0x100 - alpha;
-                    tmp = (uint32_t)buf2[0] |
-                           ((uint32_t)buf2[1]) << 8 |
-                           ((uint32_t)buf2[2]) << 16;
-                    r = ((R(color) * alpha) >> 8) + 
-                        ((gc_red_component24(gc, tmp) * compalpha) >> 8);
-                    g = ((G(color) * alpha) >> 8) + 
-                        ((gc_green_component24(gc, tmp) * compalpha) >> 8);
-                    b = ((B(color) * alpha) >> 8) + 
-                        ((gc_blue_component24(gc, tmp) * compalpha) >> 8);
-
-                    tmp = gc_comp_to_rgb24(gc, r, g, b);
-                    buf2[0] = tmp & 0xff;
-                    buf2[1] = (tmp >> 8) & 0xff;
-                    buf2[2] = (tmp >> 16) & 0xff;
-                }
-
-                buf2 += gc->pixel_width;
-                */
             }
 
             buf += gc->pitch;
@@ -336,9 +235,6 @@ void __gc_draw_char_clipped_ttf(struct gc_t *gc, struct TGlyph *glyph,
     }
     else
     {
-        //uint32_t col32 = to_rgb32(gc, color), tmp;
-
-        //__asm__ __volatile__("xchg %%bx, %%bx"::);
         for(l = srcy; l < srcy2; l++)
         {
             buf2 = buf;
@@ -348,35 +244,6 @@ void __gc_draw_char_clipped_ttf(struct gc_t *gc, struct TGlyph *glyph,
                 *(uint32_t *)buf2 = alpha_blend32(gc, color | srcbuf[i], 
                                                       *(uint32_t *)buf2);
                 buf2 += 4;
-
-                /*
-                alpha = srcbuf[i];
-
-                if(alpha == 0)
-                {
-                    // foreground is transparent - nothing to do here
-                }
-                else if(alpha == 0xff)
-                {
-                    // foreground is opaque - copy to buffer
-                    *(uint32_t *)buf2 = col32;
-                }
-                else
-                {
-                    compalpha = 0x100 - alpha;
-                    tmp = *(uint32_t *)buf2;
-                    r = ((R(color) * alpha) >> 8) + 
-                        ((gc_red_component32(gc, tmp) * compalpha) >> 8);
-                    g = ((G(color) * alpha) >> 8) + 
-                        ((gc_green_component32(gc, tmp) * compalpha) >> 8);
-                    b = ((B(color) * alpha) >> 8) + 
-                        ((gc_blue_component32(gc, tmp) * compalpha) >> 8);
-
-                    *(uint32_t *)buf2 = gc_comp_to_rgb32(gc, r, g, b);
-                }
-
-                buf2 += gc->pixel_width;
-                */
             }
 
             buf += gc->pitch;

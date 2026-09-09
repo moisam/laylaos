@@ -135,7 +135,6 @@ void notify_win_title_event(int fd, char *title, winid_t dest, winid_t src)
     //write(fd, (void *)evbuf, bufsz);
     direct_write(fd, (void *)evbuf, bufsz);
 
-
     free((void *)evbuf);
 }
 

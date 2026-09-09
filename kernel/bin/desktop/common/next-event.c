@@ -98,7 +98,13 @@ static void poll_events(void)
      (type) == EVENT_WINDOW_RESIZE_CONFIRM ||   \
      (type) == EVENT_WINDOW_NEW_CANVAS ||       \
      (type) == EVENT_MODIFIER_KEYS ||           \
-     (type) == EVENT_KEYS_STATE)
+     (type) == EVENT_KEYS_STATE ||              \
+     (type) == EVENT_SCREENSHOT_DATA ||         \
+     (type) == EVENT_DESKTOP_BOUNDS ||          \
+     (type) == EVENT_WINDOW_STATE ||            \
+     (type) == EVENT_SYSTRAY_MANAGER_WINID ||   \
+     (type) == EVENT_SYSTRAY_BOUNDS ||          \
+     (type) == EVENT_ROOT_WINID)
 
 struct event_t *next_event_for_seqid(struct window_t *window,
                                      uint32_t seqid, int wait)
@@ -365,5 +371,28 @@ int pending_events_utimeout(suseconds_t usecs)
 int pending_events(void)
 {
     return pending_events_timeout(0);
+}
+
+int expand_internal_buffer(size_t newsz)
+{
+    void *p;
+
+    if(newsz > GLOB.evbufsz)
+    {
+        mutex_lock(&__global_evlock);
+
+        if(!(p = realloc(GLOB.evbuf_internal, newsz)))
+        {
+            mutex_unlock(&__global_evlock);
+            return 0;
+        }
+
+        GLOB.evbuf_internal = p;
+        GLOB.evbufsz = newsz;
+
+        mutex_unlock(&__global_evlock);
+    }
+
+    return 1;
 }
 

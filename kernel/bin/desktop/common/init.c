@@ -94,7 +94,7 @@ static void load_sysfont(char *myname, char *fontname, struct font_t *font)
 
         if(FT_New_Size(font->ft_face, &ftsize) == 0)
         {
-            font->ptsz = 16;
+            font->ptsz = 14;
 
             font->ftsize = ftsize;
             FT_Activate_Size(ftsize);

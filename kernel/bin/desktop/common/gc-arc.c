@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2023, 2024 (c)
+ *    Copyright 2023, 2024, 2025, 2026 (c)
  * 
  *    file: gc-arc.c
  *    This file is part of LaylaOS.
@@ -31,139 +31,268 @@
  *  - gc-circle.c: functions to draw circles (hollow and filled),
  *  - gc-line.c: functions to draw lines of different thickness,
  *  - gc-poly.c: functions to draw polygons (hollow and filled),
+ *  - gc-round-rect.c: functions to draw round edge rectangles (hollow and filled),
  *  - gc-ttf.c: functions to draw text using TrueType Fonts (TTF),
+ *  - gc-gc.c: functions to convert pixels between different gc formats,
+ *  - gc-grad-vert.c: functions to draw vertical gradients,
  */
 
 #include <math.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include "../include/gui.h"
 #include "../include/gc.h"
 #include "../include/rgb.h"
 
-// functions defined in gc-circle.c
-extern void xline(struct gc_t *gc, int x1, int x2, int y, 
-                  Rect *clip_area, uint32_t color);
-extern void yline(struct gc_t *gc, int x, int y1, int y2, 
-                  Rect *clip_area, uint32_t color);
-extern void pixel(struct gc_t *gc, int x, int y, 
-                  Rect *clip_area, uint32_t color);
+#include "gc-inlines.h"
 
-/*
- * Below code is adopted from the post by 'bkht' on:
- *    https://github.com/lvgl/lvgl/issues/252
- */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846f
+#endif
 
-int fast_atan2(int x, int y)
+typedef struct { float x, y; } Point2D;
+
+
+// Helper function: Calculate shortest distance from a pixel point to a line segment
+static float distance_to_segment(float px, float py, Point2D p1, Point2D p2)
 {
-    // Fast XY vector to integer degree algorithm - Jan 2011 www.RomanBlack.com
-    // Converts any XY values including 0 to a degree value that should be
-    // within +/- 1 degree of the accurate value without needing
-    // large slow trig functions like ArcTan() or ArcCos().
-    // NOTE! at least one of the X or Y values must be non-zero!
-    // This is the full version, for all 4 quadrants and will generate
-    // the angle in integer degrees from 0-360.
-    // Any values of X and Y are usable including negative values provided
-    // they are between -1456 and 1456 so the 16bit multiply does not overflow.
+    float dx = p2.x - p1.x;
+    float dy = p2.y - p1.y;
 
-    unsigned char negflag;
-    unsigned char tempdegree;
-    unsigned char comp;
-    unsigned int degree;     // this will hold the result
-    unsigned int ux;
-    unsigned int uy;
-
-    // Save the sign flags then remove signs and get XY as unsigned ints
-    negflag = 0;
-
-    if(x < 0)
+    if(dx == 0.0f && dy == 0.0f)
     {
-        negflag += 0x01;    // x flag bit
-        x = (0 - x);        // is now +
+        return sqrtf((px - p1.x) * (px - p1.x) + (py - p1.y) * (py - p1.y));
+    }
+    
+    float t = ((px - p1.x) * dx + (py - p1.y) * dy) / (dx * dx + dy * dy);
+
+    if(t < 0.0f)
+    {
+        t = 0.0f;
+    }
+    else if(t > 1.0f)
+    {
+        t = 1.0f;
     }
 
-    ux = x;                // copy to unsigned var before multiply
+    float nearest_x = p1.x + t * dx;
+    float nearest_y = p1.y + t * dy;
 
-    if(y < 0)
-    {
-        negflag += 0x02;    // y flag bit
-        y = (0 - y);        // is now +
-    }
-
-    uy = y;                // copy to unsigned var before multiply
-
-    // 1. Calc the scaled "degrees"
-    if(ux > uy)
-    {
-        degree = (uy * 45) / ux;   // degree result will be 0-45 range
-        negflag += 0x10;    // octant flag bit
-    }
-    else
-    {
-        degree = (ux * 45) / uy;   // degree result will be 0-45 range
-    }
-
-    // 2. Compensate for the 4 degree error curve
-    comp = 0;
-    tempdegree = degree;    // use an unsigned char for speed!
-
-    if(tempdegree > 22)      // if top half of range
-    {
-        if(tempdegree <= 44) comp++;
-        if(tempdegree <= 41) comp++;
-        if(tempdegree <= 37) comp++;
-        if(tempdegree <= 32) comp++;  // max is 4 degrees compensated
-    }
-    else    // else is lower half of range
-    {
-        if(tempdegree >= 2) comp++;
-        if(tempdegree >= 6) comp++;
-        if(tempdegree >= 10) comp++;
-        if(tempdegree >= 15) comp++;  // max is 4 degrees compensated
-    }
-
-    degree += comp;   // degree is now accurate to +/- 1 degree!
-
-    // Invert degree if it was X>Y octant, makes 0-45 into 90-45
-    if(negflag & 0x10) degree = (90 - degree);
-
-    // 3. Degree is now 0-90 range for this quadrant,
-    // need to invert it for whichever quadrant it was in
-    if(negflag & 0x02)   // if -Y
-    {
-        if(negflag & 0x01)   // if -Y -X
-            degree = (180 + degree);
-        else        // else is -Y +X
-            degree = (180 - degree);
-    }
-    else    // else is +Y
-    {
-        if(negflag & 0x01)   // if +Y -X
-            degree = (360 - degree);
-    }
-
-    return degree;
+    return sqrtf((px - nearest_x) * (px - nearest_x) + (py - nearest_y) * (py - nearest_y));
 }
 
 
-#define __ITERATOR_PREFIX       \
-    for(clip_area = clipping->clip_rects->root; \
-        clip_area != NULL;  \
-        clip_area = clip_area->next)
-
-
-/*
- * NOTE: angle1 and angle2 are given in degrees.
- */
-void gc_arc_clipped(struct gc_t *gc, struct clipping_t *__clipping,
-                    int xc, int yc, int radius, int angle1, int angle2,
-                    int thickness, uint32_t color)
+// Helper function: Check if an angle falls within the specified arc span
+static int is_angle_in_arc(float x, float y, float angle1, float angle2)
 {
-    thickness++;
-    radius += (thickness / 2);
+    // We use standard screen-coordinate space inversion (Y goes down)
+    // atan2f(-y, x) normalises angles counter-clockwise
+    float angle = atan2f(-y, x); 
+
+    if(angle < 0.0f)
+    {
+        angle += 2.0f * M_PI;
+    }
     
-    int radius2 = radius - thickness;
-    int deg = fast_atan2(-radius, 0);
+    float deg = angle * (180.0f / M_PI);
+    float end_angle = angle1 + angle2;
+    
+    // Normalize target angles to 0-360 window
+    if(angle1 < 0.0f)
+    {
+        angle1 += 360.0f;
+        end_angle += 360.0f;
+    }
+
+    while(deg < 0.0f)
+    {
+        deg += 360.0f;
+    }
+
+    while(deg >= 360.0f)
+    {
+        deg -= 360.0f;
+    }
+
+    while(angle1 >= 360.0f)
+    {
+        angle1 -= 360.0f;
+        end_angle -= 360.0f;
+    }
+
+    if(end_angle > angle1)
+    {
+        return (deg >= angle1 && deg <= end_angle);
+    }
+    else        // Handle cross-zero wrapping boundaries
+    {
+        return (deg >= angle1 || deg <= end_angle);
+    }
+}
+
+
+static void __gc_arc_clipped(struct gc_t *gc, Rect *clip_area,
+                             int cxi, int cyi, int rxi, int ryi, 
+                             int angle1, int angle2, int thickness, 
+                             uint32_t color, int filled)
+{
+    float cx = (float)cxi;
+    float cy = (float)cyi;
+    float rx = (float)rxi;
+    float ry = (float)ryi;
+    float rx4 = rx * rx * rx * rx;
+    float ry4 = ry * ry * ry * ry;
+
+    // Define the bounding region parameters
+    int start_x = (int)(cx - rx - thickness - 1.0f);
+    int end_x   = (int)(cx + rx + thickness + 1.0f);
+    int start_y = (int)(cy - ry - thickness - 1.0f);
+    int end_y   = (int)(cy + ry + thickness + 1.0f);
     int x, y;
 
+    if(start_x < 0)
+    {
+        start_x = 0;
+    }
+
+    if(end_x >= gc->w)
+    {
+        end_x = gc->w - 1;
+    }
+
+    if(start_y < 0)
+    {
+        start_y = 0;
+    }
+
+    if(end_y >= gc->h)
+    {
+        end_y = gc->h - 1;
+    }
+
+    // Cache line segments for filled pie-wedges to minimize math calculations inside loops
+    Point2D center = { cx, cy };
+    Point2D edge_start, edge_end;
+
+    // Remove alpha
+    color &= 0xffffff00;
+
+    if(filled)
+    {
+        float rad_start = angle1 * (M_PI / 180.0f);
+        float rad_end = (angle1 + angle2) * (M_PI / 180.0f);
+
+        edge_start.x = cx + rx * cosf(rad_start);
+        edge_start.y = cy - ry * sinf(rad_start); // Negative due to screen coordinate inversion
+        edge_end.x   = cx + rx * cosf(rad_end);
+        edge_end.y   = cy - ry * sinf(rad_end);
+    }
+
+    for(y = start_y; y <= end_y; y++)
+    {
+        for(x = start_x; x <= end_x; x++)
+        {
+            if(x < clip_area->left || x > clip_area->right)
+            {
+                continue;
+            }
+
+            if(y < clip_area->top || y > clip_area->bottom)
+            {
+                continue;
+            }
+
+            float dx = (float)x + 0.5f - cx;
+            float dy = (float)y + 0.5f - cy;
+
+            // Algebraic distance value (Elliptical Vector Space mapping)
+            float norm_x = dx / rx;
+            float norm_y = dy / ry;
+            float elliptic_radius = sqrtf(norm_x * norm_x + norm_y * norm_y);
+
+            // Determine dynamic subpixel distance adjustments using delta approximations
+            float pixel_value_delta = sqrtf((dx * dx) / (rx4) + (dy * dy) / (ry4));
+            float distance_in_pixels = (elliptic_radius - 1.0f) / pixel_value_delta;
+
+            int in_arc = is_angle_in_arc(dx, dy, angle1, angle2);
+            int alpha = 0;
+
+            if(filled)      // Filled Arc
+            {
+                if(in_arc)
+                {
+                    if(distance_in_pixels <= -0.5f)
+                    {
+                        alpha = 255; // Solid inside the ellipse sector
+                    }
+                    else if (distance_in_pixels >= 0.5f)
+                    {
+                        alpha = 0;   // Outside the ellipse boundary
+                    }
+                    else    // Antialiased Outer Curve Edge
+                    {
+                        alpha = (int)((0.5f - distance_in_pixels) * 255);
+                    }
+                }
+                else
+                {
+                    // straight lines from the edge back to center (pie slice)
+                    float px = (float)x + 0.5f;
+                    float py = (float)y + 0.5f;
+                    float d_start = distance_to_segment(px, py, center, edge_start);
+                    float d_end   = distance_to_segment(px, py, center, edge_end);
+                    float min_line_d = (d_start < d_end) ? d_start : d_end;
+                    
+                    // Render straight cuts if we are geometrically within the ellipse area
+                    if(distance_in_pixels < 0.5f && min_line_d < 0.5f)
+                    {
+                        alpha = (int)((0.5f - min_line_d) * 255);
+                    }
+                }
+            }
+            else        // Hollow Stroke outline
+            {
+                if(!in_arc)
+                {
+                    continue; 
+                }
+
+                float half_w = thickness * 0.5f;
+                float dist_from_stroke = fabsf(distance_in_pixels) - half_w;
+
+                if(dist_from_stroke <= -0.5f)
+                {
+                    alpha = 255;
+                }
+                else if(dist_from_stroke >= 0.5f)
+                {
+                    alpha = 0;
+                }
+                else
+                {
+                    alpha = (int)((0.5f - dist_from_stroke) * 255);
+                }
+            }
+
+            if(alpha > 0)
+            {
+                if(alpha > 255)
+                {
+                    alpha = 255;
+                }
+
+                __fill_pixel(gc, y, x, color, alpha);
+            }
+        }
+    }
+}
+
+
+static void gc_arc_clipped(struct gc_t *gc, struct clipping_t *__clipping,
+                           int xc, int yc, int xr, int yr, 
+                           int angle1, int angle2, int thickness, 
+                           uint32_t color, int filled)
+{
     struct clipping_t tmp_clipping;
     struct clipping_t *clipping;
 
@@ -171,137 +300,15 @@ void gc_arc_clipped(struct gc_t *gc, struct clipping_t *__clipping,
     Rect screen_area;
     RectList clip_rects;
 
-    if(gc->pixel_width == 2)
+    __prep_clipping_internal(gc, &clipping, __clipping, &tmp_clipping, &clip_rects, &screen_area);
+
+    for(clip_area = clipping->clip_rects->root;
+        clip_area != NULL;
+        clip_area = clip_area->next)
     {
-        color = to_rgb16(gc, color);
-    }
-    else
-    {
-        color = to_rgb32(gc, color);
-    }
-
-    if(__clipping && __clipping->clip_rects && __clipping->clip_rects->root)
-    {
-        clipping = __clipping;
-    }
-    else
-    {
-        clipping = &tmp_clipping;
-        tmp_clipping.clipping_on = 0;
-        tmp_clipping.clip_rects = &clip_rects;
-
-        if(!__clipping || !__clipping->clipping_on)
-        {
-            clip_rects.root = &screen_area;
-            screen_area.top = 0;
-            screen_area.left = 0;
-            screen_area.bottom = gc->h - 1;
-            screen_area.right = gc->w - 1;
-            screen_area.next = NULL;
-        }
-        else
-        {
-            clip_rects.root = NULL;
-        }
-    }
-
-#define __XLINE(x1, x2, y)  \
-    __ITERATOR_PREFIX \
-    {   \
-        xline(gc, (x1), (x2), (y), clip_area, color);   \
-    }
-
-    if((deg >= angle1) && (deg <= angle2))
-    {
-        // Left Middle
-        __XLINE(xc - radius + 1, xc - radius + 1 + thickness, yc);
-    }
-
-    deg = fast_atan2(radius2, 0);
-    
-    if((deg >= angle1) && (deg <= angle2))
-    {
-        // Right Middle
-        __XLINE(xc + radius2, xc + radius2 + thickness, yc);
-    }
-
-#undef __XLINE
-
-#define __YLINE(x, y1, y2)  \
-    __ITERATOR_PREFIX \
-    {   \
-        yline(gc, (x), (y1), (y2), clip_area, color);   \
-    }
-
-    deg = fast_atan2(0, -radius);
-
-    if((deg >= angle1) && (deg <= angle2))
-    {
-        // Top Middle
-        __YLINE(xc, yc - radius + 1, yc - radius + 1 + thickness);
-    }
-
-    deg = fast_atan2(0, radius2);
-
-    if((deg >= angle1) && (deg <= angle2))
-    {
-        // Bottom middle
-        __YLINE(xc, yc + radius2, yc + radius2 + thickness);
-    }
-
-#undef __YLINE
-
-#define __PIXEL(x, y)   \
-    __ITERATOR_PREFIX \
-    {   \
-        pixel(gc, (x), (y), clip_area, color);  \
-    }
-
-    int radius_sqr = radius * radius;
-    int radius2_sqr = radius2 * radius2;
-
-    for(y = -radius; y < 0; y++)
-    {
-        for(x = -radius; x < 0; x++)
-        {
-            uint32_t r2 = x * x + y * y;
-
-            if((r2 <= radius_sqr) && (r2 >= radius2_sqr))
-            {
-                deg = fast_atan2(x, y);
-
-                if ((deg >= angle1) && (deg <= angle2))
-                {
-                    __PIXEL(xc + x, yc + y);
-                }
-
-                deg = fast_atan2(x, -y);
-
-                if ((deg >= angle1) && (deg <= angle2))
-                {
-                    __PIXEL(xc + x, yc - y);
-                }
-
-                deg = fast_atan2(-x, y);
-
-                if ((deg >= angle1) && (deg <= angle2))
-                {
-                    __PIXEL(xc - x, yc + y);
-                }
-
-                deg = fast_atan2(-x, -y);
-
-                if ((deg >= angle1) && (deg <= angle2))
-                {
-                    __PIXEL(xc - x, yc - y);
-                }
-            }
-        }
+        __gc_arc_clipped(gc, clip_area, xc, yc, xr, yr, angle1, angle2, thickness, color, filled);
     }
 }
-
-#undef __PIXEL
-#undef __ITERATOR_PREFIX
 
 
 /***********************************
@@ -311,10 +318,17 @@ void gc_arc_clipped(struct gc_t *gc, struct clipping_t *__clipping,
  ***********************************/
 
 void gc_arc(struct gc_t *gc, int xc, int yc,
-                             int radius, int angle1, int angle2,
+                             int xr, int yr, int angle1, int angle2,
                              int thickness, uint32_t color)
 {
-    gc_arc_clipped(gc, &gc->clipping, xc, yc, radius, angle1, angle2,
-                                      thickness, color);
+    gc_arc_clipped(gc, &gc->clipping, xc, yc, xr, yr, angle1, angle2, thickness, color, 0);
+}
+
+
+void gc_arc_filled(struct gc_t *gc, int xc, int yc,
+                             int xr, int yr, int angle1, int angle2,
+                             uint32_t color)
+{
+    gc_arc_clipped(gc, &gc->clipping, xc, yc, xr, yr, angle1, angle2, 1, color, 1);
 }
 
