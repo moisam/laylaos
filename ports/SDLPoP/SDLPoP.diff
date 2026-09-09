@@ -1,0 +1,44 @@
+diff -rub ./SDLPoP-1.24-RC/src/config.h ./SDLPoP-1.24-RC/src/config.h
+--- ./SDLPoP-1.24-RC/src/config.h	2025-04-20 17:51:15.000000000 +0100
++++ ./SDLPoP-1.24-RC/src/config.h	2026-04-05 21:06:41.801267507 +0100
+@@ -34,8 +34,12 @@
+ #define WINDOW_TITLE "Prince of Persia (SDLPoP) v" SDLPOP_VERSION
+ 
+ #if ! (defined WIN32 || _WIN32 || WIN64 || _WIN64)
+-#define POP_DIR_NAME "SDLPoP"
+-#define SHARE_PATH "/usr/share"
++# define POP_DIR_NAME "SDLPoP"
++# ifdef __laylaos__
++#  define SHARE_PATH "/usr/share/games"
++# else
++#  define SHARE_PATH "/usr/share"
++# endif
+ #endif
+ 
+ // Enable or disable fading.
+diff -rub ./SDLPoP-1.24-RC/src/seg009.c ./SDLPoP-1.24-RC/src/seg009.c
+--- ./SDLPoP-1.24-RC/src/seg009.c	2025-04-20 17:51:15.000000000 +0100
++++ ./SDLPoP-1.24-RC/src/seg009.c	2026-04-05 21:30:28.798740740 +0100
+@@ -982,6 +982,10 @@
+ 		sdl_haptic = NULL;
+ 	}
+ 
++#ifdef __laylaos__
++	is_joyst_mode = 0;
++#endif
++
+ 	is_keyboard_mode = !is_joyst_mode;
+ 	return is_joyst_mode;
+ }
+@@ -2560,7 +2564,11 @@
+ #ifdef SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING
+ 	SDL_SetHint(SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING, "1");
+ #endif
++#ifdef __laylaos__
++	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_NOPARACHUTE) != 0) {
++#else
+ 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_NOPARACHUTE | SDL_INIT_GAMECONTROLLER) != 0) {
++#endif
+ 		sdlperror("set_gr_mode: SDL_Init");
+ 		quit(1);
+ 	}

@@ -120,14 +120,14 @@ LAYLAOS_CreateSystemCursor(SDL_SystemCursor id)
     case SDL_SYSTEM_CURSOR_IBEAM:     sysid = CURSOR_IBEAM; break;
     case SDL_SYSTEM_CURSOR_WAIT:      sysid = CURSOR_WAITING; break;
     case SDL_SYSTEM_CURSOR_CROSSHAIR: sysid = CURSOR_CROSSHAIR; break;
-    case SDL_SYSTEM_CURSOR_WAITARROW: sysid = CURSOR_WAITING; break;
+    case SDL_SYSTEM_CURSOR_WAITARROW: sysid = CURSOR_ARROW_WAITING; break;
     case SDL_SYSTEM_CURSOR_SIZENWSE:  sysid = CURSOR_NWSE; break;
     case SDL_SYSTEM_CURSOR_SIZENESW:  sysid = CURSOR_NESW; break;
     case SDL_SYSTEM_CURSOR_SIZEWE:    sysid = CURSOR_WE; break;
     case SDL_SYSTEM_CURSOR_SIZENS:    sysid = CURSOR_NS; break;
-    case SDL_SYSTEM_CURSOR_SIZEALL:   sysid = CURSOR_CROSS; break;
+    case SDL_SYSTEM_CURSOR_SIZEALL:   sysid = CURSOR_FLEUR; break;
     case SDL_SYSTEM_CURSOR_NO:        sysid = CURSOR_X; break;
-    case SDL_SYSTEM_CURSOR_HAND:      sysid = CURSOR_HAND; break;
+    case SDL_SYSTEM_CURSOR_HAND:      sysid = CURSOR_OPEN_HAND; break;
     }
 
     cursor = SDL_calloc(1, sizeof(*cursor));
