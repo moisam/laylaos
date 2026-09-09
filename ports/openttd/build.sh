@@ -68,7 +68,7 @@ do_download()
     echo "   ==> Downloading ${1}/${2} to ${DOWNLOAD_SRCDIR}/${2}"
 
     wget -O "${2}" "${1}/${2}"
-    [ $? -ne 0 ] && exit_failure "$0: failed to download ${DOWNLOAD_URL}/${2}"
+    [ $? -ne 0 ] && exit_failure "$0: failed to download ${1}/${2}"
 
     unzip "${2}" || exit_failure "$0: failed to unzip ${2}"
 
@@ -94,6 +94,7 @@ echo " ==> Creating desktop entry"
 
 mkdir -p ${CROSSCOMPILE_SYSROOT_PATH}/usr/share/gui/icons/
 cp ${DOWNLOAD_SRCDIR}/os/windows/openttd.ico ${CROSSCOMPILE_SYSROOT_PATH}/usr/share/gui/icons/
+cp ${DOWNLOAD_SRCDIR}/media/openttd.64.png ${CROSSCOMPILE_SYSROOT_PATH}/usr/share/gui/icons/openttd.png
 
 mkdir -p ${CROSSCOMPILE_SYSROOT_PATH}/usr/share/gui/desktop/
 cat > ${CROSSCOMPILE_SYSROOT_PATH}/usr/share/gui/desktop/openttd.entry << EOF

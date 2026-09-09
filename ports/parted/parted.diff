@@ -1,0 +1,193 @@
+diff -rub ./parted-3.7/configure ./parted-3.7/configure
+--- ./parted-3.7/configure	2026-04-08 23:27:14.000000000 +0100
++++ ./parted-3.7/configure	2026-08-02 15:25:55.171127282 +0100
+@@ -5584,6 +5584,7 @@
+ 	linux*|uclinux*) OS=linux ;;
+ 	gnu*)	OS=gnu ;;
+ 	beos*)	OS=beos ;;
++	laylaos*)	OS=laylaos ;;
+ 	*)	as_fn_error $? "Unknown or unsupported OS \"$host_os\".  Only \"linux\", \"uclinux\", \"gnu\" and \"beos\" are supported in this version of GNU Parted." "$LINENO" 5 ;;
+ esac
+ 
+@@ -21258,7 +21259,7 @@
+   # Guess yes on platforms where we know the result.
+            *-gnu* | freebsd* | netbsd* | openbsd* | bitrig* \
+            | gnu* | *-musl* | midipix* | midnightbsd* \
+-           | hpux* | solaris* | cygwin* | mingw* | windows* | msys*) :
++           | hpux* | solaris* | cygwin* | mingw* | windows* | msys* | laylaos*) :
+     ac_cv_func_malloc_0_nonnull="guessing yes" ;; #(
+   *) :
+     # Guess as follows if we don't know.
+@@ -39497,7 +39498,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos*|laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -45212,6 +45213,19 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++# LaylaOS
++laylaos*)
++  version_type=linux # correct to gnu/linux during the next big refactor
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='$libname$release$shared_ext$versuffix $libname$release$shared_ext$major $libname$shared_ext'
++  soname_spec='$libname$release$shared_ext$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  shlibpath_overrides_runpath=no
++  dynamic_linker='LaylaOS ld.so'
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
+diff -rub ./parted-3.7/libparted/arch/linux.c ./parted-3.7/libparted/arch/linux.c
+--- ./parted-3.7/libparted/arch/linux.c	2026-03-24 23:30:48.000000000 +0000
++++ ./parted-3.7/libparted/arch/linux.c	2026-08-08 20:28:11.010841909 +0100
+@@ -19,7 +19,11 @@
+ 
+ #include <config.h>
+ #include <arch/linux.h>
++#ifdef __laylaos__
++#include <sys/blkpg.h>
++#else
+ #include <linux/blkpg.h>
++#endif
+ #include <parted/parted.h>
+ #include <parted/debug.h>
+ #if defined __s390__ || defined __s390x__
+@@ -69,7 +73,9 @@
+ 
+ #define STRPREFIX(a, b) (strncmp (a, b, strlen (b)) == 0)
+ 
++#ifndef __laylaos__
+ #define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))
++#endif
+ 
+ #ifndef __NR__llseek
+ #define __NR__llseek 140
+@@ -714,6 +720,7 @@
+         return 1;
+ }
+ 
++#ifndef __laylaos__
+ static int
+ _get_linux_version ()
+ {
+@@ -733,6 +740,7 @@
+         assert (n == 2 || n == 3);
+         return kver = KERNEL_VERSION (major, minor, teeny);
+ }
++#endif
+ 
+ #if USE_BLKID
+ static void
+@@ -762,10 +770,12 @@
+ 
+         PED_ASSERT (dev->open_count);
+ 
++#ifndef __laylaos__
+         if (_get_linux_version() < KERNEL_VERSION (2,3,0)) {
+                 dev->sector_size = PED_SECTOR_SIZE_DEFAULT;
+                 return;
+         }
++#endif
+ 
+         if (ioctl (arch_specific->fd, BLKSSZGET, &sector_size)) {
+                 ped_exception_throw (
+@@ -815,12 +825,16 @@
+ static int
+ _kernel_has_blkgetsize64(void)
+ {
++#ifndef __laylaos__
+         int version = _get_linux_version();
+ 
+         if (version >= KERNEL_VERSION (2,5,4)) return 1;
+         if (version <  KERNEL_VERSION (2,5,0) &&
+             version >= KERNEL_VERSION (2,4,18)) return 1;
+         return 0;
++#else
++        return 1;
++#endif
+ }
+ 
+ /* TODO: do a binary search if BLKGETSIZE doesn't work?! */
+@@ -957,6 +971,10 @@
+                 /* silently ignore unsupported ioctl */
+                 dev->model = strdup(_("Generic IDE"));
+         } else if (r) {
++#ifdef __laylaos__
++            if (errno == ENOSYS)
++                goto error_close_dev;
++#endif
+                 ex_status = ped_exception_throw (
+                                 PED_EXCEPTION_WARNING,
+                                 PED_EXCEPTION_IGNORE_CANCEL,
+@@ -1888,6 +1906,7 @@
+         PED_ASSERT (dev != NULL);
+         PED_ASSERT (dev->sector_size % PED_SECTOR_SIZE_DEFAULT == 0);
+ 
++#ifndef __laylaos__
+         if (_get_linux_version() < KERNEL_VERSION (2,6,0)) {
+                 /* Kludge.  This is necessary to read/write the last
+                    block of an odd-sized disk, until Linux 2.5.x kernel fixes.
+@@ -1898,6 +1917,7 @@
+                                 && _read_lastoddsector (
+                                         dev, (char *) buffer + (count-1) * 512);
+         }
++#endif
+         while (1) {
+                 if (_device_seek (dev, start))
+                         break;
+@@ -2032,6 +2052,7 @@
+                         return 1;
+         }
+ 
++#ifndef __laylaos__
+         if (_get_linux_version() < KERNEL_VERSION (2,6,0)) {
+                 /* Kludge.  This is necessary to read/write the last
+                    block of an odd-sized disk, until Linux 2.5.x kernel fixes.
+@@ -2043,6 +2064,7 @@
+                                         dev, ((char*) buffer
+                                               + (count-1) * dev->sector_size));
+         }
++#endif
+         while (1) {
+                 if (_device_seek (dev, start))
+                         break;
+@@ -3240,6 +3262,7 @@
+ static int
+ _have_blkpg ()
+ {
++#ifndef __laylaos__
+         static int have_blkpg = -1;
+         int kver;
+ 
+@@ -3248,6 +3271,9 @@
+ 
+         kver = _get_linux_version();
+         return have_blkpg = kver >= KERNEL_VERSION (2,4,0) ? 1 : 0;
++#else
++        return 1;
++#endif
+ }
+ 
+ /* Return nonzero upon success, 0 if something fails.  */
+diff -rub ./parted-3.7/libparted/architecture.c ./parted-3.7/libparted/architecture.c
+--- ./parted-3.7/libparted/architecture.c	2026-03-24 23:30:48.000000000 +0000
++++ ./parted-3.7/libparted/architecture.c	2026-08-02 19:46:03.601677489 +0100
+@@ -29,7 +29,7 @@
+ 	if (ped_architecture)
+ 		return;
+ 
+-#ifdef linux
++#if defined(linux) || defined(__laylaos__)
+ 	extern PedArchitecture ped_linux_arch;
+ 	const PedArchitecture* arch = &ped_linux_arch;
+ #elif defined(__BEOS__)
