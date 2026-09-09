@@ -61,6 +61,35 @@ make DESTDIR=${CROSSCOMPILE_SYSROOT_PATH} install || exit_failure "$0: failed to
 # Fix libhunspell-1.7.la for the future generations
 sed -i "s/dependency_libs=.*/dependency_libs='-lstdc++'/g" ${CROSSCOMPILE_SYSROOT_PATH}/usr/lib/libhunspell-1.7.la
 
+# Download dictionaries
+# https://wordlist.aspell.net/dicts/
+# https://sourceforge.net/projects/wordlist/files/speller/2026.02.25/
+echo " ==> Downloading dictionaries"
+
+do_download()
+{
+    echo "   ==> Downloading ${1}${2} to ${DOWNLOAD_SRCDIR}/${3}"
+
+    wget -O "${3}.zip" "${1}${2}/hunspell-${3}-${2}.zip"
+    [ $? -ne 0 ] && exit_failure "$0: failed to download ${1}${2}/hunspell-${3}-${2}.zip"
+
+    unzip "${3}.zip" || exit_failure "$0: failed to unzip ${3}.zip"
+    rm "${3}.zip"
+
+    cp ${3}* README_${3}* ${CROSSCOMPILE_SYSROOT_PATH}/usr/share/hunspell/ \
+        || exit_failure "$0: failed to copy contents of ${3}.zip"
+}
+
+cd ${DOWNLOAD_SRCDIR}
+mkdir -p ${CROSSCOMPILE_SYSROOT_PATH}/usr/share/hunspell
+
+DICTVER="2026.02.25"
+
+do_download "https://github.com/en-wl/wordlist/releases/download/rel-" ${DICTVER} "en_AU"
+do_download "https://github.com/en-wl/wordlist/releases/download/rel-" ${DICTVER} "en_CA"
+do_download "https://github.com/en-wl/wordlist/releases/download/rel-" ${DICTVER} "en_US"
+do_download "https://github.com/en-wl/wordlist/releases/download/rel-" ${DICTVER} "en_GB-ise"
+
 # Clean up
 cd ${CWD}
 rm -rf ${DOWNLOAD_SRCDIR}

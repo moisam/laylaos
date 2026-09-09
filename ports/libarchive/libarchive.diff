@@ -1,0 +1,31 @@
+diff -rub ./libarchive-3.8.9/configure ./libarchive-3.8.9/configure
+--- ./libarchive-3.8.9/configure	2026-07-28 10:31:15.000000000 +0100
++++ ./libarchive-3.8.9/configure	2026-08-16 00:38:10.777781291 +0100
+@@ -7247,7 +7247,7 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-beos*)
++beos*|laylaos*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -13435,6 +13435,18 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++# LaylaOS
++laylaos*)
++  version_type=linux # correct to gnu/linux during the next big refactor
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  shlibpath_overrides_runpath=no
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
