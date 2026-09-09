@@ -206,7 +206,22 @@ struct fs_node_t
     dev_t dev;          /**< devid of device containing this inode */
     ino_t inode;        /**< inode number */
     struct mount_info_t *minfo;     /**< device mount info for quick access */
-    unsigned int refs;    /**< reference count */
+
+#define FS_NODE_DIRTY           0x0001
+#define FS_NODE_PIPE            0x0002
+#define FS_NODE_MOUNTPOINT      0x0004
+#define FS_NODE_SOCKET          0x0008
+#define FS_NODE_SOCKET_ONDISK   0x0010
+#define FS_NODE_KEEP_INCORE     0x0020
+#define FS_NODE_STALE           0x0040
+#define FS_NODE_LOOP_BACKING    0x0080
+//#define FS_NODE_WANTED          0x0080
+#define FS_NODE_INDEXED_DIR     0x0100
+#define FS_NODE_APPEND_ONLY     0x0200
+#define FS_NODE_HEADER_ONLY     0x0400
+    unsigned int flags;     /**< node flags */
+
+    volatile unsigned int refs;    /**< reference count */
 
     mode_t mode;        /**< access mode */
     uid_t uid;          /**< user id */
@@ -228,18 +243,6 @@ struct fs_node_t
     volatile struct kernel_mutex_t lock; /**< struct lock */
     //volatile struct kernel_mutex_t sleeping_task;    /**< waiting task sleep channel */
 
-#define FS_NODE_DIRTY           0x0001
-#define FS_NODE_PIPE            0x0002
-#define FS_NODE_MOUNTPOINT      0x0004
-#define FS_NODE_SOCKET          0x0008
-#define FS_NODE_SOCKET_ONDISK   0x0010
-#define FS_NODE_KEEP_INCORE     0x0020
-#define FS_NODE_STALE           0x0040
-#define FS_NODE_LOOP_BACKING    0x0080
-//#define FS_NODE_WANTED          0x0080
-#define FS_NODE_INDEXED_DIR     0x0100
-#define FS_NODE_APPEND_ONLY     0x0200
-    unsigned int flags;     /**< node flags */
     struct fs_ops_t *ops;   /**< pointer to filesystem operations struct */
     struct fs_node_t *ptr;  /**< alias pointer for symlinks and mount-points */
     struct fs_node_t *next; /**< used by tmpfs to find next node in a
@@ -256,7 +259,7 @@ struct fs_node_t
 
     struct selinfo select_channel;  /**< used by pipes to select/poll */
     
-    struct alock_t *alocks;         /**< queue of advisory locks */
+    volatile struct alock_t *alocks;         /**< queue of advisory locks */
 };
 
 struct fs_node_header_t
@@ -264,6 +267,7 @@ struct fs_node_header_t
     dev_t dev;          /**< devid of device containing this inode */
     ino_t inode;        /**< inode number */
     struct mount_info_t *minfo;     /**< device mount info for quick access */
+    unsigned int flags;     /**< node flags */
 };
 
 /**

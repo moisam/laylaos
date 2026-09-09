@@ -74,6 +74,7 @@
                                                      page fault */
 #define PROPERTY_DYNAMICALLY_LOADED (1 << 14)   /**< dynamically loaded */
 #define PROPERTY_SELECT_EVENT       (1 << 15)   /**< select event occurred */
+#define PROPERTY_STRUCT_BUSY        (1 << 16)   /**< task struct is busy */
 
 /* thread group flags */
 #define TG_FLAG_EXITING             (1 << 0)
@@ -275,7 +276,8 @@ struct task_t
     int properties;             /**< task properties */
 
     int32_t cpuid;              /**< id of the cpu the task is running on */
-    int32_t prev_cpuid;
+    int32_t prev_cpuid;         /**< id of the cpu the task last ran on */
+    uint64_t cpu_affinity;      /**< cpu affinity mask */
 
     //physical_addr tss_stack_phys;  /**< TSS stack physical address */
     //virtual_addr tss_stack_virt;   /**< TSS stack virtual address */
@@ -329,9 +331,13 @@ struct task_t
 
     struct task_files_t *ofiles;        /**< open files handlers */
 
-    uint32_t cloexec;               /**< which files are closed on exec() */
+    uint64_t cloexec;               /**< which files are closed on exec() */
   
     struct task_vm_t *mem;          /**< task memory map */
+
+    // chaining pointers for the dual hash tables
+    volatile struct task_t *pid_hash_next;
+    volatile struct task_t *tgid_hash_next;
 
     /*
      * Signals 
