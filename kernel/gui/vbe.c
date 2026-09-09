@@ -261,27 +261,6 @@ void get_vbe_info(unsigned long addr)
 
     vbe_framebuffer.memsize = vbe_framebuffer.pitch *
                                     vbe_framebuffer.height;
-
-    printk("Found VBE info:\n");
-    printk("  VBE mode 0x%x\n", vbe_mode);
-    printk("  %c%c%c%c ", vbe_control_info.signature[0],
-                          vbe_control_info.signature[1],
-                          vbe_control_info.signature[2],
-                          vbe_control_info.signature[3]);
-    printk("ver %d (total memory: %ukB)\n",
-                          VBE_VERSION(vbe_control_info.version),
-                          (vbe_control_info.video_memory * 64));
-
-    printk("  Resolution %u x %u, bpp %u, phys base 0x%x\n",
-           vbe_framebuffer.width, vbe_framebuffer.height,
-           vbe_framebuffer.bpp, vbe_framebuffer.phys_addr);
-
-    //printf("\nR [%u, %u]\n", vbe_driver.red_position, vbe_driver.red_mask);
-    //printf("G [%u, %u]\n", vbe_driver.green_position, vbe_driver.green_mask);
-    //printf("B [%u, %u]\n", vbe_driver.blue_position, vbe_driver.blue_mask);
-    //__asm__ __volatile__("xchg %%bx, %%bx"::);
-
-    //empty_loop();
 }
 
 
@@ -289,17 +268,19 @@ static inline void vbe_map_backbuf(uint8_t **addr)
 {
     physical_addr phys;
 
-    if(!(phys = (physical_addr)pmmngr_alloc_blocks(align_up(vbe_framebuffer.memsize) / PAGE_SIZE)))
+    // allocate the maximum supported memory size so we can handle display
+    // resolution change without reallocating memory
+    if(!(phys = (physical_addr)pmmngr_alloc_blocks(MAX_FRAMEBUFFER_MEMSZ / PAGE_SIZE)))
     {
         kpanic("  Failed to alloc VBE back buffer\n");
     }
     else
     {
-        *addr = (uint8_t *)kmod_map(phys, phys + vbe_framebuffer.memsize);
-        A_memset(*addr, 0, vbe_framebuffer.memsize);
+        *addr = (uint8_t *)mmio_map(phys, phys + MAX_FRAMEBUFFER_MEMSZ);
+        A_memset(*addr, 0, MAX_FRAMEBUFFER_MEMSZ);
 
         physical_addr start = phys;
-        physical_addr end = start + vbe_framebuffer.memsize;
+        physical_addr end = start + MAX_FRAMEBUFFER_MEMSZ;
         physical_addr addr;
 
         for(addr = start; addr < end; addr += PAGE_SIZE)
@@ -322,9 +303,9 @@ void vbe_init(void)
     }
 
     if(!(vbe_framebuffer.virt_addr = (uint8_t *)
-            kmod_map((physical_addr)vbe_framebuffer.phys_addr,
+            mmio_map((physical_addr)vbe_framebuffer.phys_addr,
                      (physical_addr)vbe_framebuffer.phys_addr +
-                                            vbe_framebuffer.memsize)))
+                                            MAX_FRAMEBUFFER_MEMSZ)))
     {
         printk("  Failed to map virtual VBE memory\n");
         return;
@@ -346,7 +327,7 @@ void vbe_init(void)
                         vbe_framebuffer.palette_num_colors;
 
         temp_addr = (uint8_t *)
-            kmod_map((physical_addr)vbe_framebuffer.palette_phys_addr,
+            mmio_map((physical_addr)vbe_framebuffer.palette_phys_addr,
                      (physical_addr)vbe_framebuffer.palette_phys_addr +
                                 (vbe_framebuffer.palette_num_colors * 4));
 
@@ -366,6 +347,32 @@ void vbe_init(void)
     vbe_inited = 1;
 
     fb_init();
+
+    printk("VBE mode info:\n");
+    printk("  VBE mode 0x%x\n", vbe_mode);
+    printk("  %c%c%c%c ", vbe_control_info.signature[0],
+                          vbe_control_info.signature[1],
+                          vbe_control_info.signature[2],
+                          vbe_control_info.signature[3]);
+    printk("ver %d (total memory: %ukB)\n",
+                          VBE_VERSION(vbe_control_info.version),
+                          (vbe_control_info.video_memory * 64));
+
+    printk("  Resolution %u x %u, bpp %u, type %u, phys base 0x%x\n",
+           vbe_framebuffer.width, vbe_framebuffer.height,
+           vbe_framebuffer.bpp, vbe_framebuffer.type, vbe_framebuffer.phys_addr);
+
+    printk("  Framebuffer size %lx bytes\n", vbe_framebuffer.memsize);
+
+    printk("  R %u(%u) G %u(%u) B %u(%u)\n",
+            vbe_framebuffer.red_pos, vbe_framebuffer.red_mask_size,
+            vbe_framebuffer.green_pos, vbe_framebuffer.green_mask_size,
+            vbe_framebuffer.blue_pos, vbe_framebuffer.blue_mask_size);
+
+    //printf("\nR [%u, %u]\n", vbe_driver.red_position, vbe_driver.red_mask);
+    //printf("G [%u, %u]\n", vbe_driver.green_position, vbe_driver.green_mask);
+    //printf("B [%u, %u]\n", vbe_driver.blue_position, vbe_driver.blue_mask);
+    //for(;;);
 }
 
 
@@ -382,9 +389,9 @@ int map_vbe_backbuf(virtual_addr *resaddr)
     }
 
     virtual_addr vbestart = (virtual_addr)fb_cur_backbuf;
-    virtual_addr vbeend = vbestart + vbe_framebuffer.memsize;
+    virtual_addr vbeend = vbestart + MAX_FRAMEBUFFER_MEMSZ;
     virtual_addr src, dest, mapaddr;
-    virtual_addr mapsz = align_up(vbe_framebuffer.memsize);
+    virtual_addr mapsz = MAX_FRAMEBUFFER_MEMSZ;
     pdirectory *pml4_dest = (pdirectory *)this_core->cur_task->pd_virt;
     pdirectory *pml4_src = (pdirectory *)get_idle_task()->pd_virt;
     volatile pt_entry *esrc, *edest;

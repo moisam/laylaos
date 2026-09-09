@@ -1,6 +1,6 @@
 /* 
  *    Programmed By: Mohammed Isam [mohammed_isam1984@yahoo.com]
- *    Copyright 2022, 2023, 2024, 2025 (c)
+ *    Copyright 2022, 2023, 2024, 2025, 2026 (c)
  * 
  *    file: fb.c
  *    This file is part of LaylaOS.
@@ -56,18 +56,6 @@
 #include "rgb_colors.h"
 #include "rgb.h"
 
-/*
-// change this include to change the font used, e.g. fb_font_8x16.h
-#include "fb_font_8x16.h"
-//#include "fb_font_8x8_alt.h"
-
-static uint8_t char_width = CHAR_WIDTH;
-static uint8_t char_height = CHAR_HEIGHT;
-static uint8_t *font_data = FONT_DATA;
-*/
-
-//#include "../bin/desktop/server/font-array.h"
-//#include "../bin/desktop/server/font-array-bold.h"
 #include "fb_font_vt100_8x16.h"
 #include "fb_font_vt100_8x16_bold.h"
 
@@ -79,7 +67,6 @@ unsigned int line_words;
 
 volatile struct task_t *screen_task = NULL;
 
-//virtual_addr framebuf_mem = 0;
 uint8_t *fb_backbuf_text, *fb_backbuf_gui, *fb_cur_backbuf;
 
 // function prototypes
@@ -204,6 +191,24 @@ void fb_reset(struct tty_t *tty)
 }
 
 
+static void get_framebuffer_wh(uint32_t *vgaw, uint32_t *vgah)
+{
+    if(vbe_framebuffer.type == 0 /* palette-indexed */ ||
+       vbe_framebuffer.type == 1 /* RGB */)
+    {
+        *vgaw = vbe_framebuffer.width / char_width;
+        *vgah = vbe_framebuffer.height / char_height;
+        vbe_framebuffer.line_height = vbe_framebuffer.pitch * char_height;
+    }
+    else if(vbe_framebuffer.type == 2 /* EGA-standard text mode */)
+    {
+        *vgaw = vbe_framebuffer.width;
+        *vgah = vbe_framebuffer.height;
+        vbe_framebuffer.line_height = vbe_framebuffer.pitch;
+    }
+}
+
+
 /*
  * Initialise the framebuffer device.
  */
@@ -256,19 +261,7 @@ void fb_init(void)
         hide_cur = vga_hide_cur_32;
     }
     
-    if(vbe_framebuffer.type == 0 /* palette-indexed */ ||
-       vbe_framebuffer.type == 1 /* RGB */)
-    {
-        vgaw = vbe_framebuffer.width / char_width;
-        vgah = vbe_framebuffer.height / char_height;
-        vbe_framebuffer.line_height = vbe_framebuffer.pitch * char_height;
-    }
-    else if(vbe_framebuffer.type == 2 /* EGA-standard text mode */)
-    {
-        vgaw = vbe_framebuffer.width;
-        vgah = vbe_framebuffer.height;
-        vbe_framebuffer.line_height = vbe_framebuffer.pitch;
-    }
+    get_framebuffer_wh(&vgaw, &vgah);
 
     line_words = vbe_framebuffer.pitch / vbe_framebuffer.pixel_width;
 
@@ -279,17 +272,22 @@ void fb_init(void)
     ttytab[1].window.ws_col = vgaw;
     ttytab[1].scroll_bottom = vgah;
 
-    if((ttytab[1].buf[0] = kmalloc(VGA_MEMORY_SIZE(&ttytab[1]))))
+    max_ttyw = (MAX_VGA_WIDTH / char_width);
+    max_ttyh = (MAX_VGA_HEIGHT / char_height);
+
+    // allocate the maximum supported size so we can handle display size
+    // change without reallocating buffers
+    if((ttytab[1].buf[0] = kmalloc(max_ttyw * max_ttyh * 2)))
     {
-        A_memset(ttytab[1].buf[0], 0, VGA_MEMORY_SIZE(&ttytab[1]));
+        A_memset(ttytab[1].buf[0], 0, max_ttyw * max_ttyh * 2);
     }
 
-    if(!(ttytab[1].cellattribs[0] = kmalloc(vgaw * vgah)))
+    if(!(ttytab[1].cellattribs[0] = kmalloc(max_ttyw * max_ttyh)))
     {
         kpanic("fb: failed to alloc internal buffer\n");
     }
 
-    A_memset(ttytab[1].cellattribs[0], 0, vgaw * vgah);
+    A_memset(ttytab[1].cellattribs[0], 0, max_ttyw * max_ttyh);
 
     for(i = 1; i < NTTYS; i++)
     {
@@ -415,15 +413,6 @@ static inline void blank_line(uint8_t *dest, uint32_t width, uint32_t bgcolor)
         
         for(j = 0; j < char_height; j++)
         {
-            /*
-            buf = (uint32_t *)dest;
-            lbuf = (uint32_t *)(&buf[width]);
-
-            while(buf < lbuf)
-            {
-                *buf++ = bgcol;
-            }
-            */
             memset32(dest, bgcol, width);
             
             dest += vbe_framebuffer.pitch;
@@ -1601,7 +1590,7 @@ void vga_restore_screen(struct tty_t *tty)
 
         // if the tty was not stopped, restart it and awake anyone who might
         // have slept while we were restoring the screen
-        if(!was_stopped)
+        if(!was_stopped && system_state == SYSTEM_STATE_RUNNING)
         {
             tty->flags &= ~TTY_FLAG_STOPPED;
             unblock_tasks(tty);
@@ -1618,6 +1607,136 @@ void vga_restore_screen(struct tty_t *tty)
         force_screen_refresh();
         tty_send_signal(tty->pgid, SIGWINCH);
     }
+
+    //printk("buf %lx, %lx, %lx\n", fb_cur_backbuf, fb_backbuf_text, fb_backbuf_gui);
+}
+
+
+int vga_resize_display(uint32_t neww, uint32_t newh)
+{
+    uint16_t *tmpbuf;
+    uint8_t *tmpattribs;
+    volatile int i, j;
+    uint32_t k;
+    uint32_t vgaw = ttytab[1].vga_width;
+    uint32_t vgah = ttytab[1].vga_height;
+    uint32_t new_vgaw, new_vgah;
+
+    // get the new w & h in characters, not pixels
+    new_vgaw = (neww / char_width);
+    new_vgah = (newh / char_height);
+
+    // alloc temp buffers
+    if(!(tmpbuf = kmalloc(new_vgaw * new_vgah * 2)))
+    {
+        kpanic("fb: failed allocate ega buffer\n");
+    }
+
+    if(!(tmpattribs = kmalloc(new_vgaw * new_vgah)))
+    {
+        kpanic("fb: failed allocate attribs buffer\n");
+    }
+
+    // set global info
+    vbe_framebuffer.width = neww;
+    vbe_framebuffer.height = newh;
+    vbe_framebuffer.pitch = neww * vbe_framebuffer.pixel_width;
+    vbe_framebuffer.memsize = vbe_framebuffer.pitch *
+                                    vbe_framebuffer.height;
+    line_words = neww;
+
+    get_framebuffer_wh(&vgaw, &vgah);
+
+    // loop through ttys and expand/shrink their buffers to fit the new 
+    // display size
+    for(i = 1; i < NTTYS; i++)
+    {
+        struct tty_t *tty = &ttytab[i];
+        uint32_t w = (new_vgaw < tty->vga_width) ? new_vgaw : tty->vga_width;
+        uint32_t h = (new_vgah < tty->vga_height) ? new_vgah : tty->vga_height;
+        int was_stopped = (tty->flags & TTY_FLAG_STOPPED);
+
+        // stop the tty so no one can write to it and mess with us while we
+        // restore the screen
+        tty->flags |= TTY_FLAG_STOPPED;
+
+        if(!(tty->flags & TTY_FLAG_NO_TEXT))
+        {
+            // text-based tty
+            // walk through both the primary and secondary buffers
+            for(j = 0; j < 2; j++)
+            {
+                uint16_t *egabuf = tty->buf[j];
+                uint8_t *attribbuf = tty->cellattribs[j];
+                uint16_t *dest = tmpbuf;
+                uint8_t *destattrib = tmpattribs;
+
+                if(!egabuf)
+                {
+                    continue;
+                }
+
+                // zero out temp buffers
+                A_memset(dest, 0, new_vgaw * new_vgah * 2);
+                A_memset(destattrib, 0, new_vgaw * new_vgah);
+
+                // copy chars and their attribs to the temp buffers
+                for(k = 0; k < h; k++)
+                {
+                    A_memcpy(dest, egabuf, w * 2);
+                    A_memcpy(destattrib, attribbuf, w);
+
+                    egabuf += tty->vga_width;
+                    attribbuf += tty->vga_width;
+                    dest += new_vgaw;
+                    destattrib += new_vgaw;
+                }
+
+                // and copy them back to the tty buffers
+                A_memcpy(tty->buf[j], tmpbuf, new_vgah * new_vgaw * 2);
+                A_memcpy(tty->cellattribs[j], tmpattribs, new_vgah * new_vgaw);
+            }
+        }
+        else
+        {
+            // gui-based tty
+            A_memset(tty->buf[0], 0, new_vgah * new_vgaw * 2);
+            A_memset(tty->cellattribs[0], 0, new_vgah * new_vgaw);
+        }
+
+        // fix the tty device to use the new specs
+        tty->vga_width = vgaw;
+        tty->vga_height = vgah;
+        tty->window.ws_row = vgah;
+        tty->window.ws_col = vgaw;
+        tty->scroll_bottom = vgah;
+
+        // if the tty was not stopped, restart it and awake anyone who might
+        // have slept while we were restoring the screen
+        if(!was_stopped)
+        {
+            tty->flags &= ~TTY_FLAG_STOPPED;
+            unblock_tasks(tty);
+        }
+
+        // if this is not the gui tty, send a SIGWINCH signal to the 
+        // foreground process group (we handle active tty with gui below)
+        if(!(tty->flags & TTY_FLAG_NO_TEXT))
+        {
+            tty_send_signal(tty->pgid, SIGWINCH);
+        }
+    }
+
+    // free temp memory
+    kfree(tmpbuf);
+    kfree(tmpattribs);
+
+    // lastly update the screen
+    hide_cur(&ttytab[cur_tty]);
+    repaint_screen = 1;
+    restore_screen(&ttytab[cur_tty]);
+
+    return 0;
 }
 
 
@@ -1836,6 +1955,7 @@ long fb_ioctl(dev_t dev, unsigned int cmd, char *arg, int kernel)
             }
             
             //__asm__ __volatile__("xchg %%bx, %%bx"::);
+            //printk("(%d,%d)", r.right, r.left);
 
             if(r.left < 0)
             {
